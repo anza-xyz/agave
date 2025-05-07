@@ -12,9 +12,25 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_reserved_account_keys::ReservedAccountKeys,
     borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize},
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_account_info::MAX_PERMITTED_DATA_INCREASE,
+    solana_client_traits::SyncClient,
+    solana_clock::{UnixTimestamp, MAX_PROCESSING_AGE},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_fee_structure::{FeeBudgetLimits, FeeStructure},
+    solana_genesis_config::ClusterType,
+    solana_hash::Hash,
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_loader_v3_interface::instruction as loader_v3_instruction,
+    solana_loader_v4_interface::instruction as loader_v4_instruction,
+    solana_message::{Message, SanitizedMessage},
     solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
@@ -32,36 +48,20 @@ use {
     solana_sbf_rust_realloc_dep::*,
     solana_sbf_rust_realloc_invoke_dep::*,
     solana_sbpf::vm::ContextObject,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
-        client::SyncClient,
-        clock::{UnixTimestamp, MAX_PROCESSING_AGE},
-        compute_budget::ComputeBudgetInstruction,
-        entrypoint::MAX_PERMITTED_DATA_INCREASE,
-        fee::{FeeBudgetLimits, FeeStructure},
-        fee_calculator::FeeRateGovernor,
-        genesis_config::ClusterType,
-        hash::Hash,
-        instruction::{AccountMeta, Instruction, InstructionError},
-        loader_v4,
-        message::{Message, SanitizedMessage},
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        stake,
-        system_instruction::MAX_PERMITTED_DATA_LENGTH,
-        system_program,
-        sysvar::{self, clock},
-        transaction::{Transaction, TransactionError},
-    },
+    solana_sdk_ids::sysvar::{self as sysvar, clock},
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
+    solana_signer::Signer,
+    solana_stake_interface as stake,
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_execution_result::InnerInstruction,
         transaction_processor::ExecutionRecordingConfig,
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_system_interface::{program as system_program, MAX_PERMITTED_DATA_LENGTH},
     solana_timings::ExecuteTimings,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     solana_type_overrides::rand,
     std::{assert_eq, cell::RefCell, str::FromStr, sync::Arc, time::Duration},
 };
@@ -674,7 +674,7 @@ fn test_program_sbf_invoke_sanity() {
             AccountMeta::new_readonly(derived_key3, false),
             AccountMeta::new_readonly(system_program::id(), false),
             AccountMeta::new(from_keypair.pubkey(), true),
-            AccountMeta::new_readonly(solana_sdk::ed25519_program::id(), false),
+            AccountMeta::new_readonly(solana_sdk_ids::ed25519_program::id(), false),
             AccountMeta::new_readonly(invoke_program_id, false),
             AccountMeta::new_readonly(unexecutable_program_keypair.pubkey(), false),
         ];
@@ -1549,7 +1549,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         &authority_keypair,
         "solana_sbf_rust_panic",
     );
-    let redeployment_instruction = bpf_loader_upgradeable::upgrade(
+    let redeployment_instruction = loader_v3_instruction::upgrade(
         &program_id,
         &buffer_keypair.pubkey(),
         &authority_keypair.pubkey(),
@@ -1585,7 +1585,7 @@ fn test_program_sbf_invoke_stable_genesis_and_bank() {
         &[program_keypair.pubkey().as_ref()],
         &bpf_loader_upgradeable::id(),
     );
-    let undeployment_instruction = bpf_loader_upgradeable::close_any(
+    let undeployment_instruction = loader_v3_instruction::close_any(
         &programdata_address,
         &mint_keypair.pubkey(),
         Some(&authority_keypair.pubkey()),
@@ -1753,7 +1753,8 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
             None,
             Some(&program_id),
         );
-    let undeployment_instruction = loader_v4::retract(&program_id, &authority_keypair.pubkey());
+    let undeployment_instruction =
+        loader_v4_instruction::retract(&program_id, &authority_keypair.pubkey());
     let redeployment_instructions =
         deployment_instructions.split_off(deployment_instructions.len() - 3);
     let signers: &[&[&Keypair]] = &[
@@ -1872,7 +1873,8 @@ fn test_program_sbf_invoke_in_same_tx_as_undeployment() {
     );
 
     // Prepare undeployment
-    let undeployment_instruction = loader_v4::retract(&program_id, &authority_keypair.pubkey());
+    let undeployment_instruction =
+        loader_v4_instruction::retract(&program_id, &authority_keypair.pubkey());
 
     // Undeployment fails when top-level-instructions invoke the program because of write lock demotion
     // and the program becomes unavailable to CPI instructions
@@ -1954,6 +1956,7 @@ fn test_program_sbf_disguised_as_sbf_loader() {
 #[test]
 #[cfg(feature = "sbf_c")]
 fn test_program_reads_from_program_account() {
+    use solana_loader_v4_interface::state as loader_v4_state;
     solana_logger::setup();
 
     let GenesisConfigInfo {
@@ -1977,7 +1980,7 @@ fn test_program_reads_from_program_account() {
     let account_metas = vec![AccountMeta::new_readonly(program_id, false)];
     let instruction = Instruction::new_with_bytes(
         program_id,
-        &data[0..loader_v4::LoaderV4State::program_data_offset()],
+        &data[0..loader_v4_state::LoaderV4State::program_data_offset()],
         account_metas,
     );
     bank_client
@@ -2055,7 +2058,7 @@ fn test_program_sbf_upgrade() {
 
     // Set authority
     let new_authority_keypair = Keypair::new();
-    let authority_instruction = loader_v4::transfer_authority(
+    let authority_instruction = loader_v4_instruction::transfer_authority(
         &program_id,
         &authority_keypair.pubkey(),
         &new_authority_keypair.pubkey(),
@@ -2080,7 +2083,7 @@ fn test_program_sbf_upgrade() {
         );
     deployment_instructions.insert(
         deployment_instructions.len() - 3,
-        loader_v4::retract(&program_id, &new_authority_keypair.pubkey()),
+        loader_v4_instruction::retract(&program_id, &new_authority_keypair.pubkey()),
     );
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
@@ -2157,7 +2160,7 @@ fn test_program_sbf_upgrade_via_cpi() {
 
     // Set authority via CPI
     let new_authority_keypair = Keypair::new();
-    let mut authority_instruction = loader_v4::transfer_authority(
+    let mut authority_instruction = loader_v4_instruction::transfer_authority(
         &program_id,
         &authority_keypair.pubkey(),
         &new_authority_keypair.pubkey(),
@@ -2186,7 +2189,7 @@ fn test_program_sbf_upgrade_via_cpi() {
         );
     deployment_instructions.insert(
         deployment_instructions.len() - 3,
-        loader_v4::retract(&program_id, &new_authority_keypair.pubkey()),
+        loader_v4_instruction::retract(&program_id, &new_authority_keypair.pubkey()),
     );
     let mut upgrade_instruction = deployment_instructions.pop().unwrap();
     let signers: &[&[&Keypair]] = &[
@@ -2588,7 +2591,7 @@ fn test_program_sbf_realloc() {
             )
             .unwrap();
         let account = bank.get_account(&pubkey).unwrap();
-        assert_eq!(&solana_sdk::system_program::id(), account.owner());
+        assert_eq!(&solana_system_interface::program::id(), account.owner());
         let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
         assert_eq!(MAX_PERMITTED_DATA_INCREASE, data.len());
 
@@ -2624,7 +2627,7 @@ fn test_program_sbf_realloc() {
                                 &[REALLOC_AND_ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM],
                                 vec![
                                     AccountMeta::new(pubkey, true),
-                                    AccountMeta::new(solana_sdk::system_program::id(), false),
+                                    AccountMeta::new(solana_system_interface::program::id(), false),
                                 ],
                             ),
                             ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
@@ -2650,7 +2653,7 @@ fn test_program_sbf_realloc() {
                             &[ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM_AND_REALLOC],
                             vec![
                                 AccountMeta::new(pubkey, true),
-                                AccountMeta::new(solana_sdk::system_program::id(), false),
+                                AccountMeta::new(solana_system_interface::program::id(), false),
                             ],
                         ),
                         ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
@@ -2896,7 +2899,7 @@ fn test_program_sbf_realloc_invoke() {
         )
         .unwrap();
     let account = bank.get_account(&pubkey).unwrap();
-    assert_eq!(&solana_sdk::system_program::id(), account.owner());
+    assert_eq!(&solana_system_interface::program::id(), account.owner());
     let data = bank_client.get_account_data(&pubkey).unwrap().unwrap();
     assert_eq!(MAX_PERMITTED_DATA_INCREASE, data.len());
 
@@ -2933,7 +2936,10 @@ fn test_program_sbf_realloc_invoke() {
                             vec![
                                 AccountMeta::new(pubkey, true),
                                 AccountMeta::new_readonly(realloc_program_id, false),
-                                AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
+                                AccountMeta::new_readonly(
+                                    solana_system_interface::program::id(),
+                                    false
+                                ),
                             ],
                         ),
                         ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
@@ -2960,7 +2966,10 @@ fn test_program_sbf_realloc_invoke() {
                         vec![
                             AccountMeta::new(pubkey, true),
                             AccountMeta::new_readonly(realloc_program_id, false),
-                            AccountMeta::new_readonly(solana_sdk::system_program::id(), false),
+                            AccountMeta::new_readonly(
+                                solana_system_interface::program::id(),
+                                false,
+                            ),
                         ],
                     ),
                     ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(
@@ -3047,7 +3056,7 @@ fn test_program_sbf_realloc_invoke() {
                         vec![
                             AccountMeta::new(mint_pubkey, true),
                             AccountMeta::new(new_pubkey, true),
-                            AccountMeta::new(solana_sdk::system_program::id(), false),
+                            AccountMeta::new(solana_system_interface::program::id(), false),
                             AccountMeta::new_readonly(realloc_invoke_program_id, false),
                         ],
                     ),
