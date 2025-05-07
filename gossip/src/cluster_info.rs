@@ -105,6 +105,9 @@ const DEFAULT_EPOCH_DURATION: Duration =
     Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
 /// milliseconds we sleep for between gossip requests
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
+/// Interval between pull requests
+const PULL_REQUEST_INTERVAL: Duration = Duration::from_millis(500);
+
 /// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
 /// intermediate packet batch buffers.
 ///
@@ -1468,7 +1471,7 @@ impl ClusterInfo {
                 let mut last_contact_info_save = timestamp();
                 let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
-                let mut generate_pull_requests = true;
+                let mut last_pull_request = Instant::now();
                 while !exit.load(Ordering::Relaxed) {
                     let start = timestamp();
                     if self.contact_debug_interval != 0
@@ -1494,6 +1497,11 @@ impl ClusterInfo {
                         .map(EpochSpecs::current_epoch_staked_nodes)
                         .cloned()
                         .unwrap_or_default();
+                    let generate_pull_requests =
+                        last_pull_request.elapsed() > PULL_REQUEST_INTERVAL;
+                    if generate_pull_requests {
+                        last_pull_request = Instant::now();
+                    }
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
@@ -1525,7 +1533,6 @@ impl ClusterInfo {
                         let time_left = GOSSIP_SLEEP_MILLIS - elapsed;
                         sleep(Duration::from_millis(time_left));
                     }
-                    generate_pull_requests = !generate_pull_requests;
                 }
             })
             .unwrap()
