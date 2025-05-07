@@ -1071,38 +1071,33 @@ impl Validator {
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
         let mut tpu_transactions_forwards_client =
-            Some(node.sockets.tpu_transactions_forwards_client);
-        let connection_cache = if !config.use_tpu_client_next {
-            let connection_cache = if use_quic {
-                let connection_cache = ConnectionCache::new_with_client_options(
-                    "connection_cache_tpu_quic",
-                    tpu_connection_pool_size,
-                    Some(
-                        tpu_transactions_forwards_client
-                            .take()
-                            .expect("Socket should exist."),
-                    ),
-                    Some((
-                        &identity_keypair,
-                        node.info
-                            .tpu(Protocol::UDP)
-                            .ok_or_else(|| {
-                                ValidatorError::Other(String::from("Invalid UDP address for TPU"))
-                            })?
-                            .ip(),
-                    )),
-                    Some((&staked_nodes, &identity_keypair.pubkey())),
-                );
-                Arc::new(connection_cache)
-            } else {
-                Arc::new(ConnectionCache::with_udp(
-                    "connection_cache_tpu_udp",
-                    tpu_connection_pool_size,
-                ))
-            };
-            Some(connection_cache)
-        } else {
-            None
+            Some(node.sockets.tpu_transaction_forwarding_client);
+
+        let connection_cache = match (config.use_tpu_client_next, use_quic) {
+            (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
+                "connection_cache_tpu_quic",
+                tpu_connection_pool_size,
+                Some(
+                    tpu_transactions_forwards_client
+                        .take()
+                        .expect("Socket should exist."),
+                ),
+                Some((
+                    &identity_keypair,
+                    node.info
+                        .tpu(Protocol::UDP)
+                        .ok_or_else(|| {
+                            ValidatorError::Other(String::from("Invalid UDP address for TPU"))
+                        })?
+                        .ip(),
+                )),
+                Some((&staked_nodes, &identity_keypair.pubkey())),
+            ))),
+            (false, false) => Some(Arc::new(ConnectionCache::with_udp(
+                "connection_cache_tpu_udp",
+                tpu_connection_pool_size,
+            ))),
+            (true, _) => None,
         };
 
         let vote_connection_cache = if vote_use_quic {
