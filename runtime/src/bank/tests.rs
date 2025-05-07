@@ -8400,6 +8400,7 @@ fn test_program_is_native_loader() {
     );
 }
 
+// HANA this breaks, expects UnsupportedProgramId but we produce InvalidProgramForExecution
 #[test]
 fn test_invoke_non_program_account_owned_by_a_builtin() {
     let (genesis_config, mint_keypair) = create_genesis_config(10000000);
@@ -13383,6 +13384,7 @@ fn test_deploy_last_epoch_slot() {
     assert_eq!(result_with_feature_enabled, Ok(()));
 }
 
+// HANA this breaks, expects UnsupportedProgramId but we produce InvalidProgramForExecution
 #[test]
 fn test_loader_v3_to_v4_migration() {
     solana_logger::setup();
