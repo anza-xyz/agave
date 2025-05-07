@@ -48,11 +48,14 @@ releases at [solanalabs/solana](https://hub.docker.com/r/solanalabs/solana).
 
 ## Software
 
-- We build and run on Ubuntu 20.04.
+- We build and run on Ubuntu 24.04.
 - See [Installing Solana CLI](../cli/install.md) for the current Solana CLI software release.
 
-Prebuilt binaries are available for Linux x86_64 on CPUs supporting AVX2 \(Ubuntu 20.04 recommended\).
-MacOS or WSL users may build from source.
+Prebuilt binaries are currently available targeting x86_64 with AVX2 support on Ubuntu 20.04. We
+will stop publishing these in the near future (as of May 2025).
+[Building from source](https://docs.anza.xyz/cli/install#build-from-source) is required for all
+other supported target platforms (MacOS and Windows) today and suggested for linux as it will soon
+be required there as well
 
 ## Networking
 Internet service should be at least 1GBbit/s symmetric, commercial. 10GBit/s preferred (especially for mainnet-beta).
