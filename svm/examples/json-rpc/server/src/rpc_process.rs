@@ -3,6 +3,7 @@ use {
         create_executable_environment, LoadAndExecuteTransactionsOutput, MockBankCallback,
         MockForkGraph, TransactionBatch,
     },
+    agave_reserved_account_keys::ReservedAccountKeys,
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::config::Options,
     jsonrpc_core::{types::error, Error, Metadata, Result},
@@ -15,11 +16,11 @@ use {
         parse_token::{get_token_account_mint, is_known_spl_token_id},
         UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
-    solana_compute_budget::{
-        compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
-    },
     solana_perf::packet::PACKET_DATA_SIZE,
-    solana_program_runtime::loaded_programs::ProgramCacheEntry,
+    solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+        loaded_programs::ProgramCacheEntry,
+    },
     solana_rpc_client_api::{
         config::*,
         response::{Response as RpcResponse, *},
@@ -37,14 +38,12 @@ use {
         },
         nonce::state::DurableNonce,
         pubkey::Pubkey,
-        reserved_account_keys::ReservedAccountKeys,
         signature::Signature,
         system_instruction, sysvar,
         transaction::{
             AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
             VersionedTransaction,
         },
-        transaction_context::{TransactionAccount, TransactionReturnData},
     },
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
@@ -59,6 +58,7 @@ use {
         },
     },
     solana_system_program::system_processor,
+    solana_transaction_context::{TransactionAccount, TransactionReturnData},
     solana_transaction_status::{
         map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
         UiTransactionEncoding,
@@ -326,15 +326,14 @@ impl JsonRpcRequestProcessor {
             TransactionProcessingConfig {
                 account_overrides: Some(&account_overrides),
                 check_program_modification_slot: false,
-                compute_budget: Some(ComputeBudget::default()),
                 log_messages_bytes_limit: None,
                 limit_to_load_programs: true,
                 recording_config: ExecutionRecordingConfig {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
+                    enable_transaction_balance_recording: true,
                 },
-                transaction_account_lock_limit: Some(64),
             },
         );
 
@@ -427,8 +426,7 @@ impl JsonRpcRequestProcessor {
         /* for now just return defaults */
         Ok(CheckedTransactionDetails::new(
             None,
-            u64::default(),
-            Ok(ComputeBudgetLimits::default()),
+            Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
         ))
     }
 
@@ -547,8 +545,7 @@ impl JsonRpcRequestProcessor {
             blockhash,
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
-            feature_set: Arc::clone(&bank.feature_set),
-            fee_lamports_per_signature: lamports_per_signature,
+            feature_set: bank.feature_set.runtime_features(),
             rent_collector: None,
         };
 

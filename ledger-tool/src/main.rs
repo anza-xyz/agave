@@ -7,11 +7,13 @@ use {
         ledger_path::*,
         ledger_utils::*,
         output::{
-            output_account, AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer,
+            AccountsOutputConfig, AccountsOutputMode, AccountsOutputStreamer, CliAccounts,
             SlotBankHash,
         },
         program::*,
     },
+    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_reserved_account_keys::ReservedAccountKeys,
     clap::{
         crate_description, crate_name, value_t, value_t_or_exit, values_t_or_exit, App,
         AppSettings, Arg, ArgMatches, SubCommand,
@@ -19,7 +21,7 @@ use {
     dashmap::DashMap,
     log::*,
     serde_derive::Serialize,
-    solana_account_decoder::UiAccountEncoding,
+    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
         accounts_index::{ScanConfig, ScanOrder},
@@ -32,14 +34,13 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::OutputFormat,
+    solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
-    solana_feature_set::{self as feature_set, FeatureSet},
     solana_ledger::{
         blockstore::{banking_trace_path, create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
@@ -74,7 +75,6 @@ use {
         native_token::{lamports_to_sol, sol_to_lamports, Sol},
         pubkey::Pubkey,
         rent::Rent,
-        reserved_account_keys::ReservedAccountKeys,
         shred_version::compute_shred_version,
         stake::{self, state::StakeStateV2},
         system_program,
@@ -83,6 +83,7 @@ use {
     solana_stake_program::stake_state,
     solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
         vote_state::{self, VoteState},
@@ -138,10 +139,10 @@ fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result
 
     let status = child.wait_with_output()?.status;
     if !status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("dot failed with error {}", status.code().unwrap_or(-1)),
-        ));
+        return Err(io::Error::other(format!(
+            "dot failed with error {}",
+            status.code().unwrap_or(-1)
+        )));
     }
     Ok(())
 }
@@ -221,16 +222,16 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
             .map(|(_, (stake, _))| stake)
             .sum();
         for (stake, vote_account) in bank.vote_accounts().values() {
-            let vote_state = vote_account.vote_state();
-            if let Some(last_vote) = vote_state.votes.iter().last() {
-                let entry = last_votes.entry(vote_state.node_pubkey).or_insert((
-                    last_vote.slot(),
-                    vote_state.clone(),
+            let vote_state_view = vote_account.vote_state_view();
+            if let Some(last_vote) = vote_state_view.last_voted_slot() {
+                let entry = last_votes.entry(*vote_state_view.node_pubkey()).or_insert((
+                    last_vote,
+                    vote_state_view.clone(),
                     *stake,
                     total_stake,
                 ));
-                if entry.0 < last_vote.slot() {
-                    *entry = (last_vote.slot(), vote_state.clone(), *stake, total_stake);
+                if entry.0 < last_vote {
+                    *entry = (last_vote, vote_state_view.clone(), *stake, total_stake);
                 }
             }
         }
@@ -254,19 +255,20 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     dot.push("  subgraph cluster_banks {".to_string());
     dot.push("    style=invis".to_string());
     let mut styled_slots = HashSet::new();
-    let mut all_votes: HashMap<Pubkey, HashMap<Slot, VoteState>> = HashMap::new();
+    let mut all_votes: HashMap<Pubkey, HashMap<Slot, VoteStateView>> = HashMap::new();
     for fork_slot in &fork_slots {
         let mut bank = bank_forks[*fork_slot].clone();
 
         let mut first = true;
         loop {
             for (_, vote_account) in bank.vote_accounts().values() {
-                let vote_state = vote_account.vote_state();
-                if let Some(last_vote) = vote_state.votes.iter().last() {
-                    let validator_votes = all_votes.entry(vote_state.node_pubkey).or_default();
+                let vote_state_view = vote_account.vote_state_view();
+                if let Some(last_vote) = vote_state_view.last_voted_slot() {
+                    let validator_votes =
+                        all_votes.entry(*vote_state_view.node_pubkey()).or_default();
                     validator_votes
-                        .entry(last_vote.slot())
-                        .or_insert_with(|| vote_state.clone());
+                        .entry(last_vote)
+                        .or_insert_with(|| vote_state_view.clone());
                 }
             }
 
@@ -344,7 +346,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     let mut absent_votes = 0;
     let mut lowest_last_vote_slot = u64::MAX;
     let mut lowest_total_stake = 0;
-    for (node_pubkey, (last_vote_slot, vote_state, stake, total_stake)) in &last_votes {
+    for (node_pubkey, (last_vote_slot, vote_state_view, stake, total_stake)) in &last_votes {
         all_votes.entry(*node_pubkey).and_modify(|validator_votes| {
             validator_votes.remove(last_vote_slot);
         });
@@ -364,9 +366,8 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 if matches!(config.vote_account_mode, GraphVoteAccountMode::WithHistory) {
                     format!(
                         "vote history:\n{}",
-                        vote_state
-                            .votes
-                            .iter()
+                        vote_state_view
+                            .votes_iter()
                             .map(|vote| format!(
                                 "slot {} (conf={})",
                                 vote.slot(),
@@ -378,10 +379,9 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 } else {
                     format!(
                         "last vote slot: {}",
-                        vote_state
-                            .votes
-                            .back()
-                            .map(|vote| vote.slot().to_string())
+                        vote_state_view
+                            .last_voted_slot()
+                            .map(|vote_slot| vote_slot.to_string())
                             .unwrap_or_else(|| "none".to_string())
                     )
                 };
@@ -390,7 +390,7 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
                 node_pubkey,
                 node_pubkey,
                 lamports_to_sol(*stake),
-                vote_state.root_slot.unwrap_or(0),
+                vote_state_view.root_slot().unwrap_or(0),
                 vote_history,
             ));
 
@@ -419,16 +419,15 @@ fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     // Add for vote information from all banks.
     if config.include_all_votes {
         for (node_pubkey, validator_votes) in &all_votes {
-            for (vote_slot, vote_state) in validator_votes {
+            for (vote_slot, vote_state_view) in validator_votes {
                 dot.push(format!(
                     r#"  "{} vote {}"[shape=box,style=dotted,label="validator vote: {}\nroot slot: {}\nvote history:\n{}"];"#,
                     node_pubkey,
                     vote_slot,
                     node_pubkey,
-                    vote_state.root_slot.unwrap_or(0),
-                    vote_state
-                        .votes
-                        .iter()
+                    vote_state_view.root_slot().unwrap_or(0),
+                    vote_state_view
+                        .votes_iter()
                         .map(|vote| format!("slot {} (conf={})", vote.slot(), vote.confirmation_count()))
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -983,6 +982,7 @@ fn main() {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(BlockVerificationMethod::cli_names())
+                .default_value(BlockVerificationMethod::default().into())
                 .global(true)
                 .help(BlockVerificationMethod::cli_message()),
         )
@@ -1485,7 +1485,17 @@ fn main() {
                         .value_name("METHOD")
                         .takes_value(true)
                         .possible_values(BlockProductionMethod::cli_names())
+                        .default_value(BlockProductionMethod::default().into())
                         .help(BlockProductionMethod::cli_message()),
+                )
+                .arg(
+                    Arg::with_name("transaction_struct")
+                        .long("transaction-structure")
+                        .value_name("STRUCT")
+                        .takes_value(true)
+                        .possible_values(TransactionStructure::cli_names())
+                        .default_value(TransactionStructure::default().into())
+                        .help(TransactionStructure::cli_message()),
                 )
                 .arg(
                     Arg::with_name("first_simulated_slot")
@@ -1672,20 +1682,46 @@ fn main() {
 
             match matches.subcommand() {
                 ("genesis", Some(arg_matches)) => {
+                    let output_format =
+                        OutputFormat::from_matches(arg_matches, "output_format", false);
+                    let output_accounts = arg_matches.is_present("accounts");
+
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
-                    let print_accounts = arg_matches.is_present("accounts");
-                    if print_accounts {
-                        let print_account_data = !arg_matches.is_present("no_account_data");
-                        let print_encoding_format = parse_encoding_format(arg_matches);
-                        for (pubkey, account) in genesis_config.accounts {
-                            output_account(
-                                &pubkey,
-                                &AccountSharedData::from(account),
-                                None,
-                                print_account_data,
-                                print_encoding_format,
-                            );
-                        }
+
+                    if output_accounts {
+                        let data_encoding = parse_encoding_format(arg_matches);
+                        let output_account_data = !arg_matches.is_present("no_account_data");
+                        let data_slice_config = if output_account_data {
+                            // None yields the entire account in the slice
+                            None
+                        } else {
+                            // usize::MAX is a sentinel that will yield an
+                            // empty data slice. Because of this, length is
+                            // ignored so any value will do
+                            let offset = usize::MAX;
+                            let length = 0;
+                            Some(UiDataSliceConfig { offset, length })
+                        };
+                        let cli_account_config = CliAccountNewConfig {
+                            data_encoding,
+                            data_slice_config,
+                            ..CliAccountNewConfig::default()
+                        };
+
+                        let accounts: Vec<_> = genesis_config
+                            .accounts
+                            .into_iter()
+                            .map(|(pubkey, account)| {
+                                CliAccount::new_with_config(
+                                    &pubkey,
+                                    &AccountSharedData::from(account),
+                                    &cli_account_config,
+                                )
+                            })
+                            .collect();
+                        let accounts = CliAccounts { accounts };
+
+                        println!("{}", output_format.formatted_string(&accounts));
                     } else {
                         println!("{genesis_config}");
                     }
@@ -2523,15 +2559,13 @@ fn main() {
                             None, // transaction status sender
                         );
 
-                    let block_production_method = value_t!(
+                    let block_production_method = value_t_or_exit!(
                         arg_matches,
                         "block_production_method",
                         BlockProductionMethod
-                    )
-                    .unwrap_or_default();
+                    );
                     let transaction_struct =
-                        value_t!(arg_matches, "transaction_struct", TransactionStructure)
-                            .unwrap_or_default();
+                        value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
                     info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
 

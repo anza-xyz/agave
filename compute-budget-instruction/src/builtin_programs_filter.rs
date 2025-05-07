@@ -64,8 +64,8 @@ impl BuiltinProgramsFilter {
 #[cfg(test)]
 mod test {
     use {
-        super::*, solana_builtins_default_costs::get_migration_feature_position,
-        solana_feature_set as feature_set,
+        super::*, agave_feature_set as feature_set,
+        solana_builtins_default_costs::get_migration_feature_position,
     };
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
@@ -110,30 +110,15 @@ mod test {
         );
 
         // migrating builtins
-        for (migrating_builtin_pubkey, migration_feature_id) in [
-            (
-                solana_sdk_ids::stake::id(),
-                feature_set::migrate_stake_program_to_core_bpf::id(),
-            ),
-            (
-                solana_sdk_ids::config::id(),
-                feature_set::migrate_config_program_to_core_bpf::id(),
-            ),
-            (
-                solana_sdk_ids::address_lookup_table::id(),
-                feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            ),
-        ] {
-            index += 1;
-            assert_eq!(
-                test_store.get_program_kind(index, &migrating_builtin_pubkey),
-                ProgramKind::MigratingBuiltin {
-                    core_bpf_migration_feature_index: get_migration_feature_position(
-                        &migration_feature_id
-                    ),
-                }
-            );
-        }
+        index += 1;
+        assert_eq!(
+            test_store.get_program_kind(index, &solana_sdk_ids::stake::id()),
+            ProgramKind::MigratingBuiltin {
+                core_bpf_migration_feature_index: get_migration_feature_position(
+                    &feature_set::migrate_stake_program_to_core_bpf::id()
+                ),
+            }
+        );
     }
 
     #[test]

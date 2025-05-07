@@ -16,7 +16,6 @@ use {
     crossbeam_channel::{unbounded, Sender},
     itertools::Itertools,
     log::*,
-    solana_client::connection_cache::ConnectionCache,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::ContactInfoQuery,
@@ -29,6 +28,7 @@ use {
     solana_poh::{
         poh_recorder::{PohRecorder, GRACE_TICKS_FACTOR, MAX_GRACE_SLOTS},
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
+        transaction_recorder::TransactionRecorder,
     },
     solana_runtime::{
         bank::{Bank, HashOverrides},
@@ -727,7 +727,7 @@ impl BankingSimulator {
 
         info!("Poh is starting!");
 
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new_with_clear_signal(
+        let (poh_recorder, entry_receiver) = PohRecorder::new_with_clear_signal(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -738,10 +738,11 @@ impl BankingSimulator {
             blockstore.get_new_shred_signal(0),
             &leader_schedule_cache,
             &genesis_config.poh_config,
-            None,
             exit.clone(),
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
+        let (record_sender, record_receiver) = unbounded();
+        let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &genesis_config.poh_config,
@@ -787,7 +788,6 @@ impl BankingSimulator {
             gossip_vote_receiver,
         } = retracer.create_channels(false);
 
-        let connection_cache = Arc::new(ConnectionCache::new("connection_cache_sim"));
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
         let shred_version = compute_shred_version(
@@ -826,6 +826,7 @@ impl BankingSimulator {
             transaction_struct.clone(),
             &cluster_info_for_banking,
             &poh_recorder,
+            transaction_recorder,
             non_vote_receiver,
             tpu_vote_receiver,
             gossip_vote_receiver,
@@ -833,10 +834,8 @@ impl BankingSimulator {
             None,
             replay_vote_sender,
             None,
-            connection_cache,
             bank_forks.clone(),
             prioritization_fee_cache,
-            false,
         );
 
         let (&_slot, &raw_base_event_time) = freeze_time_by_slot

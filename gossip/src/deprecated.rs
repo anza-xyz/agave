@@ -1,4 +1,4 @@
-use solana_sdk::clock::Slot;
+use solana_clock::Slot;
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample, AbiEnumVisitor))]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

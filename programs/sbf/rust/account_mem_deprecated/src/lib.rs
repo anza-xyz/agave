@@ -25,7 +25,7 @@ pub fn process_instruction(
     let mut too_early = |before: usize| -> &mut [u8] {
         let data = data.as_mut_ptr().wrapping_sub(before);
 
-        unsafe { std::slice::from_raw_parts_mut(data, data_len) }
+        unsafe { std::slice::from_raw_parts_mut(data, data_len.wrapping_add(100)) }
     };
 
     match instruction_data[0] {
@@ -40,11 +40,11 @@ pub fn process_instruction(
         2 => {
             // memcmp overlaps begining
             #[allow(clippy::manual_memcpy)]
-            for i in 0..500 {
+            for i in 0..90 {
                 buf[i] = too_early(8)[i];
             }
 
-            sol_memcmp(too_early(8), &buf, 500);
+            sol_memcmp(too_early(8), &buf, 90);
         }
         3 => {
             // memcmp overlaps begining

@@ -2,6 +2,7 @@
 
 use {
     crate::{bank::Bank, static_ids},
+    agave_reserved_account_keys::ReservedAccountKeys,
     dashmap::DashSet,
     log::info,
     rayon::{
@@ -22,7 +23,6 @@ use {
         bpf_loader_upgradeable::{self, UpgradeableLoaderState},
         clock::Slot,
         pubkey::Pubkey,
-        reserved_account_keys::ReservedAccountKeys,
     },
     std::{
         collections::HashSet,
@@ -99,14 +99,18 @@ impl<'a> SnapshotMinimizer<'a> {
 
     /// Used to get active bank feature accounts in `minimize`.
     fn get_active_bank_features(&self) {
-        self.bank.feature_set.active.iter().for_each(|(pubkey, _)| {
-            self.minimized_account_set.insert(*pubkey);
-        });
+        self.bank
+            .feature_set
+            .active()
+            .iter()
+            .for_each(|(pubkey, _)| {
+                self.minimized_account_set.insert(*pubkey);
+            });
     }
 
     /// Used to get inactive bank feature accounts in `minimize`
     fn get_inactive_bank_features(&self) {
-        self.bank.feature_set.inactive.iter().for_each(|pubkey| {
+        self.bank.feature_set.inactive().iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         });
     }

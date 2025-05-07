@@ -13,33 +13,29 @@ use {
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
-        transaction_processing_callback::TransactionProcessingCallback,
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
     log::debug,
     percentage::Percentage,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
-    solana_bpf_loader_program::syscalls::{
-        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
-    },
     solana_clock::{Epoch, Slot},
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::{
-        enable_transaction_loading_failure_fees, remove_accounts_executable_flag_checks, FeatureSet,
-    },
-    solana_fee_structure::{FeeBudgetLimits, FeeDetails, FeeStructure},
     solana_hash::Hash,
     solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_log_collector::LogCollector,
     solana_measure::{measure::Measure, measure_us},
-    solana_message::compiled_instruction::CompiledInstruction,
+    solana_message::{
+        compiled_instruction::CompiledInstruction,
+        inner_instruction::{InnerInstruction, InnerInstructionsList},
+    },
     solana_nonce::{
         state::{DurableNonce, State as NonceState},
         versions::Versions as NonceVersions,
     },
     solana_program_runtime::{
+        execution_budget::SVMTransactionExecutionCost,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
@@ -49,11 +45,10 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        inner_instruction::{InnerInstruction, InnerInstructionsList},
-        rent_collector::RentCollector,
-    },
+    solana_rent_collector::RentCollector,
     solana_sdk_ids::{native_loader, system_program},
+    solana_svm_callback::TransactionProcessingCallback,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{ExecuteTimingType, ExecuteTimings},
@@ -82,6 +77,9 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
+    /// Balances accumulated for TransactionStatusSender when
+    /// transaction balance recording is enabled.
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -90,6 +88,7 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
+    pub enable_transaction_balance_recording: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -98,6 +97,7 @@ impl ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
+            enable_transaction_balance_recording: option,
         }
     }
 }
@@ -111,8 +111,6 @@ pub struct TransactionProcessingConfig<'a> {
     /// Whether or not to check a program's modification slot when replenishing
     /// a program cache instance.
     pub check_program_modification_slot: bool,
-    /// The compute budget to use for transaction execution.
-    pub compute_budget: Option<ComputeBudget>,
     /// The maximum number of bytes that log messages can consume.
     pub log_messages_bytes_limit: Option<usize>,
     /// Whether to limit the number of programs loaded for the transaction
@@ -120,11 +118,10 @@ pub struct TransactionProcessingConfig<'a> {
     pub limit_to_load_programs: bool,
     /// Recording capabilities for transaction execution.
     pub recording_config: ExecutionRecordingConfig,
-    /// The max number of accounts that a transaction may lock.
-    pub transaction_account_lock_limit: Option<usize>,
 }
 
 /// Runtime environment for transaction batch processing.
+#[derive(Default)]
 pub struct TransactionProcessingEnvironment<'a> {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
@@ -138,30 +135,15 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// The total stake for the current epoch.
     pub epoch_total_stake: u64,
     /// Runtime feature set to use for the transaction batch.
-    pub feature_set: Arc<FeatureSet>,
-    /// Transaction fee to charge per signature, in lamports.
-    pub fee_lamports_per_signature: u64,
+    pub feature_set: SVMFeatureSet,
     /// Rent collector to use for the transaction batch.
     pub rent_collector: Option<&'a dyn SVMRentCollector>,
-}
-
-impl Default for TransactionProcessingEnvironment<'_> {
-    fn default() -> Self {
-        Self {
-            blockhash: Hash::default(),
-            blockhash_lamports_per_signature: 0,
-            epoch_total_stake: 0,
-            feature_set: Arc::<FeatureSet>::default(),
-            fee_lamports_per_signature: FeeStructure::default().lamports_per_signature, // <-- Default fee.
-            rent_collector: None,
-        }
-    }
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(
     feature = "dev-context-only-utils",
-    field_qualifiers(slot(pub), epoch(pub))
+    field_qualifiers(slot(pub), epoch(pub), sysvar_cache(pub))
 )]
 pub struct TransactionBatchProcessor<FG: ForkGraph> {
     /// Bank slot (i.e. block)
@@ -180,6 +162,8 @@ pub struct TransactionBatchProcessor<FG: ForkGraph> {
 
     /// Builtin program ids
     pub builtin_program_ids: RwLock<HashSet<Pubkey>>,
+
+    execution_cost: SVMTransactionExecutionCost,
 }
 
 impl<FG: ForkGraph> Debug for TransactionBatchProcessor<FG> {
@@ -204,6 +188,7 @@ impl<FG: ForkGraph> Default for TransactionBatchProcessor<FG> {
                 Epoch::default(),
             ))),
             builtin_program_ids: RwLock::new(HashSet::new()),
+            execution_cost: SVMTransactionExecutionCost::default(),
         }
     }
 }
@@ -268,7 +253,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             sysvar_cache: RwLock::<SysvarCache>::default(),
             program_cache: self.program_cache.clone(),
             builtin_program_ids: RwLock::new(self.builtin_program_ids.read().unwrap().clone()),
+            execution_cost: self.execution_cost,
         }
+    }
+
+    /// Sets the base execution cost for the transactions that this instance of transaction processor
+    /// will execute.
+    pub fn set_execution_cost(&mut self, cost: SVMTransactionExecutionCost) {
+        self.execution_cost = cost;
     }
 
     fn configure_program_runtime_environments_inner(
@@ -355,6 +347,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             }
             program_accounts_map
         });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
 
         let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
@@ -372,11 +366,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
+                    // If we abort the batch and balance recording is enabled, no balances should be
+                    // collected. If this is a leader thread, no batch will be committed.
+                    balance_collector: None,
                 };
             }
 
             program_cache_for_tx_batch
         });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
         // Determine a capacity for the internal account cache. This
         // over-allocates but avoids ever reallocating, and spares us from
@@ -387,37 +386,38 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut account_loader = AccountLoader::new_with_account_cache_capacity(
             config.account_overrides,
             callbacks,
-            environment.feature_set.clone(),
+            &environment.feature_set,
             account_keys_in_batch,
         );
 
-        let enable_transaction_loading_failure_fees = environment
-            .feature_set
-            .is_active(&enable_transaction_loading_failure_fees::id());
+        // Create the transaction balance collector if recording is enabled.
+        let mut balance_collector = config
+            .recording_config
+            .enable_transaction_balance_recording
+            .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
-        let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
+        let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            let (validate_result, single_validate_fees_us) =
+            let (validate_result, validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
                         &mut account_loader,
                         tx,
                         tx_details,
                         &environment.blockhash,
-                        environment.fee_lamports_per_signature,
                         environment
                             .rent_collector
                             .unwrap_or(&RentCollector::default()),
                         &mut error_metrics,
-                        callbacks,
                     )
                 }));
-            validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
 
             let (load_result, single_load_us) = measure_us!(load_transaction(
                 &mut account_loader,
@@ -430,18 +430,19 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            let ((), collect_balances_us) =
+                measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
-                    if enable_transaction_loading_failure_fees {
-                        // Update loaded accounts cache with nonce and fee-payer
-                        account_loader
-                            .update_accounts_for_failed_tx(tx, &fees_only_tx.rollback_accounts);
+                    // Update loaded accounts cache with nonce and fee-payer
+                    account_loader
+                        .update_accounts_for_failed_tx(tx, &fees_only_tx.rollback_accounts);
 
-                        Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
-                    } else {
-                        Err(fees_only_tx.load_error)
-                    }
+                    Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                 }
                 TransactionLoadResult::Loaded(loaded_transaction) => {
                     let executed_tx = self.execute_loaded_transaction(
@@ -468,6 +469,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
+            let ((), collect_balances_us) =
+                measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
             processing_results.push(processing_result);
         }
 
@@ -492,20 +498,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execution_us,
             sanitized_txs.len(),
         );
-
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
+
+        if let Some(ref balance_collector) = balance_collector {
+            debug_assert!(balance_collector.lengths_match_expected(sanitized_txs.len()));
+        }
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,
             execute_timings,
             processing_results,
+            balance_collector,
         }
     }
 
@@ -514,10 +518,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
         environment_blockhash: &Hash,
-        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-        callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         // If this is a nonce transaction, validate the nonce info.
         // This must be done for every transaction to support SIMD83 because
@@ -525,8 +527,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // This function is a successful no-op if given a blockhash transaction.
         if let CheckedTransactionDetails {
             nonce: Some(ref nonce_info),
-            lamports_per_signature: _,
-            compute_budget_limits: _,
+            compute_budget_and_limits: _,
         } = checked_details
         {
             let next_durable_nonce = DurableNonce::from_blockhash(environment_blockhash);
@@ -544,10 +545,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             account_loader,
             message,
             checked_details,
-            fee_lamports_per_signature,
             rent_collector,
             error_counters,
-            callbacks,
         )
     }
 
@@ -558,18 +557,15 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &mut AccountLoader<CB>,
         message: &impl SVMMessage,
         checked_details: CheckedTransactionDetails,
-        fee_lamports_per_signature: u64,
         rent_collector: &dyn SVMRentCollector,
         error_counters: &mut TransactionErrorMetrics,
-        callbacks: &CB,
     ) -> TransactionResult<ValidatedTransactionDetails> {
         let CheckedTransactionDetails {
             nonce,
-            lamports_per_signature,
-            compute_budget_limits,
+            compute_budget_and_limits,
         } = checked_details;
 
-        let compute_budget_limits = compute_budget_limits.inspect_err(|_err| {
+        let compute_budget_and_limits = compute_budget_and_limits.inspect_err(|_err| {
             error_counters.invalid_compute_budget += 1;
         })?;
 
@@ -583,24 +579,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
         loaded_fee_payer.rent_collected = collect_rent_from_account(
-            &account_loader.feature_set,
+            account_loader.feature_set,
             rent_collector,
             fee_payer_address,
             &mut loaded_fee_payer.account,
         )
         .rent_amount;
-
-        let fee_budget_limits = FeeBudgetLimits::from(compute_budget_limits);
-        let fee_details = if lamports_per_signature == 0 {
-            FeeDetails::default()
-        } else {
-            callbacks.calculate_fee(
-                message,
-                fee_lamports_per_signature,
-                fee_budget_limits.prioritization_fee,
-                account_loader.feature_set.as_ref(),
-            )
-        };
 
         let fee_payer_index = 0;
         validate_fee_payer(
@@ -609,7 +593,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             fee_payer_index,
             error_counters,
             rent_collector,
-            fee_details.total_fee(),
+            compute_budget_and_limits.fee_details.total_fee(),
         )?;
 
         // Capture fee-subtracted fee payer account and next nonce account state
@@ -623,9 +607,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         Ok(ValidatedTransactionDetails {
-            fee_details,
+            fee_details: compute_budget_and_limits.fee_details,
             rollback_accounts,
-            compute_budget_limits,
+            loaded_accounts_bytes_limit: compute_budget_and_limits.loaded_accounts_data_size_limit,
+            compute_budget: compute_budget_and_limits.budget,
             loaded_fee_payer_account: loaded_fee_payer,
         })
     }
@@ -818,92 +803,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         loaded_programs_for_txs.unwrap()
     }
 
-    pub fn prepare_program_cache_for_upcoming_feature_set<CB: TransactionProcessingCallback>(
-        &self,
-        callbacks: &CB,
-        upcoming_feature_set: &FeatureSet,
-        compute_budget: &ComputeBudget,
-        slot_index: u64,
-        slots_in_epoch: u64,
-    ) {
-        // Recompile loaded programs one at a time before the next epoch hits
-        let slots_in_recompilation_phase =
-            (solana_program_runtime::loaded_programs::MAX_LOADED_ENTRY_COUNT as u64)
-                .min(slots_in_epoch)
-                .checked_div(2)
-                .unwrap();
-        let mut program_cache = self.program_cache.write().unwrap();
-        if program_cache.upcoming_environments.is_some() {
-            if let Some((key, program_to_recompile)) = program_cache.programs_to_recompile.pop() {
-                let effective_epoch = program_cache.latest_root_epoch.saturating_add(1);
-                drop(program_cache);
-                let environments_for_epoch = self
-                    .program_cache
-                    .read()
-                    .unwrap()
-                    .get_environments_for_epoch(effective_epoch);
-                if let Some(recompiled) = load_program_with_pubkey(
-                    callbacks,
-                    &environments_for_epoch,
-                    &key,
-                    self.slot,
-                    &mut ExecuteTimings::default(),
-                    false,
-                ) {
-                    recompiled.tx_usage_counter.fetch_add(
-                        program_to_recompile
-                            .tx_usage_counter
-                            .load(Ordering::Relaxed),
-                        Ordering::Relaxed,
-                    );
-                    recompiled.ix_usage_counter.fetch_add(
-                        program_to_recompile
-                            .ix_usage_counter
-                            .load(Ordering::Relaxed),
-                        Ordering::Relaxed,
-                    );
-                    let mut program_cache = self.program_cache.write().unwrap();
-                    program_cache.assign_program(key, recompiled);
-                }
-            }
-        } else if self.epoch != program_cache.latest_root_epoch
-            || slot_index.saturating_add(slots_in_recompilation_phase) >= slots_in_epoch
-        {
-            // Anticipate the upcoming program runtime environment for the next epoch,
-            // so we can try to recompile loaded programs before the feature transition hits.
-            drop(program_cache);
-            let mut program_cache = self.program_cache.write().unwrap();
-            let program_runtime_environment_v1 = create_program_runtime_environment_v1(
-                upcoming_feature_set,
-                compute_budget,
-                false, /* deployment */
-                false, /* debugging_features */
-            )
-            .unwrap();
-            let program_runtime_environment_v2 = create_program_runtime_environment_v2(
-                compute_budget,
-                false, /* debugging_features */
-            );
-            let mut upcoming_environments = program_cache.environments.clone();
-            let changed_program_runtime_v1 =
-                *upcoming_environments.program_runtime_v1 != program_runtime_environment_v1;
-            let changed_program_runtime_v2 =
-                *upcoming_environments.program_runtime_v2 != program_runtime_environment_v2;
-            if changed_program_runtime_v1 {
-                upcoming_environments.program_runtime_v1 = Arc::new(program_runtime_environment_v1);
-            }
-            if changed_program_runtime_v2 {
-                upcoming_environments.program_runtime_v2 = Arc::new(program_runtime_environment_v2);
-            }
-            program_cache.upcoming_environments = Some(upcoming_environments);
-            program_cache.programs_to_recompile = program_cache
-                .get_flattened_entries(changed_program_runtime_v1, changed_program_runtime_v2);
-            program_cache
-                .programs_to_recompile
-                .sort_by_cached_key(|(_id, program)| program.decayed_usage_counter(self.slot));
-        }
-    }
-
     /// Execute a transaction using the provided loaded accounts and update
     /// the executors cache if the transaction was successful.
     #[allow(clippy::too_many_arguments)]
@@ -941,9 +840,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let lamports_before_tx =
             transaction_accounts_lamports_sum(&transaction_accounts).unwrap_or(0);
 
-        let compute_budget = config
-            .compute_budget
-            .unwrap_or_else(|| ComputeBudget::from(loaded_transaction.compute_budget_limits));
+        let compute_budget = loaded_transaction.compute_budget;
 
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
@@ -954,7 +851,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         transaction_context.set_remove_accounts_executable_flag_checks(
             environment
                 .feature_set
-                .is_active(&remove_accounts_executable_flag_checks::id()),
+                .remove_accounts_executable_flag_checks,
         );
         #[cfg(debug_assertions)]
         transaction_context.set_signature(tx.signature());
@@ -975,8 +872,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
-        let epoch_vote_account_stake_callback =
-            |pubkey| callback.get_current_epoch_vote_account_stake(pubkey);
 
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
@@ -984,13 +879,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             EnvironmentConfig::new(
                 environment.blockhash,
                 environment.blockhash_lamports_per_signature,
-                environment.epoch_total_stake,
-                &epoch_vote_account_stake_callback,
-                Arc::clone(&environment.feature_set),
+                callback,
+                &environment.feature_set,
                 sysvar_cache,
             ),
             log_collector.clone(),
             compute_budget,
+            self.execution_cost,
         );
 
         let mut process_message_time = Measure::start("process_message_time");
@@ -1200,31 +1095,33 @@ mod tests {
             account_loader::{LoadedTransactionAccount, ValidatedTransactionDetails},
             nonce_info::NonceInfo,
             rollback_accounts::RollbackAccounts,
-            transaction_processing_callback::AccountState,
         },
+        agave_reserved_account_keys::ReservedAccountKeys,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
-        solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
-        solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_epoch_schedule::EpochSchedule,
-        solana_feature_set::FeatureSet,
         solana_fee_calculator::FeeCalculator,
-        solana_fee_structure::{FeeDetails, FeeStructure},
+        solana_fee_structure::FeeDetails,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
         solana_nonce as nonce,
-        solana_program_runtime::loaded_programs::{BlockRelation, ProgramCacheEntryType},
+        solana_program_runtime::{
+            execution_budget::{
+                SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
+            },
+            loaded_programs::{BlockRelation, ProgramCacheEntryType},
+        },
         solana_rent::Rent,
+        solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_rent_debits::RentDebits,
-        solana_reserved_account_keys::ReservedAccountKeys,
-        solana_sdk::rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
+        solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::TransactionContext,
-        solana_transaction_error::TransactionError,
+        solana_transaction_error::{TransactionError, TransactionError::DuplicateInstruction},
         test_case::test_case,
     };
 
@@ -1249,7 +1146,10 @@ mod tests {
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
+        feature_set: SVMFeatureSet,
     }
+
+    impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
@@ -1298,13 +1198,13 @@ mod tests {
                 .or_default()
                 .push((account, is_writable));
         }
+    }
 
-        fn calculate_fee(
-            &self,
+    impl MockBankCallback {
+        pub fn calculate_fee_details(
             message: &impl SVMMessage,
             lamports_per_signature: u64,
             prioritization_fee: u64,
-            _feature_set: &FeatureSet,
         ) -> FeeDetails {
             let signature_count = message
                 .num_transaction_signatures()
@@ -1324,7 +1224,7 @@ mod tests {
             AccountLoader::new_with_account_cache_capacity(
                 None,
                 callbacks,
-                Arc::<FeatureSet>::default(),
+                &callbacks.feature_set,
                 0,
             )
         }
@@ -1451,7 +1351,7 @@ mod tests {
             program_indices: vec![vec![0]],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
-            compute_budget_limits: ComputeBudgetLimits::default(),
+            compute_budget: SVMTransactionExecutionBudget::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 32,
@@ -1548,7 +1448,7 @@ mod tests {
             program_indices: vec![vec![0]],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
-            compute_budget_limits: ComputeBudgetLimits::default(),
+            compute_budget: SVMTransactionExecutionBudget::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
@@ -2140,11 +2040,6 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
-        let compute_budget_limits = process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&message),
-            &FeatureSet::default(),
-        )
-        .unwrap();
         let fee_payer_address = message.fee_payer();
         let current_epoch = 42;
         let rent_collector = RentCollector {
@@ -2160,7 +2055,7 @@ mod tests {
         assert!(
             starting_balance > min_balance,
             "we're testing that a rent exempt fee payer can be fully drained, \
-        so ensure that the starting balance is more than the min balance"
+                so ensure that the starting balance is more than the min balance"
         );
 
         let fee_payer_rent_epoch = current_epoch;
@@ -2180,20 +2075,22 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
+        let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits {
+            budget: SVMTransactionExecutionBudget {
+                compute_unit_limit: 2000,
+                ..SVMTransactionExecutionBudget::default()
+            },
+            fee_details: FeeDetails::new(transaction_fee, priority_fee),
+            ..SVMTransactionExecutionAndFeeBudgetLimits::default()
+        };
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(
-                    None,
-                    lamports_per_signature,
-                    Ok(compute_budget_limits),
-                ),
+                CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
             );
 
         let post_validation_fee_payer_account = {
@@ -2213,7 +2110,9 @@ mod tests {
                     fee_payer_rent_debit,
                     fee_payer_rent_epoch
                 ),
-                compute_budget_limits,
+                compute_budget: compute_budget_and_limits.budget,
+                loaded_accounts_bytes_limit: compute_budget_and_limits
+                    .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, priority_fee),
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     loaded_size: fee_payer_account.data().len(),
@@ -2232,11 +2131,6 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &Hash::new_unique(),
         ));
-        let compute_budget_limits = process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&message),
-            &FeatureSet::default(),
-        )
-        .unwrap();
         let fee_payer_address = message.fee_payer();
         let mut rent_collector = RentCollector::default();
         rent_collector.rent.lamports_per_byte_year = 1_000_000;
@@ -2262,20 +2156,17 @@ mod tests {
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
+        let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+            MockBankCallback::calculate_fee_details(&message, lamports_per_signature, 0),
+        );
         let result =
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(
-                    None,
-                    lamports_per_signature,
-                    Ok(compute_budget_limits),
-                ),
+                CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
             );
 
         let post_validation_fee_payer_account = {
@@ -2295,7 +2186,9 @@ mod tests {
                     fee_payer_rent_debit,
                     0, // rent epoch
                 ),
-                compute_budget_limits,
+                compute_budget: compute_budget_and_limits.budget,
+                loaded_accounts_bytes_limit: compute_budget_and_limits
+                    .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, 0),
                 loaded_fee_payer_account: LoadedTransactionAccount {
                     loaded_size: fee_payer_account.data().len(),
@@ -2308,7 +2201,6 @@ mod tests {
 
     #[test]
     fn test_validate_transaction_fee_payer_not_found() {
-        let lamports_per_signature = 5000;
         let message =
             new_unchecked_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique())));
 
@@ -2321,14 +2213,11 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
-                    Ok(ComputeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::default()),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.account_not_found.0, 1);
@@ -2357,14 +2246,17 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
-                    Ok(ComputeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(
+                            &message,
+                            lamports_per_signature,
+                            0,
+                        ),
+                    )),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.insufficient_funds.0, 1);
@@ -2397,14 +2289,17 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
-                    Ok(ComputeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(
+                            &message,
+                            lamports_per_signature,
+                            0,
+                        ),
+                    )),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(
@@ -2435,14 +2330,17 @@ mod tests {
                 &message,
                 CheckedTransactionDetails::new(
                     None,
-                    lamports_per_signature,
-                    Ok(ComputeBudgetLimits::default()),
+                    Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                        MockBankCallback::calculate_fee_details(
+                            &message,
+                            lamports_per_signature,
+                            0,
+                        ),
+                    )),
                 ),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.invalid_account_for_fee.0, 1);
@@ -2451,7 +2349,6 @@ mod tests {
 
     #[test]
     fn test_validate_transaction_fee_payer_invalid_compute_budget() {
-        let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new(
             &[
                 ComputeBudgetInstruction::set_compute_unit_limit(2000u32),
@@ -2459,10 +2356,6 @@ mod tests {
             ],
             Some(&Pubkey::new_unique()),
         ));
-        let compute_budget_limits = process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&message),
-            &FeatureSet::default(),
-        );
 
         let mock_bank = MockBankCallback::default();
         let mut account_loader = (&mock_bank).into();
@@ -2471,12 +2364,10 @@ mod tests {
             TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature, compute_budget_limits),
+                CheckedTransactionDetails::new(None, Err(DuplicateInstruction(1))),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &RentCollector::default(),
                 &mut error_counters,
-                &mock_bank,
             );
 
         assert_eq!(error_counters.invalid_compute_budget.0, 1);
@@ -2487,7 +2378,7 @@ mod tests {
     fn test_validate_transaction_fee_payer_is_nonce() {
         let lamports_per_signature = 5000;
         let rent_collector = RentCollector::default();
-        let compute_unit_limit = 2 * solana_compute_budget_program::DEFAULT_COMPUTE_UNITS;
+        let compute_unit_limit = 1000u64;
         let last_blockhash = Hash::new_unique();
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
@@ -2497,14 +2388,13 @@ mod tests {
             Some(&Pubkey::new_unique()),
             &last_blockhash,
         ));
-        let compute_budget_limits = process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&message),
-            &FeatureSet::default(),
-        )
-        .unwrap();
+        let transaction_fee = lamports_per_signature;
+        let compute_budget_and_limits = SVMTransactionExecutionAndFeeBudgetLimits {
+            fee_details: FeeDetails::new(transaction_fee, compute_unit_limit),
+            ..SVMTransactionExecutionAndFeeBudgetLimits::default()
+        };
         let fee_payer_address = message.fee_payer();
         let min_balance = Rent::default().minimum_balance(nonce::state::State::size());
-        let transaction_fee = lamports_per_signature;
         let priority_fee = compute_unit_limit;
 
         // Sufficient Fees
@@ -2541,20 +2431,17 @@ mod tests {
 
             let tx_details = CheckedTransactionDetails::new(
                 Some(future_nonce.clone()),
-                lamports_per_signature,
-                Ok(compute_budget_limits),
+                Ok(compute_budget_and_limits),
             );
 
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
-                &mut account_loader,
-                &message,
-                tx_details,
-                &environment_blockhash,
-                FeeStructure::default().lamports_per_signature,
-                &rent_collector,
-                &mut error_counters,
-                &mock_bank,
-            );
+                   &mut account_loader,
+                   &message,
+                   tx_details,
+                   &environment_blockhash,
+                   &rent_collector,
+                   &mut error_counters,
+               );
 
             let post_validation_fee_payer_account = {
                 let mut account = fee_payer_account.clone();
@@ -2573,7 +2460,9 @@ mod tests {
                         0, // fee_payer_rent_debit
                         0, // fee_payer_rent_epoch
                     ),
-                    compute_budget_limits,
+                    compute_budget: compute_budget_and_limits.budget,
+                    loaded_accounts_bytes_limit: compute_budget_and_limits
+                        .loaded_accounts_data_size_limit,
                     fee_details: FeeDetails::new(transaction_fee, priority_fee),
                     loaded_fee_payer_account: LoadedTransactionAccount {
                         loaded_size: fee_payer_account.data().len(),
@@ -2607,13 +2496,11 @@ mod tests {
             let result = TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
                 &mut account_loader,
                 &message,
-                CheckedTransactionDetails::new(None, lamports_per_signature, Ok(compute_budget_limits)),
+                CheckedTransactionDetails::new(None, Ok(compute_budget_and_limits)),
                 &Hash::default(),
-                FeeStructure::default().lamports_per_signature,
                 &rent_collector,
                 &mut error_counters,
-                &mock_bank,
-            );
+               );
 
             assert_eq!(error_counters.insufficient_funds.0, 1);
             assert_eq!(result, Err(TransactionError::InsufficientFundsForFee));
@@ -2647,20 +2534,18 @@ mod tests {
             Some(&fee_payer_address),
             &Hash::new_unique(),
         ));
-        let compute_budget_limits = process_compute_budget_instructions(
-            SVMMessage::program_instructions_iter(&message),
-            &FeatureSet::default(),
-        )
-        .unwrap();
         TransactionBatchProcessor::<TestForkGraph>::validate_transaction_nonce_and_fee_payer(
             &mut account_loader,
             &message,
-            CheckedTransactionDetails::new(None, 5000, Ok(compute_budget_limits)),
+            CheckedTransactionDetails::new(
+                None,
+                Ok(SVMTransactionExecutionAndFeeBudgetLimits::with_fee(
+                    MockBankCallback::calculate_fee_details(&message, 5000, 0),
+                )),
+            ),
             &Hash::default(),
-            FeeStructure::default().lamports_per_signature,
             &RentCollector::default(),
             &mut TransactionErrorMetrics::default(),
-            &mock_bank,
         )
         .unwrap();
 

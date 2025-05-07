@@ -68,7 +68,7 @@ mod tests {
             crds_data::new_rand_timestamp,
         },
         rand::seq::SliceRandom,
-        solana_sdk::signature::Keypair,
+        solana_keypair::Keypair,
         std::collections::HashMap,
     };
 

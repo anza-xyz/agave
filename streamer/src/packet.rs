@@ -5,7 +5,7 @@ use {
         socket::SocketAddrSpace,
     },
     std::{
-        io::Result,
+        io::{ErrorKind, Result},
         net::UdpSocket,
         time::{Duration, Instant},
     },
@@ -17,7 +17,14 @@ pub use {
     },
 };
 
-pub fn recv_from(batch: &mut PacketBatch, socket: &UdpSocket, max_wait: Duration) -> Result<usize> {
+pub(crate) fn recv_from(
+    batch: &mut PacketBatch,
+    socket: &UdpSocket,
+    // If max_wait is None, reads from the socket until either:
+    //   * 64 packets are read (NUM_RCVMMSGS == PACKETS_PER_BATCH == 64), or
+    //   * There are no more data available to read from the socket.
+    max_wait: Option<Duration>,
+) -> Result<usize> {
     let mut i = 0;
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
@@ -27,15 +34,16 @@ pub fn recv_from(batch: &mut PacketBatch, socket: &UdpSocket, max_wait: Duration
     //  * set it back to blocking before returning
     socket.set_nonblocking(false)?;
     trace!("receiving on {}", socket.local_addr().unwrap());
-    let start = Instant::now();
+    let should_wait = max_wait.is_some();
+    let start = should_wait.then(Instant::now);
     loop {
         batch.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
             Packet::default(),
         );
         match recv_mmsg(socket, &mut batch[i..]) {
-            Err(_) if i > 0 => {
-                if start.elapsed() > max_wait {
+            Err(err) if i > 0 => {
+                if !should_wait && err.kind() == ErrorKind::WouldBlock {
                     break;
                 }
             }
@@ -51,10 +59,13 @@ pub fn recv_from(batch: &mut PacketBatch, socket: &UdpSocket, max_wait: Duration
                 i += npkts;
                 // Try to batch into big enough buffers
                 // will cause less re-shuffling later on.
-                if start.elapsed() > max_wait || i >= PACKETS_PER_BATCH {
+                if i >= PACKETS_PER_BATCH {
                     break;
                 }
             }
+        }
+        if start.as_ref().map(Instant::elapsed) > max_wait {
+            break;
         }
     }
     batch.truncate(i);
@@ -119,7 +130,7 @@ mod tests {
         let recvd = recv_from(
             &mut batch,
             &recv_socket,
-            Duration::from_millis(1), // max_wait
+            Some(Duration::from_millis(1)), // max_wait
         )
         .unwrap();
         assert_eq!(recvd, batch.len());
@@ -177,7 +188,7 @@ mod tests {
         let recvd = recv_from(
             &mut batch,
             &recv_socket,
-            Duration::from_millis(100), // max_wait
+            Some(Duration::from_millis(100)), // max_wait
         )
         .unwrap();
         // Check we only got PACKETS_PER_BATCH packets

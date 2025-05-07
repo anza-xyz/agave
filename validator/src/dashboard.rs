@@ -12,7 +12,6 @@ use {
         pubkey::Pubkey,
     },
     std::{
-        io,
         net::SocketAddr,
         path::{Path, PathBuf},
         sync::{
@@ -35,7 +34,7 @@ impl Dashboard {
         ledger_path: &Path,
         log_path: Option<&Path>,
         validator_exit: Option<&mut Exit>,
-    ) -> Result<Self, io::Error> {
+    ) -> Self {
         println_name_value("Ledger location:", &format!("{}", ledger_path.display()));
         if let Some(log_path) = log_path {
             println_name_value("Log:", &format!("{}", log_path.display()));
@@ -50,11 +49,11 @@ impl Dashboard {
             validator_exit.register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
         }
 
-        Ok(Self {
+        Self {
             exit,
             ledger_path: ledger_path.to_path_buf(),
             progress_bar,
-        })
+        }
     }
 
     pub fn run(self, refresh_interval: Duration) {

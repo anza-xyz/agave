@@ -376,6 +376,7 @@ impl PohService {
 mod tests {
     use {
         super::*,
+        crossbeam_channel::unbounded,
         rand::{thread_rng, Rng},
         solana_clock::DEFAULT_HASHES_PER_TICK,
         solana_ledger::{
@@ -416,7 +417,7 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let blockstore = Arc::new(blockstore);
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             prev_hash,
             bank.clone(),
@@ -482,6 +483,7 @@ mod tests {
         let hashes_per_batch = std::env::var("HASHES_PER_BATCH")
             .map(|x| x.parse().unwrap())
             .unwrap_or(DEFAULT_HASHES_PER_BATCH);
+        let (_record_sender, record_receiver) = unbounded();
         let poh_service = PohService::new(
             poh_recorder.clone(),
             &poh_config,

@@ -2,9 +2,11 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    agave_feature_set::FEATURE_NAMES,
     base64::{prelude::BASE64_STANDARD, Engine},
     clap::{crate_description, crate_name, value_t, value_t_or_exit, App, Arg, ArgMatches},
     itertools::Itertools,
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
     solana_clap_utils::{
         input_parsers::{
@@ -15,34 +17,30 @@ use {
             is_valid_percentage, normalize_to_url_if_moniker,
         },
     },
+    solana_clock as clock,
+    solana_commitment_config::CommitmentConfig,
     solana_entry::poh::compute_hashes_per_tick,
+    solana_epoch_schedule::EpochSchedule,
+    solana_feature_gate_interface as feature,
+    solana_fee_calculator::FeeRateGovernor,
     solana_genesis::{
         genesis_accounts::add_genesis_accounts, Base64Account, StakedValidatorAccountInfo,
         ValidatorAccountsFile,
     },
+    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_inflation::Inflation,
+    solana_keypair::{read_keypair_file, Keypair},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_native_token::sol_to_lamports,
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable::UpgradeableLoaderState,
-        clock,
-        commitment_config::CommitmentConfig,
-        epoch_schedule::EpochSchedule,
-        feature,
-        feature_set::FEATURE_NAMES,
-        fee_calculator::FeeRateGovernor,
-        genesis_config::{ClusterType, GenesisConfig},
-        inflation::Inflation,
-        native_token::sol_to_lamports,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        signer::keypair::read_keypair_file,
-        stake::state::StakeStateV2,
-        system_program,
-    },
+    solana_sdk_ids::system_program,
+    solana_signer::Signer,
+    solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
     solana_vote_program::vote_state::{self, VoteState},
     std::{
@@ -66,8 +64,8 @@ pub enum AccountFileFormat {
 fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
     Pubkey::from_str(key_str).or_else(|_| {
         let bytes: Vec<u8> = serde_json::from_str(key_str)?;
-        let keypair = Keypair::from_bytes(&bytes)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let keypair =
+            Keypair::from_bytes(&bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
 }
@@ -78,21 +76,17 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
 
     let genesis_accounts: HashMap<String, Base64Account> =
         serde_yaml::from_reader(accounts_file)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?;
+            .map_err(|err| io::Error::other(format!("{err:?}")))?;
 
     for (key, account_details) in genesis_accounts {
-        let pubkey = pubkey_from_str(key.as_str()).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Invalid pubkey/keypair {key}: {err:?}"),
-            )
-        })?;
+        let pubkey = pubkey_from_str(key.as_str())
+            .map_err(|err| io::Error::other(format!("Invalid pubkey/keypair {key}: {err:?}")))?;
 
         let owner_program_id = Pubkey::from_str(account_details.owner.as_str()).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Invalid owner: {}: {:?}", account_details.owner, err),
-            )
+            io::Error::other(format!(
+                "Invalid owner: {}: {:?}",
+                account_details.owner, err
+            ))
         })?;
 
         let mut account = AccountSharedData::new(account_details.balance, 0, &owner_program_id);
@@ -101,10 +95,10 @@ pub fn load_genesis_accounts(file: &str, genesis_config: &mut GenesisConfig) -> 
                 &BASE64_STANDARD
                     .decode(account_details.data.as_str())
                     .map_err(|err| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Invalid account data: {}: {:?}", account_details.data, err),
-                        )
+                        io::Error::other(format!(
+                            "Invalid account data: {}: {:?}",
+                            account_details.data, err
+                        ))
                     })?,
             );
         }
@@ -125,37 +119,28 @@ pub fn load_validator_accounts(
     let accounts_file = File::open(file)?;
     let validator_genesis_accounts: Vec<StakedValidatorAccountInfo> =
         serde_yaml::from_reader::<_, ValidatorAccountsFile>(accounts_file)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{err:?}")))?
+            .map_err(|err| io::Error::other(format!("{err:?}")))?
             .validator_accounts;
 
     for account_details in validator_genesis_accounts {
         let pubkeys = [
             pubkey_from_str(account_details.identity_account.as_str()).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid pubkey/keypair {}: {:?}",
-                        account_details.identity_account, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "Invalid pubkey/keypair {}: {:?}",
+                    account_details.identity_account, err
+                ))
             })?,
             pubkey_from_str(account_details.vote_account.as_str()).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid pubkey/keypair {}: {:?}",
-                        account_details.vote_account, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "Invalid pubkey/keypair {}: {:?}",
+                    account_details.vote_account, err
+                ))
             })?,
             pubkey_from_str(account_details.stake_account.as_str()).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "Invalid pubkey/keypair {}: {:?}",
-                        account_details.stake_account, err
-                    ),
-                )
+                io::Error::other(format!(
+                    "Invalid pubkey/keypair {}: {:?}",
+                    account_details.stake_account, err
+                ))
             })?,
         ];
 
@@ -288,8 +273,7 @@ fn add_validator_accounts(
 
 fn rent_exempt_check(stake_lamports: u64, exempt: u64) -> io::Result<()> {
     if stake_lamports < exempt {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             format!(
                 "error: insufficient validator stake lamports: {stake_lamports} for rent exemption, requires {exempt}"
             ),
@@ -903,7 +887,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 mod tests {
     use {
         super::*,
-        solana_sdk::{borsh1, genesis_config::GenesisConfig, stake},
+        solana_borsh::v1 as borsh1,
+        solana_genesis_config::GenesisConfig,
+        solana_stake_interface as stake,
         std::{collections::HashMap, fs::remove_file, io::Write, path::Path},
     };
 
@@ -916,27 +902,27 @@ mod tests {
 
         let mut genesis_accounts = HashMap::new();
         genesis_accounts.insert(
-            solana_sdk::pubkey::new_rand().to_string(),
+            solana_pubkey::new_rand().to_string(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 2,
                 executable: false,
                 data: String::from("aGVsbG8="),
             },
         );
         genesis_accounts.insert(
-            solana_sdk::pubkey::new_rand().to_string(),
+            solana_pubkey::new_rand().to_string(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 1,
                 executable: true,
                 data: String::from("aGVsbG8gd29ybGQ="),
             },
         );
         genesis_accounts.insert(
-            solana_sdk::pubkey::new_rand().to_string(),
+            solana_pubkey::new_rand().to_string(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 3,
                 executable: true,
                 data: String::from("bWUgaGVsbG8gdG8gd29ybGQ="),
@@ -990,27 +976,27 @@ mod tests {
         // Test more accounts can be appended
         let mut genesis_accounts1 = HashMap::new();
         genesis_accounts1.insert(
-            solana_sdk::pubkey::new_rand().to_string(),
+            solana_pubkey::new_rand().to_string(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 6,
                 executable: true,
                 data: String::from("eW91IGFyZQ=="),
             },
         );
         genesis_accounts1.insert(
-            solana_sdk::pubkey::new_rand().to_string(),
+            solana_pubkey::new_rand().to_string(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 5,
                 executable: false,
                 data: String::from("bWV0YSBzdHJpbmc="),
             },
         );
         genesis_accounts1.insert(
-            solana_sdk::pubkey::new_rand().to_string(),
+            solana_pubkey::new_rand().to_string(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 10,
                 executable: false,
                 data: String::from("YmFzZTY0IHN0cmluZw=="),
@@ -1076,7 +1062,7 @@ mod tests {
         genesis_accounts2.insert(
             serde_json::to_string(&account_keypairs[0].to_bytes().to_vec()).unwrap(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 20,
                 executable: true,
                 data: String::from("Y2F0IGRvZw=="),
@@ -1085,7 +1071,7 @@ mod tests {
         genesis_accounts2.insert(
             serde_json::to_string(&account_keypairs[1].to_bytes().to_vec()).unwrap(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 15,
                 executable: false,
                 data: String::from("bW9ua2V5IGVsZXBoYW50"),
@@ -1094,7 +1080,7 @@ mod tests {
         genesis_accounts2.insert(
             serde_json::to_string(&account_keypairs[2].to_bytes().to_vec()).unwrap(),
             Base64Account {
-                owner: solana_sdk::pubkey::new_rand().to_string(),
+                owner: solana_pubkey::new_rand().to_string(),
                 balance: 30,
                 executable: true,
                 data: String::from("Y29tYSBtb2Nh"),
@@ -1259,23 +1245,23 @@ mod tests {
 
         let validator_accounts = vec![
             StakedValidatorAccountInfo {
-                identity_account: solana_sdk::pubkey::new_rand().to_string(),
-                vote_account: solana_sdk::pubkey::new_rand().to_string(),
-                stake_account: solana_sdk::pubkey::new_rand().to_string(),
+                identity_account: solana_pubkey::new_rand().to_string(),
+                vote_account: solana_pubkey::new_rand().to_string(),
+                stake_account: solana_pubkey::new_rand().to_string(),
                 balance_lamports: 100000000000,
                 stake_lamports: 10000000000,
             },
             StakedValidatorAccountInfo {
-                identity_account: solana_sdk::pubkey::new_rand().to_string(),
-                vote_account: solana_sdk::pubkey::new_rand().to_string(),
-                stake_account: solana_sdk::pubkey::new_rand().to_string(),
+                identity_account: solana_pubkey::new_rand().to_string(),
+                vote_account: solana_pubkey::new_rand().to_string(),
+                stake_account: solana_pubkey::new_rand().to_string(),
                 balance_lamports: 200000000000,
                 stake_lamports: 20000000000,
             },
             StakedValidatorAccountInfo {
-                identity_account: solana_sdk::pubkey::new_rand().to_string(),
-                vote_account: solana_sdk::pubkey::new_rand().to_string(),
-                stake_account: solana_sdk::pubkey::new_rand().to_string(),
+                identity_account: solana_pubkey::new_rand().to_string(),
+                vote_account: solana_pubkey::new_rand().to_string(),
+                stake_account: solana_pubkey::new_rand().to_string(),
                 balance_lamports: 300000000000,
                 stake_lamports: 30000000000,
             },

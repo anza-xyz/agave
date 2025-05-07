@@ -12,6 +12,30 @@ annotate() {
   }
 }
 
+cargo_build_sbf_sanity() {
+  cargo_build_sbf="$(realpath ./cargo-build-sbf)"
+
+  pushd programs/sbf
+  # Generate the sanity programs list
+  if [ ! -f sanity_programs.txt ]; then
+    cargo test --features="sbf_rust,sbf_sanity_list" --test programs test_program_sbf_sanity
+  fi
+  mapfile -t rust_programs < <(cat sanity_programs.txt)
+
+  pushd rust
+  # This is done in a loop to mock how developers invoke `cargo-build-sbf`
+  for program in "${rust_programs[@]}"
+  do
+    pushd "$program"
+    $cargo_build_sbf --arch "$1"
+    popd
+  done
+  popd
+
+  cargo test --features=sbf_rust --test programs test_program_sbf_sanity
+  popd
+}
+
 # Run the appropriate test based on entrypoint
 testName=$(basename "$0" .sh)
 
@@ -55,21 +79,26 @@ test-stable-sbf)
   # Install the platform tools
   _ platform-tools-sdk/sbf/scripts/install.sh
 
-  # SBF program tests
-  export SBF_OUT_DIR=target/sbf-solana-solana/release
-  _ make -C programs/sbf test
+  # SBPFv0 program tests
+  _ make -C programs/sbf test-v0
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v0"
 
-  # SBF program instruction count assertion
-  sbf_target_path=programs/sbf/target
-  mkdir -p $sbf_target_path/deploy
-  _ cargo test \
-    --manifest-path programs/sbf/Cargo.toml \
-    --features=sbf_c,sbf_rust assert_instruction_count \
-    -- --nocapture &> $sbf_target_path/deploy/instruction_counts.txt
+  # SBPFv1 program tests
+  _ make -C programs/sbf clean-all test-v1
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v1"
 
-  sbf_dump_archive="sbf-dumps.tar.bz2"
-  rm -f "$sbf_dump_archive"
-  tar cjvf "$sbf_dump_archive" $sbf_target_path/{deploy/*.txt,sbf-solana-solana/release/*.so}
+  # SBPFv2 program tests
+  _ make -C programs/sbf clean-all test-v2
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v2"
+
+  # SBPFv3 program tests
+  _ make -C programs/sbf clean-all test-v3
+  _ make -C programs/sbf clean-all
+  _ cargo_build_sbf_sanity "v3"
+
   exit 0
   ;;
 test-docs)

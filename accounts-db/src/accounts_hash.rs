@@ -8,15 +8,14 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     log::*,
     rayon::prelude::*,
+    solana_clock::Slot,
+    solana_hash::{Hash, HASH_BYTES},
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        hash::{Hash, Hasher, HASH_BYTES},
-        rent_collector::RentCollector,
-        slot_history::Slot,
-        sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_rent_collector::RentCollector,
+    solana_sha256_hasher::Hasher,
+    solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
         clone,
         convert::TryInto,
@@ -1412,7 +1411,7 @@ mod tests {
                             CalculateHashIntermediate {
                                 hash: AccountHash(Hash::default()),
                                 lamports: 0,
-                                pubkey: binner.lowest_pubkey_from_bin(bin, bins),
+                                pubkey: binner.lowest_pubkey_from_bin(bin),
                             }
                         })
                     })

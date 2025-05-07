@@ -6,12 +6,26 @@ use {
 };
 
 fn mem_op_consume(invoke_context: &mut InvokeContext, n: u64) -> Result<(), Error> {
-    let compute_budget = invoke_context.get_compute_budget();
-    let cost = compute_budget.mem_op_base_cost.max(
-        n.checked_div(compute_budget.cpi_bytes_per_unit)
+    let compute_cost = invoke_context.get_execution_cost();
+    let cost = compute_cost.mem_op_base_cost.max(
+        n.checked_div(compute_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX),
     );
     consume_compute_meter(invoke_context, cost)
+}
+
+/// Check that two regions do not overlap.
+pub(crate) fn is_nonoverlapping<N>(src: N, src_len: N, dst: N, dst_len: N) -> bool
+where
+    N: Ord + num_traits::SaturatingSub,
+{
+    // If the absolute distance between the ptrs is at least as big as the size of the other,
+    // they do not overlap.
+    if src > dst {
+        src.saturating_sub(&dst) >= dst_len
+    } else {
+        dst.saturating_sub(&src) >= src_len
+    }
 }
 
 declare_builtin_function!(
@@ -71,7 +85,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
+            .bpf_account_data_direct_mapping
         {
             let cmp_result = translate_type_mut::<i32>(
                 memory_mapping,
@@ -129,7 +143,7 @@ declare_builtin_function!(
 
         if invoke_context
             .get_feature_set()
-            .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
+            .bpf_account_data_direct_mapping
         {
             let syscall_context = invoke_context.get_syscall_context()?;
 
@@ -156,7 +170,7 @@ fn memmove(
 ) -> Result<u64, Error> {
     if invoke_context
         .get_feature_set()
-        .is_active(&solana_feature_set::bpf_account_data_direct_mapping::id())
+        .bpf_account_data_direct_mapping
     {
         let syscall_context = invoke_context.get_syscall_context()?;
 
@@ -310,7 +324,11 @@ fn memset_non_contiguous(
     )?;
     for item in dst_chunk_iter {
         let (dst_region, dst_vm_addr, dst_len) = item?;
-        let dst_host_addr = Result::from(dst_region.vm_to_host(dst_vm_addr, dst_len as u64))?;
+        let dst_host_addr = dst_region
+            .vm_to_host(dst_vm_addr, dst_len as u64)
+            .ok_or_else(|| {
+                EbpfError::AccessViolation(AccessType::Store, dst_vm_addr, dst_len as u64, "")
+            })?;
         unsafe { slice::from_raw_parts_mut(dst_host_addr as *mut u8, dst_len).fill(c) }
     }
 
@@ -341,8 +359,7 @@ where
         src_addr,
         n_bytes,
         resize_area,
-    )
-    .map_err(EbpfError::from)?;
+    )?;
     let mut dst_chunk_iter = MemoryChunkIterator::new(
         memory_mapping,
         accounts,
@@ -350,8 +367,7 @@ where
         dst_addr,
         n_bytes,
         resize_area,
-    )
-    .map_err(EbpfError::from)?;
+    )?;
 
     let mut src_chunk = None;
     let mut dst_chunk = None;
@@ -401,8 +417,21 @@ where
             };
 
             (
-                Result::from(src_region.vm_to_host(src_addr, chunk_len as u64))?,
-                Result::from(dst_region.vm_to_host(dst_addr, chunk_len as u64))?,
+                src_region
+                    .vm_to_host(src_addr, chunk_len as u64)
+                    .ok_or_else(|| {
+                        EbpfError::AccessViolation(AccessType::Load, src_addr, chunk_len as u64, "")
+                    })?,
+                dst_region
+                    .vm_to_host(dst_addr, chunk_len as u64)
+                    .ok_or_else(|| {
+                        EbpfError::AccessViolation(
+                            AccessType::Store,
+                            dst_addr,
+                            chunk_len as u64,
+                            "",
+                        )
+                    })?,
             )
         };
 
@@ -482,7 +511,7 @@ impl<'a> MemoryChunkIterator<'a> {
 
     fn region(&mut self, vm_addr: u64) -> Result<&'a MemoryRegion, Error> {
         match self.memory_mapping.region(self.access_type, vm_addr) {
-            Ok(region) => Ok(region),
+            Ok((_region_index, region)) => Ok(region),
             Err(error) => match error {
                 EbpfError::AccessViolation(access_type, _vm_addr, _len, name) => Err(Box::new(
                     EbpfError::AccessViolation(access_type, self.initial_vm_addr, self.len, name),
@@ -532,7 +561,7 @@ impl<'a> Iterator for MemoryChunkIterator<'a> {
                     account_index = account_index.saturating_add(1);
                     self.account_index = Some(account_index);
                 } else {
-                    region_is_account = region.vm_addr == account_addr
+                    region_is_account = (account.original_data_len != 0 && region.vm_addr == account_addr)
                         // unaligned programs do not have a resize area
                         || (self.resize_area && region.vm_addr == resize_addr);
                     break;
@@ -606,7 +635,7 @@ impl DoubleEndedIterator for MemoryChunkIterator<'_> {
 
                 self.account_index = Some(account_index);
             } else {
-                region_is_account = region.vm_addr == account_addr
+                region_is_account = (account.original_data_len != 0 && region.vm_addr == account_addr)
                     // unaligned programs do not have a resize area
                     || (self.resize_area && region.vm_addr == resize_addr);
                 break;
@@ -1170,5 +1199,20 @@ mod tests {
 
     fn flatten_memory(mem: &[Vec<u8>]) -> Vec<u8> {
         mem.iter().flatten().copied().collect()
+    }
+
+    #[test]
+    fn test_is_nonoverlapping() {
+        for dst in 0..8 {
+            assert!(is_nonoverlapping(10, 3, dst, 3));
+        }
+        for dst in 8..13 {
+            assert!(!is_nonoverlapping(10, 3, dst, 3));
+        }
+        for dst in 13..20 {
+            assert!(is_nonoverlapping(10, 3, dst, 3));
+        }
+        assert!(is_nonoverlapping::<u8>(255, 3, 254, 1));
+        assert!(!is_nonoverlapping::<u8>(255, 2, 254, 3));
     }
 }

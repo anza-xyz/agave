@@ -443,7 +443,7 @@ mod tests {
         let b: Vec<_> = (0..n).map(|_| Scalar::random(&mut OsRng)).collect();
         let c = util::inner_product(&a, &b).unwrap();
 
-        let G_factors: Vec<Scalar> = iter::repeat(Scalar::ONE).take(n).collect();
+        let G_factors: Vec<Scalar> = iter::repeat_n(Scalar::ONE, n).collect();
 
         let y_inv = Scalar::random(&mut OsRng);
         let H_factors: Vec<Scalar> = util::exp_iter(y_inv).take(n).collect();
@@ -480,7 +480,7 @@ mod tests {
         assert!(proof
             .verify(
                 n,
-                iter::repeat(Scalar::ONE).take(n),
+                iter::repeat_n(Scalar::ONE, n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,
@@ -495,7 +495,7 @@ mod tests {
         assert!(proof
             .verify(
                 n,
-                iter::repeat(Scalar::ONE).take(n),
+                iter::repeat_n(Scalar::ONE, n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,

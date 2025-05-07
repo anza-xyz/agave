@@ -3,7 +3,7 @@
 use crate::{rpc_pubsub_service, rpc_subscriptions::RpcSubscriptions};
 use {
     crate::{
-        rpc::check_is_at_least_confirmed,
+        rpc::{check_is_at_least_confirmed, optimize_filters, verify_filters},
         rpc_pubsub_service::PubSubConfig,
         rpc_subscription_tracker::{
             AccountSubscriptionParams, BlockSubscriptionKind, BlockSubscriptionParams,
@@ -450,9 +450,18 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         config: Option<RpcProgramAccountsConfig>,
     ) -> Result<SubscriptionId> {
         let config = config.unwrap_or_default();
+        let mut filters = config.filters.unwrap_or_default();
+        if let Err(error) = verify_filters(&filters) {
+            return Err(Error {
+                code: ErrorCode::InvalidParams,
+                message: error.to_string(),
+                data: None,
+            });
+        }
+        optimize_filters(&mut filters);
         let params = ProgramSubscriptionParams {
             pubkey: param::<Pubkey>(&pubkey_str, "pubkey")?,
-            filters: config.filters.unwrap_or_default(),
+            filters,
             encoding: config
                 .account_config
                 .encoding

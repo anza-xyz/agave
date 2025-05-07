@@ -1,8 +1,9 @@
 use {
+    super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
     solana_poh::poh_recorder::BankStart,
     solana_sdk::{clock::Slot, timing::AtomicInterval},
-    std::time::Instant,
+    std::time::{Duration, Instant},
 };
 
 #[derive(Default)]
@@ -51,16 +52,16 @@ pub struct SchedulerCountMetricsInner {
 
     /// Number of transactions scheduled.
     pub num_scheduled: usize,
-    /// Number of transactions that were unschedulable.
-    pub num_unschedulable: usize,
+    /// Number of transactions that were unschedulable due to multiple conflicts.
+    pub num_unschedulable_conflicts: usize,
+    /// Number of transactions that were unschedulable due to thread capacity.
+    pub num_unschedulable_threads: usize,
     /// Number of transactions that were filtered out during scheduling.
     pub num_schedule_filtered_out: usize,
     /// Number of completed transactions received from workers.
     pub num_finished: usize,
     /// Number of transactions that were retryable.
     pub num_retryable: usize,
-    /// Number of transactions that were scheduled to be forwarded.
-    pub num_forwarded: usize,
 
     /// Number of transactions that were immediately dropped on receive.
     pub num_dropped_on_receive: usize,
@@ -116,7 +117,8 @@ impl SchedulerCountMetricsInner {
             ("num_received", self.num_received, i64),
             ("num_buffered", self.num_buffered, i64),
             ("num_scheduled", self.num_scheduled, i64),
-            ("num_unschedulable", self.num_unschedulable, i64),
+            ("num_unschedulable_conflicts", self.num_unschedulable_conflicts, i64),
+            ("num_unschedulable_threads", self.num_unschedulable_threads, i64),
             (
                 "num_schedule_filtered_out",
                 self.num_schedule_filtered_out,
@@ -124,7 +126,6 @@ impl SchedulerCountMetricsInner {
             ),
             ("num_finished", self.num_finished, i64),
             ("num_retryable", self.num_retryable, i64),
-            ("num_forwarded", self.num_forwarded, i64),
             ("num_dropped_on_receive", self.num_dropped_on_receive, i64),
             (
                 "num_dropped_on_sanitization",
@@ -161,11 +162,11 @@ impl SchedulerCountMetricsInner {
         self.num_received != 0
             || self.num_buffered != 0
             || self.num_scheduled != 0
-            || self.num_unschedulable != 0
+            || self.num_unschedulable_conflicts != 0
+            || self.num_unschedulable_threads != 0
             || self.num_schedule_filtered_out != 0
             || self.num_finished != 0
             || self.num_retryable != 0
-            || self.num_forwarded != 0
             || self.num_dropped_on_receive != 0
             || self.num_dropped_on_sanitization != 0
             || self.num_dropped_on_validate_locks != 0
@@ -179,11 +180,11 @@ impl SchedulerCountMetricsInner {
         self.num_received = 0;
         self.num_buffered = 0;
         self.num_scheduled = 0;
-        self.num_unschedulable = 0;
+        self.num_unschedulable_conflicts = 0;
+        self.num_unschedulable_threads = 0;
         self.num_schedule_filtered_out = 0;
         self.num_finished = 0;
         self.num_retryable = 0;
-        self.num_forwarded = 0;
         self.num_dropped_on_receive = 0;
         self.num_dropped_on_sanitization = 0;
         self.num_dropped_on_validate_locks = 0;
@@ -275,8 +276,6 @@ pub struct SchedulerTimingMetricsInner {
     pub clear_time_us: u64,
     /// Time spent cleaning expired or processed transactions from the container.
     pub clean_time_us: u64,
-    /// Time spent forwarding transactions.
-    pub forward_time_us: u64,
     /// Time spent receiving completed transactions.
     pub receive_completed_time_us: u64,
 }
@@ -318,7 +317,6 @@ impl SchedulerTimingMetricsInner {
             ("schedule_time_us", self.schedule_time_us, i64),
             ("clear_time_us", self.clear_time_us, i64),
             ("clean_time_us", self.clean_time_us, i64),
-            ("forward_time_us", self.forward_time_us, i64),
             (
                 "receive_completed_time_us",
                 self.receive_completed_time_us,
@@ -339,7 +337,6 @@ impl SchedulerTimingMetricsInner {
         self.schedule_time_us = 0;
         self.clear_time_us = 0;
         self.clean_time_us = 0;
-        self.forward_time_us = 0;
         self.receive_completed_time_us = 0;
     }
 }
@@ -404,5 +401,113 @@ impl SchedulerLeaderDetectionMetrics {
                 i64
             ),
         );
+    }
+}
+
+pub struct SchedulingDetails {
+    pub last_report: Instant,
+    pub num_schedule_calls: usize,
+
+    pub min_starting_queue_size: usize,
+    pub max_starting_queue_size: usize,
+    pub sum_starting_queue_size: usize, // div for report
+
+    pub min_starting_buffer_size: usize,
+    pub max_starting_buffer_size: usize,
+    pub sum_starting_buffer_size: usize, // div for report
+
+    pub sum_num_scheduled: usize,
+    pub sum_unschedulable_conflicts: usize,
+    pub sum_unschedulable_threads: usize,
+}
+
+impl Default for SchedulingDetails {
+    fn default() -> Self {
+        Self {
+            last_report: Instant::now(),
+            num_schedule_calls: 0,
+            min_starting_queue_size: 0,
+            max_starting_queue_size: 0,
+            sum_starting_queue_size: 0,
+            min_starting_buffer_size: 0,
+            max_starting_buffer_size: 0,
+            sum_starting_buffer_size: 0,
+            sum_num_scheduled: 0,
+            sum_unschedulable_conflicts: 0,
+            sum_unschedulable_threads: 0,
+        }
+    }
+}
+
+impl SchedulingDetails {
+    pub fn update(&mut self, scheduling_summary: &SchedulingSummary) {
+        self.num_schedule_calls += 1;
+
+        self.min_starting_queue_size = self
+            .min_starting_queue_size
+            .min(scheduling_summary.starting_queue_size);
+        self.max_starting_queue_size = self
+            .max_starting_queue_size
+            .max(scheduling_summary.starting_queue_size);
+        self.sum_starting_queue_size += scheduling_summary.starting_queue_size;
+
+        self.min_starting_buffer_size = self
+            .min_starting_buffer_size
+            .min(scheduling_summary.starting_buffer_size);
+        self.max_starting_buffer_size = self
+            .max_starting_buffer_size
+            .max(scheduling_summary.starting_buffer_size);
+        self.sum_starting_buffer_size += scheduling_summary.starting_buffer_size;
+
+        self.sum_num_scheduled += scheduling_summary.num_scheduled;
+        self.sum_unschedulable_conflicts += scheduling_summary.num_unschedulable_conflicts;
+        self.sum_unschedulable_threads += scheduling_summary.num_unschedulable_threads;
+    }
+
+    pub fn maybe_report(&mut self) {
+        const REPORT_INTERVAL: Duration = Duration::from_millis(20);
+        let now = Instant::now();
+        if now.duration_since(self.last_report) > REPORT_INTERVAL {
+            self.last_report = now;
+            if self.num_schedule_calls > 0 {
+                let avg_starting_queue_size =
+                    self.sum_starting_queue_size / self.num_schedule_calls;
+                let avg_starting_buffer_size =
+                    self.sum_starting_buffer_size / self.num_schedule_calls;
+                datapoint_info!(
+                    "scheduling_details",
+                    ("num_schedule_calls", self.num_schedule_calls, i64),
+                    ("min_starting_queue_size", self.min_starting_queue_size, i64),
+                    ("max_starting_queue_size", self.max_starting_queue_size, i64),
+                    ("avg_starting_queue_size", avg_starting_queue_size, i64),
+                    (
+                        "min_starting_buffer_size",
+                        self.min_starting_buffer_size,
+                        i64
+                    ),
+                    (
+                        "max_starting_buffer_size",
+                        self.max_starting_buffer_size,
+                        i64
+                    ),
+                    ("avg_starting_buffer_size", avg_starting_buffer_size, i64),
+                    ("num_scheduled", self.sum_num_scheduled, i64),
+                    (
+                        "num_unschedulable_conflicts",
+                        self.sum_unschedulable_conflicts,
+                        i64
+                    ),
+                    (
+                        "num_unschedulable_threads",
+                        self.sum_unschedulable_threads,
+                        i64
+                    ),
+                );
+                *self = Self {
+                    last_report: now,
+                    ..Self::default()
+                }
+            }
+        }
     }
 }

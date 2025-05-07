@@ -3,12 +3,9 @@ use {
     crate::{crds_data::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
+    solana_pubkey::Pubkey,
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        pubkey::Pubkey,
-        quic::QUIC_PORT_OFFSET,
-        rpc_port::{DEFAULT_RPC_PORT, DEFAULT_RPC_PUBSUB_PORT},
-    },
     solana_serde_varint as serde_varint, solana_short_vec as short_vec,
     solana_streamer::socket::SocketAddrSpace,
     static_assertions::const_assert_eq,
@@ -20,6 +17,17 @@ use {
     },
     thiserror::Error,
 };
+
+// inline consts to avoid solana-sdk dep
+const DEFAULT_RPC_PORT: u16 = 8899;
+const DEFAULT_RPC_PUBSUB_PORT: u16 = 8900;
+#[cfg(test)]
+static_assertions::const_assert_eq!(DEFAULT_RPC_PORT, solana_sdk::rpc_port::DEFAULT_RPC_PORT);
+#[cfg(test)]
+static_assertions::const_assert_eq!(
+    DEFAULT_RPC_PUBSUB_PORT,
+    solana_sdk::rpc_port::DEFAULT_RPC_PUBSUB_PORT
+);
 
 pub const SOCKET_ADDR_UNSPECIFIED: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0u16);
@@ -397,7 +405,7 @@ impl ContactInfo {
     /// New random ContactInfo for tests and simulations.
     pub fn new_rand<R: rand::Rng>(rng: &mut R, pubkey: Option<Pubkey>) -> Self {
         let delay = 10 * 60 * 1000; // 10 minutes
-        let now = solana_sdk::timing::timestamp() - delay + rng.gen_range(0..2 * delay);
+        let now = solana_time_utils::timestamp() - delay + rng.gen_range(0..2 * delay);
         let pubkey = pubkey.unwrap_or_else(solana_pubkey::new_rand);
         let mut node = ContactInfo::new_localhost(&pubkey, now);
         let _ = node.set_gossip((Ipv4Addr::LOCALHOST, rng.gen_range(1024..u16::MAX)));
@@ -408,8 +416,8 @@ impl ContactInfo {
     pub fn new_gossip_entry_point(gossip_addr: &SocketAddr) -> Self {
         let mut node = Self::new(
             Pubkey::default(),
-            solana_sdk::timing::timestamp(), // wallclock
-            0,                               // shred_version
+            solana_time_utils::timestamp(), // wallclock
+            0,                              // shred_version
         );
         if let Err(err) = node.set_gossip(*gossip_addr) {
             error!("Invalid entrypoint: {gossip_addr}, {err:?}");
@@ -446,8 +454,8 @@ impl ContactInfo {
         assert_matches!(sanitize_socket(socket), Ok(()));
         let mut node = Self::new(
             *pubkey,
-            solana_sdk::timing::timestamp(), // wallclock,
-            0u16,                            // shred_version
+            solana_time_utils::timestamp(), // wallclock,
+            0u16,                           // shred_version
         );
         let (addr, port) = (socket.ip(), socket.port());
         node.set_gossip((addr, port + 1)).unwrap();
@@ -679,7 +687,8 @@ mod tests {
     use {
         super::*,
         rand::{seq::SliceRandom, Rng},
-        solana_sdk::signature::{Keypair, Signer},
+        solana_keypair::Keypair,
+        solana_signer::Signer,
         std::{
             collections::{HashMap, HashSet},
             iter::repeat_with,
@@ -1001,7 +1010,7 @@ mod tests {
     fn test_new_localhost() {
         let node = ContactInfo::new_localhost(
             &Keypair::new().pubkey(),
-            solana_sdk::timing::timestamp(), // wallclock
+            solana_time_utils::timestamp(), // wallclock
         );
         cross_verify_with_legacy(&node);
     }

@@ -34,6 +34,10 @@ impl SVMMessage for SanitizedTransaction {
         SVMMessage::program_instructions_iter(SanitizedTransaction::message(self))
     }
 
+    fn static_account_keys(&self) -> &[Pubkey] {
+        SVMMessage::static_account_keys(SanitizedTransaction::message(self))
+    }
+
     fn account_keys(&self) -> AccountKeys {
         SVMMessage::account_keys(SanitizedTransaction::message(self))
     }

@@ -1,5 +1,5 @@
 use {
-    crate::{cluster::Cluster, local_cluster::LocalCluster},
+    crate::local_cluster::LocalCluster,
     log::*,
     solana_runtime::{
         snapshot_archive_info::{
@@ -7,7 +7,6 @@ use {
         },
         snapshot_utils,
     },
-    solana_sdk::commitment_config::CommitmentConfig,
     std::{
         path::Path,
         thread::sleep,
@@ -16,7 +15,7 @@ use {
 };
 
 impl LocalCluster {
-    /// Return the next full snapshot archive info after the cluster's last processed slot
+    /// Return the next produced full snapshot archive info
     pub fn wait_for_next_full_snapshot<T>(
         &self,
         full_snapshot_archives_dir: T,
@@ -38,8 +37,7 @@ impl LocalCluster {
         }
     }
 
-    /// Return the next incremental snapshot archive info (and associated full snapshot archive info)
-    /// after the cluster's last processed slot
+    /// Return the next produced incremental snapshot archive info (and associated full snapshot archive info)
     pub fn wait_for_next_incremental_snapshot(
         &self,
         full_snapshot_archives_dir: impl AsRef<Path>,
@@ -63,7 +61,7 @@ impl LocalCluster {
         }
     }
 
-    /// Return the next snapshot archive infos after the cluster's last processed slot
+    /// Return the next produced snapshot archive infos
     fn wait_for_next_snapshot(
         &self,
         full_snapshot_archives_dir: impl AsRef<Path>,
@@ -71,19 +69,24 @@ impl LocalCluster {
         next_snapshot_type: NextSnapshotType,
         max_wait_duration: Option<Duration>,
     ) -> NextSnapshotResult {
-        // Get slot after which this was generated
-        let client = self
-            .build_validator_tpu_quic_client(self.entry_point_info.pubkey())
-            .unwrap();
-        let last_slot = client
-            .rpc_client()
-            .get_slot_with_commitment(CommitmentConfig::processed())
-            .expect("Couldn't get slot");
+        let full_snapshot_slot =
+            snapshot_utils::get_highest_full_snapshot_archive_slot(&full_snapshot_archives_dir);
+        let last_slot = match next_snapshot_type {
+            NextSnapshotType::FullSnapshot => full_snapshot_slot,
+            NextSnapshotType::IncrementalAndFullSnapshot => {
+                full_snapshot_slot.and_then(|full_snapshot_slot| {
+                    snapshot_utils::get_highest_incremental_snapshot_archive_slot(
+                        incremental_snapshot_archives_dir.as_ref().unwrap(),
+                        full_snapshot_slot,
+                    )
+                })
+            }
+        }
+        .unwrap_or(0);
 
-        // Wait for a snapshot for a bank >= last_slot to be made so we know that the snapshot
-        // must include the transactions just pushed
+        // Wait for a snapshot for a bank > last_slot to be made
         trace!(
-            "Waiting for {:?} snapshot archive to be generated with slot >= {}, max wait duration: {:?}",
+            "Waiting for {:?} snapshot archive to be generated with slot > {}, max wait duration: {:?}",
             next_snapshot_type,
             last_slot,
             max_wait_duration,
@@ -95,7 +98,7 @@ impl LocalCluster {
             {
                 match next_snapshot_type {
                     NextSnapshotType::FullSnapshot => {
-                        if full_snapshot_archive_info.slot() >= last_slot {
+                        if full_snapshot_archive_info.slot() > last_slot {
                             break NextSnapshotResult::FullSnapshot(full_snapshot_archive_info);
                         }
                     }
@@ -106,7 +109,7 @@ impl LocalCluster {
                                 full_snapshot_archive_info.slot(),
                             )
                         {
-                            if incremental_snapshot_archive_info.slot() >= last_slot {
+                            if incremental_snapshot_archive_info.slot() > last_slot {
                                 break NextSnapshotResult::IncrementalAndFullSnapshot(
                                     incremental_snapshot_archive_info,
                                     full_snapshot_archive_info,

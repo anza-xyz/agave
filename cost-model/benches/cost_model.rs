@@ -1,8 +1,8 @@
 #![feature(test)]
 extern crate test;
 use {
+    agave_feature_set::FeatureSet,
     solana_cost_model::cost_model::CostModel,
-    solana_feature_set::FeatureSet,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,

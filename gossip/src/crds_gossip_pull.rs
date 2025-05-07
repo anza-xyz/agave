@@ -28,13 +28,12 @@ use {
     },
     rayon::{prelude::*, ThreadPool},
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
-    solana_sdk::{
-        hash::Hash,
-        native_token::LAMPORTS_PER_SOL,
-        packet::PACKET_DATA_SIZE,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet, VecDeque},
@@ -255,7 +254,7 @@ impl CrdsGossipPull {
             &self_keypair.pubkey(),
             // Pull from nodes with the same shred version, unless this is a
             // spy node which then can pull from any node.
-            |shred_version| self_shred_version == 0u16 || shred_version == self_shred_version,
+            |shred_version| shred_version == self_shred_version,
             crds,
             gossip_validators,
             stakes,
@@ -303,6 +302,7 @@ impl CrdsGossipPull {
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         Self::filter_crds_values(
@@ -312,6 +312,7 @@ impl CrdsGossipPull {
             output_size_limit,
             now,
             should_retain_crds_value,
+            self_shred_version,
             stats,
         )
     }
@@ -460,6 +461,7 @@ impl CrdsGossipPull {
         now: u64,
         // Predicate returning false if the CRDS value should be discarded.
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         let msg_timeout = CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS;
@@ -495,7 +497,7 @@ impl CrdsGossipPull {
                 }
             };
             let out: Vec<_> = crds
-                .filter_bitmask(filter.mask, filter.mask_bits)
+                .filter_bitmask(filter.mask, filter.mask_bits, self_shred_version)
                 .filter(pred)
                 .map(|entry| entry.value.clone())
                 .take(output_size_limit.load(Ordering::Relaxed).max(0) as usize)
@@ -668,13 +670,12 @@ pub(crate) mod tests {
         rand::{seq::SliceRandom, SeedableRng},
         rand_chacha::ChaChaRng,
         rayon::ThreadPoolBuilder,
+        solana_hash::HASH_BYTES,
+        solana_keypair::keypair_from_seed,
+        solana_packet::PACKET_DATA_SIZE,
         solana_perf::test_tx::new_test_vote_tx,
-        solana_sdk::{
-            hash::{hash, HASH_BYTES},
-            packet::PACKET_DATA_SIZE,
-            signer::keypair::keypair_from_seed,
-            timing::timestamp,
-        },
+        solana_sha256_hasher::hash,
+        solana_time_utils::timestamp,
         std::{
             net::{IpAddr, Ipv6Addr},
             time::Instant,
@@ -783,7 +784,7 @@ pub(crate) mod tests {
         );
         let hash_values: Vec<_> = repeat_with(|| {
             let buf: [u8; 32] = rng.gen();
-            solana_sdk::hash::hashv(&[&buf])
+            solana_sha256_hasher::hashv(&[&buf])
         })
         .take(1024)
         .collect();
@@ -1120,6 +1121,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            0,        // self_shred_version
             &GossipStats::default(),
         );
 
@@ -1144,6 +1146,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            0,        // self_shred_version
             &GossipStats::default(),
         );
         assert_eq!(rsp[0].len(), 0);
@@ -1170,6 +1173,7 @@ pub(crate) mod tests {
             usize::MAX, // output_size_limit
             now,
             |_| true, // should_retain_crds_value
+            0,        // self_shred_version
             &GossipStats::default(),
         );
         assert_eq!(rsp.len(), 2 * MIN_NUM_BLOOM_FILTERS);
@@ -1263,6 +1267,7 @@ pub(crate) mod tests {
                 usize::MAX, // output_size_limit
                 0,          // now
                 |_| true,   // should_retain_crds_value
+                0,          // self_shred_version
                 &GossipStats::default(),
             );
             // if there is a false positive this is empty

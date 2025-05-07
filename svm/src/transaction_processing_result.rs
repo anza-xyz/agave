@@ -39,10 +39,7 @@ impl TransactionProcessingResultExtensions for TransactionProcessingResult {
     }
 
     fn processed_transaction(&self) -> Option<&ProcessedTransaction> {
-        match self {
-            Ok(processed_tx) => Some(processed_tx),
-            Err(_) => None,
-        }
+        self.as_ref().ok()
     }
 
     fn flattened_result(&self) -> TransactionResult<()> {

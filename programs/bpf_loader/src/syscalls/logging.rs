@@ -13,7 +13,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .syscall_base_cost
             .max(len);
         consume_compute_meter(invoke_context, cost)?;
@@ -44,7 +44,7 @@ declare_builtin_function!(
         arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let cost = invoke_context.get_compute_budget().log_64_units;
+        let cost = invoke_context.get_execution_cost().log_64_units;
         consume_compute_meter(invoke_context, cost)?;
 
         stable_log::program_log(
@@ -67,7 +67,7 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let cost = invoke_context.get_compute_budget().syscall_base_cost;
+        let cost = invoke_context.get_execution_cost().syscall_base_cost;
         consume_compute_meter(invoke_context, cost)?;
 
         ic_logger_msg!(
@@ -91,7 +91,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let cost = invoke_context.get_compute_budget().log_pubkey_units;
+        let cost = invoke_context.get_execution_cost().log_pubkey_units;
         consume_compute_meter(invoke_context, cost)?;
 
         let pubkey = translate_type::<Pubkey>(
@@ -116,9 +116,9 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         let untranslated_fields = translate_slice_of_slices::<u8>(
             memory_mapping,
@@ -129,7 +129,7 @@ declare_builtin_function!(
 
         consume_compute_meter(
             invoke_context,
-            budget
+            execution_cost
                 .syscall_base_cost
                 .saturating_mul(untranslated_fields.len() as u64),
         )?;

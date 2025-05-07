@@ -12,8 +12,8 @@ edition = { workspace = true }
 [dependencies]
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
+http = { workspace = true }
 log = { workspace = true }
-reqwest = { workspace = true, features = ["blocking", "brotli", "deflate", "gzip", "rustls-tls", "json"] }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }

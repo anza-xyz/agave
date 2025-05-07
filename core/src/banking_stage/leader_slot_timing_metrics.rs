@@ -1,11 +1,10 @@
 use {
-    solana_poh::poh_recorder::RecordTransactionsTimings, solana_sdk::clock::Slot,
+    solana_poh::transaction_recorder::RecordTransactionsTimings, solana_sdk::clock::Slot,
     solana_timings::ExecuteTimings, std::time::Instant,
 };
 
 #[derive(Default, Debug)]
 pub struct LeaderExecuteAndCommitTimings {
-    pub collect_balances_us: u64,
     pub load_execute_us: u64,
     pub freeze_lock_us: u64,
     pub record_us: u64,
@@ -17,7 +16,6 @@ pub struct LeaderExecuteAndCommitTimings {
 
 impl LeaderExecuteAndCommitTimings {
     pub fn accumulate(&mut self, other: &LeaderExecuteAndCommitTimings) {
-        self.collect_balances_us += other.collect_balances_us;
         self.load_execute_us += other.load_execute_us;
         self.freeze_lock_us += other.freeze_lock_us;
         self.record_us += other.record_us;
@@ -28,12 +26,10 @@ impl LeaderExecuteAndCommitTimings {
         self.execute_timings.accumulate(&other.execute_timings);
     }
 
-    pub fn report(&self, id: &str, slot: Slot) {
+    pub fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_execute_and_commit_timings",
-            "id" => id,
+            "banking_stage-leader_slot_vote_execute_and_commit_timings",
             ("slot", slot as i64, i64),
-            ("collect_balances_us", self.collect_balances_us as i64, i64),
             ("load_execute_us", self.load_execute_us as i64, i64),
             ("freeze_lock_us", self.freeze_lock_us as i64, i64),
             ("record_us", self.record_us as i64, i64),
@@ -46,13 +42,13 @@ impl LeaderExecuteAndCommitTimings {
         );
 
         datapoint_info!(
-            "banking_stage-leader_slot_record_timings",
-            "id" => id,
+            "banking_stage-leader_slot_vote_record_timings",
             ("slot", slot as i64, i64),
             (
                 "processing_results_to_transactions_us",
                 self.record_transactions_timings
-                    .processing_results_to_transactions_us.0 as i64,
+                    .processing_results_to_transactions_us
+                    .0 as i64,
                 i64
             ),
             (
@@ -91,12 +87,12 @@ impl LeaderSlotTimingMetrics {
         }
     }
 
-    pub(crate) fn report(&self, id: &str, slot: Slot) {
-        self.outer_loop_timings.report(id, slot);
-        self.process_buffered_packets_timings.report(id, slot);
-        self.consume_buffered_packets_timings.report(id, slot);
-        self.process_packets_timings.report(id, slot);
-        self.execute_and_commit_timings.report(id, slot);
+    pub(crate) fn report(&self, slot: Slot) {
+        self.outer_loop_timings.report(slot);
+        self.process_buffered_packets_timings.report(slot);
+        self.consume_buffered_packets_timings.report(slot);
+        self.process_packets_timings.report(slot);
+        self.execute_and_commit_timings.report(slot);
     }
 
     pub(crate) fn mark_slot_end_detected(&mut self) {
@@ -143,10 +139,9 @@ impl OuterLoopTimings {
             self.bank_detected_time.elapsed().as_micros() as u64;
     }
 
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_loop_timings",
-            "id" => id,
+            "banking_stage-leader_slot_vote_loop_timings",
             ("slot", slot as i64, i64),
             (
                 "bank_detected_to_slot_end_detected_us",
@@ -182,14 +177,11 @@ impl OuterLoopTimings {
 pub(crate) struct ProcessBufferedPacketsTimings {
     pub make_decision_us: u64,
     pub consume_buffered_packets_us: u64,
-    pub forward_us: u64,
-    pub forward_and_hold_us: u64,
 }
 impl ProcessBufferedPacketsTimings {
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_process_buffered_packets_timings",
-            "id" => id,
+            "banking_stage-leader_slot_vote_process_buffered_packets_timings",
             ("slot", slot as i64, i64),
             ("make_decision_us", self.make_decision_us as i64, i64),
             (
@@ -197,8 +189,6 @@ impl ProcessBufferedPacketsTimings {
                 self.consume_buffered_packets_us as i64,
                 i64
             ),
-            ("forward_us", self.forward_us as i64, i64),
-            ("forward_and_hold_us", self.forward_and_hold_us as i64, i64),
         );
     }
 }
@@ -210,10 +200,9 @@ pub(crate) struct ConsumeBufferedPacketsTimings {
 }
 
 impl ConsumeBufferedPacketsTimings {
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_consume_buffered_packets_timings",
-            "id" => id,
+            "banking_stage-leader_slot_vote_consume_buffered_packets_timings",
             ("slot", slot as i64, i64),
             (
                 "process_packets_transactions_us",
@@ -242,10 +231,9 @@ pub(crate) struct ProcessPacketsTimings {
 }
 
 impl ProcessPacketsTimings {
-    fn report(&self, id: &str, slot: Slot) {
+    fn report(&self, slot: Slot) {
         datapoint_info!(
-            "banking_stage-leader_slot_process_packets_timings",
-            "id" => id,
+            "banking_stage-leader_slot_vote_process_packets_timings",
             ("slot", slot as i64, i64),
             (
                 "transactions_from_packets_us",

@@ -22,10 +22,11 @@
 
 use {
     crate::bank::Bank,
+    assert_matches::assert_matches,
     log::*,
+    solana_clock::Slot,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sdk::{
-        clock::Slot,
         hash::Hash,
         transaction::{Result, SanitizedTransaction, TransactionError},
     },
@@ -212,6 +213,17 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// `ResultWithTimings` internally until it's `wait_for_termination()`-ed to collect the result
     /// later.
     fn pause_for_recent_blockhash(&mut self);
+
+    /// Unpause a block production scheduler, immediately after it's taken from the scheduler pool.
+    ///
+    /// This is rather a special-purposed method. Such a scheduler is initially paused due to a
+    /// race condition between the poh thread and handler threads. So, it needs to be unpaused in
+    /// order to start processing transactions by calling this.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a block verification scheduler.
+    fn unpause_after_taken(&self);
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
@@ -235,43 +247,55 @@ pub type SchedulerId = u64;
 /// expected to be used by a particular scheduler only for that duration of the time and to be
 /// disposed by the scheduler. Then, the scheduler may work on different banks with new
 /// `SchedulingContext`s.
+///
+/// There's a special construction only used for scheduler preallocation, which has no bank. Panics
+/// will be triggered when tried to be used normally across code-base.
 #[derive(Clone, Debug)]
 pub struct SchedulingContext {
     mode: SchedulingMode,
-    bank: Arc<Bank>,
+    bank: Option<Arc<Bank>>,
 }
 
 impl SchedulingContext {
-    pub fn new(bank: Arc<Bank>) -> Self {
-        // mode will be configurable later
+    pub fn for_preallocation() -> Self {
         Self {
-            mode: SchedulingMode::BlockVerification,
-            bank,
+            mode: SchedulingMode::BlockProduction,
+            bank: None,
         }
     }
 
-    pub fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
-        Self { mode, bank }
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+        Self {
+            mode,
+            bank: Some(bank),
+        }
+    }
+
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    fn for_verification(bank: Arc<Bank>) -> Self {
+        Self::new_with_mode(SchedulingMode::BlockVerification, bank)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn for_production(bank: Arc<Bank>) -> Self {
-        Self {
-            mode: SchedulingMode::BlockProduction,
-            bank,
-        }
+        Self::new_with_mode(SchedulingMode::BlockProduction, bank)
+    }
+
+    pub fn is_preallocated(&self) -> bool {
+        self.bank.is_none()
     }
 
     pub fn mode(&self) -> SchedulingMode {
         self.mode
     }
 
-    pub fn bank(&self) -> &Arc<Bank> {
-        &self.bank
+    pub fn bank(&self) -> Option<&Arc<Bank>> {
+        self.bank.as_ref()
     }
 
-    pub fn slot(&self) -> Slot {
-        self.bank().slot()
+    pub fn slot(&self) -> Option<Slot> {
+        self.bank.as_ref().map(|bank| bank.slot())
     }
 }
 
@@ -424,11 +448,19 @@ pub struct BankWithSchedulerInner {
 pub type InstalledSchedulerRwLock = RwLock<SchedulerStatus>;
 
 impl BankWithScheduler {
+    /// Creates a new `BankWithScheduler` from bank and its associated scheduler.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `scheduler`'s scheduling context is unmatched to given bank or for scheduler
+    /// preallocation.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(bank: Arc<Bank>, scheduler: Option<InstalledSchedulerBox>) -> Self {
+        // Avoid the fatal situation in which bank is being associated with a scheduler associated
+        // to a different bank!
         if let Some(bank_in_context) = scheduler
             .as_ref()
-            .map(|scheduler| scheduler.context().bank())
+            .map(|scheduler| scheduler.context().bank().unwrap())
         {
             assert!(Arc::ptr_eq(&bank, bank_in_context));
         }
@@ -521,6 +553,13 @@ impl BankWithScheduler {
         self.inner.drop_scheduler();
     }
 
+    pub fn unpause_new_block_production_scheduler(&self) {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            scheduler.unpause_after_taken();
+        }
+    }
+
     pub(crate) fn wait_for_paused_scheduler(bank: &Bank, scheduler: &InstalledSchedulerRwLock) {
         let maybe_result_with_timings = BankWithSchedulerInner::wait_for_scheduler_termination(
             bank,
@@ -570,7 +609,9 @@ impl BankWithSchedulerInner {
                 let pool = pool.clone();
                 drop(scheduler);
 
-                let context = SchedulingContext::new(self.bank.clone());
+                // Schedulers can be stale only if its mode is block-verification. So,
+                // unconditional context construction for verification is okay here.
+                let context = SchedulingContext::for_verification(self.bank.clone());
                 let mut scheduler = self.scheduler.write().unwrap();
                 trace!("with_active_scheduler: {:?}", scheduler);
                 scheduler.transition_from_stale_to_active(|pool, result_with_timings| {
@@ -756,7 +797,6 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
         solana_sdk::system_transaction,
         std::sync::Mutex,
@@ -773,7 +813,7 @@ mod tests {
         mock.expect_context()
             .times(1)
             .in_sequence(&mut seq.lock().unwrap())
-            .return_const(SchedulingContext::new(bank));
+            .return_const(SchedulingContext::for_verification(bank));
 
         for wait_reason in is_dropped_flags {
             let seq_cloned = seq.clone();

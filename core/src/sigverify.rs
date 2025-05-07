@@ -13,27 +13,36 @@ use {
         sigverify_stage::{SigVerifier, SigVerifyServiceError},
     },
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    crossbeam_channel::Sender,
     solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
 };
 
 pub struct TransactionSigVerifier {
-    packet_sender: BankingPacketSender,
+    banking_stage_sender: BankingPacketSender,
+    forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
     recycler: Recycler<TxOffset>,
     recycler_out: Recycler<PinnedVec<u8>>,
     reject_non_vote: bool,
 }
 
 impl TransactionSigVerifier {
-    pub fn new_reject_non_vote(packet_sender: BankingPacketSender) -> Self {
-        let mut new_self = Self::new(packet_sender);
+    pub fn new_reject_non_vote(
+        packet_sender: BankingPacketSender,
+        forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+    ) -> Self {
+        let mut new_self = Self::new(packet_sender, forward_stage_sender);
         new_self.reject_non_vote = true;
         new_self
     }
 
-    pub fn new(packet_sender: BankingPacketSender) -> Self {
+    pub fn new(
+        banking_stage_sender: BankingPacketSender,
+        forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+    ) -> Self {
         init();
         Self {
-            packet_sender,
+            banking_stage_sender,
+            forward_stage_sender,
             recycler: Recycler::warmed(50, 4096),
             recycler_out: Recycler::warmed(50, 4096),
             reject_non_vote: false,
@@ -48,8 +57,15 @@ impl SigVerifier for TransactionSigVerifier {
         &mut self,
         packet_batches: Vec<PacketBatch>,
     ) -> Result<(), SigVerifyServiceError<Self::SendType>> {
-        self.packet_sender
-            .send(BankingPacketBatch::new(packet_batches))?;
+        let banking_packet_batch = BankingPacketBatch::new(packet_batches);
+        if let Some(forward_stage_sender) = &self.forward_stage_sender {
+            self.banking_stage_sender
+                .send(banking_packet_batch.clone())?;
+            let _ = forward_stage_sender.try_send((banking_packet_batch, self.reject_non_vote));
+        } else {
+            self.banking_stage_sender.send(banking_packet_batch)?;
+        }
+
         Ok(())
     }
 

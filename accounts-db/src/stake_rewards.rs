@@ -1,9 +1,14 @@
 //! Code for stake and vote rewards
 
 use {
-    crate::storable_accounts::{AccountForStorage, StorableAccounts},
+    crate::{
+        is_zero_lamport::IsZeroLamport,
+        storable_accounts::{AccountForStorage, StorableAccounts},
+    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::AccountSharedData, clock::Slot, reward_info::RewardInfo},
+    solana_reward_info::RewardInfo,
 };
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -20,6 +25,12 @@ impl StakeReward {
     }
 }
 
+impl IsZeroLamport for StakeReward {
+    fn is_zero_lamport(&self) -> bool {
+        self.stake_account.lamports() == 0
+    }
+}
+
 /// allow [StakeReward] to be passed to `StoreAccounts` directly without copies or vec construction
 impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
     fn account<Ret>(
@@ -29,6 +40,15 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
     ) -> Ret {
         let entry = &self.1[index];
         callback((&self.1[index].stake_pubkey, &entry.stake_account).into())
+    }
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.1[index].is_zero_lamport()
+    }
+    fn data_len(&self, index: usize) -> usize {
+        self.1[index].stake_account.data().len()
+    }
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        &self.1[index].stake_pubkey
     }
     fn slot(&self, _index: usize) -> Slot {
         // per-index slot is not unique per slot when per-account slot is not included in the source data
@@ -44,14 +64,8 @@ impl<'a> StorableAccounts<'a> for (Slot, &'a [StakeReward]) {
 
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    rand::Rng,
-    solana_sdk::{
-        account::WritableAccount,
-        rent::Rent,
-        signature::{Keypair, Signer},
-    },
-    solana_stake_program::stake_state,
-    solana_vote_program::vote_state,
+    rand::Rng, solana_account::WritableAccount, solana_keypair::Keypair, solana_rent::Rent,
+    solana_signer::Signer, solana_stake_program::stake_state, solana_vote_program::vote_state,
 };
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -86,10 +100,10 @@ impl StakeReward {
         Self {
             stake_pubkey: Pubkey::new_unique(),
             stake_reward_info: RewardInfo {
-                reward_type: solana_sdk::reward_type::RewardType::Staking,
+                reward_type: solana_reward_info::RewardType::Staking,
                 lamports: reward_lamports,
-                post_balance: 0,  /* unused atm */
-                commission: None, /* unused atm */
+                post_balance: 0,     /* unused atm */
+                commission: Some(0), /* unused but tests require some value */
             },
 
             stake_account: validator_stake_account,

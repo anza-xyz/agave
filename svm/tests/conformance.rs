@@ -3,13 +3,13 @@ use {
         mock_bank::{MockBankCallback, MockForkGraph},
         transaction_builder::SanitizedTransactionBuilder,
     },
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     lazy_static::lazy_static,
     prost::Message,
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
-    solana_compute_budget::compute_budget::ComputeBudget,
-    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_log_collector::LogCollector,
     solana_program_runtime::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
@@ -24,17 +24,14 @@ use {
         rent::Rent,
         signature::Signature,
         sysvar::{last_restart_slot, SysvarId},
-        transaction_context::{
-            ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount,
-            TransactionContext,
-        },
     },
-    solana_svm::{
-        program_loader, transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
     solana_timings::ExecuteTimings,
+    solana_transaction_context::{
+        ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+    },
     std::{
         collections::{hash_map::Entry, HashMap},
         env,
@@ -53,13 +50,13 @@ mod transaction_builder;
 const fn feature_u64(feature: &Pubkey) -> u64 {
     let feature_id = feature.to_bytes();
     feature_id[0] as u64
-        | (feature_id[1] as u64) << 8
-        | (feature_id[2] as u64) << 16
-        | (feature_id[3] as u64) << 24
-        | (feature_id[4] as u64) << 32
-        | (feature_id[5] as u64) << 40
-        | (feature_id[6] as u64) << 48
-        | (feature_id[7] as u64) << 56
+        | ((feature_id[1] as u64) << 8)
+        | ((feature_id[2] as u64) << 16)
+        | ((feature_id[3] as u64) << 24)
+        | ((feature_id[4] as u64) << 32)
+        | ((feature_id[5] as u64) << 40)
+        | ((feature_id[6] as u64) << 48)
+        | ((feature_id[7] as u64) << 56)
 }
 
 lazy_static! {
@@ -216,15 +213,20 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
 
     let transactions = vec![transaction];
 
-    let compute_budget = ComputeBudget {
+    let compute_budget = SVMTransactionExecutionBudget {
         compute_unit_limit: input.cu_avail,
-        ..ComputeBudget::default()
+        ..SVMTransactionExecutionBudget::default()
     };
 
-    let v1_environment =
-        create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
+    let v1_environment = create_program_runtime_environment_v1(
+        &feature_set.runtime_features(),
+        &compute_budget,
+        false,
+        false,
+    )
+    .unwrap();
 
-    mock_bank.override_feature_set(feature_set);
+    mock_bank.override_feature_set(feature_set.runtime_features());
 
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     let batch_processor = TransactionBatchProcessor::new(
@@ -279,7 +281,7 @@ fn execute_fixture_as_instr(
     mock_bank: &MockBankCallback,
     batch_processor: &TransactionBatchProcessor<MockForkGraph>,
     sanitized_message: &SanitizedMessage,
-    compute_budget: ComputeBudget,
+    compute_budget: SVMTransactionExecutionBudget,
     output: &InstrEffects,
     filename: OsString,
     cu_avail: u64,
@@ -354,9 +356,8 @@ fn execute_fixture_as_instr(
     let env_config = EnvironmentConfig::new(
         blockhash,
         lamports_per_signature,
-        0,
-        &|_| 0,
-        mock_bank.feature_set.clone(),
+        mock_bank,
+        &mock_bank.feature_set,
         sysvar_cache,
     );
 
@@ -366,6 +367,7 @@ fn execute_fixture_as_instr(
         env_config,
         Some(log_collector.clone()),
         compute_budget,
+        SVMTransactionExecutionCost::default(),
     );
 
     let mut instruction_accounts: Vec<InstructionAccount> =

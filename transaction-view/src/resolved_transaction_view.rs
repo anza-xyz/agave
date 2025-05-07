@@ -183,6 +183,10 @@ impl<D: TransactionData> SVMMessage for ResolvedTransactionView<D> {
         self.view.program_instructions_iter()
     }
 
+    fn static_account_keys(&self) -> &[Pubkey] {
+        self.view.static_account_keys()
+    }
+
     fn account_keys(&self) -> AccountKeys {
         AccountKeys::new(
             self.view.static_account_keys(),

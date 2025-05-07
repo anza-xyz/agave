@@ -5,7 +5,7 @@ use {
     bincode::deserialize,
     serde_json::{json, Map, Value},
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
-    solana_program::stake::instruction::StakeInstruction,
+    solana_stake_interface::instruction::StakeInstruction,
 };
 
 pub fn parse_stake(
@@ -333,13 +333,13 @@ mod test {
         super::*,
         solana_instruction::Instruction,
         solana_message::Message,
-        solana_program::stake::{
+        solana_pubkey::Pubkey,
+        solana_sdk_ids::sysvar,
+        solana_stake_interface::{
             config,
             instruction::{self, LockupArgs},
             state::{Authorized, Lockup, StakeAuthorize},
         },
-        solana_pubkey::Pubkey,
-        solana_sdk_ids::sysvar,
         std::iter::repeat_with,
     };
 

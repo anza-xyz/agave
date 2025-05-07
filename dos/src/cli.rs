@@ -45,6 +45,13 @@ pub struct DosClientParameters {
     #[clap(long, help = "Just use entrypoint address directly")]
     pub skip_gossip: bool,
 
+    #[clap(
+        long,
+        conflicts_with("skip-gossip"),
+        help = "The shred version to use for gossip discovery. If not provided, will be discovered from the network"
+    )]
+    pub shred_version: Option<u16>,
+
     #[clap(long, help = "Allow contacting private ip addresses")]
     pub allow_private_addr: bool,
 
@@ -214,6 +221,8 @@ mod tests {
             "get-account-info",
             "--data-input",
             &pubkey_str,
+            "--shred-version",
+            "42",
         ])
         .unwrap();
         assert_eq!(
@@ -225,6 +234,7 @@ mod tests {
                 data_type: DataType::GetAccountInfo,
                 data_input: Some(pubkey),
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 transaction_params: TransactionParams::default(),
                 tpu_use_quic: false,
@@ -250,6 +260,8 @@ mod tests {
             "--tpu-use-quic",
             "--send-batch-size",
             "1",
+            "--shred-version",
+            "42",
         ])
         .unwrap();
         assert_eq!(
@@ -261,6 +273,7 @@ mod tests {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -294,6 +307,8 @@ mod tests {
             "1",
             "--send-batch-size",
             "1",
+            "--shred-version",
+            "42",
         ])
         .unwrap();
         assert_eq!(
@@ -305,6 +320,7 @@ mod tests {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -331,6 +347,8 @@ mod tests {
             "transfer",
             "--num-instructions",
             "8",
+            "--shred-version",
+            "42",
         ]);
         assert!(result.is_err());
         assert_eq!(
@@ -353,6 +371,8 @@ mod tests {
             "8",
             "--send-batch-size",
             "1",
+            "--shred-version",
+            "42",
         ])
         .unwrap();
         assert_eq!(
@@ -364,6 +384,7 @@ mod tests {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -395,6 +416,8 @@ mod tests {
             "account-creation",
             "--send-batch-size",
             "1",
+            "--shred-version",
+            "42",
         ])
         .unwrap();
         assert_eq!(
@@ -406,6 +429,7 @@ mod tests {
                 data_type: DataType::Transaction,
                 data_input: None,
                 skip_gossip: false,
+                shred_version: Some(42),
                 allow_private_addr: false,
                 num_gen_threads: 1,
                 transaction_params: TransactionParams {
@@ -438,6 +462,8 @@ mod tests {
             "8",
             "--num-instructions",
             "1",
+            "--shred-version",
+            "42",
         ]);
         assert!(result.is_err());
     }

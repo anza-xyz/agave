@@ -434,9 +434,8 @@ fn check_epoch_slots_hash_against_bank_status(
         BankStatus::Frozen(bank_frozen_hash) => {
             // The epoch slots hash does not match our frozen hash.
             warn!(
-                "EpochSlots sample returned slot {} with hash {}, but our version
-                has hash {:?}",
-                slot, epoch_slots_frozen_hash, bank_frozen_hash
+                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, \
+                 but our version has hash {bank_frozen_hash:?}",
             );
             if !is_popular_pruned {
                 // If the slot is not already pruned notify fork choice to mark as invalid
@@ -446,8 +445,8 @@ fn check_epoch_slots_hash_against_bank_status(
         BankStatus::Dead => {
             // Cluster sample found a hash for our dead slot, we must have the wrong version
             warn!(
-                "EpochSlots sample returned slot {} with hash {}, but we marked slot dead",
-                slot, epoch_slots_frozen_hash
+                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, \
+                 but we marked slot dead",
             );
         }
         BankStatus::Unprocessed => {
@@ -456,8 +455,8 @@ fn check_epoch_slots_hash_against_bank_status(
             assert!(is_popular_pruned);
             // The cluster sample found the troublesome slot which caused this fork to be pruned
             warn!(
-                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, but \
-                 we have pruned it due to incorrect ancestry"
+                "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, \
+                 but we have pruned it due to incorrect ancestry"
             );
         }
     }
@@ -644,9 +643,8 @@ fn on_epoch_slots_frozen(
         if let Some(duplicate_confirmed_hash) = duplicate_confirmed_hash {
             if epoch_slots_frozen_hash != duplicate_confirmed_hash {
                 warn!(
-                    "EpochSlots sample returned slot {} with hash {}, but we already saw \
-                     duplicate confirmation on hash: {:?}",
-                    slot, epoch_slots_frozen_hash, duplicate_confirmed_hash
+                    "EpochSlots sample returned slot {slot} with hash {epoch_slots_frozen_hash}, \
+                     but we already saw duplicate confirmation on hash: {duplicate_confirmed_hash:?}",
                 );
             }
             return vec![];
@@ -778,9 +776,9 @@ fn get_duplicate_confirmed_hash(
         (Some(local_duplicate_confirmed_hash), Some(duplicate_confirmed_hash)) => {
             if local_duplicate_confirmed_hash != duplicate_confirmed_hash {
                 error!(
-                    "For slot {}, the gossip duplicate confirmed hash {}, is not equal
-                to the confirmed hash we replayed: {}",
-                    slot, duplicate_confirmed_hash, local_duplicate_confirmed_hash
+                    "For slot {slot}, the gossip duplicate confirmed hash: \
+                     {duplicate_confirmed_hash} is not equal to the confirmed hash we replayed: \
+                     {local_duplicate_confirmed_hash}",
                 );
             }
             Some(local_duplicate_confirmed_hash)

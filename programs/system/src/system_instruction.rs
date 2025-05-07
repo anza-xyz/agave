@@ -1129,9 +1129,9 @@ mod test {
         assert_matches!(
             verify_nonce_account(
                 &transaction_context
-                    .get_account_at_index(NONCE_ACCOUNT_INDEX)
-                    .unwrap()
-                    .borrow(),
+                    .accounts()
+                    .try_borrow(NONCE_ACCOUNT_INDEX)
+                    .unwrap(),
                 DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash)
                     .as_hash(),
             ),
@@ -1151,9 +1151,9 @@ mod test {
         assert_eq!(
             verify_nonce_account(
                 &transaction_context
-                    .get_account_at_index(NONCE_ACCOUNT_INDEX)
-                    .unwrap()
-                    .borrow(),
+                    .accounts()
+                    .try_borrow(NONCE_ACCOUNT_INDEX)
+                    .unwrap(),
                 &Hash::default(),
             ),
             None
@@ -1191,9 +1191,9 @@ mod test {
         assert_eq!(
             verify_nonce_account(
                 &transaction_context
-                    .get_account_at_index(NONCE_ACCOUNT_INDEX)
-                    .unwrap()
-                    .borrow(),
+                    .accounts()
+                    .try_borrow(NONCE_ACCOUNT_INDEX)
+                    .unwrap(),
                 DurableNonce::from_blockhash(&invoke_context.environment_config.blockhash)
                     .as_hash(),
             ),

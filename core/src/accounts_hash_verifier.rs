@@ -15,6 +15,7 @@ use {
     solana_runtime::{
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_package::{
             self, AccountsHashAlgorithm, AccountsPackage, AccountsPackageKind, SnapshotKind,
             SnapshotPackage,
@@ -43,7 +44,7 @@ impl AccountsHashVerifier {
         accounts_package_receiver: Receiver<AccountsPackage>,
         pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
         exit: Arc<AtomicBool>,
-        snapshot_config: SnapshotConfig,
+        snapshot_controller: Arc<SnapshotController>,
     ) -> Self {
         // If there are no accounts packages to process, limit how often we re-check
         const LOOP_LIMITER: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
@@ -71,10 +72,11 @@ impl AccountsHashVerifier {
                     info!("handling accounts package: {accounts_package:?}");
                     let enqueued_time = accounts_package.enqueued.elapsed();
 
+                    let snapshot_config = snapshot_controller.snapshot_config();
                     let (result, handling_time_us) = measure_us!(Self::process_accounts_package(
                         accounts_package,
                         &pending_snapshot_packages,
-                        &snapshot_config,
+                        snapshot_config,
                     ));
                     if let Err(err) = result {
                         error!(
@@ -226,7 +228,6 @@ impl AccountsHashVerifier {
         Self::submit_for_packaging(
             accounts_package,
             pending_snapshot_packages,
-            snapshot_config,
             merkle_or_lattice_accounts_hash,
             bank_incremental_snapshot_persistence,
         );
@@ -259,7 +260,6 @@ impl AccountsHashVerifier {
         }
 
         let accounts_hash_calculation_kind = match accounts_package.package_kind {
-            AccountsPackageKind::AccountsHashVerifier => CalcAccountsHashKind::Full,
             AccountsPackageKind::EpochAccountsHash => CalcAccountsHashKind::Full,
             AccountsPackageKind::Snapshot(snapshot_kind) => match snapshot_kind {
                 SnapshotKind::FullSnapshot => CalcAccountsHashKind::Full,
@@ -489,16 +489,13 @@ impl AccountsHashVerifier {
     fn submit_for_packaging(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        snapshot_config: &SnapshotConfig,
         merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) {
-        if !snapshot_config.should_generate_snapshots()
-            || !matches!(
-                accounts_package.package_kind,
-                AccountsPackageKind::Snapshot(_)
-            )
-        {
+        if !matches!(
+            accounts_package.package_kind,
+            AccountsPackageKind::Snapshot(_)
+        ) {
             return;
         }
 
@@ -545,9 +542,6 @@ mod tests {
             slot,
         )
     }
-    fn new_ahv(slot: Slot) -> AccountsPackage {
-        new(AccountsPackageKind::AccountsHashVerifier, slot)
-    }
 
     /// Ensure that unhandled accounts packages are properly re-enqueued or dropped
     ///
@@ -560,27 +554,15 @@ mod tests {
 
         // Populate the channel so that re-enqueueing and dropping will be tested
         let mut accounts_packages = [
-            new_ahv(99),
             new_fss(100), // skipped, since there's another full snapshot with a higher slot
-            new_ahv(101),
             new_iss(110, 100),
-            new_ahv(111),
             new_eah(200), // <-- handle 1st
-            new_ahv(201),
             new_iss(210, 100),
-            new_ahv(211),
             new_fss(300),
-            new_ahv(301),
             new_iss(310, 300),
-            new_ahv(311),
             new_fss(400), // <-- handle 2nd
-            new_ahv(401),
             new_iss(410, 400),
-            new_ahv(411),
             new_iss(420, 400), // <-- handle 3rd
-            new_ahv(421),
-            new_ahv(422),
-            new_ahv(423), // <-- handle 4th
         ];
         // Shuffle the accounts packages to simulate receiving new accounts packages from ABS
         // simultaneously as AHV is processing them.
@@ -604,7 +586,7 @@ mod tests {
             AccountsPackageKind::EpochAccountsHash
         );
         assert_eq!(account_package.slot, 200);
-        assert_eq!(num_re_enqueued_accounts_packages, 15);
+        assert_eq!(num_re_enqueued_accounts_packages, 6);
 
         // The Full Snapshot from slot 400 is handled 2nd
         // (the older full snapshot from slot 300 is skipped and dropped)
@@ -622,7 +604,7 @@ mod tests {
             AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
         );
         assert_eq!(account_package.slot, 400);
-        assert_eq!(num_re_enqueued_accounts_packages, 7);
+        assert_eq!(num_re_enqueued_accounts_packages, 2);
 
         // The Incremental Snapshot from slot 420 is handled 3rd
         // (the older incremental snapshot from slot 410 is skipped and dropped)
@@ -640,24 +622,6 @@ mod tests {
             AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(400))
         );
         assert_eq!(account_package.slot, 420);
-        assert_eq!(num_re_enqueued_accounts_packages, 3);
-
-        // The Accounts Hash Verifier from slot 423 is handled 4th
-        // (the older accounts hash verifiers from slot 421 and 422 are skipped and dropped)
-        let (
-            account_package,
-            _num_outstanding_accounts_packages,
-            num_re_enqueued_accounts_packages,
-        ) = AccountsHashVerifier::get_next_accounts_package(
-            &accounts_package_sender,
-            &accounts_package_receiver,
-        )
-        .unwrap();
-        assert_eq!(
-            account_package.package_kind,
-            AccountsPackageKind::AccountsHashVerifier
-        );
-        assert_eq!(account_package.slot, 423);
         assert_eq!(num_re_enqueued_accounts_packages, 0);
 
         // And now the accounts package channel is empty!
@@ -678,18 +642,11 @@ mod tests {
 
         // Populate the channel so that re-enqueueing and dropping will be tested
         let mut accounts_packages = [
-            new_ahv(99),
             new_fss(100), // <-- handle 1st
-            new_ahv(101),
             new_iss(110, 100),
-            new_ahv(111),
             new_eah(200), // <-- handle 2nd
-            new_ahv(201),
             new_iss(210, 100),
-            new_ahv(211),
             new_iss(220, 100), // <-- handle 3rd
-            new_ahv(221),
-            new_ahv(222), // <-- handle 4th
         ];
         // Shuffle the accounts packages to simulate receiving new accounts packages from ABS
         // simultaneously as AHV is processing them.
@@ -713,7 +670,7 @@ mod tests {
             AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)
         );
         assert_eq!(account_package.slot, 100);
-        assert_eq!(num_re_enqueued_accounts_packages, 10);
+        assert_eq!(num_re_enqueued_accounts_packages, 4);
 
         // The EAH is handled 2nd
         let (
@@ -730,7 +687,7 @@ mod tests {
             AccountsPackageKind::EpochAccountsHash
         );
         assert_eq!(account_package.slot, 200);
-        assert_eq!(num_re_enqueued_accounts_packages, 6);
+        assert_eq!(num_re_enqueued_accounts_packages, 2);
 
         // The Incremental Snapshot from slot 220 is handled 3rd
         // (the older incremental snapshot from slot 210 is skipped and dropped)
@@ -748,24 +705,6 @@ mod tests {
             AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(100))
         );
         assert_eq!(account_package.slot, 220);
-        assert_eq!(num_re_enqueued_accounts_packages, 2);
-
-        // The Accounts Hash Verifier from slot 222 is handled 4th
-        // (the older accounts hash verifier from slot 221 is skipped and dropped)
-        let (
-            account_package,
-            _num_outstanding_accounts_packages,
-            num_re_enqueued_accounts_packages,
-        ) = AccountsHashVerifier::get_next_accounts_package(
-            &accounts_package_sender,
-            &accounts_package_receiver,
-        )
-        .unwrap();
-        assert_eq!(
-            account_package.package_kind,
-            AccountsPackageKind::AccountsHashVerifier
-        );
-        assert_eq!(account_package.slot, 222);
         assert_eq!(num_re_enqueued_accounts_packages, 0);
 
         // And now the accounts package channel is empty!

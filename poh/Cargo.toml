@@ -13,6 +13,7 @@ edition = { workspace = true }
 core_affinity = { workspace = true }
 crossbeam-channel = { workspace = true }
 log = { workspace = true }
+qualifier_attr = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }

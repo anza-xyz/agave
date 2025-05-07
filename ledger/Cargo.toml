@@ -10,6 +10,9 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
+agave-reserved-account-keys = { workspace = true }
+anyhow = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 bitflags = { workspace = true, features = ["serde"] }
@@ -30,7 +33,6 @@ lru = { workspace = true }
 mockall = { workspace = true }
 num_cpus = { workspace = true }
 num_enum = { workspace = true }
-proptest = { workspace = true }
 prost = { workspace = true }
 qualifier_attr = { workspace = true }
 rand = { workspace = true }
@@ -46,7 +48,6 @@ solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
@@ -55,6 +56,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
@@ -65,14 +67,14 @@ solana-sdk = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-storage-proto = { workspace = true }
+solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
-spl-token = { workspace = true, features = ["no-entrypoint"] }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
@@ -93,9 +95,17 @@ features = ["lz4"]
 [dev-dependencies]
 bs58 = { workspace = true }
 criterion = { workspace = true }
+proptest = { workspace = true }
 solana-account-decoder = { workspace = true }
+# See order-crates-for-publishing.py for using this unusual `path = "."`
+solana-ledger = { path = ".", features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
+solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
+solana-program-option = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
+spl-generic-token = { workspace = true }
 spl-pod = { workspace = true }
 test-case = { workspace = true }
 
@@ -110,9 +120,6 @@ frozen-abi = [
 [lib]
 crate-type = ["lib"]
 name = "solana_ledger"
-
-[[bench]]
-name = "sigverify_shreds"
 
 [[bench]]
 name = "blockstore"

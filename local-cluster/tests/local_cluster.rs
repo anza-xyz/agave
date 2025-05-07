@@ -20,7 +20,7 @@ use {
     },
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
-    solana_gossip::gossip_service::discover_cluster,
+    solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
@@ -252,7 +252,6 @@ fn test_local_cluster_signature_subscribe() {
         &[&cluster.funding_keypair],
         &mut transaction,
         5,
-        0,
     )
     .unwrap();
 
@@ -338,10 +337,10 @@ fn test_forwarding() {
     };
 
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &cluster.entry_point_info.gossip().unwrap(),
         2,
+        cluster.entry_point_info.shred_version(),
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -422,9 +421,10 @@ fn test_mainnet_beta_cluster_type() {
         ..ClusterConfig::default()
     };
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &cluster.entry_point_info.gossip().unwrap(),
         1,
+        cluster.entry_point_info.shred_version(),
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -436,7 +436,6 @@ fn test_mainnet_beta_cluster_type() {
 
     // Programs that are available at epoch 0
     for program_id in [
-        &solana_config_program::id(),
         &solana_sdk::system_program::id(),
         &solana_sdk::stake::program::id(),
         &solana_vote_program::id(),
@@ -555,21 +554,18 @@ fn test_snapshot_download() {
 fn test_incremental_snapshot_download() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
-    let accounts_hash_interval = 3;
-    let incremental_snapshot_interval = accounts_hash_interval * 3;
+    let incremental_snapshot_interval = 9;
     let full_snapshot_interval = incremental_snapshot_interval * 3;
     let num_account_paths = 3;
 
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
     let validator_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
 
@@ -594,10 +590,10 @@ fn test_incremental_snapshot_download() {
         .snapshot_config
         .incremental_snapshot_archives_dir;
 
-    debug!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
-           full_snapshot_interval,
-           incremental_snapshot_interval,
-           accounts_hash_interval);
+    debug!(
+        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}",
+        full_snapshot_interval, incremental_snapshot_interval,
+    );
     debug!(
         "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
         leader_snapshot_test_config
@@ -729,21 +725,18 @@ fn test_incremental_snapshot_download() {
 fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_startup() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // If these intervals change, also make sure to change the loop timers accordingly.
-    let accounts_hash_interval = 3;
-    let incremental_snapshot_interval = accounts_hash_interval * 3;
+    let incremental_snapshot_interval = 9;
     let full_snapshot_interval = incremental_snapshot_interval * 5;
 
     let num_account_paths = 3;
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
     let mut validator_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
     // The test has asserts that require the validator always boots from snapshot archives
@@ -762,10 +755,10 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
-    info!("snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}\n\taccounts hash interval: {}",
-           full_snapshot_interval,
-           incremental_snapshot_interval,
-           accounts_hash_interval);
+    info!(
+        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}",
+        full_snapshot_interval, incremental_snapshot_interval,
+    );
     debug!(
         "leader config:\n\tbank snapshots dir: {}\n\tfull snapshot archives dir: {}\n\tincremental snapshot archives dir: {}",
         leader_snapshot_test_config
@@ -1183,7 +1176,6 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let final_validator_snapshot_test_config = SnapshotValidatorConfig::new(
         full_snapshot_interval,
         incremental_snapshot_interval,
-        accounts_hash_interval,
         num_account_paths,
     );
 
@@ -1253,12 +1245,10 @@ fn test_snapshot_restart_tower() {
         .unwrap();
     let validator_info = cluster.exit_node(&validator_id);
 
-    // Get slot after which this was generated
     let full_snapshot_archives_dir = &leader_snapshot_test_config
         .validator_config
         .snapshot_config
         .full_snapshot_archives_dir;
-
     let full_snapshot_archive_info = cluster.wait_for_next_full_snapshot(
         full_snapshot_archives_dir,
         Some(Duration::from_secs(5 * 60)),
@@ -1286,7 +1276,7 @@ fn test_snapshot_restart_tower() {
     cluster_tests::spend_and_verify_all_nodes(
         restarted_node_info,
         &cluster.funding_keypair,
-        1,
+        2,
         HashSet::new(),
         SocketAddrSpace::Unspecified,
         &cluster.connection_cache,
@@ -1350,9 +1340,10 @@ fn test_snapshots_blockstore_floor() {
     let slot_floor = archive_info.slot();
 
     // Start up a new node from a snapshot
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &cluster.entry_point_info.gossip().unwrap(),
         1,
+        cluster.entry_point_info.shred_version(),
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -1761,8 +1752,8 @@ fn test_optimistic_confirmation_violation_detection() {
 
         // Wait for this node to make a fork that doesn't include the `optimistically_confirmed_slot``
         info!(
-            "Looking for slot not equal to {optimistically_confirmed_slot}
-            with parent {optimistically_confirmed_slot_parent}"
+            "Looking for slot not equal to {optimistically_confirmed_slot} \
+             with parent {optimistically_confirmed_slot_parent}"
         );
         let start = Instant::now();
         let new_fork_slot;
@@ -2259,6 +2250,10 @@ fn test_hard_fork_invalidates_tower() {
         &cluster.lock().unwrap().genesis_config.hash(),
         Some(&hard_forks),
     );
+    cluster
+        .lock()
+        .unwrap()
+        .set_shred_version(expected_shred_version);
 
     validator_a_info
         .config
@@ -2330,7 +2325,7 @@ fn create_snapshot_to_hard_fork(
                 .unwrap()
                 .0,
         ],
-        Some(&snapshot_config),
+        &snapshot_config,
         process_options,
         None,
         None,
@@ -2852,10 +2847,9 @@ fn test_oc_bad_signatures() {
                 );
                 LocalCluster::send_transaction_with_retries(
                     &client,
-                    &[&cluster_funding_keypair],
+                    &[&cluster_funding_keypair, &bad_authorized_signer_keypair],
                     &mut vote_tx,
                     5,
-                    0,
                 )
                 .unwrap();
 
@@ -2866,6 +2860,7 @@ fn test_oc_bad_signatures() {
         cluster.validators.len().saturating_sub(1),
         0,
         0,
+        cluster.entry_point_info.shred_version(),
     );
 
     let (mut block_subscribe_client, receiver) = PubsubClient::block_subscribe(
@@ -3291,13 +3286,15 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     let c_validator_to_slots = vec![(validator_b_pubkey, DEFAULT_SLOTS_PER_EPOCH as usize)];
 
     let c_leader_schedule = create_custom_leader_schedule(c_validator_to_slots.into_iter());
-    let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
+    let leader_schedule = Arc::new(create_custom_leader_schedule(
+        validator_to_slots.into_iter(),
+    ));
     for slot in 0..=validator_b_last_leader_slot {
         assert_eq!(leader_schedule[slot], validator_b_pubkey);
     }
 
     default_config.fixed_leader_schedule = Some(FixedSchedule {
-        leader_schedule: Arc::new(leader_schedule.clone()),
+        leader_schedule: leader_schedule.clone(),
     });
     let mut validator_configs =
         make_identical_validator_configs(&default_config, node_stakes.len());
@@ -3419,9 +3416,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     info!("Restart validator C again!!!");
     validator_c_info.config.voting_disabled = false;
     // C should now produce blocks
-    validator_c_info.config.fixed_leader_schedule = Some(FixedSchedule {
-        leader_schedule: Arc::new(leader_schedule),
-    });
+    validator_c_info.config.fixed_leader_schedule = Some(FixedSchedule { leader_schedule });
     cluster.restart_node(
         &validator_c_pubkey,
         validator_c_info,
@@ -3435,13 +3430,9 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "C failed to create a fork past {} in {} seconds
-            last_vote {},
-            votes_on_c_fork: {:?}",
-            base_slot,
+            "C failed to create a fork past {base_slot} in {} seconds, \
+             last_vote {last_vote}, votes_on_c_fork: {votes_on_c_fork:?}",
             elapsed.as_secs(),
-            last_vote,
-            votes_on_c_fork,
         );
         sleep(Duration::from_millis(100));
 
@@ -3458,7 +3449,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         }
     }
     assert!(!votes_on_c_fork.is_empty());
-    info!("Collected validator C's votes: {:?}", votes_on_c_fork);
+    info!("Collected validator C's votes: {votes_on_c_fork:?}");
 
     // Step 4:
     // verify whether there was violation or not
@@ -4076,8 +4067,8 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                         None,
                     );
                     gossip_vote_index += 1;
-                    gossip_vote_index %= MAX_LOCKOUT_HISTORY;
-                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index as u8)
+                    gossip_vote_index %= MAX_VOTES;
+                    cluster_info.push_vote_at_index(vote_tx, gossip_vote_index);
                 }
             }
         },
@@ -4085,6 +4076,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
         cluster.validators.len().saturating_sub(1),
         5000, // Refresh if 5 seconds of inactivity
         5,    // Refresh the past 5 votes
+        cluster.entry_point_info.shred_version(),
     );
 
     // 4) Check that the cluster is making progress
@@ -4348,9 +4340,10 @@ fn test_listener_startup() {
         ..ClusterConfig::default()
     };
     let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &cluster.entry_point_info.gossip().unwrap(),
         4,
+        cluster.entry_point_info.shred_version(),
         SocketAddrSpace::Unspecified,
     )
     .unwrap();
@@ -4827,11 +4820,9 @@ fn test_duplicate_with_pruned_ancestor() {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "Majority validator failed to vote on a slot >= {} in {} secs,
-            majority validator last vote: {}",
-            fork_slot,
+            "Majority validator failed to vote on a slot >= {fork_slot} in {} secs, \
+             majority validator last vote: {last_majority_vote}",
             elapsed.as_secs(),
-            last_majority_vote,
         );
         sleep(Duration::from_millis(100));
 
@@ -4843,7 +4834,7 @@ fn test_duplicate_with_pruned_ancestor() {
         }
     }
 
-    info!("Killing majority validator, waiting for minority fork to reach a depth of at least 15",);
+    info!("Killing majority validator, waiting for minority fork to reach a depth of at least 15");
     let mut majority_validator_info = cluster.exit_node(&majority_pubkey);
 
     let now = Instant::now();
@@ -4852,11 +4843,9 @@ fn test_duplicate_with_pruned_ancestor() {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(30),
-            "Minority validator failed to create a fork of depth >= {} in {} secs,
-            last_minority_vote: {}",
-            15,
+            "Minority validator failed to create a fork of depth >= {} in 15 secs, \
+             last_minority_vote: {last_minority_vote}",
             elapsed.as_secs(),
-            last_minority_vote,
         );
 
         if let Some((last_vote, _)) = last_vote_in_tower(&minority_ledger_path, &minority_pubkey) {
@@ -4904,11 +4893,10 @@ fn test_duplicate_with_pruned_ancestor() {
         let elapsed = now.elapsed();
         assert!(
             elapsed <= Duration::from_secs(60),
-            "Majority validator failed to root something > {} in {} secs,
-            last majority validator vote: {},",
+            "Majority validator failed to root something > {} in {} secs, \
+             last majority validator vote: {last_majority_vote}",
             fork_slot + fork_length + majority_fork_buffer,
             elapsed.as_secs(),
-            last_majority_vote,
         );
         sleep(Duration::from_millis(100));
 
@@ -4921,8 +4909,8 @@ fn test_duplicate_with_pruned_ancestor() {
         wait_for_last_vote_in_tower_to_land_in_ledger(&majority_ledger_path, &majority_pubkey)
             .unwrap();
     info!(
-        "Creating duplicate block built off of pruned branch for our node.
-           Last majority vote {last_majority_vote}, Last minority vote {last_minority_vote}"
+        "Creating duplicate block built off of pruned branch for our node. \
+         Last majority vote {last_majority_vote}, Last minority vote {last_minority_vote}"
     );
     {
         {
@@ -5004,24 +4992,12 @@ fn test_boot_from_local_state() {
     const FULL_SNAPSHOT_INTERVAL: Slot = 100;
     const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
 
-    let validator1_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        2,
-    );
-    let validator2_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        4,
-    );
-    let validator3_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        3,
-    );
+    let validator1_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 2);
+    let validator2_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 4);
+    let validator3_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 3);
 
     let mut cluster_config = ClusterConfig {
         node_stakes: vec![100 * DEFAULT_NODE_STAKE],
@@ -5296,12 +5272,8 @@ fn test_boot_from_local_state_missing_archive() {
     const FULL_SNAPSHOT_INTERVAL: Slot = 20;
     const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
 
-    let validator_config = SnapshotValidatorConfig::new(
-        FULL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        INCREMENTAL_SNAPSHOT_INTERVAL,
-        7,
-    );
+    let validator_config =
+        SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 7);
 
     let mut cluster_config = ClusterConfig {
         node_stakes: vec![100 * DEFAULT_NODE_STAKE],
@@ -5532,14 +5504,10 @@ fn test_duplicate_shreds_switch_failure() {
     ) = (validators[0], validators[1], validators[2], validators[3]);
 
     info!(
-        "duplicate_fork_validator1_pubkey: {},
-        duplicate_fork_validator2_pubkey: {},
-        target_switch_fork_validator_pubkey: {},
-        duplicate_leader_validator_pubkey: {}",
-        duplicate_fork_validator1_pubkey,
-        duplicate_fork_validator2_pubkey,
-        target_switch_fork_validator_pubkey,
-        duplicate_leader_validator_pubkey
+        "duplicate_fork_validator1_pubkey: {duplicate_fork_validator1_pubkey}, \
+         duplicate_fork_validator2_pubkey: {duplicate_fork_validator2_pubkey}, \
+         target_switch_fork_validator_pubkey: {target_switch_fork_validator_pubkey}, \
+         duplicate_leader_validator_pubkey: {duplicate_leader_validator_pubkey}",
     );
 
     let validator_to_slots = vec![

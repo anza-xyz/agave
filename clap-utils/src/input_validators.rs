@@ -1,5 +1,8 @@
 use {
-    crate::keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
+    crate::{
+        input_parsers::parse_cpu_ranges,
+        keypair::{parse_signer_source, SignerSourceKind, ASK_KEYWORD},
+    },
     chrono::DateTime,
     solana_clock::{Epoch, Slot},
     solana_hash::Hash,
@@ -302,6 +305,23 @@ where
     }
 }
 
+pub fn is_amount_or_all_or_available<T>(amount: T) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    if amount.as_ref().parse::<u64>().is_ok()
+        || amount.as_ref().parse::<f64>().is_ok()
+        || amount.as_ref() == "ALL"
+        || amount.as_ref() == "AVAILABLE"
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "Unable to parse input amount as integer or float, provided: {amount}"
+        ))
+    }
+}
+
 pub fn is_rfc3339_datetime<T>(value: T) -> Result<(), String>
 where
     T: AsRef<str> + Display,
@@ -418,6 +438,15 @@ where
     } else {
         Ok(())
     }
+}
+
+pub fn validate_cpu_ranges<T>(value: T, err_prefix: &str) -> Result<(), String>
+where
+    T: AsRef<str> + Display,
+{
+    parse_cpu_ranges(value.as_ref())
+        .map(|_| ())
+        .map_err(|e| format!("{err_prefix} {e}"))
 }
 
 #[cfg(test)]

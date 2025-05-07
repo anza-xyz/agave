@@ -17,9 +17,9 @@ use {
         rent::{Rent, RentDue},
         rent_collector::{CollectedInfo, RentCollector},
         transaction::{Result, TransactionError},
-        transaction_context::IndexOfAccount,
     },
     solana_svm_rent_collector::{rent_state::RentState, svm_rent_collector::SVMRentCollector},
+    solana_transaction_context::IndexOfAccount,
 };
 
 /// Wrapper around `RentCollector` to allow for overriding of some

@@ -28,7 +28,7 @@ pub fn set_ancestor_hash_repair_sample_size_for_tests_only(sample_size: usize) {
 // another, the chance of >= 11 of the 21 sampled being from the 52% portion is
 // about 57%, so we should be able to find a correct sample in a reasonable amount of time.
 pub fn get_minimum_ancestor_agreement_size() -> usize {
-    (get_ancestor_hash_repair_sample_size() + 1) / 2
+    get_ancestor_hash_repair_sample_size().div_ceil(2)
 }
 const RETRY_INTERVAL_SECONDS: usize = 5;
 
@@ -473,10 +473,10 @@ impl AncestorRequestStatus {
                 // replay dump then repair to fix.
 
                 warn!(
-                    "Blockstore is missing frozen hash for slot {},
-                which the cluster claims is an ancestor of dead slot {}. Potentially
-                our version of the dead slot chains to the wrong fork!",
-                    ancestor_slot, self.requested_mismatched_slot
+                    "Blockstore is missing frozen hash for slot {ancestor_slot}, \
+                     which the cluster claims is an ancestor of dead slot {}. Potentially \
+                     our version of the dead slot chains to the wrong fork!",
+                    self.requested_mismatched_slot
                 );
             }
             last_ancestor = *ancestor_slot;

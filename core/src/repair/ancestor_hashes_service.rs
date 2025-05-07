@@ -142,6 +142,12 @@ impl AncestorRepairRequestsStats {
     }
 }
 
+pub struct AncestorHashesChannels {
+    pub ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
+    pub ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+    pub ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
+}
+
 pub struct AncestorHashesService {
     thread_hdls: Vec<JoinHandle<()>>,
 }
@@ -151,10 +157,8 @@ impl AncestorHashesService {
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         ancestor_hashes_request_socket: Arc<UdpSocket>,
-        ancestor_hashes_request_quic_sender: AsyncSender<(SocketAddr, Bytes)>,
-        ancestor_hashes_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
+        ancestor_hashes_channels: AncestorHashesChannels,
         repair_info: RepairInfo,
-        ancestor_hashes_replay_update_receiver: AncestorHashesReplayUpdateReceiver,
     ) -> Self {
         let outstanding_requests = Arc::<RwLock<OutstandingAncestorHashesRepairs>>::default();
         let (response_sender, response_receiver) = unbounded();
@@ -167,11 +171,17 @@ impl AncestorHashesService {
             Arc::new(StreamerReceiveStats::new(
                 "ancestor_hashes_response_receiver",
             )),
-            Duration::from_millis(1), // coalesce
-            false,                    // use_pinned_memory
-            None,                     // in_vote_only_mode
-            false,                    // is_staked_service
+            Some(Duration::from_millis(1)), // coalesce
+            false,                          // use_pinned_memory
+            None,                           // in_vote_only_mode
+            false,                          // is_staked_service
         );
+
+        let AncestorHashesChannels {
+            ancestor_hashes_request_quic_sender,
+            ancestor_hashes_response_quic_receiver,
+            ancestor_hashes_replay_update_receiver,
+        } = ancestor_hashes_channels;
 
         let t_receiver_quic = {
             let exit = exit.clone();
@@ -730,9 +740,8 @@ impl AncestorHashesService {
 
         for (slot, request_type) in potential_slot_requests.take(number_of_allowed_requests) {
             warn!(
-                "Cluster froze slot: {}, but we marked it as {}.
+                "Cluster froze slot: {slot}, but we marked it as {}. \
                  Initiating protocol to sample cluster for dead slot ancestors.",
-                slot,
                 if request_type.is_pruned() {
                     "pruned"
                 } else {
@@ -784,9 +793,9 @@ impl AncestorHashesService {
                         .read()
                         .unwrap()
                         .iter()
-                        .map(|(node_key, _)| {
+                        .map(|(key, _v)| {
                             node_id_to_vote_accounts
-                                .get(node_key)
+                                .get(key)
                                 .map(|v| v.total_stake)
                                 .unwrap_or(0)
                         })
@@ -915,7 +924,7 @@ mod test {
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
         solana_net_utils::bind_to_unspecified,
-        solana_runtime::{accounts_background_service::AbsRequestSender, bank_forks::BankForks},
+        solana_runtime::bank_forks::BankForks,
         solana_sdk::{
             hash::Hash,
             signature::{Keypair, Signer},
@@ -1206,7 +1215,7 @@ mod test {
 
         // Slot hasn't reached the threshold
         for (i, key) in (0..2).zip(vote_simulator.node_pubkeys.iter()) {
-            cluster_slots.insert_node_id(dead_slot, *key);
+            cluster_slots.insert_node_id(dead_slot, *key, Some(42));
             AncestorHashesService::find_epoch_slots_frozen_dead_slots(
                 &cluster_slots,
                 &mut dead_slot_pool,
@@ -1293,7 +1302,7 @@ mod test {
                 requests_sender,
                 Recycler::default(),
                 Arc::new(StreamerReceiveStats::new("repair_request_receiver")),
-                Duration::from_millis(1), // coalesce
+                Some(Duration::from_millis(1)), // coalesce
                 false,
                 None,
                 false,
@@ -1350,6 +1359,7 @@ mod test {
                 .root_bank()
                 .epoch_schedule()
                 .clone();
+
             let keypair = Keypair::new();
             let requester_cluster_info = Arc::new(ClusterInfo::new(
                 Node::new_localhost_with_pubkey(&keypair.pubkey()).info,
@@ -1528,7 +1538,7 @@ mod test {
         );
         // Should have received valid response
         let mut response_packet = response_receiver
-            .recv_timeout(Duration::from_millis(10_000))
+            .recv_timeout(Duration::from_millis(1_000))
             .unwrap();
         let packet = &mut response_packet[0];
         packet
@@ -1548,7 +1558,7 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id);
+        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
         requester_cluster_info.insert_info(responder_info.clone());
         // Now the request should actually be made
         AncestorHashesService::initiate_ancestor_hashes_requests_for_duplicate_slot(
@@ -1891,9 +1901,7 @@ mod test {
         {
             let mut w_bank_forks = bank_forks.write().unwrap();
             w_bank_forks.insert(new_root_bank);
-            w_bank_forks
-                .set_root(new_root_slot, &AbsRequestSender::default(), None)
-                .unwrap();
+            w_bank_forks.set_root(new_root_slot, None, None).unwrap();
         }
         popular_pruned_slot_pool.insert(dead_duplicate_confirmed_slot);
         assert!(!dead_slot_pool.is_empty());
@@ -2005,7 +2013,7 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id);
+        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
         requester_cluster_info.insert_info(responder_info.clone());
 
         // Send a request to generate a ping

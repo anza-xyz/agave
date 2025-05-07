@@ -5,7 +5,7 @@ use {
     bincode::deserialize,
     serde_json::json,
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
-    solana_program::vote::instruction::VoteInstruction,
+    solana_vote_interface::instruction::VoteInstruction,
 };
 
 pub fn parse_vote(
@@ -286,12 +286,12 @@ mod test {
         super::*,
         solana_hash::Hash,
         solana_message::Message,
-        solana_program::vote::{
+        solana_pubkey::Pubkey,
+        solana_sdk_ids::sysvar,
+        solana_vote_interface::{
             instruction as vote_instruction,
             state::{TowerSync, Vote, VoteAuthorize, VoteInit, VoteStateUpdate, VoteStateVersions},
         },
-        solana_pubkey::Pubkey,
-        solana_sdk_ids::sysvar,
     };
 
     #[test]

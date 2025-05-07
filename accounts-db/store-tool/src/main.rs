@@ -125,7 +125,7 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
     let mut num_accounts = Saturating(0usize);
     let mut stored_accounts_size = Saturating(0);
     let mut lamports = Saturating(0);
-    storage.scan_accounts(|account| {
+    storage.scan_accounts_stored_meta(|account| {
         if verbose {
             println!("{account:?}");
         } else {
@@ -191,7 +191,7 @@ fn do_search(
         let storage = ManuallyDrop::new(storage);
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
-        storage.scan_accounts(|account| {
+        storage.scan_accounts_stored_meta(|account| {
             if addresses.contains(account.pubkey()) {
                 if verbose {
                     println!("storage: {}, {account:?}", file_name.display());

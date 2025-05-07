@@ -1,12 +1,13 @@
 use {
     criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput},
     rand::seq::SliceRandom,
+    solana_account::AccountSharedData,
     solana_accounts_db::{
         accounts_db::AccountsDb,
         accounts_hash::{AccountHash, AccountsHasher},
     },
+    solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::AccountSharedData, hash::Hash},
 };
 
 const KB: usize = 1024;

@@ -53,6 +53,10 @@ while [[ -n $1 ]]; do
       buildProfileArg='--profile release-with-debug'
       buildProfile='release-with-debug'
       shift
+    elif [[ $1 = --release-with-lto ]]; then
+      buildProfileArg='--profile release-with-lto'
+      buildProfile='release-with-lto'
+      shift
     elif [[ $1 = --validator-only ]]; then
       validatorOnly=true
       shift

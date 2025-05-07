@@ -2,13 +2,13 @@
 
 use {
     crate::{
-        accounts_background_service::{AbsRequestSender, SnapshotRequest, SnapshotRequestKind},
-        bank::{bank_hash_details, epoch_accounts_hash_utils, Bank, SquashTiming},
+        accounts_background_service::SnapshotRequest,
+        bank::{bank_hash_details, Bank, SquashTiming},
         bank_hash_cache::DumpedSlotSubscription,
         installed_scheduler_pool::{
             BankWithScheduler, InstalledSchedulerPoolArc, SchedulingContext,
         },
-        snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
     },
     crossbeam_channel::SendError,
     log::*,
@@ -76,15 +76,9 @@ pub struct BankForks {
     banks: HashMap<Slot, BankWithScheduler>,
     descendants: HashMap<Slot, HashSet<Slot>>,
     root: Arc<AtomicSlot>,
-
-    pub snapshot_config: Option<SnapshotConfig>,
-
-    pub accounts_hash_interval_slots: Slot,
-    last_accounts_hash_slot: Slot,
     in_vote_only_mode: Arc<AtomicBool>,
     highest_slot_at_startup: Slot,
     scheduler_pool: Option<InstalledSchedulerPoolArc>,
-
     dumped_slot_subscribers: Vec<DumpedSlotSubscription>,
 }
 
@@ -130,9 +124,6 @@ impl BankForks {
             root: Arc::new(AtomicSlot::new(root_slot)),
             banks,
             descendants,
-            snapshot_config: None,
-            accounts_hash_interval_slots: u64::MAX,
-            last_accounts_hash_slot: root_slot,
             in_vote_only_mode: Arc::new(AtomicBool::new(false)),
             highest_slot_at_startup: 0,
             scheduler_pool: None,
@@ -243,11 +234,7 @@ impl BankForks {
 
         let bank = Arc::new(bank);
         let bank = if let Some(scheduler_pool) = &self.scheduler_pool {
-            let context = SchedulingContext::new_with_mode(mode, bank.clone());
-            let scheduler = scheduler_pool.take_scheduler(context);
-            let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
-            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
-            bank_with_scheduler
+            Self::install_scheduler_into_bank(scheduler_pool, mode, bank)
         } else {
             BankWithScheduler::new_without_scheduler(bank)
         };
@@ -259,6 +246,24 @@ impl BankForks {
             self.descendants.entry(parent).or_default().insert(slot);
         }
         bank
+    }
+
+    fn install_scheduler_into_bank(
+        scheduler_pool: &InstalledSchedulerPoolArc,
+        mode: SchedulingMode,
+        bank: Arc<Bank>,
+    ) -> BankWithScheduler {
+        let context = SchedulingContext::new_with_mode(mode, bank.clone());
+        let scheduler = scheduler_pool.take_scheduler(context);
+        let bank_with_scheduler = BankWithScheduler::new(bank, Some(scheduler));
+        // Skip registering for block production. Both the tvu main loop in the replay stage
+        // and PohRecorder don't support _concurrent block production_ at all. It's strongly
+        // assumed that block is produced in singleton way and it's actually desired, while
+        // ignoring the opportunity cost of (hopefully rare!) fork switching...
+        if matches!(mode, SchedulingMode::BlockVerification) {
+            scheduler_pool.register_timeout_listener(bank_with_scheduler.create_timeout_listener());
+        }
+        bank_with_scheduler
     }
 
     pub fn insert_from_ledger(&mut self, bank: Bank) -> BankWithScheduler {
@@ -333,69 +338,10 @@ impl BankForks {
             .unzip()
     }
 
-    /// Sends an EpochAccountsHash request if one of the `banks` crosses the EAH boundary.
-    /// Returns if the bank at slot `root` was squashed, and its timings.
-    ///
-    /// Panics if more than one bank in `banks` should send an EAH request.
-    pub fn send_eah_request_if_needed(
-        &mut self,
-        root: Slot,
-        banks: &[&Arc<Bank>],
-        accounts_background_request_sender: &AbsRequestSender,
-    ) -> Result<(bool, SquashTiming), SetRootError> {
-        let mut is_root_bank_squashed = false;
-        let mut squash_timing = SquashTiming::default();
-
-        // Go through all the banks and see if we should send an EAH request.
-        // Only one EAH bank is allowed to send an EAH request.
-        // NOTE: Instead of filter-collect-assert, `.find()` could be used instead.
-        // Once sufficient testing guarantees only one bank will ever request an EAH,
-        // change to `.find()`.
-        let eah_banks: Vec<_> = banks
-            .iter()
-            .filter(|bank| self.should_request_epoch_accounts_hash(bank))
-            .collect();
-        assert!(
-            eah_banks.len() <= 1,
-            "At most one bank should request an epoch accounts hash calculation! num banks: {}, bank slots: {:?}",
-            eah_banks.len(),
-            eah_banks.iter().map(|bank| bank.slot()).collect::<Vec<_>>(),
-        );
-        if let Some(&&eah_bank) = eah_banks.first() {
-            debug!(
-                "sending epoch accounts hash request, slot: {}",
-                eah_bank.slot(),
-            );
-
-            self.last_accounts_hash_slot = eah_bank.slot();
-            squash_timing += eah_bank.squash();
-            is_root_bank_squashed = eah_bank.slot() == root;
-
-            eah_bank
-                .rc
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .set_in_flight(eah_bank.slot());
-            if let Err(e) =
-                accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
-                    snapshot_root_bank: Arc::clone(eah_bank),
-                    status_cache_slot_deltas: Vec::default(),
-                    request_kind: SnapshotRequestKind::EpochAccountsHash,
-                    enqueued: Instant::now(),
-                })
-            {
-                return Err(SetRootError::SendEpochAccountHashError(eah_bank.slot(), e));
-            };
-        }
-
-        Ok((is_root_bank_squashed, squash_timing))
-    }
-
     fn do_set_root_return_metrics(
         &mut self,
         root: Slot,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<(Vec<BankWithScheduler>, SetRootMetrics), SetRootError> {
         let old_epoch = self.root_bank().epoch();
@@ -410,11 +356,7 @@ impl BankForks {
         let new_epoch = root_bank.epoch();
         if old_epoch != new_epoch {
             info!(
-                "Root entering
-                    epoch: {},
-                    next_epoch_start_slot: {},
-                    epoch_stakes: {:#?}",
-                new_epoch,
+                "Root entering epoch: {new_epoch}, next_epoch_start_slot: {}, epoch_stakes: {:#?}",
                 root_bank
                     .epoch_schedule()
                     .get_first_slot_in_epoch(new_epoch + 1),
@@ -434,56 +376,12 @@ impl BankForks {
         let parents = root_bank.parents();
         banks.extend(parents.iter());
         let total_parent_banks = banks.len();
-        let mut total_snapshot_ms = 0;
-
-        let (mut is_root_bank_squashed, mut squash_timing) =
-            self.send_eah_request_if_needed(root, &banks, accounts_background_request_sender)?;
-
-        // After checking for EAH requests, also check for regular snapshot requests.
-        //
-        // This is needed when a snapshot request occurs in a slot after an EAH request, and is
-        // part of the same set of `banks` in a single `set_root()` invocation.  While (very)
-        // unlikely for a validator with default snapshot intervals (and accounts hash verifier
-        // intervals), it *is* possible, and there are tests to exercise this possibility.
-        if let Some(bank) = banks.iter().find(|bank| {
-            bank.slot() > self.last_accounts_hash_slot
-                && bank.block_height() % self.accounts_hash_interval_slots == 0
-        }) {
-            let bank_slot = bank.slot();
-            self.last_accounts_hash_slot = bank_slot;
-            squash_timing += bank.squash();
-
-            is_root_bank_squashed = bank_slot == root;
-
-            let mut snapshot_time = Measure::start("squash::snapshot_time");
-            if self.snapshot_config.is_some()
-                && accounts_background_request_sender.is_snapshot_creation_enabled()
-            {
-                if bank.is_startup_verification_complete() {
-                    // Save off the status cache because these may get pruned if another
-                    // `set_root()` is called before the snapshots package can be generated
-                    let status_cache_slot_deltas =
-                        bank.status_cache.read().unwrap().root_slot_deltas();
-                    if let Err(e) =
-                        accounts_background_request_sender.send_snapshot_request(SnapshotRequest {
-                            snapshot_root_bank: Arc::clone(bank),
-                            status_cache_slot_deltas,
-                            request_kind: SnapshotRequestKind::Snapshot,
-                            enqueued: Instant::now(),
-                        })
-                    {
-                        warn!(
-                            "Error sending snapshot request for bank: {}, err: {:?}",
-                            bank_slot, e
-                        );
-                    }
-                } else {
-                    info!("Not sending snapshot request for bank: {}, startup verification is incomplete", bank_slot);
-                }
-            }
-            snapshot_time.stop();
-            total_snapshot_ms += snapshot_time.as_ms() as i64;
-        }
+        let (is_root_bank_squashed, mut squash_timing, total_snapshot_ms) =
+            if let Some(snapshot_controller) = snapshot_controller {
+                snapshot_controller.handle_new_roots(root, &banks)?
+            } else {
+                (false, SquashTiming::default(), 0)
+            };
 
         if !is_root_bank_squashed {
             squash_timing += root_bank.squash();
@@ -505,7 +403,7 @@ impl BankForks {
             SetRootMetrics {
                 timings: SetRootTimings {
                     total_squash_time: squash_timing,
-                    total_snapshot_ms,
+                    total_snapshot_ms: total_snapshot_ms as i64,
                     prune_non_rooted_ms: prune_time.as_ms() as i64,
                     drop_parent_banks_ms: drop_parent_banks_time.as_ms() as i64,
                     prune_slots_ms: prune_slots_ms as i64,
@@ -528,14 +426,14 @@ impl BankForks {
     pub fn set_root(
         &mut self,
         root: Slot,
-        accounts_background_request_sender: &AbsRequestSender,
+        snapshot_controller: Option<&SnapshotController>,
         highest_super_majority_root: Option<Slot>,
     ) -> Result<Vec<BankWithScheduler>, SetRootError> {
         let program_cache_prune_start = Instant::now();
         let set_root_start = Instant::now();
         let (removed_banks, set_root_metrics) = self.do_set_root_return_metrics(
             root,
-            accounts_background_request_sender,
+            snapshot_controller,
             highest_super_majority_root,
         )?;
         datapoint_info!(
@@ -724,34 +622,13 @@ impl BankForks {
             prune_remove_time.as_ms(),
         )
     }
-
-    pub fn set_snapshot_config(&mut self, snapshot_config: Option<SnapshotConfig>) {
-        self.snapshot_config = snapshot_config;
-    }
-
-    pub fn set_accounts_hash_interval_slots(&mut self, accounts_interval_slots: u64) {
-        self.accounts_hash_interval_slots = accounts_interval_slots;
-    }
-
-    /// Determine if this bank should request an epoch accounts hash
-    #[must_use]
-    fn should_request_epoch_accounts_hash(&self, bank: &Bank) -> bool {
-        if !epoch_accounts_hash_utils::is_enabled_this_epoch(bank) {
-            return false;
-        }
-
-        let start_slot = epoch_accounts_hash_utils::calculation_start(bank);
-        bank.slot() > self.last_accounts_hash_slot
-            && bank.parent_slot() < start_slot
-            && bank.slot() >= start_slot
-    }
 }
 
 impl ForkGraph for BankForks {
     fn relationship(&self, a: Slot, b: Slot) -> BlockRelation {
         let known_slot_range = self.root()..=self.highest_slot();
-        (known_slot_range.contains(&a) && known_slot_range.contains(&b))
-            .then(|| {
+        if known_slot_range.contains(&a) && known_slot_range.contains(&b) {
+            {
                 (a == b)
                     .then_some(BlockRelation::Equal)
                     .or_else(|| {
@@ -767,8 +644,10 @@ impl ForkGraph for BankForks {
                         })
                     })
                     .unwrap_or(BlockRelation::Unrelated)
-            })
-            .unwrap_or(BlockRelation::Unknown)
+            }
+        } else {
+            BlockRelation::Unknown
+        }
     }
 }
 
@@ -777,10 +656,12 @@ mod tests {
     use {
         super::*,
         crate::{
+            accounts_background_service::SnapshotRequestKind,
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
+            snapshot_config::SnapshotConfig,
         },
         assert_matches::assert_matches,
         solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
@@ -894,7 +775,11 @@ mod tests {
         // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
         // waiting for an in-flight EAH calculation to complete.
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
+        let snapshot_controller = SnapshotController::new(
+            snapshot_request_sender,
+            SnapshotConfig::new_disabled(),
+            0, /* root_slot */
+        );
         let bg_exit = Arc::new(AtomicBool::new(false));
         let bg_thread = {
             let exit = Arc::clone(&bg_exit);
@@ -925,7 +810,9 @@ mod tests {
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
         let mut bank_forks0 = bank_forks0.write().unwrap();
-        bank_forks0.set_root(0, &abs_request_sender, None).unwrap();
+        bank_forks0
+            .set_root(0, Some(&snapshot_controller), None)
+            .unwrap();
 
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
@@ -961,7 +848,7 @@ mod tests {
             // Set root in bank_forks0 to truncate the ancestor history
             bank_forks0.insert(child1);
             bank_forks0
-                .set_root(slot, &abs_request_sender, None)
+                .set_root(slot, Some(&snapshot_controller), None)
                 .unwrap();
 
             // Don't set root in bank_forks1 to keep the ancestor history
@@ -1031,8 +918,8 @@ mod tests {
             .write()
             .unwrap()
             .set_root(
-                2,
-                &AbsRequestSender::default(),
+                2,    // root
+                None, // snapshot_controller
                 None, // highest confirmed root
             )
             .unwrap();
@@ -1099,7 +986,7 @@ mod tests {
             .unwrap()
             .set_root(
                 2,
-                &AbsRequestSender::default(),
+                None,    // snapshot_controller
                 Some(1), // highest confirmed root
             )
             .unwrap();
@@ -1191,7 +1078,7 @@ mod tests {
         bank_forks
             .set_root(
                 2,
-                &AbsRequestSender::default(),
+                None,    // snapshot_controller
                 Some(1), // highest confirmed root
             )
             .unwrap();

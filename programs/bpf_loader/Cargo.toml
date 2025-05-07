@@ -12,6 +12,7 @@ edition = { workspace = true }
 [dependencies]
 bincode = { workspace = true }
 libsecp256k1 = { workspace = true }
+num-traits = { workspace = true }
 qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
 solana-account = { workspace = true }
@@ -21,22 +22,18 @@ solana-bincode = { workspace = true }
 solana-blake3-hasher = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-clock = { workspace = true }
-solana-compute-budget = { workspace = true }
 solana-cpi = { workspace = true }
 solana-curve25519 = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keccak-hasher = { workspace = true }
 solana-loader-v3-interface = { workspace = true, features = ["serde"] }
-solana-loader-v4-interface = { workspace = true, optional = true }
+solana-loader-v4-interface = { workspace = true, features = ["bincode"] }
 solana-log-collector = { workspace = true }
 solana-measure = { workspace = true }
 solana-packet = { workspace = true }
 solana-poseidon = { workspace = true }
-solana-precompiles = { workspace = true }
 solana-program-entrypoint = { workspace = true }
-solana-program-memory = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbpf = { workspace = true }
@@ -44,6 +41,7 @@ solana-sdk-ids = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-stable-layout = { workspace = true }
+solana-svm-feature-set = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-sysvar-id = { workspace = true }
@@ -62,9 +60,11 @@ solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-last-restart-slot = { workspace = true }
 solana-program = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-slot-hashes = { workspace = true }
+solana-svm-callback = { workspace = true }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
@@ -92,4 +92,4 @@ shuttle-test = [
     "solana-program-runtime/shuttle-test",
     "solana-sbpf/shuttle-test"
 ]
-svm-internal = ["dep:solana-loader-v4-interface"]
+svm-internal = []

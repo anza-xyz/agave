@@ -12,9 +12,9 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dev-dependencies]
+agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-program-test = { workspace = true }
 solana-sdk = { workspace = true }
 solana-vote-program = { workspace = true }

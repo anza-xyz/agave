@@ -305,10 +305,9 @@ fn connect_with_retry(
     loop {
         let result = connect(url.clone()).map(|(socket, _)| socket);
         if let Err(tungstenite::Error::Http(response)) = &result {
-            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && connection_retries > 0
-            {
+            if response.status() == http::StatusCode::TOO_MANY_REQUESTS && connection_retries > 0 {
                 let mut duration = Duration::from_millis(500);
-                if let Some(retry_after) = response.headers().get(reqwest::header::RETRY_AFTER) {
+                if let Some(retry_after) = response.headers().get(http::header::RETRY_AFTER) {
                     if let Ok(retry_after) = retry_after.to_str() {
                         if let Ok(retry_after) = retry_after.parse::<u64>() {
                             if retry_after < 120 {

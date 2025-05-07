@@ -1,4 +1,5 @@
 use {
+    assert_cmd::assert::Assert,
     predicates::prelude::*,
     std::{
         env, fs,
@@ -141,10 +142,8 @@ fn test_generate_child_script_on_failure() {
     clean_target("fail");
 }
 
-#[test]
-#[serial]
-fn test_sbfv2() {
-    run_cargo_build("noop", &["--arch", "sbfv2"], false);
+fn build_noop_and_readelf(arch: &str) -> Assert {
+    run_cargo_build("noop", &["--arch", arch], false);
     let cwd = env::current_dir().expect("Unable to get current working directory");
     let bin = cwd
         .join("tests")
@@ -167,11 +166,53 @@ fn test_sbfv2() {
         .join("llvm")
         .join("bin")
         .join("llvm-readelf");
-    assert_cmd::Command::new(readelf)
-        .args(["-h", bin])
-        .assert()
+
+    assert_cmd::Command::new(readelf).args(["-h", bin]).assert()
+}
+
+#[test]
+#[serial]
+fn test_sbpfv0() {
+    let assert_v0 = build_noop_and_readelf("v0");
+    assert_v0
         .stdout(predicate::str::contains(
-            "Flags:                             0x20",
+            "Flags:                             0x0",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv1() {
+    let assert_v1 = build_noop_and_readelf("v1");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x1",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv2() {
+    let assert_v1 = build_noop_and_readelf("v2");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x2",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv3() {
+    let assert_v1 = build_noop_and_readelf("v3");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x3",
         ))
         .success();
     clean_target("noop");
@@ -189,4 +230,67 @@ fn test_package_metadata_tools_version() {
 fn test_workspace_metadata_tools_version() {
     run_cargo_build("workspace-metadata", &[], false);
     clean_target("workspace-metadata");
+}
+
+#[test]
+#[serial]
+fn test_corrupted_toolchain() {
+    run_cargo_build("noop", &[], false);
+
+    fn assert_failed_command() {
+        let cwd = env::current_dir().expect("Unable to get current working directory");
+        let toml = cwd
+            .join("tests")
+            .join("crates")
+            .join("noop")
+            .join("Cargo.toml");
+        let toml = format!("{}", toml.display());
+        let args = vec!["--sbf-sdk", "../sbf", "--manifest-path", &toml];
+
+        let mut cmd = assert_cmd::Command::cargo_bin("cargo-build-sbf").unwrap();
+        let assert = cmd.env("RUST_LOG", "debug").args(&args).assert();
+        let output = assert.get_output();
+
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("The Solana toolchain is corrupted.")
+        );
+    }
+
+    let cwd = env::current_dir().expect("Unable to get current working directory");
+    let sdk_path = cwd.parent().unwrap().join("sbf");
+
+    let bin_folder = sdk_path
+        .join("dependencies")
+        .join("platform-tools")
+        .join("rust")
+        .join("bin");
+    fs::rename(bin_folder.join("cargo"), bin_folder.join("cargo_2"))
+        .expect("Failed to rename file");
+
+    assert_failed_command();
+
+    fs::rename(bin_folder.join("cargo_2"), bin_folder.join("cargo"))
+        .expect("Failed to rename file");
+    fs::rename(bin_folder.join("rustc"), bin_folder.join("rustc_2"))
+        .expect("Failed to rename file");
+
+    assert_failed_command();
+
+    fs::rename(bin_folder.join("rustc_2"), bin_folder.join("rustc"))
+        .expect("Failed to rename file");
+    fs::rename(&bin_folder, bin_folder.parent().unwrap().join("bin2"))
+        .expect("Failed to rename file");
+
+    assert_failed_command();
+
+    fs::rename(bin_folder.parent().unwrap().join("bin2"), &bin_folder)
+        .expect("Failed to rename file");
+    let right_rust_folder = bin_folder.parent().unwrap();
+    let wrong_rust_folder = right_rust_folder.parent().unwrap().join("rust_2");
+    fs::rename(right_rust_folder, &wrong_rust_folder).expect("Failed to rename file");
+
+    assert_failed_command();
+
+    // Revert to the original name, so other tests can run correctly.
+    fs::rename(wrong_rust_folder, right_rust_folder).expect("Failed to rename file");
 }

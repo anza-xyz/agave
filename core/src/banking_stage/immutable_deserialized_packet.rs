@@ -1,5 +1,6 @@
 use {
     super::packet_filter::PacketFilterFailure,
+    agave_feature_set::FeatureSet,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_perf::packet::Packet,
@@ -8,7 +9,6 @@ use {
     solana_sanitize::SanitizeError,
     solana_sdk::{
         clock::Slot,
-        feature_set::FeatureSet,
         hash::Hash,
         message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
         pubkey::Pubkey,
@@ -51,9 +51,10 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct ImmutableDeserializedPacket {
-    original_packet: Packet,
     transaction: SanitizedVersionedTransaction,
+    forwarded: bool,
     message_hash: Hash,
     is_simple_vote: bool,
     compute_unit_price: u64,
@@ -61,12 +62,13 @@ pub struct ImmutableDeserializedPacket {
 }
 
 impl ImmutableDeserializedPacket {
-    pub fn new(packet: Packet) -> Result<Self, DeserializedPacketError> {
+    pub fn new(packet: &Packet) -> Result<Self, DeserializedPacketError> {
         let versioned_transaction: VersionedTransaction = packet.deserialize_slice(..)?;
         let sanitized_transaction = SanitizedVersionedTransaction::try_from(versioned_transaction)?;
-        let message_bytes = packet_message(&packet)?;
+        let message_bytes = packet_message(packet)?;
         let message_hash = Message::hash_raw_message(message_bytes);
         let is_simple_vote = packet.meta().is_simple_vote_tx();
+        let forwarded = packet.meta().forwarded();
 
         // drop transaction if prioritization fails.
         let ComputeBudgetLimits {
@@ -88,8 +90,8 @@ impl ImmutableDeserializedPacket {
         };
 
         Ok(Self {
-            original_packet: packet,
             transaction: sanitized_transaction,
+            forwarded,
             message_hash,
             is_simple_vote,
             compute_unit_price,
@@ -97,8 +99,8 @@ impl ImmutableDeserializedPacket {
         })
     }
 
-    pub fn original_packet(&self) -> &Packet {
-        &self.original_packet
+    pub fn forwarded(&self) -> bool {
+        self.forwarded
     }
 
     pub fn transaction(&self) -> &SanitizedVersionedTransaction {
@@ -223,7 +225,7 @@ mod tests {
             Hash::new_unique(),
         );
         let packet = Packet::from_data(None, tx).unwrap();
-        let deserialized_packet = ImmutableDeserializedPacket::new(packet);
+        let deserialized_packet = ImmutableDeserializedPacket::new(&packet);
 
         assert!(deserialized_packet.is_ok());
     }
@@ -253,7 +255,7 @@ mod tests {
                 Hash::new_unique(),
             );
             let packet = Packet::from_data(None, tx).unwrap();
-            let deserialized_packet = ImmutableDeserializedPacket::new(packet).unwrap();
+            let deserialized_packet = ImmutableDeserializedPacket::new(&packet).unwrap();
             assert_eq!(
                 deserialized_packet.check_insufficent_compute_unit_limit(),
                 expectation

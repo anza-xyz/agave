@@ -1,0 +1,44 @@
+name: Verify Packets
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+    paths:
+      - .github/workflows/verify-packets.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gossip:
+    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install required packages
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libclang-dev \
+            libprotobuf-dev \
+            libssl-dev \
+            libudev-dev \
+            pkg-config \
+            zlib1g-dev \
+            llvm \
+            clang \
+            cmake \
+            make \
+            protobuf-compiler \
+            git-lfs
+
+      - name: Run packet verify
+        run: |
+          ./ci/test-verify-packets-gossip.sh

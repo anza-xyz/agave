@@ -1,24 +1,12 @@
-use crate::compute_budget_limits::{self, ComputeBudgetLimits, DEFAULT_HEAP_COST};
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
-
-#[cfg(feature = "frozen-abi")]
-impl ::solana_frozen_abi::abi_example::AbiExample for ComputeBudget {
-    fn example() -> Self {
-        // ComputeBudget is not Serialize so just rely on Default.
-        ComputeBudget::default()
-    }
-}
-
-/// Max instruction stack depth. This is the maximum nesting of instructions that can happen during
-/// a transaction.
-pub const MAX_INSTRUCTION_STACK_DEPTH: usize = 5;
-
-/// Max call depth. This is the maximum nesting of SBF to SBF call that can happen within a program.
-pub const MAX_CALL_DEPTH: usize = 64;
-
-/// The size of one SBF stack frame.
-pub const STACK_FRAME_SIZE: usize = 4096;
+pub use solana_program_runtime::execution_budget::{
+    SVMTransactionExecutionBudget, SVMTransactionExecutionCost, MAX_CALL_DEPTH,
+    MAX_INSTRUCTION_STACK_DEPTH, STACK_FRAME_SIZE,
+};
+use {
+    crate::compute_budget_limits::ComputeBudgetLimits, solana_fee_structure::FeeDetails,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
+    std::num::NonZeroU32,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComputeBudget {
@@ -133,7 +121,134 @@ pub struct ComputeBudget {
 
 impl Default for ComputeBudget {
     fn default() -> Self {
-        Self::new(compute_budget_limits::MAX_COMPUTE_UNIT_LIMIT as u64)
+        Self::from_budget_and_cost(
+            &SVMTransactionExecutionBudget::default(),
+            &SVMTransactionExecutionCost::default(),
+        )
+    }
+}
+
+impl ComputeBudget {
+    pub fn from_budget_and_cost(
+        budget: &SVMTransactionExecutionBudget,
+        cost: &SVMTransactionExecutionCost,
+    ) -> Self {
+        Self {
+            compute_unit_limit: budget.compute_unit_limit,
+            log_64_units: cost.log_64_units,
+            create_program_address_units: cost.create_program_address_units,
+            invoke_units: cost.invoke_units,
+            max_instruction_stack_depth: budget.max_instruction_stack_depth,
+            max_instruction_trace_length: budget.max_instruction_trace_length,
+            sha256_base_cost: cost.sha256_base_cost,
+            sha256_byte_cost: cost.sha256_byte_cost,
+            sha256_max_slices: budget.sha256_max_slices,
+            max_call_depth: budget.max_call_depth,
+            stack_frame_size: budget.stack_frame_size,
+            log_pubkey_units: cost.log_pubkey_units,
+            max_cpi_instruction_size: budget.max_cpi_instruction_size,
+            cpi_bytes_per_unit: cost.cpi_bytes_per_unit,
+            sysvar_base_cost: cost.sysvar_base_cost,
+            secp256k1_recover_cost: cost.secp256k1_recover_cost,
+            syscall_base_cost: cost.syscall_base_cost,
+            curve25519_edwards_validate_point_cost: cost.curve25519_edwards_validate_point_cost,
+            curve25519_edwards_add_cost: cost.curve25519_edwards_add_cost,
+            curve25519_edwards_subtract_cost: cost.curve25519_edwards_subtract_cost,
+            curve25519_edwards_multiply_cost: cost.curve25519_edwards_multiply_cost,
+            curve25519_edwards_msm_base_cost: cost.curve25519_edwards_msm_base_cost,
+            curve25519_edwards_msm_incremental_cost: cost.curve25519_edwards_msm_incremental_cost,
+            curve25519_ristretto_validate_point_cost: cost.curve25519_ristretto_validate_point_cost,
+            curve25519_ristretto_add_cost: cost.curve25519_ristretto_add_cost,
+            curve25519_ristretto_subtract_cost: cost.curve25519_ristretto_subtract_cost,
+            curve25519_ristretto_multiply_cost: cost.curve25519_ristretto_multiply_cost,
+            curve25519_ristretto_msm_base_cost: cost.curve25519_ristretto_msm_base_cost,
+            curve25519_ristretto_msm_incremental_cost: cost
+                .curve25519_ristretto_msm_incremental_cost,
+            heap_size: budget.heap_size,
+            heap_cost: cost.heap_cost,
+            mem_op_base_cost: cost.mem_op_base_cost,
+            alt_bn128_addition_cost: cost.alt_bn128_addition_cost,
+            alt_bn128_multiplication_cost: cost.alt_bn128_multiplication_cost,
+            alt_bn128_pairing_one_pair_cost_first: cost.alt_bn128_pairing_one_pair_cost_first,
+            alt_bn128_pairing_one_pair_cost_other: cost.alt_bn128_pairing_one_pair_cost_other,
+            big_modular_exponentiation_base_cost: cost.big_modular_exponentiation_base_cost,
+            big_modular_exponentiation_cost_divisor: cost.big_modular_exponentiation_cost_divisor,
+            poseidon_cost_coefficient_a: cost.poseidon_cost_coefficient_a,
+            poseidon_cost_coefficient_c: cost.poseidon_cost_coefficient_c,
+            get_remaining_compute_units_cost: cost.get_remaining_compute_units_cost,
+            alt_bn128_g1_compress: cost.alt_bn128_g1_compress,
+            alt_bn128_g1_decompress: cost.alt_bn128_g1_decompress,
+            alt_bn128_g2_compress: cost.alt_bn128_g2_compress,
+            alt_bn128_g2_decompress: cost.alt_bn128_g2_decompress,
+        }
+    }
+
+    pub fn to_budget(&self) -> SVMTransactionExecutionBudget {
+        SVMTransactionExecutionBudget {
+            compute_unit_limit: self.compute_unit_limit,
+            max_instruction_stack_depth: self.max_instruction_stack_depth,
+            max_instruction_trace_length: self.max_instruction_trace_length,
+            sha256_max_slices: self.sha256_max_slices,
+            max_call_depth: self.max_call_depth,
+            stack_frame_size: self.stack_frame_size,
+            max_cpi_instruction_size: self.max_cpi_instruction_size,
+            heap_size: self.heap_size,
+        }
+    }
+
+    pub fn to_cost(&self) -> SVMTransactionExecutionCost {
+        SVMTransactionExecutionCost {
+            log_64_units: self.log_64_units,
+            create_program_address_units: self.create_program_address_units,
+            invoke_units: self.invoke_units,
+            sha256_base_cost: self.sha256_base_cost,
+            sha256_byte_cost: self.sha256_byte_cost,
+            log_pubkey_units: self.log_pubkey_units,
+            cpi_bytes_per_unit: self.cpi_bytes_per_unit,
+            sysvar_base_cost: self.sysvar_base_cost,
+            secp256k1_recover_cost: self.secp256k1_recover_cost,
+            syscall_base_cost: self.syscall_base_cost,
+            curve25519_edwards_validate_point_cost: self.curve25519_edwards_validate_point_cost,
+            curve25519_edwards_add_cost: self.curve25519_edwards_add_cost,
+            curve25519_edwards_subtract_cost: self.curve25519_edwards_subtract_cost,
+            curve25519_edwards_multiply_cost: self.curve25519_edwards_multiply_cost,
+            curve25519_edwards_msm_base_cost: self.curve25519_edwards_msm_base_cost,
+            curve25519_edwards_msm_incremental_cost: self.curve25519_edwards_msm_incremental_cost,
+            curve25519_ristretto_validate_point_cost: self.curve25519_ristretto_validate_point_cost,
+            curve25519_ristretto_add_cost: self.curve25519_ristretto_add_cost,
+            curve25519_ristretto_subtract_cost: self.curve25519_ristretto_subtract_cost,
+            curve25519_ristretto_multiply_cost: self.curve25519_ristretto_multiply_cost,
+            curve25519_ristretto_msm_base_cost: self.curve25519_ristretto_msm_base_cost,
+            curve25519_ristretto_msm_incremental_cost: self
+                .curve25519_ristretto_msm_incremental_cost,
+            heap_cost: self.heap_cost,
+            mem_op_base_cost: self.mem_op_base_cost,
+            alt_bn128_addition_cost: self.alt_bn128_addition_cost,
+            alt_bn128_multiplication_cost: self.alt_bn128_multiplication_cost,
+            alt_bn128_pairing_one_pair_cost_first: self.alt_bn128_pairing_one_pair_cost_first,
+            alt_bn128_pairing_one_pair_cost_other: self.alt_bn128_pairing_one_pair_cost_other,
+            big_modular_exponentiation_base_cost: self.big_modular_exponentiation_base_cost,
+            big_modular_exponentiation_cost_divisor: self.big_modular_exponentiation_cost_divisor,
+            poseidon_cost_coefficient_a: self.poseidon_cost_coefficient_a,
+            poseidon_cost_coefficient_c: self.poseidon_cost_coefficient_c,
+            get_remaining_compute_units_cost: self.get_remaining_compute_units_cost,
+            alt_bn128_g1_compress: self.alt_bn128_g1_compress,
+            alt_bn128_g1_decompress: self.alt_bn128_g1_decompress,
+            alt_bn128_g2_compress: self.alt_bn128_g2_compress,
+            alt_bn128_g2_decompress: self.alt_bn128_g2_decompress,
+        }
+    }
+
+    pub fn get_compute_budget_and_limits(
+        &self,
+        loaded_accounts_data_size_limit: NonZeroU32,
+        fee_details: FeeDetails,
+    ) -> SVMTransactionExecutionAndFeeBudgetLimits {
+        SVMTransactionExecutionAndFeeBudgetLimits {
+            budget: self.to_budget(),
+            loaded_accounts_data_size_limit,
+            fee_details,
+        }
     }
 }
 
@@ -144,87 +259,5 @@ impl From<ComputeBudgetLimits> for ComputeBudget {
             heap_size: compute_budget_limits.updated_heap_bytes,
             ..ComputeBudget::default()
         }
-    }
-}
-
-impl ComputeBudget {
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn new(compute_unit_limit: u64) -> Self {
-        ComputeBudget {
-            compute_unit_limit,
-            log_64_units: 100,
-            create_program_address_units: 1500,
-            invoke_units: 1000,
-            max_instruction_stack_depth: MAX_INSTRUCTION_STACK_DEPTH,
-            max_instruction_trace_length: 64,
-            sha256_base_cost: 85,
-            sha256_byte_cost: 1,
-            sha256_max_slices: 20_000,
-            max_call_depth: MAX_CALL_DEPTH,
-            stack_frame_size: STACK_FRAME_SIZE,
-            log_pubkey_units: 100,
-            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
-            cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
-            sysvar_base_cost: 100,
-            secp256k1_recover_cost: 25_000,
-            syscall_base_cost: 100,
-            curve25519_edwards_validate_point_cost: 159,
-            curve25519_edwards_add_cost: 473,
-            curve25519_edwards_subtract_cost: 475,
-            curve25519_edwards_multiply_cost: 2_177,
-            curve25519_edwards_msm_base_cost: 2_273,
-            curve25519_edwards_msm_incremental_cost: 758,
-            curve25519_ristretto_validate_point_cost: 169,
-            curve25519_ristretto_add_cost: 521,
-            curve25519_ristretto_subtract_cost: 519,
-            curve25519_ristretto_multiply_cost: 2_208,
-            curve25519_ristretto_msm_base_cost: 2303,
-            curve25519_ristretto_msm_incremental_cost: 788,
-            heap_size: u32::try_from(solana_program_entrypoint::HEAP_LENGTH).unwrap(),
-            heap_cost: DEFAULT_HEAP_COST,
-            mem_op_base_cost: 10,
-            alt_bn128_addition_cost: 334,
-            alt_bn128_multiplication_cost: 3_840,
-            alt_bn128_pairing_one_pair_cost_first: 36_364,
-            alt_bn128_pairing_one_pair_cost_other: 12_121,
-            big_modular_exponentiation_base_cost: 190,
-            big_modular_exponentiation_cost_divisor: 2,
-            poseidon_cost_coefficient_a: 61,
-            poseidon_cost_coefficient_c: 542,
-            get_remaining_compute_units_cost: 100,
-            alt_bn128_g1_compress: 30,
-            alt_bn128_g1_decompress: 398,
-            alt_bn128_g2_compress: 86,
-            alt_bn128_g2_decompress: 13610,
-        }
-    }
-
-    /// Returns cost of the Poseidon hash function for the given number of
-    /// inputs is determined by the following quadratic function:
-    ///
-    /// 61*n^2 + 542
-    ///
-    /// Which aproximates the results of benchmarks of light-posiedon
-    /// library[0]. These results assume 1 CU per 33 ns. Examples:
-    ///
-    /// * 1 input
-    ///   * light-poseidon benchmark: `18,303 / 33 ≈ 555`
-    ///   * function: `61*1^2 + 542 = 603`
-    /// * 2 inputs
-    ///   * light-poseidon benchmark: `25,866 / 33 ≈ 784`
-    ///   * function: `61*2^2 + 542 = 786`
-    /// * 3 inputs
-    ///   * light-poseidon benchmark: `37,549 / 33 ≈ 1,138`
-    ///   * function; `61*3^2 + 542 = 1091`
-    ///
-    /// [0] https://github.com/Lightprotocol/light-poseidon#performance
-    pub fn poseidon_cost(&self, nr_inputs: u64) -> Option<u64> {
-        let squared_inputs = nr_inputs.checked_pow(2)?;
-        let mul_result = self
-            .poseidon_cost_coefficient_a
-            .checked_mul(squared_inputs)?;
-        let final_result = mul_result.checked_add(self.poseidon_cost_coefficient_c)?;
-
-        Some(final_result)
     }
 }

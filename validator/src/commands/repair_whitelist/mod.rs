@@ -1,13 +1,48 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs},
-    clap::{values_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+    },
+    clap::{values_t, App, AppSettings, Arg, ArgMatches, SubCommand},
+    itertools::Itertools,
     solana_clap_utils::input_validators::is_pubkey,
+    solana_cli_output::OutputFormat,
     solana_sdk::pubkey::Pubkey,
-    std::{collections::HashSet, path::Path, process::exit},
+    std::path::Path,
 };
 
-pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("repair-whitelist")
+pub const COMMAND: &str = "repair-whitelist";
+
+#[derive(Debug, PartialEq)]
+pub struct RepairWhitelistGetArgs {
+    pub output: OutputFormat,
+}
+
+impl FromClapArgMatches for RepairWhitelistGetArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        Ok(RepairWhitelistGetArgs {
+            output: OutputFormat::from_matches(matches, "output", false),
+        })
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RepairWhitelistSetArgs {
+    pub whitelist: Vec<Pubkey>,
+}
+
+impl FromClapArgMatches for RepairWhitelistSetArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let whitelist = values_t!(matches, "whitelist", Pubkey)?
+            .into_iter()
+            .unique()
+            .collect::<Vec<_>>();
+        Ok(RepairWhitelistSetArgs { whitelist })
+    }
+}
+
+pub fn command<'a>() -> App<'a, 'a> {
+    SubCommand::with_name(COMMAND)
         .about("Manage the validator's repair protocol whitelist")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .setting(AppSettings::InferSubcommands)
@@ -34,6 +69,7 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
                         .value_name("VALIDATOR IDENTITY")
                         .multiple(true)
                         .takes_value(true)
+                        .required(true)
                         .help("Set the validator's repair protocol whitelist"),
                 )
                 .after_help(
@@ -49,69 +85,125 @@ pub fn command(_default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     match matches.subcommand() {
         ("get", Some(subcommand_matches)) => {
-            let output_mode = subcommand_matches.value_of("output");
+            let repair_whitelist_get_args =
+                RepairWhitelistGetArgs::from_clap_arg_match(subcommand_matches)?;
+
             let admin_client = admin_rpc_service::connect(ledger_path);
             let repair_whitelist = admin_rpc_service::runtime()
-                .block_on(async move { admin_client.await?.repair_whitelist().await })
-                .unwrap_or_else(|err| {
-                    eprintln!("Repair whitelist query failed: {err}");
-                    exit(1);
-                });
-            if let Some(mode) = output_mode {
-                match mode {
-                    "json" => println!(
-                        "{}",
-                        serde_json::to_string_pretty(&repair_whitelist).unwrap()
-                    ),
-                    "json-compact" => {
-                        print!("{}", serde_json::to_string(&repair_whitelist).unwrap())
-                    }
-                    _ => unreachable!(),
-                }
-            } else {
-                print!("{repair_whitelist}");
-            }
+                .block_on(async move { admin_client.await?.repair_whitelist().await })?;
+
+            println!(
+                "{}",
+                repair_whitelist_get_args
+                    .output
+                    .formatted_string(&repair_whitelist)
+            );
         }
         ("set", Some(subcommand_matches)) => {
-            let whitelist = if subcommand_matches.is_present("whitelist") {
-                let validators_set: HashSet<_> =
-                    values_t_or_exit!(subcommand_matches, "whitelist", Pubkey)
-                        .into_iter()
-                        .collect();
-                validators_set.into_iter().collect::<Vec<_>>()
-            } else {
-                return;
-            };
-            set_repair_whitelist(ledger_path, whitelist).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                exit(1);
-            });
+            let RepairWhitelistSetArgs { whitelist } =
+                RepairWhitelistSetArgs::from_clap_arg_match(subcommand_matches)?;
+
+            if whitelist.is_empty() {
+                return Ok(());
+            }
+
+            set_repair_whitelist(ledger_path, whitelist)?;
         }
         ("remove-all", _) => {
-            set_repair_whitelist(ledger_path, Vec::default()).unwrap_or_else(|err| {
-                eprintln!("{err}");
-                exit(1);
-            });
+            set_repair_whitelist(ledger_path, Vec::default())?;
         }
         _ => unreachable!(),
     }
+
+    Ok(())
 }
 
-fn set_repair_whitelist(
-    ledger_path: &Path,
-    whitelist: Vec<Pubkey>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn set_repair_whitelist(ledger_path: &Path, whitelist: Vec<Pubkey>) -> Result<()> {
     let admin_client = admin_rpc_service::connect(ledger_path);
     admin_rpc_service::runtime()
-        .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })
-        .map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("setRepairWhitelist request failed: {err}"),
-            )
-        })?;
+        .block_on(async move { admin_client.await?.set_repair_whitelist(whitelist).await })?;
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, std::str::FromStr};
+
+    #[test]
+    fn verify_args_struct_by_command_repair_whitelist_get_default() {
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "get"]);
+        let subcommand_matches = matches.subcommand_matches("get").unwrap();
+        let args = RepairWhitelistGetArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        assert_eq!(
+            args,
+            RepairWhitelistGetArgs {
+                output: OutputFormat::Display
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_repair_whitelist_get_with_output() {
+        let app = command();
+        let matches = app.get_matches_from(vec![COMMAND, "get", "--output", "json"]);
+        let subcommand_matches = matches.subcommand_matches("get").unwrap();
+        let args = RepairWhitelistGetArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        assert_eq!(
+            args,
+            RepairWhitelistGetArgs {
+                output: OutputFormat::Json
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_repair_whitelist_set_with_single_whitelist() {
+        let app = command();
+        let matches = app.get_matches_from(vec![
+            COMMAND,
+            "set",
+            "--whitelist",
+            "ch1do11111111111111111111111111111111111111",
+        ]);
+        let subcommand_matches = matches.subcommand_matches("set").unwrap();
+        let args = RepairWhitelistSetArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        assert_eq!(
+            args,
+            RepairWhitelistSetArgs {
+                whitelist: vec![
+                    Pubkey::from_str("ch1do11111111111111111111111111111111111111").unwrap(),
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_repair_whitelist_set_with_multiple_whitelist() {
+        let app = command();
+        let matches = app.get_matches_from(vec![
+            COMMAND,
+            "set",
+            "--whitelist",
+            "ch1do11111111111111111111111111111111111111",
+            "--whitelist",
+            "ch1do11111111111111111111111111111111111112",
+        ]);
+        let subcommand_matches = matches.subcommand_matches("set").unwrap();
+        let mut args = RepairWhitelistSetArgs::from_clap_arg_match(subcommand_matches).unwrap();
+        args.whitelist.sort(); // the order of the whitelist is not guaranteed. sort it before asserting
+        assert_eq!(
+            args,
+            RepairWhitelistSetArgs {
+                whitelist: vec![
+                    Pubkey::from_str("ch1do11111111111111111111111111111111111111").unwrap(),
+                    Pubkey::from_str("ch1do11111111111111111111111111111111111112").unwrap(),
+                ]
+            }
+        );
+    }
 }

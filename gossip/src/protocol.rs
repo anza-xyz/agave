@@ -7,14 +7,12 @@ use {
         ping_pong::{self, Pong},
     },
     bincode::serialize,
-    rayon::prelude::*,
     serde::Serialize,
+    solana_keypair::signable::Signable,
     solana_perf::packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Signable, Signature},
-    },
+    solana_signature::Signature,
     std::{
         borrow::{Borrow, Cow},
         fmt::Debug,
@@ -92,11 +90,11 @@ impl Protocol {
 
     // Returns true if all signatures verify.
     #[must_use]
-    pub(crate) fn par_verify(&self) -> bool {
+    pub(crate) fn verify(&self) -> bool {
         match self {
             Self::PullRequest(_, caller) => caller.verify(),
-            Self::PullResponse(_, data) => data.par_iter().all(CrdsValue::verify),
-            Self::PushMessage(_, data) => data.par_iter().all(CrdsValue::verify),
+            Self::PullResponse(_, data) => data.iter().all(CrdsValue::verify),
+            Self::PushMessage(_, data) => data.iter().all(CrdsValue::verify),
             Self::PruneMessage(_, data) => data.verify(),
             Self::PingMessage(ping) => ping.verify(),
             Self::PongMessage(pong) => pong.verify(),
@@ -268,15 +266,14 @@ pub(crate) mod tests {
             duplicate_shred::{self, tests::new_rand_shred, MAX_DUPLICATE_SHREDS},
         },
         rand::Rng,
+        solana_clock::Slot,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
         solana_perf::packet::Packet,
-        solana_sdk::{
-            clock::Slot,
-            hash::Hash,
-            signature::{Keypair, Signer},
-            timing::timestamp,
-            transaction::Transaction,
-        },
+        solana_signer::Signer,
+        solana_time_utils::timestamp,
+        solana_transaction::Transaction,
         solana_vote_program::{vote_instruction, vote_state::Vote},
         std::{
             iter::repeat_with,

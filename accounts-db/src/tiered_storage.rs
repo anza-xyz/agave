@@ -178,12 +178,10 @@ mod tests {
         file::TieredStorageMagicNumber,
         footer::TieredStorageFooter,
         hot::HOT_FORMAT,
+        solana_account::{AccountSharedData, ReadableAccount},
+        solana_clock::Slot,
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount},
-            clock::Slot,
-            system_instruction::MAX_PERMITTED_DATA_LENGTH,
-        },
+        solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
         std::{
             collections::{HashMap, HashSet},
             mem::ManuallyDrop,
@@ -386,20 +384,20 @@ mod tests {
         let mut max_pubkey = MIN_PUBKEY;
 
         reader
-            .scan_accounts(|stored_account_meta| {
-                if let Some(account) = expected_accounts_map.get(stored_account_meta.pubkey()) {
+            .scan_accounts(|stored_account| {
+                if let Some(account) = expected_accounts_map.get(stored_account.pubkey()) {
                     verify_test_account_with_footer(
-                        &stored_account_meta,
+                        &stored_account,
                         account,
-                        stored_account_meta.pubkey(),
+                        stored_account.pubkey(),
                         footer,
                     );
-                    verified_accounts.insert(*stored_account_meta.pubkey());
-                    if min_pubkey > *stored_account_meta.pubkey() {
-                        min_pubkey = *stored_account_meta.pubkey();
+                    verified_accounts.insert(*stored_account.pubkey());
+                    if min_pubkey > *stored_account.pubkey() {
+                        min_pubkey = *stored_account.pubkey();
                     }
-                    if max_pubkey < *stored_account_meta.pubkey() {
-                        max_pubkey = *stored_account_meta.pubkey();
+                    if max_pubkey < *stored_account.pubkey() {
+                        max_pubkey = *stored_account.pubkey();
                     }
                 }
             })

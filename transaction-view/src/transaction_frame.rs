@@ -229,12 +229,16 @@ impl TransactionFrame {
     /// - This function must be called with the same `bytes` slice that was
     ///   used to create the `TransactionFrame` instance.
     #[inline]
-    pub(crate) unsafe fn instructions_iter<'a>(&self, bytes: &'a [u8]) -> InstructionsIterator<'a> {
+    pub(crate) unsafe fn instructions_iter<'a>(
+        &'a self,
+        bytes: &'a [u8],
+    ) -> InstructionsIterator<'a> {
         InstructionsIterator {
             bytes,
             offset: usize::from(self.instructions.offset),
             num_instructions: self.instructions.num_instructions,
             index: 0,
+            frames: &self.instructions.frames,
         }
     }
 

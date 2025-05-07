@@ -1,19 +1,24 @@
 //! The `gossip_service` module implements the network control plane.
 
 use {
-    crate::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    crossbeam_channel::{unbounded, Sender},
+    crate::{
+        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
+        cluster_info_metrics::submit_gossip_stats,
+        contact_info::ContactInfo,
+        epoch_specs::EpochSpecs,
+    },
+    crossbeam_channel::Sender,
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
+    solana_keypair::Keypair,
     solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
     solana_perf::recycler::Recycler,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::{
+        evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
     },
@@ -25,10 +30,12 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
         },
-        thread::{self, sleep, JoinHandle},
+        thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
 };
+
+const SUBMIT_GOSSIP_STATS_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct GossipService {
     thread_hdls: Vec<JoinHandle<()>>,
@@ -44,7 +51,8 @@ impl GossipService {
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let (request_sender, request_receiver) = unbounded();
+        let (request_sender, request_receiver) =
+            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let gossip_socket = Arc::new(gossip_socket);
         trace!(
             "GossipService: id: {}, listening on: {:?}",
@@ -52,26 +60,29 @@ impl GossipService {
             gossip_socket.local_addr().unwrap()
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
+        let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
         let t_receiver = streamer::receiver(
             "solRcvrGossip".to_string(),
             gossip_socket.clone(),
             exit.clone(),
             request_sender,
             Recycler::default(),
-            Arc::new(StreamerReceiveStats::new("gossip_receiver")),
-            Duration::from_millis(1), // coalesce
+            gossip_receiver_stats.clone(),
+            Some(Duration::from_millis(1)), // coalesce
             false,
             None,
             false,
         );
-        let (consume_sender, listen_receiver) = unbounded();
+        let (consume_sender, listen_receiver) =
+            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_socket_consume = cluster_info.clone().start_socket_consume_thread(
             bank_forks.clone(),
             request_receiver,
             consume_sender,
             exit.clone(),
         );
-        let (response_sender, response_receiver) = unbounded();
+        let (response_sender, response_receiver) =
+            EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
         let t_listen = cluster_info.clone().listen(
             bank_forks.clone(),
             listen_receiver,
@@ -79,10 +90,12 @@ impl GossipService {
             should_check_duplicate_instance,
             exit.clone(),
         );
-        let t_gossip =
-            cluster_info
-                .clone()
-                .gossip(bank_forks, response_sender, gossip_validators, exit);
+        let t_gossip = cluster_info.clone().gossip(
+            bank_forks.clone(),
+            response_sender,
+            gossip_validators,
+            exit.clone(),
+        );
         let t_responder = streamer::responder(
             "Gossip",
             gossip_socket,
@@ -90,12 +103,33 @@ impl GossipService {
             socket_addr_space,
             stats_reporter_sender,
         );
+        let t_metrics = Builder::new()
+            .name("solGossipMetr".to_string())
+            .spawn({
+                let cluster_info = cluster_info.clone();
+                let mut epoch_specs = bank_forks.map(EpochSpecs::from);
+                move || {
+                    while !exit.load(Ordering::Relaxed) {
+                        sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
+                        let stakes = epoch_specs
+                            .as_mut()
+                            .map(|epoch_specs| epoch_specs.current_epoch_staked_nodes())
+                            .cloned()
+                            .unwrap_or_default();
+
+                        submit_gossip_stats(&cluster_info.stats, &cluster_info.gossip, &stakes);
+                        gossip_receiver_stats.report();
+                    }
+                }
+            })
+            .unwrap();
         let thread_hdls = vec![
             t_receiver,
             t_responder,
             t_socket_consume,
             t_listen,
             t_gossip,
+            t_metrics,
         ];
         Self { thread_hdls }
     }
@@ -109,9 +143,19 @@ impl GossipService {
 }
 
 /// Discover Validators in a cluster
+#[deprecated(since = "3.0.0", note = "use `discover_validators` instead")]
 pub fn discover_cluster(
     entrypoint: &SocketAddr,
     num_nodes: usize,
+    socket_addr_space: SocketAddrSpace,
+) -> std::io::Result<Vec<ContactInfo>> {
+    discover_validators(entrypoint, num_nodes, 0, socket_addr_space)
+}
+
+pub fn discover_validators(
+    entrypoint: &SocketAddr,
+    num_nodes: usize,
+    my_shred_version: u16,
     socket_addr_space: SocketAddrSpace,
 ) -> std::io::Result<Vec<ContactInfo>> {
     const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -120,10 +164,10 @@ pub fn discover_cluster(
         Some(entrypoint),
         Some(num_nodes),
         DISCOVER_CLUSTER_TIMEOUT,
-        None, // find_nodes_by_pubkey
-        None, // find_node_by_gossip_addr
-        None, // my_gossip_addr
-        0,    // my_shred_version
+        None,             // find_nodes_by_pubkey
+        None,             // find_node_by_gossip_addr
+        None,             // my_gossip_addr
+        my_shred_version, // my_shred_version
         socket_addr_space,
     )?;
     Ok(validators)
@@ -198,10 +242,7 @@ pub fn discover(
     }
 
     info!("discover failed...\n{}", spy_ref.contact_info_trace());
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "Discover failed",
-    ))
+    Err(std::io::Error::other("Discover failed"))
 }
 
 /// Creates a TpuClient by selecting a valid node at random

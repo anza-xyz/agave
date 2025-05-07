@@ -1,0 +1,112 @@
+name: Publish Windows Tarball
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        type: string
+        required: true
+        description: commit
+
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    outputs:
+      tag: ${{ steps.build.outputs.tag }}
+      channel: ${{ steps.build.outputs.channel }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      # took the workaround from https://github.com/sfackler/rust-openssl/issues/2149
+      - name: Set Perl environment variables
+        run: |
+          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build
+        id: build
+        shell: bash
+        env:
+          COMMIT: ${{ github.event.inputs.commit }}
+        run: |
+          # install all deps
+          source .github/scripts/install-all-deps.sh ${{ runner.os }}
+
+          # checkout the commit
+          if [[ -z ${{ env.COMMIT }} ]]; then
+            echo "Required parameter env.COMMIT is empty."
+            exit 1
+          fi
+
+          git checkout ${{ env.COMMIT }}
+
+          source ci/env.sh
+          echo "tag=$CI_TAG" >> $GITHUB_OUTPUT
+          eval "$(ci/channel-info.sh)"
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+
+          # print the info
+          echo "::notice::commit: ${{ env.COMMIT }}"
+          echo "::notice::tag: $CI_TAG"
+          echo "::notice::channel: $CHANNEL"
+
+          ci/publish-tarball.sh
+
+      - name: Prepare Upload Files
+        if: ${{ steps.build.outputs.channel != '' || steps.build.outputs.tag != '' }}
+        shell: bash
+        run: |
+          FOLDER_NAME=${{ steps.build.outputs.tag || steps.build.outputs.channel }}
+          mkdir -p "windows-release/$FOLDER_NAME"
+          cp -v "solana-release-x86_64-pc-windows-msvc.tar.bz2" "windows-release/$FOLDER_NAME/"
+          cp -v "solana-release-x86_64-pc-windows-msvc.yml" "windows-release/$FOLDER_NAME/"
+          cp -v "agave-install-init-x86_64-pc-windows-msvc"* "windows-release/$FOLDER_NAME"
+
+      - name: Upload Artifacts
+        if: ${{ steps.build.outputs.channel != '' || steps.build.outputs.tag != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifact
+          path: windows-release/
+
+  windows-gcs-upload:
+    if: ${{ needs.windows-build.outputs.channel != '' || needs.windows-build.outputs.tag != '' }}
+    needs: [windows-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artifact
+          path: ./windows-release
+
+      - name: Setup crediential
+        uses: "google-github-actions/auth@v2"
+        with:
+          credentials_json: "${{ secrets.GCS_RELEASE_BUCKET_WRITER_CREDIENTIAL }}"
+
+      - name: Upload files to GCS
+        run: |
+          gcloud storage cp --recursive windows-release/* gs://anza-release/
+
+  windows-gh-release:
+    if: ${{ needs.windows-build.outputs.tag != '' }}
+    needs: [windows-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artifact
+          path: ./windows-release/
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.windows-build.outputs.tag }}
+          files: |
+            windows-release/${{ needs.windows-build.outputs.tag }}/*

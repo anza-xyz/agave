@@ -13,7 +13,6 @@ use {
             tower_storage::{NullTowerStorage, TowerStorage},
             ExternalRootSource, Tower,
         },
-        poh_timing_report_service::PohTimingReportService,
         repair::{
             self,
             quic_endpoint::{RepairQuicAsyncSenders, RepairQuicSenders, RepairQuicSockets},
@@ -30,10 +29,8 @@ use {
         tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
-    agave_thread_manager::{ThreadManager, ThreadManagerConfig},
     anyhow::{anyhow, Context, Result},
     crossbeam_channel::{bounded, unbounded, Receiver},
-    lazy_static::lazy_static,
     quinn::Endpoint,
     solana_accounts_db::{
         accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
@@ -73,12 +70,11 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure::Measure,
-    solana_metrics::{
-        datapoint_info, metrics::metrics_config_sanity_check, poh_timing_point::PohTimingSender,
-    },
+    solana_metrics::{datapoint_info, metrics::metrics_config_sanity_check},
     solana_poh::{
         poh_recorder::PohRecorder,
         poh_service::{self, PohService},
+        transaction_recorder::TransactionRecorder,
     },
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
@@ -91,14 +87,14 @@ use {
         rpc::JsonRpcConfig,
         rpc_completed_slots_service::RpcCompletedSlotsService,
         rpc_pubsub_service::{PubSubConfig, PubSubService},
-        rpc_service::JsonRpcService,
+        rpc_service::{ClientOption, JsonRpcService, JsonRpcServiceConfig},
         rpc_subscriptions::RpcSubscriptions,
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
     },
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AbsRequestSender, AccountsBackgroundService, DroppedSlotsReceiver,
+            AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
             PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank::Bank,
@@ -109,6 +105,7 @@ use {
         snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
         snapshot_config::SnapshotConfig,
+        snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
@@ -124,12 +121,12 @@ use {
         signature::{Keypair, Signer},
         timing::timestamp,
     },
-    solana_send_transaction_service::send_transaction_service,
+    solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
-    solana_turbine::{self, broadcast_stage::BroadcastStageType},
+    solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
@@ -176,22 +173,15 @@ impl BlockVerificationMethod {
     }
 
     pub fn cli_message() -> &'static str {
-        lazy_static! {
-            static ref MESSAGE: String = format!(
-                "Switch transaction scheduling method for verifying ledger entries [default: {}]",
-                BlockVerificationMethod::default()
-            );
-        };
-
-        &MESSAGE
+        "Switch transaction scheduling method for verifying ledger entries"
     }
 }
 
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockProductionMethod {
-    #[default]
     CentralScheduler,
+    #[default]
     CentralSchedulerGreedy,
 }
 
@@ -201,14 +191,7 @@ impl BlockProductionMethod {
     }
 
     pub fn cli_message() -> &'static str {
-        lazy_static! {
-            static ref MESSAGE: String = format!(
-                "Switch transaction scheduling method for producing ledger entries [default: {}]",
-                BlockProductionMethod::default()
-            );
-        };
-
-        &MESSAGE
+        "Switch transaction scheduling method for producing ledger entries"
     }
 }
 
@@ -226,14 +209,7 @@ impl TransactionStructure {
     }
 
     pub fn cli_message() -> &'static str {
-        lazy_static! {
-            static ref MESSAGE: String = format!(
-                "Switch internal transaction structure/representation [default: {}]",
-                TransactionStructure::default()
-            );
-        };
-
-        &MESSAGE
+        "Switch internal transaction structure/representation"
     }
 }
 
@@ -270,7 +246,6 @@ pub struct ValidatorConfig {
     pub repair_validators: Option<HashSet<Pubkey>>, // None = repair from all
     pub repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>, // Empty = repair with all
     pub gossip_validators: Option<HashSet<Pubkey>>, // None = gossip with all
-    pub accounts_hash_interval_slots: u64,
     pub max_genesis_archive_unpacked_size: u64,
     /// Run PoH, transaction signature and other transaction verifications during blockstore
     /// processing.
@@ -280,7 +255,7 @@ pub struct ValidatorConfig {
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub contact_debug_interval: u64,
     pub contact_save_interval: u64,
-    pub send_transaction_service_config: send_transaction_service::Config,
+    pub send_transaction_service_config: SendTransactionServiceConfig,
     pub no_poh_speed_test: bool,
     pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
@@ -315,8 +290,9 @@ pub struct ValidatorConfig {
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub tvu_shred_sigverify_threads: NonZeroUsize,
-    pub thread_manager_config: ThreadManagerConfig,
     pub delay_leader_block_for_pending_fork: bool,
+    pub use_tpu_client_next: bool,
+    pub retransmit_xdp: Option<XdpConfig>,
 }
 
 impl Default for ValidatorConfig {
@@ -346,7 +322,6 @@ impl Default for ValidatorConfig {
             repair_validators: None,
             repair_whitelist: Arc::new(RwLock::new(HashSet::default())),
             gossip_validators: None,
-            accounts_hash_interval_slots: u64::MAX,
             max_genesis_archive_unpacked_size: MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
             run_verification: true,
             require_tower: false,
@@ -354,7 +329,7 @@ impl Default for ValidatorConfig {
             debug_keys: None,
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
-            send_transaction_service_config: send_transaction_service::Config::default(),
+            send_transaction_service_config: SendTransactionServiceConfig::default(),
             no_poh_speed_test: true,
             no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
@@ -388,9 +363,10 @@ impl Default for ValidatorConfig {
             rayon_global_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
-            thread_manager_config: ThreadManagerConfig::default_for_agave(),
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
+            use_tpu_client_next: false,
+            retransmit_xdp: None,
         }
     }
 }
@@ -568,7 +544,6 @@ pub struct Validator {
     entry_notifier_service: Option<EntryNotifierService>,
     system_monitor_service: Option<SystemMonitorService>,
     sample_performance_service: Option<SamplePerformanceService>,
-    poh_timing_report_service: PohTimingReportService,
     stats_reporter_service: StatsReporterService,
     gossip_service: GossipService,
     serve_repair_service: ServeRepairService,
@@ -592,7 +567,10 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
-    thread_manager: ThreadManager,
+    // This runtime is used to run the client owned by SendTransactionService.
+    // We don't wait for its JoinHandle here because ownership and shutdown
+    // are managed elsewhere. This variable is intentionally unused.
+    _tpu_client_next_runtime: Option<TokioRuntime>,
 }
 
 impl Validator {
@@ -624,7 +602,6 @@ impl Validator {
 
         let start_time = Instant::now();
 
-        let thread_manager = ThreadManager::new(&config.thread_manager_config)?;
         // Initialize the global rayon pool first to ensure the value in config
         // is honored. Otherwise, some code accessing the global pool could
         // cause it to get initialized with Rayon's default (not ours)
@@ -800,10 +777,6 @@ impl Validator {
             },
         ));
 
-        let (poh_timing_point_sender, poh_timing_point_receiver) = unbounded();
-        let poh_timing_report_service =
-            PohTimingReportService::new(poh_timing_point_receiver, exit.clone());
-
         let (
             bank_forks,
             blockstore,
@@ -832,7 +805,6 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
-            Some(poh_timing_point_sender.clone()),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -891,20 +863,29 @@ impl Validator {
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         let cluster_info = Arc::new(cluster_info);
 
-        assert!(is_snapshot_config_valid(
-            &config.snapshot_config,
-            config.accounts_hash_interval_slots,
+        assert!(is_snapshot_config_valid(&config.snapshot_config));
+
+        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let snapshot_controller = Arc::new(SnapshotController::new(
+            snapshot_request_sender.clone(),
+            config.snapshot_config.clone(),
+            bank_forks.read().unwrap().root(),
         ));
 
         let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-        let snapshot_packager_service = if config.snapshot_config.should_generate_snapshots() {
+        let snapshot_packager_service = if snapshot_controller
+            .snapshot_config()
+            .should_generate_snapshots()
+        {
+            let exit_backpressure = None;
             let enable_gossip_push = true;
             let snapshot_packager_service = SnapshotPackagerService::new(
                 pending_snapshot_packages.clone(),
                 starting_snapshot_hashes,
                 exit.clone(),
+                exit_backpressure,
                 cluster_info.clone(),
-                config.snapshot_config.clone(),
+                snapshot_controller.clone(),
                 enable_gossip_push,
             );
             Some(snapshot_packager_service)
@@ -918,15 +899,10 @@ impl Validator {
             accounts_package_receiver,
             pending_snapshot_packages,
             exit.clone(),
-            config.snapshot_config.clone(),
+            snapshot_controller.clone(),
         );
-
-        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-        let accounts_background_request_sender =
-            AbsRequestSender::new(snapshot_request_sender.clone());
         let snapshot_request_handler = SnapshotRequestHandler {
-            snapshot_config: config.snapshot_config.clone(),
-            snapshot_request_sender,
+            snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
             accounts_package_sender,
         };
@@ -955,7 +931,7 @@ impl Validator {
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let startup_verification_complete;
-        let (poh_recorder, entry_receiver, record_receiver) = {
+        let (poh_recorder, entry_receiver) = {
             let bank = &bank_forks.read().unwrap().working_bank();
             startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
             PohRecorder::new_with_clear_signal(
@@ -969,10 +945,12 @@ impl Validator {
                 blockstore.get_new_shred_signal(0),
                 &leader_schedule_cache,
                 &genesis_config.poh_config,
-                Some(poh_timing_point_sender),
                 exit.clone(),
             )
         };
+        let (record_sender, record_receiver) = unbounded();
+        let transaction_recorder =
+            TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
 
         let (banking_tracer, tracer_thread) =
@@ -1032,7 +1010,7 @@ impl Validator {
             block_meta_sender.clone(),
             entry_notification_sender,
             blockstore_root_scan,
-            accounts_background_request_sender.clone(),
+            &snapshot_controller,
             config,
         );
 
@@ -1042,7 +1020,7 @@ impl Validator {
             ledger_path,
             &bank_forks,
             &leader_schedule_cache,
-            &accounts_background_request_sender,
+            &snapshot_controller,
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1092,11 +1070,14 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
+        // ConnectionCache might be used for JsonRpc and for Forwarding. Since
+        // the latter is not migrated yet to the tpu-client-next, create
+        // ConnectionCache regardless of config.use_tpu_client_next for now.
         let connection_cache = if use_quic {
             let connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                None,
+                Some(node.sockets.tpu_transaction_forwarding_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1120,7 +1101,7 @@ impl Validator {
             let vote_connection_cache = ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
                 tpu_connection_pool_size,
-                None, // client_endpoint
+                Some(node.sockets.quic_vote_client),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1139,6 +1120,22 @@ impl Validator {
                 tpu_connection_pool_size,
             ))
         };
+
+        // test-validator crate may start the validator in a tokio runtime
+        // context which forces us to use the same runtime because a nested
+        // runtime will cause panic at drop. Outside test-validator crate, we
+        // always need a tokio runtime (and the respective handle) to initialize
+        // the turbine QUIC endpoint.
+        let current_runtime_handle = tokio::runtime::Handle::try_current();
+        let tpu_client_next_runtime =
+            (current_runtime_handle.is_err() && config.use_tpu_client_next).then(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .worker_threads(2)
+                    .thread_name("solTpuClientRt")
+                    .build()
+                    .unwrap()
+            });
 
         let rpc_override_health_check =
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
@@ -1164,31 +1161,45 @@ impl Validator {
                 None
             };
 
-            let json_rpc_service = JsonRpcService::new(
+            let client_option = if config.use_tpu_client_next {
+                let runtime_handle = tpu_client_next_runtime
+                    .as_ref()
+                    .map(TokioRuntime::handle)
+                    .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+                ClientOption::TpuClientNext(
+                    Arc::as_ref(&identity_keypair),
+                    node.sockets.rpc_sts_client,
+                    runtime_handle.clone(),
+                )
+            } else {
+                ClientOption::ConnectionCache(connection_cache.clone())
+            };
+            let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
-                config.rpc_config.clone(),
-                Some(config.snapshot_config.clone()),
-                bank_forks.clone(),
-                block_commitment_cache.clone(),
-                blockstore.clone(),
-                cluster_info.clone(),
-                Some(poh_recorder.clone()),
-                genesis_config.hash(),
-                ledger_path,
-                config.validator_exit.clone(),
-                exit.clone(),
-                rpc_override_health_check.clone(),
+                rpc_config: config.rpc_config.clone(),
+                snapshot_config: Some(snapshot_controller.snapshot_config().clone()),
+                bank_forks: bank_forks.clone(),
+                block_commitment_cache: block_commitment_cache.clone(),
+                blockstore: blockstore.clone(),
+                cluster_info: cluster_info.clone(),
+                poh_recorder: Some(poh_recorder.clone()),
+                genesis_hash: genesis_config.hash(),
+                ledger_path: ledger_path.to_path_buf(),
+                validator_exit: config.validator_exit.clone(),
+                exit: exit.clone(),
+                override_health_check: rpc_override_health_check.clone(),
                 startup_verification_complete,
-                optimistically_confirmed_bank.clone(),
-                config.send_transaction_service_config.clone(),
-                max_slots.clone(),
-                leader_schedule_cache.clone(),
-                connection_cache.clone(),
+                optimistically_confirmed_bank: optimistically_confirmed_bank.clone(),
+                send_transaction_service_config: config.send_transaction_service_config.clone(),
+                max_slots: max_slots.clone(),
+                leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
-                prioritization_fee_cache.clone(),
-            )
-            .map_err(ValidatorError::Other)?;
+                prioritization_fee_cache: prioritization_fee_cache.clone(),
+                client_option,
+            };
+            let json_rpc_service =
+                JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
 
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -1356,12 +1367,6 @@ impl Validator {
             .as_ref()
             .map(|service| service.sender_cloned());
 
-        // test-validator crate may start the validator in a tokio runtime
-        // context which forces us to use the same runtime because a nested
-        // runtime will cause panic at drop.
-        // Outside test-validator crate, we always need a tokio runtime (and
-        // the respective handle) to initialize the turbine QUIC endpoint.
-        let current_runtime_handle = tokio::runtime::Handle::try_current();
         let turbine_quic_endpoint_runtime = (current_runtime_handle.is_err()
             && genesis_config.cluster_type != ClusterType::MainnetBeta)
             .then(|| {
@@ -1473,6 +1478,11 @@ impl Validator {
         let cluster_slots =
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
+        // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
+        let connection_cache_for_warmup = (json_rpc_service.is_some()
+            && !config.use_tpu_client_next)
+            .then_some(&connection_cache);
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1514,13 +1524,14 @@ impl Validator {
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
+                retransmit_xdp: config.retransmit_xdp.clone(),
             },
             &max_slots,
             block_metadata_notifier,
             config.wait_to_vote_slot,
-            accounts_background_request_sender.clone(),
+            Some(snapshot_controller.clone()),
             config.runtime_config.log_messages_bytes_limit,
-            json_rpc_service.is_some().then_some(&connection_cache), // for the cache warmer only used for STS for RPC service
+            connection_cache_for_warmup,
             &prioritization_fee_cache,
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
@@ -1549,8 +1560,7 @@ impl Validator {
                 wen_restart_repair_slots: wen_restart_repair_slots.clone(),
                 wait_for_supermajority_threshold_percent:
                     WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT,
-                snapshot_config: config.snapshot_config.clone(),
-                accounts_background_request_sender: accounts_background_request_sender.clone(),
+                snapshot_controller: Some(snapshot_controller.clone()),
                 abs_status: accounts_background_service.status().clone(),
                 genesis_config_hash: genesis_config.hash(),
                 exit: exit.clone(),
@@ -1561,6 +1571,7 @@ impl Validator {
         let (tpu, mut key_notifies) = Tpu::new(
             &cluster_info,
             &poh_recorder,
+            transaction_recorder,
             entry_receiver,
             retransmit_slots_receiver,
             TpuSockets {
@@ -1571,6 +1582,8 @@ impl Validator {
                 transactions_quic: node.sockets.tpu_quic,
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
+                vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
+                vortexor_receivers: node.sockets.vortexor_receivers,
             },
             &rpc_subscriptions,
             transaction_status_sender,
@@ -1618,6 +1631,12 @@ impl Validator {
         );
 
         *start_progress.write().unwrap() = ValidatorStartProgress::Running;
+        if config.use_tpu_client_next {
+            if let Some(json_rpc_service) = &json_rpc_service {
+                key_notifies.push(json_rpc_service.get_client_key_updater())
+            }
+        }
+        // add connection_cache because it is still used in Forwarder.
         key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
@@ -1644,7 +1663,6 @@ impl Validator {
             entry_notifier_service,
             system_monitor_service,
             sample_performance_service,
-            poh_timing_report_service,
             snapshot_packager_service,
             completed_data_sets_service,
             tpu,
@@ -1666,7 +1684,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
-            thread_manager,
+            _tpu_client_next_runtime: tpu_client_next_runtime,
         })
     }
 
@@ -1818,11 +1836,6 @@ impl Validator {
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
             geyser_plugin_service.join().expect("geyser_plugin_service");
         }
-
-        self.poh_timing_report_service
-            .join()
-            .expect("poh_timing_report_service");
-        self.thread_manager.destroy();
     }
 }
 
@@ -1999,7 +2012,6 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
-    poh_timing_point_sender: Option<PohTimingSender>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2019,14 +2031,12 @@ fn load_blockstore(
     info!("loading ledger from {:?}...", ledger_path);
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
-    let mut blockstore =
-        Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
-            .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
+    let blockstore = Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
+        .map_err(|err| format!("Failed to open Blockstore: {err:?}"))?;
 
     let (ledger_signal_sender, ledger_signal_receiver) = bounded(MAX_REPLAY_WAKE_UP_SIGNALS);
     blockstore.add_new_shred_signal(ledger_signal_sender);
 
-    blockstore.shred_timing_point_sender = poh_timing_point_sender;
     // following boot sequence (esp BankForks) could set root. so stash the original value
     // of blockstore root away here as soon as possible.
     let original_blockstore_root = blockstore.max_root();
@@ -2075,7 +2085,7 @@ fn load_blockstore(
             genesis_config,
             &blockstore,
             config.account_paths.clone(),
-            Some(&config.snapshot_config),
+            &config.snapshot_config,
             &process_options,
             transaction_history_services.block_meta_sender.as_ref(),
             entry_notifier_service
@@ -2095,11 +2105,6 @@ fn load_blockstore(
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
 
     leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
-    {
-        let mut bank_forks = bank_forks.write().unwrap();
-        bank_forks.set_snapshot_config(Some(config.snapshot_config.clone()));
-        bank_forks.set_accounts_hash_interval_slots(config.accounts_hash_interval_slots);
-    }
 
     Ok((
         bank_forks,
@@ -2129,7 +2134,7 @@ pub struct ProcessBlockStore<'a> {
     block_meta_sender: Option<BlockMetaSender>,
     entry_notification_sender: Option<&'a EntryNotifierSender>,
     blockstore_root_scan: Option<BlockstoreRootScan>,
-    accounts_background_request_sender: AbsRequestSender,
+    snapshot_controller: &'a SnapshotController,
     config: &'a ValidatorConfig,
     tower: Option<Tower>,
 }
@@ -2149,7 +2154,7 @@ impl<'a> ProcessBlockStore<'a> {
         block_meta_sender: Option<BlockMetaSender>,
         entry_notification_sender: Option<&'a EntryNotifierSender>,
         blockstore_root_scan: BlockstoreRootScan,
-        accounts_background_request_sender: AbsRequestSender,
+        snapshot_controller: &'a SnapshotController,
         config: &'a ValidatorConfig,
     ) -> Self {
         Self {
@@ -2165,7 +2170,7 @@ impl<'a> ProcessBlockStore<'a> {
             block_meta_sender,
             entry_notification_sender,
             blockstore_root_scan: Some(blockstore_root_scan),
-            accounts_background_request_sender,
+            snapshot_controller,
             config,
             tower: None,
         }
@@ -2202,7 +2207,7 @@ impl<'a> ProcessBlockStore<'a> {
                 self.transaction_status_sender,
                 self.block_meta_sender.as_ref(),
                 self.entry_notification_sender,
-                &self.accounts_background_request_sender,
+                Some(self.snapshot_controller),
             )
             .map_err(|err| {
                 exit.store(true, Ordering::Relaxed);
@@ -2266,7 +2271,7 @@ fn maybe_warp_slot(
     ledger_path: &Path,
     bank_forks: &RwLock<BankForks>,
     leader_schedule_cache: &LeaderScheduleCache,
-    accounts_background_request_sender: &AbsRequestSender,
+    snapshot_controller: &SnapshotController,
 ) -> Result<(), String> {
     if let Some(warp_slot) = config.warp_slot {
         let mut bank_forks = bank_forks.write().unwrap();
@@ -2297,11 +2302,7 @@ fn maybe_warp_slot(
             solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
         ));
         bank_forks
-            .set_root(
-                warp_slot,
-                accounts_background_request_sender,
-                Some(warp_slot),
-            )
+            .set_root(warp_slot, Some(snapshot_controller), Some(warp_slot))
             .map_err(|err| err.to_string())?;
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
@@ -2460,7 +2461,8 @@ fn cleanup_blockstore_incorrect_shred_versions(
             let slot_meta_iterator = blockstore.slot_meta_iterator(start_slot)?;
             for (slot, _meta) in slot_meta_iterator {
                 let shreds = blockstore.get_data_shreds_for_slot(slot, 0)?;
-                let _ = backup_blockstore.insert_shreds(shreds, None, true);
+                let shreds = shreds.into_iter().map(Cow::Owned);
+                let _ = backup_blockstore.insert_cow_shreds(shreds, None, true);
                 num_slots_copied += 1;
 
                 if print_timer.elapsed() > PRINT_INTERVAL {
@@ -2530,8 +2532,8 @@ fn initialize_rpc_transaction_history_services(
 
 #[derive(Error, Debug)]
 pub enum ValidatorError {
-    #[error("Bad expected bank hash")]
-    BadExpectedBankHash,
+    #[error("bank hash mismatch: actual={0}, expected={1}")]
+    BankHashMismatch(Hash, Hash),
 
     #[error("blockstore error: {0}")]
     Blockstore(#[source] BlockstoreError),
@@ -2539,8 +2541,11 @@ pub enum ValidatorError {
     #[error("genesis hash mismatch: actual={0}, expected={1}")]
     GenesisHashMismatch(Hash, Hash),
 
-    #[error("Ledger does not have enough data to wait for supermajority")]
-    NotEnoughLedgerData,
+    #[error(
+        "ledger does not have enough data to wait for supermajority: \
+        current slot={0}, needed slot={1}"
+    )]
+    NotEnoughLedgerData(Slot, Slot),
 
     #[error("failed to open genesis: {0}")]
     OpenGenesisConfig(#[source] OpenGenesisConfigError),
@@ -2590,25 +2595,20 @@ fn wait_for_supermajority(
             match wait_for_supermajority_slot.cmp(&bank.slot()) {
                 std::cmp::Ordering::Less => return Ok(false),
                 std::cmp::Ordering::Greater => {
-                    error!(
-                        "Ledger does not have enough data to wait for supermajority, please \
-                         enable snapshot fetch. Has {} needs {}",
+                    return Err(ValidatorError::NotEnoughLedgerData(
                         bank.slot(),
-                        wait_for_supermajority_slot
-                    );
-                    return Err(ValidatorError::NotEnoughLedgerData);
+                        wait_for_supermajority_slot,
+                    ));
                 }
                 _ => {}
             }
 
             if let Some(expected_bank_hash) = config.expected_bank_hash {
                 if bank.hash() != expected_bank_hash {
-                    error!(
-                        "Bank hash({}) does not match expected value: {}",
+                    return Err(ValidatorError::BankHashMismatch(
                         bank.hash(),
-                        expected_bank_hash
-                    );
-                    return Err(ValidatorError::BadExpectedBankHash);
+                        expected_bank_hash,
+                    ));
                 }
             }
 
@@ -2761,10 +2761,7 @@ fn cleanup_accounts_paths(config: &ValidatorConfig) {
     }
 }
 
-pub fn is_snapshot_config_valid(
-    snapshot_config: &SnapshotConfig,
-    accounts_hash_interval_slots: Slot,
-) -> bool {
+pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
     // if the snapshot config is configured to *not* take snapshots, then it is valid
     if !snapshot_config.should_generate_snapshots() {
         return true;
@@ -2774,18 +2771,13 @@ pub fn is_snapshot_config_valid(
     let incremental_snapshot_interval_slots =
         snapshot_config.incremental_snapshot_archive_interval_slots;
 
-    let is_incremental_config_valid =
-        if incremental_snapshot_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-            true
-        } else {
-            incremental_snapshot_interval_slots >= accounts_hash_interval_slots
-                && incremental_snapshot_interval_slots % accounts_hash_interval_slots == 0
-                && full_snapshot_interval_slots > incremental_snapshot_interval_slots
-        };
-
-    full_snapshot_interval_slots >= accounts_hash_interval_slots
-        && full_snapshot_interval_slots % accounts_hash_interval_slots == 0
-        && is_incremental_config_valid
+    if incremental_snapshot_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
+        true
+    } else if incremental_snapshot_interval_slots == 0 {
+        false
+    } else {
+        full_snapshot_interval_slots > incremental_snapshot_interval_slots
+    }
 }
 
 #[cfg(test)]
@@ -3112,7 +3104,7 @@ mod tests {
 
         // bank=0, wait=1, should fail
         config.wait_for_supermajority = Some(1);
-        matches!(
+        assert!(matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -3121,8 +3113,8 @@ mod tests {
                 rpc_override_health_check.clone(),
                 &start_progress,
             ),
-            Err(ValidatorError::NotEnoughLedgerData),
-        );
+            Err(ValidatorError::NotEnoughLedgerData(_, _)),
+        ));
 
         // bank=1, wait=0, should pass, bank is past the wait slot
         let bank_forks = BankForks::new_rw_arc(Bank::new_from_parent(
@@ -3144,7 +3136,7 @@ mod tests {
         // bank=1, wait=1, equal, but bad hash provided
         config.wait_for_supermajority = Some(1);
         config.expected_bank_hash = Some(hash(&[1]));
-        matches!(
+        assert!(matches!(
             wait_for_supermajority(
                 &config,
                 None,
@@ -3153,8 +3145,8 @@ mod tests {
                 rpc_override_health_check,
                 &start_progress,
             ),
-            Err(ValidatorError::BadExpectedBankHash),
-        );
+            Err(ValidatorError::BankHashMismatch(_, _)),
+        ));
     }
 
     #[test]
@@ -3170,89 +3162,50 @@ mod tests {
             }
         }
 
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(300, 200),
-            100
-        ));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(300, 200)));
 
-        let default_accounts_hash_interval =
-            snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS;
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
-                snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-                snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
-            ),
-            default_accounts_hash_interval,
-        ));
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
-                snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-            ),
-            default_accounts_hash_interval
-        ));
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
-                snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-            ),
-            default_accounts_hash_interval
-        ));
-        assert!(is_snapshot_config_valid(
-            &new_snapshot_config(
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-            ),
-            Slot::MAX
-        ));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(
+            snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
+        )));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(
+            snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
+        )));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(
+            snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
+        )));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(
+            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
+        )));
 
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 100), 100));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 0), 100));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(42, 100),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(100, 42),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(100, 100),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(100, 200),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(444, 200),
-            100
-        ));
-        assert!(!is_snapshot_config_valid(
-            &new_snapshot_config(400, 222),
-            100
-        ));
+        // Full snaphot intervals used to be required to be a multiple of
+        // incremental snapshot intervals, but that's no longer the case
+        // so test that the check is relaxed.
+        assert!(is_snapshot_config_valid(&new_snapshot_config(100, 42)));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(444, 200)));
+        assert!(is_snapshot_config_valid(&new_snapshot_config(400, 222)));
 
-        assert!(is_snapshot_config_valid(
-            &SnapshotConfig::new_load_only(),
-            100
-        ));
-        assert!(is_snapshot_config_valid(
-            &SnapshotConfig {
-                full_snapshot_archive_interval_slots: 41,
-                incremental_snapshot_archive_interval_slots: 37,
-                ..SnapshotConfig::new_load_only()
-            },
-            100
-        ));
-        assert!(is_snapshot_config_valid(
-            &SnapshotConfig {
-                full_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                incremental_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                ..SnapshotConfig::new_load_only()
-            },
-            100
-        ));
+        assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 100)));
+        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 0)));
+        assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 0)));
+        assert!(!is_snapshot_config_valid(&new_snapshot_config(42, 100)));
+        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 100)));
+        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 200)));
+
+        assert!(is_snapshot_config_valid(&SnapshotConfig::new_load_only()));
+        assert!(is_snapshot_config_valid(&SnapshotConfig {
+            full_snapshot_archive_interval_slots: 37,
+            incremental_snapshot_archive_interval_slots: 41,
+            ..SnapshotConfig::new_load_only()
+        }));
+        assert!(is_snapshot_config_valid(&SnapshotConfig {
+            full_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+            incremental_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+            ..SnapshotConfig::new_load_only()
+        }));
     }
 
     fn target_tick_duration() -> Duration {

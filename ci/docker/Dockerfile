@@ -41,6 +41,7 @@ RUN \
   gnupg \
   lld \
   cmake \
+  openssh-client \
   # docs
   mscgen \
   # solana compiling

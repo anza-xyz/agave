@@ -18,6 +18,7 @@ export CI_DOCKER_ARG_SCCACHE_VERSION=v0.9.1
 export CI_DOCKER_ARG_GRCOV_VERSION=v0.8.18
 
 hash_vars=(
+  "$(cat "${ci_docker_env_sh_here}/Dockerfile")"
   "${CI_DOCKER_ARG_BASE_IMAGE}"
   "${CI_DOCKER_ARG_RUST_VERSION}"
   "${CI_DOCKER_ARG_RUST_NIGHTLY_VERSION}"

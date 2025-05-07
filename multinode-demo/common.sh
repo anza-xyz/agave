@@ -50,8 +50,8 @@ else
       program="solana-$program"
     fi
 
-    if [[ -n $NDEBUG ]]; then
-      maybe_release=--release
+    if [[ -n $CARGO_BUILD_PROFILE ]]; then
+      profile_arg="--profile $CARGO_BUILD_PROFILE"
     fi
 
     # Prebuild binaries so that CI sanity check timeout doesn't include build time
@@ -59,11 +59,11 @@ else
       (
         set -x
         # shellcheck disable=SC2086 # Don't want to double quote
-        cargo $CARGO_TOOLCHAIN build $maybe_release --bin $program
+        cargo $CARGO_TOOLCHAIN build $profile_arg --bin $program
       )
     fi
 
-    printf "cargo $CARGO_TOOLCHAIN run $maybe_release  --bin %s %s -- " "$program"
+    printf "cargo $CARGO_TOOLCHAIN run $profile_arg --bin %s %s -- " "$program"
   }
 fi
 

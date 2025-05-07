@@ -1,7 +1,8 @@
 use {
+    agave_feature_set as feature_set,
     solana_program_test::ProgramTest,
     solana_sdk::{
-        bpf_loader, feature_set,
+        bpf_loader,
         instruction::{AccountMeta, Instruction},
         pubkey::Pubkey,
         signature::Signer,

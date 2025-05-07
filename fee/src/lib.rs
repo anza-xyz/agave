@@ -1,5 +1,5 @@
 use {
-    solana_feature_set::{enable_secp256r1_precompile, FeatureSet},
+    agave_feature_set::{enable_secp256r1_precompile, FeatureSet},
     solana_fee_structure::FeeDetails,
     solana_svm_transaction::svm_message::SVMMessage,
 };

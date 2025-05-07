@@ -39,8 +39,8 @@ use {
         vote_error::VoteError,
         vote_instruction,
         vote_state::{
-            process_slot_vote_unchecked, BlockTimestamp, Lockout, TowerSync, Vote,
-            VoteState1_14_11, VoteStateUpdate, MAX_LOCKOUT_HISTORY,
+            BlockTimestamp, Lockout, TowerSync, Vote, VoteState1_14_11, VoteStateUpdate,
+            MAX_LOCKOUT_HISTORY,
         },
     },
     std::{
@@ -406,10 +406,10 @@ impl Tower {
                 continue;
             }
             trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
-            let mut vote_state = account.vote_state().clone();
+            let mut vote_state = TowerVoteState::from(account.vote_state_view());
             for vote in &vote_state.votes {
                 lockout_intervals
-                    .entry(vote.lockout.last_locked_out_slot())
+                    .entry(vote.last_locked_out_slot())
                     .or_default()
                     .push((vote.slot(), key));
             }
@@ -450,7 +450,7 @@ impl Tower {
                 );
             }
 
-            process_slot_vote_unchecked(&mut vote_state, bank_slot);
+            vote_state.process_next_vote_slot(bank_slot);
 
             for vote in &vote_state.votes {
                 vote_slots.insert(vote.slot());
@@ -576,7 +576,7 @@ impl Tower {
         if let Some(last_voted_slot) = self.last_vote.last_voted_slot() {
             if heaviest_slot_on_same_fork <= last_voted_slot {
                 warn!(
-                    "Trying to refresh timestamp for vote on {last_voted_slot}
+                    "Trying to refresh timestamp for vote on {last_voted_slot} \
                      using smaller heaviest bank {heaviest_slot_on_same_fork}"
                 );
                 return;
@@ -588,8 +588,8 @@ impl Tower {
             self.last_vote.set_timestamp(Some(timestamp));
         } else {
             warn!(
-                "Trying to refresh timestamp for last vote on heaviest bank on same fork
-                   {heaviest_slot_on_same_fork}, but there is no vote to refresh"
+                "Trying to refresh timestamp for last vote on heaviest bank on same fork \
+                 {heaviest_slot_on_same_fork}, but there is no vote to refresh"
             );
         }
     }
@@ -608,8 +608,7 @@ impl Tower {
 
     pub fn last_voted_slot_in_bank(bank: &Bank, vote_account_pubkey: &Pubkey) -> Option<Slot> {
         let vote_account = bank.get_vote_account(vote_account_pubkey)?;
-        let vote_state = vote_account.vote_state();
-        vote_state.last_voted_slot()
+        vote_account.vote_state_view().last_voted_slot()
     }
 
     pub fn record_bank_vote(&mut self, bank: &Bank) -> Option<Slot> {
@@ -626,7 +625,7 @@ impl Tower {
             bank.slot(),
             bank.hash(),
             bank.feature_set
-                .is_active(&solana_feature_set::enable_tower_sync_ix::id()),
+                .is_active(&agave_feature_set::enable_tower_sync_ix::id()),
             block_id,
         )
     }
@@ -1115,8 +1114,8 @@ impl Tower {
                             last_vote_ancestors,
                         )
                         .expect(
-                            "candidate_slot and switch_slot exist in descendants map,
-                        so they must exist in ancestors map",
+                            "candidate_slot and switch_slot exist in descendants map, \
+                             so they must exist in ancestors map",
                         )
                 }
             {
@@ -1618,7 +1617,7 @@ impl Tower {
         bank: &Bank,
     ) {
         if let Some(vote_account) = bank.get_vote_account(vote_account_pubkey) {
-            self.vote_state = TowerVoteState::from(vote_account.vote_state().clone());
+            self.vote_state = TowerVoteState::from(vote_account.vote_state_view());
             self.initialize_root(root);
             self.initialize_lockouts(|v| v.slot() > root);
         } else {
@@ -1795,7 +1794,7 @@ pub mod test {
         },
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
-            Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            process_slot_vote_unchecked, Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
         std::{
             collections::{HashMap, VecDeque},
@@ -2446,8 +2445,8 @@ pub mod test {
             .unwrap()
             .get_vote_account(&vote_pubkey)
             .unwrap();
-        let state = observed.vote_state();
-        info!("observed tower: {:#?}", state.votes);
+        let state = observed.vote_state_view();
+        info!("observed tower: {:#?}", state.votes_iter().collect_vec());
 
         let num_slots_to_try = 200;
         cluster_votes

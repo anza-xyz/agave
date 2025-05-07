@@ -10,24 +10,29 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+async-trait = { workspace = true }
 crossbeam-channel = { workspace = true }
 itertools = { workspace = true }
 log = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
+solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
+solana-net-utils = { workspace = true, optional = true }
 solana-runtime = { workspace = true }
 solana-sdk = { workspace = true }
-solana-tpu-client = { workspace = true }
+solana-tpu-client-next = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
+solana-net-utils = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 
 [features]
-dev-context-only-utils = []
+dev-context-only-utils = ["solana-net-utils"]
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]

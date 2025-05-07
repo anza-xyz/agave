@@ -21,17 +21,21 @@ dyn-clone = { workspace = true }
 log = { workspace = true }
 qualifier_attr = { workspace = true }
 scopeguard = { workspace = true }
+solana-clock = { workspace = true }
+solana-cost-model = { workspace = true }
 solana-ledger = { workspace = true }
 solana-poh = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
+solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
 static_assertions = { workspace = true }
 trait-set = { workspace = true }
+unwrap_none = { workspace = true }
 vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]

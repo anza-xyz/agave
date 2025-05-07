@@ -285,7 +285,6 @@ impl ConsumeWorkerMetrics {
     fn update_on_execute_and_commit_timings(
         &self,
         LeaderExecuteAndCommitTimings {
-            collect_balances_us,
             load_execute_us,
             freeze_lock_us,
             record_us,
@@ -294,9 +293,6 @@ impl ConsumeWorkerMetrics {
             ..
         }: &LeaderExecuteAndCommitTimings,
     ) {
-        self.timing_metrics
-            .collect_balances_us
-            .fetch_add(*collect_balances_us, Ordering::Relaxed);
         self.timing_metrics
             .load_execute_us_min
             .fetch_min(*load_execute_us, Ordering::Relaxed);
@@ -512,7 +508,6 @@ impl ConsumeWorkerCountMetrics {
 #[derive(Default)]
 struct ConsumeWorkerTimingMetrics {
     cost_model_us: AtomicU64,
-    collect_balances_us: AtomicU64,
     load_execute_us: AtomicU64,
     load_execute_us_min: AtomicU64,
     load_execute_us_max: AtomicU64,
@@ -533,11 +528,6 @@ impl ConsumeWorkerTimingMetrics {
             (
                 "cost_model_us",
                 self.cost_model_us.swap(0, Ordering::Relaxed),
-                i64
-            ),
-            (
-                "collect_balances_us",
-                self.collect_balances_us.swap(0, Ordering::Relaxed),
                 i64
             ),
             (
@@ -745,7 +735,10 @@ mod tests {
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_poh::poh_recorder::{PohRecorder, WorkingBankEntry},
+        solana_poh::{
+            poh_recorder::{PohRecorder, WorkingBankEntry},
+            transaction_recorder::TransactionRecorder,
+        },
         solana_runtime::{
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
@@ -814,7 +807,7 @@ mod tests {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
             .expect("Expected to be able to open database ledger");
-        let (poh_recorder, entry_receiver, record_receiver) = PohRecorder::new(
+        let (poh_recorder, entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             bank.last_blockhash(),
             bank.clone(),
@@ -825,7 +818,8 @@ mod tests {
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
-        let recorder = poh_recorder.new_recorder();
+        let (record_sender, record_receiver) = unbounded();
+        let recorder = TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
 

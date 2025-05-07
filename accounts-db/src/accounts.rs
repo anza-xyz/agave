@@ -1,32 +1,34 @@
 use {
     crate::{
         account_locks::{validate_account_locks, AccountLocks},
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
             ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
+        is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
     },
-    dashmap::DashMap,
     log::*,
-    solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        address_lookup_table::{self, error::AddressLookupError, state::AddressLookupTable},
-        clock::{BankId, Slot},
-        message::v0::LoadedAddresses,
-        slot_hashes::SlotHashes,
-        transaction::{Result, SanitizedTransaction},
-        transaction_context::TransactionAccount,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_address_lookup_table_interface::{
+        self as address_lookup_table, error::AddressLookupError, state::AddressLookupTable,
     },
+    solana_clock::{BankId, Slot},
+    solana_message::v0::LoadedAddresses,
+    solana_pubkey::Pubkey,
+    solana_slot_hashes::SlotHashes,
     solana_svm_transaction::{
         message_address_table_lookup::SVMMessageAddressTableLookup, svm_message::SVMMessage,
     },
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_context::TransactionAccount,
+    solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
-        collections::{BinaryHeap, HashSet},
+        collections::{BinaryHeap, HashMap, HashSet},
         ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -214,21 +216,23 @@ impl Accounts {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
             },
-            |accum: &DashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
+            |accum: &mut HashMap<Pubkey, B>, stored_account, data| {
+                // SAFETY: We called scan_account_storage() with
+                // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
+                let data = data.unwrap();
+                let loaded_account =
+                    LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
                 let loaded_account_pubkey = *loaded_account.pubkey();
-                if let Some(val) = func(loaded_account) {
+                if let Some(val) = func(&loaded_account) {
                     accum.insert(loaded_account_pubkey, val);
                 }
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {
             ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result
-                .into_iter()
-                .map(|(_pubkey, val)| val)
-                .collect(),
+            ScanStorageResult::Stored(stored_result) => stored_result.into_values().collect(),
         }
     }
 
@@ -327,19 +331,13 @@ impl Accounts {
         }
     }
 
-    pub fn is_loadable(lamports: u64) -> bool {
-        // Don't ever load zero lamport accounts into runtime because
-        // the existence of zero-lamport accounts are never deterministic!!
-        lamports > 0
-    }
-
     fn load_while_filtering<F: Fn(&AccountSharedData) -> bool>(
         collector: &mut Vec<TransactionAccount>,
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
         filter: F,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()) && filter(account))
+            .filter(|(_, account, _)| account.is_loadable() && filter(account))
             .map(|(pubkey, account, _slot)| (*pubkey, account))
         {
             collector.push(mapped_account_tuple)
@@ -351,7 +349,7 @@ impl Accounts {
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+            .filter(|(_, account, _)| account.is_loadable())
             .map(|(pubkey, account, slot)| (*pubkey, account, slot))
         {
             collector.push(mapped_account_tuple)
@@ -500,8 +498,8 @@ impl Accounts {
                 ancestors,
                 bank_id,
                 |some_account_tuple| {
-                    if let Some((pubkey, account, slot)) = some_account_tuple
-                        .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+                    if let Some((pubkey, account, slot)) =
+                        some_account_tuple.filter(|(_, account, _)| account.is_loadable())
                     {
                         collector.push((*pubkey, account, slot))
                     }
@@ -562,6 +560,7 @@ impl Accounts {
     /// Slow because lock is held for 1 operation instead of many.
     /// WARNING: This noncached version is only to be used for tests/benchmarking
     /// as bypassing the cache in general is not supported
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn store_slow_uncached(&self, slot: Slot, pubkey: &Pubkey, account: &AccountSharedData) {
         self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
     }
@@ -663,16 +662,18 @@ impl Accounts {
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            account::{AccountSharedData, WritableAccount},
-            address_lookup_table::state::LookupTableMeta,
-            hash::Hash,
-            instruction::CompiledInstruction,
-            message::{v0::MessageAddressTableLookup, Message, MessageHeader},
-            native_loader,
-            signature::{signers::Signers, Keypair, Signer},
-            transaction::{Transaction, TransactionError, MAX_TX_ACCOUNT_LOCKS},
+        solana_account::{AccountSharedData, WritableAccount},
+        solana_address_lookup_table_interface::state::LookupTableMeta,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::{
+            compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup, Message,
+            MessageHeader,
         },
+        solana_sdk_ids::native_loader,
+        solana_signer::{signers::Signers, Signer},
+        solana_transaction::{sanitized::MAX_TX_ACCOUNT_LOCKS, Transaction},
+        solana_transaction_error::TransactionError,
         std::{
             borrow::Cow,
             iter,
@@ -716,8 +717,7 @@ mod tests {
         // use bins * 2 to get the first half of the range within bin 0
         let bins_2 = bins * 2;
         let binner = crate::pubkey_bins::PubkeyBinCalculator24::new(bins_2);
-        let range2 =
-            binner.lowest_pubkey_from_bin(0, bins_2)..binner.lowest_pubkey_from_bin(1, bins_2);
+        let range2 = binner.lowest_pubkey_from_bin(0)..binner.lowest_pubkey_from_bin(1);
         let range2_inclusive = range2.start..=range2.end;
         assert_eq!(0, idx.bin_calculator.bin_from_pubkey(&range2.start));
         assert_eq!(0, idx.bin_calculator.bin_from_pubkey(&range2.end));

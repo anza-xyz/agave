@@ -15,6 +15,7 @@ futures = { workspace = true }
 solana-banks-interface = { workspace = true }
 solana-program = { workspace = true }
 solana-sdk = { workspace = true }
+solana-transaction-context = { workspace = true }
 tarpc = { workspace = true, features = ["full"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

@@ -64,22 +64,22 @@ pub fn app<'a>(version: &'a str, default_args: &'a DefaultArgs) -> App<'a, 'a> {
         .global_setting(AppSettings::InferSubcommands)
         .global_setting(AppSettings::UnifiedHelpMessage)
         .global_setting(AppSettings::VersionlessSubcommands)
-        .subcommand(commands::exit::command(default_args))
-        .subcommand(commands::authorized_voter::command(default_args))
-        .subcommand(commands::contact_info::command(default_args))
-        .subcommand(commands::repair_shred_from_peer::command(default_args))
-        .subcommand(commands::repair_whitelist::command(default_args))
+        .subcommand(commands::exit::command())
+        .subcommand(commands::authorized_voter::command())
+        .subcommand(commands::contact_info::command())
+        .subcommand(commands::repair_shred_from_peer::command())
+        .subcommand(commands::repair_whitelist::command())
         .subcommand(
             SubCommand::with_name("init").about("Initialize the ledger directory then exit"),
         )
-        .subcommand(commands::monitor::command(default_args))
+        .subcommand(commands::monitor::command())
         .subcommand(SubCommand::with_name("run").about("Run the validator"))
-        .subcommand(commands::plugin::command(default_args))
-        .subcommand(commands::set_identity::command(default_args))
-        .subcommand(commands::set_log_filter::command(default_args))
-        .subcommand(commands::staked_nodes_overrides::command(default_args))
-        .subcommand(commands::wait_for_restart_window::command(default_args))
-        .subcommand(commands::set_public_address::command(default_args));
+        .subcommand(commands::plugin::command())
+        .subcommand(commands::set_identity::command())
+        .subcommand(commands::set_log_filter::command())
+        .subcommand(commands::staked_nodes_overrides::command())
+        .subcommand(commands::wait_for_restart_window::command())
+        .subcommand(commands::set_public_address::command());
 
     commands::run::add_args(app, default_args)
         .args(&thread_args(&default_args.thread_args))
@@ -432,14 +432,6 @@ pub struct DefaultArgs {
     pub num_quic_endpoints: String,
     pub vote_use_quic: String,
 
-    // Exit subcommand
-    pub exit_min_idle_time: String,
-    pub exit_max_delinquent_stake: String,
-
-    // Wait subcommand
-    pub wait_for_restart_window_min_idle_time: String,
-    pub wait_for_restart_window_max_delinquent_stake: String,
-
     pub banking_trace_dir_byte_limit: String,
 
     pub wen_restart_path: String,
@@ -535,10 +527,6 @@ impl DefaultArgs {
             tpu_max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS.to_string(),
             num_quic_endpoints: DEFAULT_QUIC_ENDPOINTS.to_string(),
             rpc_max_request_body_size: MAX_REQUEST_BODY_SIZE.to_string(),
-            exit_min_idle_time: "10".to_string(),
-            exit_max_delinquent_stake: "5".to_string(),
-            wait_for_restart_window_min_idle_time: "10".to_string(),
-            wait_for_restart_window_max_delinquent_stake: "5".to_string(),
             banking_trace_dir_byte_limit: BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT.to_string(),
             wen_restart_path: "wen_restart_progress.proto".to_string(),
             thread_args: DefaultThreadArgs::default(),
@@ -875,8 +863,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .default_value("0.0.0.0")
-                .help("IP address to bind the validator ports [default: 0.0.0.0]"),
+                .default_value("127.0.0.1")
+                .help("IP address to bind the validator ports [default: 127.0.0.1]"),
         )
         .arg(
             Arg::with_name("clone_account")

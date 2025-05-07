@@ -41,9 +41,6 @@ pub struct SnapshotConfig {
     /// NOTE: Incremental snapshots will only be kept for the latest full snapshot
     pub maximum_incremental_snapshot_archives_to_retain: NonZeroUsize,
 
-    /// This is the `debug_verify` parameter to use when calling `update_accounts_hash()`
-    pub accounts_hash_debug_verify: bool,
-
     // Thread niceness adjustment for snapshot packager service
     pub packager_thread_niceness_adj: i8,
 }
@@ -67,7 +64,6 @@ impl Default for SnapshotConfig {
                 snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             maximum_incremental_snapshot_archives_to_retain:
                 snapshot_utils::DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            accounts_hash_debug_verify: false,
             packager_thread_niceness_adj: 0,
         }
     }
@@ -75,7 +71,6 @@ impl Default for SnapshotConfig {
 
 impl SnapshotConfig {
     /// A new snapshot config used for only loading at startup
-    #[must_use]
     pub fn new_load_only() -> Self {
         Self {
             usage: SnapshotUsage::LoadOnly,
@@ -83,16 +78,32 @@ impl SnapshotConfig {
         }
     }
 
+    /// A new snapshot config used to disable snapshot generation and loading at
+    /// startup
+    pub fn new_disabled() -> Self {
+        Self {
+            usage: SnapshotUsage::Disabled,
+            ..Self::default()
+        }
+    }
+
     /// Should snapshots be generated?
-    #[must_use]
     pub fn should_generate_snapshots(&self) -> bool {
         self.usage == SnapshotUsage::LoadAndGenerate
+    }
+
+    /// Should snapshots be loaded?
+    pub fn should_load_snapshots(&self) -> bool {
+        self.usage == SnapshotUsage::LoadAndGenerate || self.usage == SnapshotUsage::LoadOnly
     }
 }
 
 /// Specify the ways that snapshots are allowed to be used
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SnapshotUsage {
+    /// Snapshots are never generated or loaded at startup,
+    /// instead start from genesis.
+    Disabled,
     /// Snapshots are only used at startup, to load the accounts and bank
     LoadOnly,
     /// Snapshots are used everywhere; both at startup (i.e. load) and steady-state (i.e.

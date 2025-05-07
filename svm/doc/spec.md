@@ -194,8 +194,6 @@ the transaction processor.
 - `limit_to_load_programs`: Whether to limit the number of programs loaded for
   the transaction batch.
 - `recording_config`: Recording capabilities for transaction execution.
-- `transaction_account_lock_limit`: The max number of accounts that a
-  transaction may lock.
 
 ### `LoadAndExecuteSanitizedTransactionsOutput`
 

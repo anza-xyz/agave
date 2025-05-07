@@ -107,26 +107,21 @@ impl OptimisticConfirmationVerifier {
                     .unwrap_or(0);
 
                 error!(
-                    "{},
-                    hash: {},
-                    epoch: {},
-                    voted keys: {:?},
-                    root: {},
-                    root bank hash: {},
-                    voted stake: {},
-                    total epoch stake: {},
-                    pct: {}",
+                    "{}, \
+                     hash: {hash}, \
+                     epoch: {epoch}, \
+                     voted keys: {:?}, \
+                     root: {root}, \
+                     root bank hash: {}, \
+                     voted stake: {voted_stake}, \
+                     total epoch stake: {total_epoch_stake}, \
+                     pct: {}",
                     Self::format_optimistic_confirmed_slot_violation_log(*optimistic_slot),
-                    hash,
-                    epoch,
                     r_slot_tracker
                         .as_ref()
                         .and_then(|s| s.optimistic_votes_tracker(hash))
                         .map(|s| s.voted()),
-                    root,
                     root_bank.hash(),
-                    voted_stake,
-                    total_epoch_stake,
                     voted_stake as f64 / total_epoch_stake as f64,
                 );
                 voted_stake

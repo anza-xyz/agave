@@ -2,16 +2,10 @@
 //! Helper functions for TieredStorage tests
 use {
     super::footer::TieredStorageFooter,
-    crate::{
-        account_storage::meta::{StoredAccountMeta, StoredMeta},
-        accounts_hash::AccountHash,
-    },
+    crate::{account_storage::stored_account_info::StoredAccountInfo, append_vec::StoredMeta},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount},
-        hash::Hash,
-        rent_collector::RENT_EXEMPT_RENT_EPOCH,
-    },
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
 };
 
 /// Create a test account based on the specified seed.
@@ -25,7 +19,7 @@ pub(super) fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) 
     let owner_byte = u8::MAX - data_byte;
     let account = Account {
         lamports: seed,
-        data: std::iter::repeat(data_byte).take(seed as usize).collect(),
+        data: std::iter::repeat_n(data_byte, seed as usize).collect(),
         // this will allow some test account sharing the same owner.
         owner: [owner_byte; 32].into(),
         executable: seed % 2 > 0,
@@ -45,29 +39,28 @@ pub(super) fn create_test_account(seed: u64) -> (StoredMeta, AccountSharedData) 
 }
 
 pub(super) fn verify_test_account(
-    stored_meta: &StoredAccountMeta<'_>,
+    stored_account: &StoredAccountInfo<'_>,
     acc: &impl ReadableAccount,
     address: &Pubkey,
 ) {
     let (lamports, owner, data, executable) =
         (acc.lamports(), acc.owner(), acc.data(), acc.executable());
 
-    assert_eq!(stored_meta.lamports(), lamports);
-    assert_eq!(stored_meta.data().len(), data.len());
-    assert_eq!(stored_meta.data(), data);
-    assert_eq!(stored_meta.executable(), executable);
-    assert_eq!(stored_meta.owner(), owner);
-    assert_eq!(stored_meta.pubkey(), address);
-    assert_eq!(*stored_meta.hash(), AccountHash(Hash::default()));
+    assert_eq!(stored_account.lamports(), lamports);
+    assert_eq!(stored_account.data().len(), data.len());
+    assert_eq!(stored_account.data(), data);
+    assert_eq!(stored_account.executable(), executable);
+    assert_eq!(stored_account.owner(), owner);
+    assert_eq!(stored_account.pubkey(), address);
 }
 
 pub(super) fn verify_test_account_with_footer(
-    stored_meta: &StoredAccountMeta<'_>,
+    stored_account: &StoredAccountInfo<'_>,
     account: &impl ReadableAccount,
     address: &Pubkey,
     footer: &TieredStorageFooter,
 ) {
-    verify_test_account(stored_meta, account, address);
+    verify_test_account(stored_account, account, address);
     assert!(footer.min_account_address <= *address);
     assert!(footer.max_account_address >= *address);
 }

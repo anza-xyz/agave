@@ -48,6 +48,9 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     fn compute_budget_instruction_details(&self) -> &ComputeBudgetInstructionDetails {
         &self.meta.compute_budget_instruction_details
     }
+    fn instruction_data_len(&self) -> u16 {
+        self.meta.instruction_data_len
+    }
 }
 
 impl<T: SVMMessage> DynamicMeta for RuntimeTransaction<T> {}
@@ -101,6 +104,10 @@ impl<T: SVMMessage> SVMMessage for RuntimeTransaction<T> {
 
     fn program_instructions_iter(&self) -> impl Iterator<Item = (&Pubkey, SVMInstruction)> + Clone {
         self.transaction.program_instructions_iter()
+    }
+
+    fn static_account_keys(&self) -> &[Pubkey] {
+        self.transaction.static_account_keys()
     }
 
     fn account_keys(&self) -> AccountKeys {

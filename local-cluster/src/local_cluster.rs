@@ -16,7 +16,7 @@ use {
     solana_gossip::{
         cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
-        gossip_service::discover_cluster,
+        gossip_service::{discover, discover_validators},
     },
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_net_utils::bind_to_unspecified,
@@ -30,7 +30,7 @@ use {
     },
     solana_sdk::{
         account::{Account, AccountSharedData},
-        clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
+        clock::{Slot, DEFAULT_DEV_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         genesis_config::{ClusterType, GenesisConfig},
@@ -38,7 +38,7 @@ use {
         native_token::LAMPORTS_PER_SOL,
         poh_config::PohConfig,
         pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
+        signature::{Keypair, Signer},
         signers::Signers,
         stake::{
             instruction as stake_instruction,
@@ -60,12 +60,12 @@ use {
     },
     std::{
         collections::HashMap,
-        io::{Error, ErrorKind, Result},
+        io::{Error, Result},
         iter,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
         sync::{Arc, RwLock},
-        time::Instant,
+        time::Duration,
     },
 };
 
@@ -159,6 +159,7 @@ pub struct LocalCluster {
     pub connection_cache: Arc<ConnectionCache>,
     quic_connection_cache_config: Option<QuicConnectionCacheConfig>,
     tpu_connection_pool_size: usize,
+    shred_version: u16,
 }
 
 impl LocalCluster {
@@ -329,7 +330,6 @@ impl LocalCluster {
             leader_config.max_genesis_archive_unpacked_size,
         );
 
-        let leader_contact_info = leader_node.info.clone();
         leader_config.rpc_addrs = Some((
             leader_node.info.rpc().unwrap(),
             leader_node.info.rpc_pubsub().unwrap(),
@@ -357,6 +357,7 @@ impl LocalCluster {
         )
         .expect("assume successful validator start");
 
+        let leader_contact_info = leader_server.cluster_info.my_contact_info();
         let mut validators = HashMap::new();
         let leader_info = ValidatorInfo {
             keypair: leader_keypair,
@@ -374,12 +375,13 @@ impl LocalCluster {
 
         let mut cluster = Self {
             funding_keypair: mint_keypair,
-            entry_point_info: leader_contact_info,
+            entry_point_info: leader_contact_info.clone(),
             validators,
             genesis_config,
             connection_cache,
             quic_connection_cache_config,
             tpu_connection_pool_size: config.tpu_connection_pool_size,
+            shred_version: leader_contact_info.shred_version(),
         };
 
         let node_pubkey_to_vote_key: HashMap<Pubkey, Arc<Keypair>> = keys_in_genesis
@@ -417,21 +419,28 @@ impl LocalCluster {
             );
         });
 
-        discover_cluster(
-            &cluster.entry_point_info.gossip().unwrap(),
-            config.node_stakes.len() + config.num_listeners as usize,
-            socket_addr_space,
-        )
-        .unwrap();
-
-        discover_cluster(
-            &cluster.entry_point_info.gossip().unwrap(),
-            config.node_stakes.len(),
+        discover(
+            None,
+            Some(&cluster.entry_point_info.gossip().unwrap()),
+            Some(config.node_stakes.len() + config.num_listeners as usize),
+            Duration::from_secs(120),
+            None,
+            None,
+            None,
+            leader_contact_info.shred_version(),
             socket_addr_space,
         )
         .unwrap();
 
         cluster
+    }
+
+    pub fn shred_version(&self) -> u16 {
+        self.shred_version
+    }
+
+    pub fn set_shred_version(&mut self, shred_version: u16) {
+        self.shred_version = shred_version;
     }
 
     pub fn exit(&mut self) {
@@ -616,9 +625,10 @@ impl LocalCluster {
             .collect();
         assert!(!alive_node_contact_infos.is_empty());
         info!("{} discovering nodes", test_name);
-        let cluster_nodes = discover_cluster(
+        let cluster_nodes = discover_validators(
             &alive_node_contact_infos[0].gossip().unwrap(),
             alive_node_contact_infos.len(),
+            self.shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -676,9 +686,10 @@ impl LocalCluster {
             .collect();
         assert!(!alive_node_contact_infos.is_empty());
         info!("{} discovering nodes", test_name);
-        let cluster_nodes = discover_cluster(
+        let cluster_nodes = discover_validators(
             &alive_node_contact_infos[0].gossip().unwrap(),
             alive_node_contact_infos.len(),
+            self.shred_version(),
             socket_addr_space,
         )
         .unwrap();
@@ -693,6 +704,38 @@ impl LocalCluster {
         info!("{} done waiting for roots", test_name);
     }
 
+    /// Poll RPC to see if transaction was processed. Return an error if unable
+    /// determine if the transaction was processed before its blockhash expires.
+    /// Return Ok(Some(())) if the transaction was processed, Ok(None) if the
+    /// transaction was not processed.
+    pub fn poll_for_processed_transaction(
+        client: &QuicTpuClient,
+        transaction: &Transaction,
+    ) -> std::result::Result<Option<()>, TransportError> {
+        loop {
+            // Some local cluster tests create conditions where confirmation
+            // is unable to be reached. So rather than checking for confirmation,
+            // check for the transaction being processed.
+            let status = client.rpc_client().get_signature_status_with_commitment(
+                &transaction.signatures[0],
+                CommitmentConfig::processed(),
+            )?;
+
+            if status.is_some() {
+                return Ok(Some(()));
+            }
+
+            if !client.rpc_client().is_blockhash_valid(
+                &transaction.message.recent_blockhash,
+                CommitmentConfig::processed(),
+            )? {
+                return Ok(None);
+            }
+
+            std::thread::sleep(Duration::from_millis(400));
+        }
+    }
+
     /// Attempt to send and confirm tx "attempts" times
     /// Wait for signature confirmation before returning
     /// Return the transaction signature
@@ -701,43 +744,27 @@ impl LocalCluster {
         keypairs: &T,
         transaction: &mut Transaction,
         attempts: usize,
-        pending_confirmations: usize,
-    ) -> std::result::Result<Signature, TransportError> {
-        for attempt in 0..attempts {
-            let now = Instant::now();
-            let mut num_confirmed = 0;
-            let mut wait_time = MAX_PROCESSING_AGE;
-
-            while now.elapsed().as_secs() < wait_time as u64 {
-                if num_confirmed == 0 {
-                    client.send_transaction_to_upcoming_leaders(transaction)?;
-                }
-
-                if let Ok(confirmed_blocks) = client.rpc_client().poll_for_signature_confirmation(
-                    &transaction.signatures[0],
-                    pending_confirmations,
-                ) {
-                    num_confirmed = confirmed_blocks;
-                    if confirmed_blocks >= pending_confirmations {
-                        return Ok(transaction.signatures[0]);
-                    }
-                    // Since network has seen the transaction, wait longer to receive
-                    // all pending confirmations. Resending the transaction could result into
-                    // extra transaction fees
-                    wait_time = wait_time.max(
-                        MAX_PROCESSING_AGE * pending_confirmations.saturating_sub(num_confirmed),
-                    );
-                }
+    ) -> std::result::Result<(), TransportError> {
+        // @gregcusack: send_wire_transaction() and try_send_transaction() both fail in
+        // a specific case when used in LocalCluster. They both invoke the nonblocking
+        // TPUClient and both fail when calling `transfer_with_client()` multiple times.
+        // I do not full understand WHY the nonblocking TPUClient fails in this specific
+        // case. But the method defined below does work although it has only been tested
+        // in LocalCluster integration tests
+        for attempt in 1..=attempts {
+            client.send_transaction_to_upcoming_leaders(transaction)?;
+            if Self::poll_for_processed_transaction(client, transaction)?.is_some() {
+                return Ok(());
             }
-            info!("{attempt} tries failed transfer");
-            let blockhash = client.rpc_client().get_latest_blockhash()?;
+
+            let (blockhash, _) = client
+                .rpc_client()
+                .get_latest_blockhash_with_commitment(CommitmentConfig::processed())?;
             transaction.sign(keypairs, blockhash);
+
+            warn!("Sending transaction with retries, attempt {attempt} failed");
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "failed to confirm transaction".to_string(),
-        )
-        .into())
+        Err(std::io::Error::other("failed to confirm transaction").into())
     }
 
     fn transfer_with_client(
@@ -759,7 +786,7 @@ impl LocalCluster {
             *dest_pubkey
         );
 
-        LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10, 0)
+        LocalCluster::send_transaction_with_retries(client, &[source_keypair], &mut tx, 10)
             .expect("client transfer should succeed");
     }
 
@@ -813,10 +840,9 @@ impl LocalCluster {
             );
             LocalCluster::send_transaction_with_retries(
                 client,
-                &[from_account],
+                &[from_account, vote_account],
                 &mut transaction,
                 10,
-                0,
             )
             .expect("should fund vote");
             client
@@ -852,7 +878,6 @@ impl LocalCluster {
                 &[from_account.as_ref(), &stake_account_keypair],
                 &mut transaction,
                 5,
-                0,
             )
             .expect("should delegate stake");
             client
@@ -889,9 +914,9 @@ impl LocalCluster {
                                 if stake_state.delegation.voter_pubkey != vote_account_pubkey
                                     || stake_state.delegation.stake != amount
                                 {
-                                    Err(Error::new(ErrorKind::Other, "invalid stake account state"))
+                                    Err(Error::other("invalid stake account state"))
                                 } else if vote_state.node_pubkey != node_pubkey {
-                                    Err(Error::new(ErrorKind::Other, "invalid vote account state"))
+                                    Err(Error::other("invalid vote account state"))
                                 } else {
                                     info!(
                                         "node {} {:?} {:?}",
@@ -901,32 +926,16 @@ impl LocalCluster {
                                     return Ok(());
                                 }
                             }
-                            (None, _) => {
-                                Err(Error::new(ErrorKind::Other, "invalid stake account data"))
-                            }
-                            (_, None) => {
-                                Err(Error::new(ErrorKind::Other, "invalid vote account data"))
-                            }
+                            (None, _) => Err(Error::other("invalid stake account data")),
+                            (_, None) => Err(Error::other("invalid vote account data")),
                         }
                     }
-                    (None, _) => Err(Error::new(
-                        ErrorKind::Other,
-                        "unable to retrieve stake account data",
-                    )),
-                    (_, None) => Err(Error::new(
-                        ErrorKind::Other,
-                        "unable to retrieve vote account data",
-                    )),
+                    (None, _) => Err(Error::other("unable to retrieve stake account data")),
+                    (_, None) => Err(Error::other("unable to retrieve vote account data")),
                 }
             }
-            (Err(_), _) => Err(Error::new(
-                ErrorKind::Other,
-                "unable to retrieve stake account data",
-            )),
-            (_, Err(_)) => Err(Error::new(
-                ErrorKind::Other,
-                "unable to retrieve vote account data",
-            )),
+            (Err(_), _) => Err(Error::other("unable to retrieve stake account data")),
+            (_, Err(_)) => Err(Error::other("unable to retrieve vote account data")),
         }
     }
 
@@ -951,10 +960,7 @@ impl LocalCluster {
         let cache = match &*self.connection_cache {
             ConnectionCache::Quic(cache) => cache,
             ConnectionCache::Udp(_) => {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Expected a Quic ConnectionCache. Got UDP",
-                ))
+                return Err(Error::other("Expected a Quic ConnectionCache. Got UDP"))
             }
         };
 
@@ -964,7 +970,7 @@ impl LocalCluster {
             TpuClientConfig::default(),
             cache.clone(),
         )
-        .map_err(|err| Error::new(ErrorKind::Other, format!("TpuSenderError: {}", err)))?;
+        .map_err(|err| Error::other(format!("TpuSenderError: {}", err)))?;
 
         Ok(tpu_client)
     }
@@ -1036,7 +1042,8 @@ impl Cluster for LocalCluster {
         cluster_validator_info: &mut ClusterValidatorInfo,
     ) -> (Node, Vec<ContactInfo>) {
         // Update the stored ContactInfo for this node
-        let node = Node::new_localhost_with_pubkey(pubkey);
+        let mut node = Node::new_localhost_with_pubkey(pubkey);
+        node.info.set_shred_version(self.shred_version());
         cluster_validator_info.info.contact_info = node.info.clone();
         cluster_validator_info.config.rpc_addrs =
             Some((node.info.rpc().unwrap(), node.info.rpc_pubsub().unwrap()));

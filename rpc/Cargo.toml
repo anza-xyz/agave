@@ -10,6 +10,7 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+agave-feature-set = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
@@ -34,15 +35,15 @@ solana-accounts-db = { workspace = true }
 solana-client = { workspace = true }
 solana-entry = { workspace = true }
 solana-faucet = { workspace = true }
-solana-feature-set = { workspace = true }
 solana-gossip = { workspace = true }
-solana-inline-spl = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
@@ -54,10 +55,12 @@ solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+spl-generic-token = { workspace = true }
 spl-token = { workspace = true, features = ["no-entrypoint"] }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 stream-cancel = { workspace = true }
@@ -66,13 +69,18 @@ tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
 
 [dev-dependencies]
+agave-reserved-account-keys = { workspace = true }
 serial_test = { workspace = true }
+solana-log-collector = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-program-option = { workspace = true }
+solana-program-runtime = { workspace = true }
 solana-rpc = { path = ".", features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+solana-send-transaction-service = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 spl-pod = { workspace = true }
 symlink = { workspace = true }

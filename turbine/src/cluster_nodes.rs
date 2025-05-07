@@ -1,9 +1,10 @@
 use {
     crate::{broadcast_stage::BroadcastStage, retransmit_stage::RetransmitStage},
+    agave_feature_set as feature_set,
+    itertools::Either,
     lazy_lru::LruCache,
     rand::{seq::SliceRandom, Rng, SeedableRng},
     rand_chacha::ChaChaRng,
-    solana_feature_set as feature_set,
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfo as GossipContactInfo, Protocol},
@@ -226,7 +227,7 @@ impl ClusterNodes<RetransmitStage> {
         shred: &ShredId,
         fanout: usize,
         socket_addr_space: &SocketAddrSpace,
-    ) -> Result<(/*root_distance:*/ usize, Vec<SocketAddr>), Error> {
+    ) -> Result<(/*root_distance:*/ u8, Vec<SocketAddr>), Error> {
         // Exclude slot leader from list of nodes.
         if slot_leader == &self.pubkey {
             return Err(Error::Loopback {
@@ -273,8 +274,15 @@ impl ClusterNodes<RetransmitStage> {
         // Unstaked nodes' position in the turbine tree is not deterministic
         // and depends on gossip propagation of contact-infos. Therefore, if
         // this node is not staked return None.
-        if self.nodes[self.index[&self.pubkey]].stake == 0 {
-            return Ok(None);
+        {
+            // dedup_tvu_addrs might exclude a non-staked node from self.nodes
+            // due to duplicate socket/IP addresses.
+            let Some(&index) = self.index.get(&self.pubkey) else {
+                return Ok(None);
+            };
+            if self.nodes[index].stake == 0 {
+                return Ok(None);
+            }
         }
         let mut weighted_shuffle = self.weighted_shuffle.clone();
         if let Some(index) = self.index.get(leader).copied() {
@@ -459,7 +467,11 @@ fn get_retransmit_peers<T>(
 ) -> (/*this node's index:*/ usize, impl Iterator<Item = T>) {
     let mut nodes = nodes.into_iter();
     // This node's index within shuffled nodes.
-    let index = nodes.by_ref().position(pred).unwrap();
+    let Some(index) = nodes.by_ref().position(pred) else {
+        // dedup_tvu_addrs might exclude a non-staked node from self.nodes due
+        // to duplicate socket/IP addresses.
+        return (usize::MAX, Either::Right(std::iter::empty()));
+    };
     // Node's index within its neighborhood.
     let offset = index.saturating_sub(1) % fanout;
     // First node in the neighborhood.
@@ -473,7 +485,7 @@ fn get_retransmit_peers<T>(
             *state = k;
             Some(peer)
         });
-    (index, peers)
+    (index, Either::Left(peers))
 }
 
 // Returns the parent node in the turbine broadcast tree.
@@ -596,7 +608,7 @@ pub(crate) fn get_broadcast_protocol(_: &ShredId) -> Protocol {
 }
 
 #[inline]
-fn get_root_distance(index: usize, fanout: usize) -> usize {
+fn get_root_distance(index: usize, fanout: usize) -> u8 {
     if index == 0 {
         0
     } else if index <= fanout {

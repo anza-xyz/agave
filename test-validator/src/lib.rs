@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
@@ -15,14 +16,12 @@ use {
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
-    solana_feature_set::FEATURE_NAMES,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::Protocol,
-        gossip_service::discover_cluster,
         socketaddr,
     },
     solana_ledger::{
@@ -46,7 +45,6 @@ use {
         commitment_config::CommitmentConfig,
         epoch_schedule::EpochSchedule,
         exit::Exit,
-        feature_set::FeatureSet,
         fee_calculator::FeeRateGovernor,
         instruction::{AccountMeta, Instruction},
         message::Message,
@@ -95,14 +93,13 @@ pub struct TestValidatorNodeConfig {
 
 impl Default for TestValidatorNodeConfig {
     fn default() -> Self {
-        const MIN_PORT_RANGE: u16 = 1024;
-        const MAX_PORT_RANGE: u16 = 65535;
-
-        let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let port_range = (MIN_PORT_RANGE, MAX_PORT_RANGE);
-
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        #[cfg(not(debug_assertions))]
+        let port_range = solana_net_utils::VALIDATOR_PORT_RANGE;
+        #[cfg(debug_assertions)]
+        let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
-            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, 0),
+            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port_range.0),
             port_range,
             bind_ip_addr,
         }
@@ -788,7 +785,7 @@ impl TestValidator {
         let mint_lamports = sol_to_lamports(500_000_000.);
 
         // Only activate features which are not explicitly deactivated.
-        let mut feature_set = FeatureSet::default().inactive;
+        let mut feature_set = FeatureSet::default().inactive().clone();
         for feature in &config.deactivate_feature_set {
             if feature_set.remove(feature) {
                 info!("Feature for {:?} deactivated", feature)
@@ -978,10 +975,7 @@ impl TestValidator {
         }
 
         let accounts_db_config = Some(AccountsDbConfig {
-            index: Some(AccountsIndexConfig {
-                started_from_validator: true,
-                ..AccountsIndexConfig::default()
-            }),
+            index: Some(AccountsIndexConfig::default()),
             account_indexes: Some(config.rpc_config.account_indexes.clone()),
             ..AccountsDbConfig::default()
         });
@@ -1011,7 +1005,6 @@ impl TestValidator {
             )),
             rpc_config: config.rpc_config.clone(),
             pubsub_config: config.pubsub_config.clone(),
-            accounts_hash_interval_slots: 100,
             account_paths: vec![
                 create_accounts_run_and_snapshot_dirs(ledger_path.join("accounts"))
                     .unwrap()
@@ -1054,11 +1047,6 @@ impl TestValidator {
             ValidatorTpuConfig::new_for_tests(config.tpu_enable_udp),
             config.admin_rpc_service_post_init.clone(),
         )?);
-
-        // Needed to avoid panics in `solana-responder-gossip` in tests that create a number of
-        // test validators concurrently...
-        discover_cluster(&gossip, 1, socket_addr_space)
-            .map_err(|err| format!("TestValidator startup failed: {err:?}"))?;
 
         let test_validator = TestValidator {
             ledger_path,
@@ -1224,7 +1212,7 @@ mod test {
 
     #[tokio::test]
     async fn test_deactivate_features() {
-        let mut control = FeatureSet::default().inactive;
+        let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
         [
             solana_sdk::feature_set::deprecate_rewards_sysvar::id(),
@@ -1308,8 +1296,8 @@ mod test {
     async fn test_core_bpf_programs() {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[
-                // Don't migrate the config program.
-                solana_sdk::feature_set::migrate_config_program_to_core_bpf::id(),
+                // Don't migrate the stake program.
+                solana_sdk::feature_set::migrate_stake_program_to_core_bpf::id(),
             ])
             .start_async()
             .await;
@@ -1321,6 +1309,7 @@ mod test {
                 solana_sdk_ids::address_lookup_table::id(),
                 solana_sdk_ids::config::id(),
                 solana_sdk_ids::feature::id(),
+                solana_sdk_ids::stake::id(),
             ])
             .await
             .unwrap();
@@ -1330,14 +1319,19 @@ mod test {
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
-        // Config is a builtin.
+        // Config is a BPF program.
         let account = fetched_programs[1].as_ref().unwrap();
-        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
+        assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
         assert!(account.executable);
 
         // Feature Gate is a BPF program.
         let account = fetched_programs[2].as_ref().unwrap();
         assert_eq!(account.owner, solana_sdk_ids::bpf_loader_upgradeable::id());
+        assert!(account.executable);
+
+        // Stake is a builtin.
+        let account = fetched_programs[3].as_ref().unwrap();
+        assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
         assert!(account.executable);
     }
 }

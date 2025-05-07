@@ -33,7 +33,7 @@ solana-keypair = { workspace = true, optional = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true, features = ["bincode"] }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, default-features = false }
 solana-rayon-threadlimit = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }

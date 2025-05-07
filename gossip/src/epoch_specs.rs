@@ -1,12 +1,10 @@
 use {
+    solana_clock::{Epoch, DEFAULT_MS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::{BankForks, ReadOnlyAtomicSlot},
-    },
-    solana_sdk::{
-        clock::{Epoch, DEFAULT_MS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        pubkey::Pubkey,
     },
     std::{
         collections::HashMap,
@@ -17,7 +15,7 @@ use {
 
 // Caches epoch specific information which stay fixed throughout the epoch.
 // Refreshes only if the root bank has moved to a new epoch.
-pub(crate) struct EpochSpecs {
+pub struct EpochSpecs {
     epoch: Epoch, // when fields were last updated.
     epoch_schedule: EpochSchedule,
     root: ReadOnlyAtomicSlot, // updated by bank-forks.
@@ -28,7 +26,7 @@ pub(crate) struct EpochSpecs {
 
 impl EpochSpecs {
     #[inline]
-    pub(crate) fn current_epoch_staked_nodes(&mut self) -> &Arc<HashMap<Pubkey, /*stake:*/ u64>> {
+    pub fn current_epoch_staked_nodes(&mut self) -> &Arc<HashMap<Pubkey, /*stake:*/ u64>> {
         self.maybe_refresh();
         &self.current_epoch_staked_nodes
     }
@@ -82,11 +80,8 @@ fn get_epoch_duration(bank: &Bank) -> Duration {
 mod tests {
     use {
         super::*,
-        solana_runtime::{
-            accounts_background_service::AbsRequestSender,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        },
-        solana_sdk::clock::Slot,
+        solana_clock::Slot,
+        solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
     };
 
     #[test]
@@ -163,7 +158,6 @@ mod tests {
             let bank = Bank::new_from_parent(bank, &Pubkey::new_unique(), slot);
             bank_forks.write().unwrap().insert(bank);
         }
-        let abs_request_sender = AbsRequestSender::default();
         // root is still 0, epoch 0.
         let root_bank = bank_forks.read().unwrap().get(0).unwrap();
         verify_epoch_specs(
@@ -176,7 +170,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(17, &abs_request_sender, None)
+            .set_root(17, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(17).unwrap();
         verify_epoch_specs(
@@ -189,7 +183,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(19, &abs_request_sender, None)
+            .set_root(19, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(19).unwrap();
         verify_epoch_specs(
@@ -202,7 +196,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(37, &abs_request_sender, None)
+            .set_root(37, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(37).unwrap();
         verify_epoch_specs(
@@ -215,7 +209,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(59, &abs_request_sender, None)
+            .set_root(59, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(59).unwrap();
         verify_epoch_specs(
@@ -228,7 +222,7 @@ mod tests {
         bank_forks
             .write()
             .unwrap()
-            .set_root(97, &abs_request_sender, None)
+            .set_root(97, None, None)
             .unwrap();
         let root_bank = bank_forks.read().unwrap().get(97).unwrap();
         verify_epoch_specs(

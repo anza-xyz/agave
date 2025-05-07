@@ -47,10 +47,10 @@ impl ServeRepairService {
             request_sender,
             Recycler::default(),
             Arc::new(StreamerReceiveStats::new("serve_repair_receiver")),
-            Duration::from_millis(1), // coalesce
-            false,                    // use_pinned_memory
-            None,                     // in_vote_only_mode
-            false,                    // is_staked_service
+            Some(Duration::from_millis(1)), // coalesce
+            false,                          // use_pinned_memory
+            None,                           // in_vote_only_mode
+            false,                          // is_staked_service
         );
         let t_packet_adapter = Builder::new()
             .name(String::from("solServRAdapt"))

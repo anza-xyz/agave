@@ -9,7 +9,10 @@ use {
     crossbeam_channel::unbounded,
     indicatif::{ProgressBar, ProgressStyle},
     serde_derive::{Deserialize, Serialize},
-    solana_config_program::{config_instruction, get_config_data, ConfigState},
+    solana_config_program_client::{
+        get_config_data,
+        instructions_bincode::{self as config_instruction, ConfigState},
+    },
     solana_hash::Hash,
     solana_keypair::{read_keypair_file, signable::Signable, Keypair},
     solana_message::Message,
@@ -148,7 +151,7 @@ fn download_to_temp(
         .map_err(|err| format!("Unable to hash {temp_file:?}: {err}"))?;
 
     if expected_sha256.is_some() && expected_sha256 != Some(&temp_file_sha256) {
-        return Err(io::Error::new(io::ErrorKind::Other, "Incorrect hash").into());
+        return Err(io::Error::other("Incorrect hash").into());
     }
 
     source.progress_bar.finish_and_clear();
@@ -925,7 +928,7 @@ fn check_for_newer_github_release(
                             if (prerelease_allowed || !prerelease)
                                 && version_filter
                                     .as_ref()
-                                    .map_or(true, |version_filter| version_filter.matches(&version))
+                                    .is_none_or(|version_filter| version_filter.matches(&version))
                             {
                                 return Some(version);
                             }

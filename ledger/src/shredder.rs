@@ -77,6 +77,37 @@ impl Shredder {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn make_merkle_shreds_from_entries(
+        &self,
+        keypair: &Keypair,
+        entries: &[Entry],
+        is_last_in_slot: bool,
+        chained_merkle_root: Option<Hash>,
+        next_shred_index: u32,
+        next_code_index: u32,
+        reed_solomon_cache: &ReedSolomonCache,
+        stats: &mut ProcessShredsStats,
+    ) -> impl Iterator<Item = Shred> {
+        shred::make_merkle_shreds_from_entries(
+            &PAR_THREAD_POOL,
+            keypair,
+            entries,
+            self.slot,
+            self.parent_slot,
+            self.version,
+            self.reference_tick,
+            is_last_in_slot,
+            chained_merkle_root,
+            next_shred_index,
+            next_code_index,
+            reed_solomon_cache,
+            stats,
+        )
+        .unwrap()
+    }
+
+    // For legacy tests and benchmarks.
+    #[allow(clippy::too_many_arguments)]
     pub fn entries_to_shreds(
         &self,
         keypair: &Keypair,
@@ -93,24 +124,18 @@ impl Shredder {
         Vec<Shred>, // coding shreds
     ) {
         if merkle_variant {
-            return shred::make_merkle_shreds_from_entries(
-                &PAR_THREAD_POOL,
-                keypair,
-                entries,
-                self.slot,
-                self.parent_slot,
-                self.version,
-                self.reference_tick,
-                is_last_in_slot,
-                chained_merkle_root,
-                next_shred_index,
-                next_code_index,
-                reed_solomon_cache,
-                stats,
-            )
-            .unwrap()
-            .into_iter()
-            .partition(Shred::is_data);
+            return self
+                .make_merkle_shreds_from_entries(
+                    keypair,
+                    entries,
+                    is_last_in_slot,
+                    chained_merkle_root,
+                    next_shred_index,
+                    next_code_index,
+                    reed_solomon_cache,
+                    stats,
+                )
+                .partition(Shred::is_data);
         }
         let data_shreds =
             self.entries_to_data_shreds(keypair, entries, is_last_in_slot, next_shred_index, stats);
@@ -140,8 +165,6 @@ impl Shredder {
 
         let mut gen_data_time = Measure::start("shred_gen_data_time");
         let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        process_stats.data_buffer_residual +=
-            (data_buffer_size - serialized_shreds.len() % data_buffer_size) % data_buffer_size;
         // Integer division to ensure we have enough shreds to fit all the data
         let num_shreds = serialized_shreds.len().div_ceil(data_buffer_size);
         let last_shred_index = next_shred_index + num_shreds as u32 - 1;
@@ -501,7 +524,7 @@ fn get_fec_set_offsets(
         }
         let num_chunks = (num_shreds / min_chunk_size).max(1);
         let chunk_size = num_shreds.div_ceil(num_chunks);
-        let offsets = std::iter::repeat(offset).take(chunk_size);
+        let offsets = std::iter::repeat_n(offset, chunk_size);
         num_shreds -= chunk_size;
         offset += chunk_size;
         Some(offsets)
@@ -517,11 +540,10 @@ mod tests {
             blockstore::MAX_DATA_SHREDS_PER_SLOT,
             shred::{
                 self, max_entries_per_n_shred, max_ticks_per_n_shreds, verify_test_data_shred,
-                ShredType, MAX_CODE_SHREDS_PER_SLOT,
+                ShredType, CODING_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT,
             },
         },
         assert_matches::assert_matches,
-        bincode::serialized_size,
         rand::{seq::SliceRandom, Rng},
         solana_sdk::{
             hash::{hash, Hash},
@@ -567,18 +589,8 @@ mod tests {
             })
             .collect();
 
-        let size = serialized_size(&entries).unwrap() as usize;
-        // Integer division to ensure we have enough shreds to fit all the data
-        let data_buffer_size = ShredData::capacity(/*merkle_proof_size:*/ None).unwrap();
-        let num_expected_data_shreds = size.div_ceil(data_buffer_size);
-        let num_expected_data_shreds = num_expected_data_shreds.max(if is_last_in_slot {
-            DATA_SHREDS_PER_FEC_BLOCK
-        } else {
-            1
-        });
-        let num_expected_coding_shreds =
-            get_erasure_batch_size(num_expected_data_shreds, is_last_in_slot)
-                - num_expected_data_shreds;
+        let num_expected_data_shreds = DATA_SHREDS_PER_FEC_BLOCK;
+        let num_expected_coding_shreds = CODING_SHREDS_PER_FEC_BLOCK;
         let start_index = 0;
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,

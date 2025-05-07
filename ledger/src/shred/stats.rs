@@ -1,4 +1,5 @@
 use {
+    crate::shred::{Shred, ShredType},
     solana_sdk::clock::Slot,
     std::{
         ops::AddAssign,
@@ -18,6 +19,17 @@ pub struct ProcessShredsStats {
     pub coding_send_elapsed: u64,
     pub get_leader_schedule_elapsed: u64,
     pub coalesce_elapsed: u64,
+    // The number of times entry coalescing exited because the maximum number of
+    // bytes was hit.
+    pub coalesce_exited_hit_max: u64,
+    // The number of times entry coalescing exited because we were tightly
+    // aligned to an erasure batch boundary.
+    pub coalesce_exited_tightly_packed: u64,
+    // The number of times entry coalescing exited because the slot ended.
+    pub coalesce_exited_slot_ended: u64,
+    // The number of times entry coalescing exited because the maximum coalesce
+    // duration was reached.
+    pub coalesce_exited_rcv_timeout: u64,
     // Histogram count of num_data_shreds obtained from serializing entries
     // counted in 5 buckets.
     num_data_shreds_hist: [usize; 5],
@@ -25,9 +37,10 @@ pub struct ProcessShredsStats {
     pub num_extant_slots: u64,
     // When looking up chained merkle root from parent slot fails.
     pub err_unknown_chained_merkle_root: u64,
-    pub(crate) data_buffer_residual: usize,
-    pub num_merkle_data_shreds: usize,
-    pub num_merkle_coding_shreds: usize,
+    pub(crate) padding_bytes: usize,
+    pub(crate) data_bytes: usize,
+    num_merkle_data_shreds: usize,
+    num_merkle_coding_shreds: usize,
 }
 
 #[derive(Default, Debug, Eq, PartialEq)]
@@ -96,13 +109,30 @@ impl ProcessShredsStats {
                 self.err_unknown_chained_merkle_root,
                 i64
             ),
-            ("data_buffer_residual", self.data_buffer_residual, i64),
+            ("padding_bytes", self.padding_bytes, i64),
+            ("data_bytes", self.data_bytes, i64),
             ("num_data_shreds_07", self.num_data_shreds_hist[0], i64),
             ("num_data_shreds_15", self.num_data_shreds_hist[1], i64),
             ("num_data_shreds_31", self.num_data_shreds_hist[2], i64),
             ("num_data_shreds_63", self.num_data_shreds_hist[3], i64),
             ("num_data_shreds_64", self.num_data_shreds_hist[4], i64),
             ("coalesce_elapsed", self.coalesce_elapsed, i64),
+            ("coalesce_exited_hit_max", self.coalesce_exited_hit_max, i64),
+            (
+                "coalesce_exited_tightly_packed",
+                self.coalesce_exited_tightly_packed,
+                i64
+            ),
+            (
+                "coalesce_exited_slot_ended",
+                self.coalesce_exited_slot_ended,
+                i64
+            ),
+            (
+                "coalesce_exited_rcv_timeout",
+                self.coalesce_exited_rcv_timeout,
+                i64
+            ),
         );
         *self = Self::default();
     }
@@ -113,13 +143,22 @@ impl ProcessShredsStats {
         let index = index.min(self.num_data_shreds_hist.len() - 1);
         self.num_data_shreds_hist[index] += 1;
     }
+
+    #[inline]
+    pub fn record_shred(&mut self, shred: &Shred) {
+        let num_shreds = match shred.shred_type() {
+            ShredType::Code => &mut self.num_merkle_coding_shreds,
+            ShredType::Data => &mut self.num_merkle_data_shreds,
+        };
+        *num_shreds += 1;
+    }
 }
 
 impl ShredFetchStats {
-    pub fn maybe_submit(&mut self, name: &'static str, cadence: Duration) {
+    pub fn maybe_submit(&mut self, name: &'static str, cadence: Duration) -> bool {
         let elapsed = self.since.as_ref().map(Instant::elapsed);
         if elapsed.unwrap_or(Duration::MAX) < cadence {
-            return;
+            return false;
         }
         datapoint_info!(
             name,
@@ -151,6 +190,8 @@ impl ShredFetchStats {
             since: Some(Instant::now()),
             ..Self::default()
         };
+
+        true
     }
 }
 
@@ -166,10 +207,15 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
             coding_send_elapsed,
             get_leader_schedule_elapsed,
             coalesce_elapsed,
+            coalesce_exited_hit_max,
+            coalesce_exited_tightly_packed,
+            coalesce_exited_slot_ended,
+            coalesce_exited_rcv_timeout,
             num_data_shreds_hist,
             num_extant_slots,
             err_unknown_chained_merkle_root,
-            data_buffer_residual,
+            padding_bytes,
+            data_bytes,
             num_merkle_data_shreds,
             num_merkle_coding_shreds,
         } = rhs;
@@ -182,9 +228,14 @@ impl AddAssign<ProcessShredsStats> for ProcessShredsStats {
         self.coding_send_elapsed += coding_send_elapsed;
         self.get_leader_schedule_elapsed += get_leader_schedule_elapsed;
         self.coalesce_elapsed += coalesce_elapsed;
+        self.coalesce_exited_hit_max += coalesce_exited_hit_max;
+        self.coalesce_exited_tightly_packed += coalesce_exited_tightly_packed;
+        self.coalesce_exited_slot_ended += coalesce_exited_slot_ended;
+        self.coalesce_exited_rcv_timeout += coalesce_exited_rcv_timeout;
         self.num_extant_slots += num_extant_slots;
         self.err_unknown_chained_merkle_root += err_unknown_chained_merkle_root;
-        self.data_buffer_residual += data_buffer_residual;
+        self.padding_bytes += padding_bytes;
+        self.data_bytes += data_bytes;
         self.num_merkle_data_shreds += num_merkle_data_shreds;
         self.num_merkle_coding_shreds += num_merkle_coding_shreds;
         for (i, bucket) in self.num_data_shreds_hist.iter_mut().enumerate() {

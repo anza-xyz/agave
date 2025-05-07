@@ -1,4 +1,4 @@
-use super::*;
+use {super::*, solana_program_runtime::execution_budget::SVMTransactionExecutionCost};
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
@@ -10,7 +10,7 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     consume_compute_meter(
         invoke_context,
         invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .sysvar_base_cost
             .saturating_add(size_of::<T>() as u64),
     )?;
@@ -179,12 +179,12 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let check_aligned = invoke_context.get_check_aligned();
-        let ComputeBudget {
+        let SVMTransactionExecutionCost {
             sysvar_base_cost,
             cpi_bytes_per_unit,
             mem_op_base_cost,
             ..
-        } = *invoke_context.get_compute_budget();
+        } = *invoke_context.get_execution_cost();
 
         // Abort: "Compute budget is exceeded."
         let sysvar_id_cost = 32_u64.checked_div(cpi_bytes_per_unit).unwrap_or(0);

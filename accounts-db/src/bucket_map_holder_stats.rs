@@ -3,7 +3,8 @@ use {
         accounts_index::{in_mem_accounts_index::InMemAccountsIndex, DiskIndexValue, IndexValue},
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
     },
-    solana_sdk::timing::AtomicInterval,
+    solana_clock::Slot,
+    solana_time_utils::AtomicInterval,
     std::{
         fmt::Debug,
         sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -253,6 +254,15 @@ impl BucketMapHolderStats {
                     ),
                 );
             }
+            let count_in_mem = self.count_in_mem.load(Ordering::Relaxed);
+            let held_in_mem_slot_list_len =
+                self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed);
+            // If an entry is held in-mem due to slot list length then it has (at least) two slot
+            // list entries.  Since `approx_size_of_one_entry()` already includes the ref count &
+            // metadata sizes, only add in a second slot list entry.
+            let estimate_mem_bytes = count_in_mem
+                * InMemAccountsIndex::<T, U>::approx_size_of_one_entry()
+                + held_in_mem_slot_list_len as usize * size_of::<(Slot, T)>();
             datapoint_info!(
                 if startup || was_startup {
                     thread_time_elapsed_ms *= 2; // more threads are allocated during startup
@@ -260,22 +270,13 @@ impl BucketMapHolderStats {
                 } else {
                     "accounts_index"
                 },
-                (
-                    "estimate_mem_bytes",
-                    self.count_in_mem.load(Ordering::Relaxed)
-                        * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
-                    i64
-                ),
+                ("estimate_mem_bytes", estimate_mem_bytes, i64),
                 (
                     "flush_should_evict_us",
                     self.flush_should_evict_us.swap(0, Ordering::Relaxed),
                     i64
                 ),
-                (
-                    "count_in_mem",
-                    self.count_in_mem.load(Ordering::Relaxed),
-                    i64
-                ),
+                ("count_in_mem", count_in_mem, i64),
                 ("count", self.total_count(), i64),
                 (
                     "bg_waiting_percent",
@@ -293,11 +294,7 @@ impl BucketMapHolderStats {
                     ),
                     f64
                 ),
-                (
-                    "slot_list_len",
-                    self.held_in_mem.slot_list_len.swap(0, Ordering::Relaxed),
-                    i64
-                ),
+                ("slot_list_len", held_in_mem_slot_list_len, i64),
                 (
                     "ref_count",
                     self.held_in_mem.ref_count.swap(0, Ordering::Relaxed),
@@ -563,6 +560,12 @@ impl BucketMapHolderStats {
                 } else {
                     "accounts_index"
                 },
+                (
+                    "estimate_mem_bytes",
+                    self.count_in_mem.load(Ordering::Relaxed)
+                        * InMemAccountsIndex::<T, U>::approx_size_of_one_entry(),
+                    i64
+                ),
                 (
                     "count_in_mem",
                     self.count_in_mem.load(Ordering::Relaxed),

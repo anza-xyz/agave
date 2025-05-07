@@ -220,7 +220,7 @@ mod test {
             state::{Data, State},
             versions::Versions,
         },
-        solana_program::vote::{
+        solana_vote_interface::{
             program::id as vote_program_id,
             state::{VoteState, VoteStateVersions},
         },

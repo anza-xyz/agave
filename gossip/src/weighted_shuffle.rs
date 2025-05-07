@@ -280,7 +280,7 @@ mod tests {
         itertools::Itertools,
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
-        solana_sdk::hash::Hash,
+        solana_hash::Hash,
         std::{
             convert::TryInto,
             iter::{repeat_with, successors, Sum},
@@ -357,18 +357,18 @@ mod tests {
             assert_eq!(get_num_nodes_and_tree_size(count), (1, 1));
         }
         let num_nodes = 1 + 16;
-        for count in 17..=256 {
-            let tree_size = 1 + (count + 15) / 16;
+        for count in 17_usize..=256 {
+            let tree_size = 1 + count.div_ceil(16);
             assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
         let num_nodes = 1 + 16 + 16 * 16;
-        for count in 257..=4096 {
-            let tree_size = 1 + 16 + (count + 15) / 16;
+        for count in 257_usize..=4096 {
+            let tree_size = 1 + 16 + count.div_ceil(16);
             assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
         let num_nodes = 1 + 16 + 16 * 16 + 16 * 16 * 16;
-        for count in 4097..=65536 {
-            let tree_size = 1 + 16 + 16 * 16 + (count + 15) / 16;
+        for count in 4097_usize..=65536 {
+            let tree_size = 1 + 16 + 16 * 16 + count.div_ceil(16);
             assert_eq!(get_num_nodes_and_tree_size(count), (num_nodes, tree_size));
         }
     }
@@ -564,7 +564,7 @@ mod tests {
             .map(usize::to_le_bytes)
             .collect::<Vec<_>>();
         let bytes = bytes.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-        assert_eq!(solana_sdk::hash::hashv(&bytes[..]), expected_hash);
+        assert_eq!(solana_sha256_hasher::hashv(&bytes[..]), expected_hash);
     }
 
     #[test]

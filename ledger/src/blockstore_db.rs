@@ -4,6 +4,7 @@ use {
         blockstore::{
             column::{
                 columns, Column, ColumnIndexDeprecation, ColumnName, ProtobufColumn, TypedColumn,
+                DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
             },
             error::{BlockstoreError, Result},
         },
@@ -119,7 +120,7 @@ impl Rocks {
         let column_options = Arc::from(options.column_options);
 
         // Open the database
-        let db = match options.access_type {
+        let mut db = match options.access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
@@ -138,6 +139,12 @@ impl Rocks {
                 )?
             }
         };
+
+        // Delete the now unused program_costs column if it is present
+        if db.cf_handle(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME).is_some() {
+            db.drop_cf(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME)?;
+        }
+
         let rocks = Rocks {
             db,
             path,
@@ -185,7 +192,6 @@ impl Rocks {
             new_cf_descriptor::<columns::Blocktime>(options, oldest_slot),
             new_cf_descriptor::<columns::PerfSamples>(options, oldest_slot),
             new_cf_descriptor::<columns::BlockHeight>(options, oldest_slot),
-            new_cf_descriptor::<columns::ProgramCosts>(options, oldest_slot),
             new_cf_descriptor::<columns::OptimisticSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
         ];
@@ -236,7 +242,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 21] {
+    const fn columns() -> [&'static str; 20] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -256,7 +262,6 @@ impl Rocks {
             columns::Blocktime::NAME,
             columns::PerfSamples::NAME,
             columns::BlockHeight::NAME,
-            columns::ProgramCosts::NAME,
             columns::OptimisticSlots::NAME,
             columns::MerkleRootMeta::NAME,
         ]
@@ -659,10 +664,22 @@ where
     }
 
     #[cfg(test)]
-    pub fn compact_range_raw_key(&self, from: &[u8], to: &[u8]) {
-        self.backend
-            .db
-            .compact_range_cf(self.handle(), Some(from), Some(to));
+    // The validator performs compactions asynchronously, this method is
+    // provided to force a synchronous compaction to test our compaction filter
+    pub fn compact(&self) {
+        // compact_range_cf() optionally takes a start and end key to limit
+        // compaction. Providing values will result in a different method
+        // getting called in the rocksdb code, even if the specified keys span
+        // the entire key range of the column
+        //
+        // Internally, rocksdb will do some checks to figure out if it should
+        // run a compaction. Empirically, it has been found that passing the
+        // keys leads to more variability in whether rocksdb runs a compaction
+        // or not. For the sake of our unit tests, we want the compaction to
+        // run everytime. So, set the keys as None which will result in rocksdb
+        // using the heavier method to determine if a compaction should run
+        let (start, end) = (None::<&[u8]>, None::<&[u8]>);
+        self.backend.db.compact_range_cf(self.handle(), start, end);
     }
 
     #[inline]
@@ -1168,6 +1185,11 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
         options.set_disable_auto_compactions(true);
     }
 
+    // Limit to (10) 50 MB log files (500 MB total)
+    // Logs grow at < 5 MB / hour, so this provides several days of logs
+    options.set_max_log_file_size(50 * 1024 * 1024);
+    options.set_keep_log_file_num(10);
+
     // Allow Rocks to open/keep open as many files as it needs for performance;
     // however, this is also explicitly required for a secondary instance.
     // See https://github.com/facebook/rocksdb/wiki/Secondary-instance
@@ -1360,6 +1382,55 @@ pub mod tests {
         }
     }
 
+    #[test]
+    fn test_remove_deprecated_progam_costs_column_compat() {
+        solana_logger::setup();
+
+        fn is_program_costs_column_present(path: &Path) -> bool {
+            DB::list_cf(&Options::default(), path)
+                .unwrap()
+                .iter()
+                .any(|column_name| column_name == DEPRECATED_PROGRAM_COSTS_COLUMN_NAME)
+        }
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path();
+
+        let options = BlockstoreOptions {
+            access_type: AccessType::Primary,
+            enforce_ulimit_nofile: false,
+            ..BlockstoreOptions::default()
+        };
+
+        // Create a new database
+        {
+            let _rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+        }
+
+        // The newly created database should not contain the deprecated column
+        assert!(!is_program_costs_column_present(db_path));
+
+        // Create a program_costs column to simulate an old database that had the column
+        {
+            let mut rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+            rocks
+                .db
+                .create_cf(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME, &Options::default())
+                .unwrap();
+        }
+
+        // Ensure the column we just created is detected
+        assert!(is_program_costs_column_present(db_path));
+
+        // Reopen the database which has logic to delete program_costs column
+        {
+            let _rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+        }
+
+        // The deprecated column should have been dropped by Rocks::open()
+        assert!(!is_program_costs_column_present(db_path));
+    }
+
     impl<C> LedgerColumn<C>
     where
         C: ColumnIndexDeprecation + ProtobufColumn + ColumnName,
@@ -1384,23 +1455,6 @@ pub mod tests {
             let serialized_value = C::serialize(value)?;
             self.backend
                 .put_cf(self.handle(), C::deprecated_key(index), &serialized_value)
-        }
-    }
-
-    impl<C> LedgerColumn<C>
-    where
-        C: ColumnIndexDeprecation + ColumnName,
-    {
-        pub(crate) fn iterator_cf_raw_key(
-            &self,
-            iterator_mode: IteratorMode<C::Index>,
-        ) -> impl Iterator<Item = (C::Key, Box<[u8]>)> + '_ {
-            // The conversion of key back into Box<[u8]> incurs an extra
-            // allocation. However, this is test code and the goal is to
-            // maximize code reuse over efficiency
-            self.iter(iterator_mode)
-                .unwrap()
-                .map(|(key, value)| (C::key(&key), value))
         }
     }
 }

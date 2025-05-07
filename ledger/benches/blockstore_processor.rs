@@ -6,7 +6,6 @@ use {
         iter::IndexedParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
-    solana_feature_set::apply_cost_tracker_during_replay,
     solana_ledger::{
         blockstore_processor::{execute_batch, TransactionBatchWithIndexes},
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -81,7 +80,7 @@ struct BenchFrame {
     prioritization_fee_cache: PrioritizationFeeCache,
 }
 
-fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
+fn setup() -> BenchFrame {
     let mint_total = u64::MAX;
     let GenesisConfigInfo {
         mut genesis_config, ..
@@ -92,10 +91,6 @@ fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
     genesis_config.ticks_per_slot = 10_000;
 
     let mut bank = Bank::new_for_benches(&genesis_config);
-
-    if !apply_cost_tracker_during_replay {
-        bank.deactivate_feature(&apply_cost_tracker_during_replay::id());
-    }
 
     // Allow arbitrary transaction processing time for the purposes of this bench
     bank.ns_per_slot = u128::MAX;
@@ -113,11 +108,7 @@ fn setup(apply_cost_tracker_during_replay: bool) -> BenchFrame {
     }
 }
 
-fn bench_execute_batch(
-    bencher: &mut Bencher,
-    batch_size: usize,
-    apply_cost_tracker_during_replay: bool,
-) {
+fn bench_execute_batch(bencher: &mut Bencher, batch_size: usize) {
     const TRANSACTIONS_PER_ITERATION: usize = 64;
     assert_eq!(
         TRANSACTIONS_PER_ITERATION % batch_size,
@@ -131,7 +122,7 @@ fn bench_execute_batch(
         bank,
         _bank_forks,
         prioritization_fee_cache,
-    } = setup(apply_cost_tracker_during_replay);
+    } = setup();
     let transactions = create_transactions(&bank, 2_usize.pow(20));
     let batches: Vec<_> = transactions
         .chunks(batch_size)
@@ -172,30 +163,15 @@ fn bench_execute_batch(
 
 #[bench]
 fn bench_execute_batch_unbatched(bencher: &mut Bencher) {
-    bench_execute_batch(bencher, 1, true);
+    bench_execute_batch(bencher, 1);
 }
 
 #[bench]
 fn bench_execute_batch_half_batch(bencher: &mut Bencher) {
-    bench_execute_batch(bencher, 32, true);
+    bench_execute_batch(bencher, 32);
 }
 
 #[bench]
 fn bench_execute_batch_full_batch(bencher: &mut Bencher) {
-    bench_execute_batch(bencher, 64, true);
-}
-
-#[bench]
-fn bench_execute_batch_unbatched_disable_tx_cost_update(bencher: &mut Bencher) {
-    bench_execute_batch(bencher, 1, false);
-}
-
-#[bench]
-fn bench_execute_batch_half_batch_disable_tx_cost_update(bencher: &mut Bencher) {
-    bench_execute_batch(bencher, 32, false);
-}
-
-#[bench]
-fn bench_execute_batch_full_batch_disable_tx_cost_update(bencher: &mut Bencher) {
-    bench_execute_batch(bencher, 64, false);
+    bench_execute_batch(bencher, 64);
 }

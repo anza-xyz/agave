@@ -37,6 +37,10 @@ impl SVMMessage for SanitizedMessage {
             .map(|(pubkey, ix)| (pubkey, SVMInstruction::from(ix)))
     }
 
+    fn static_account_keys(&self) -> &[Pubkey] {
+        SanitizedMessage::static_account_keys(self)
+    }
+
     fn account_keys(&self) -> AccountKeys {
         SanitizedMessage::account_keys(self)
     }

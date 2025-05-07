@@ -31,6 +31,7 @@ use {
         hash::Hash,
     },
     std::{
+        borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap},
         fs::File,
         io::{stdout, BufRead, BufReader, Write},
@@ -131,7 +132,6 @@ fn analyze_storage(blockstore: &Blockstore) -> Result<()> {
     analyze_column(blockstore, Blocktime::NAME)?;
     analyze_column(blockstore, PerfSamples::NAME)?;
     analyze_column(blockstore, BlockHeight::NAME)?;
-    analyze_column(blockstore, ProgramCosts::NAME)?;
     analyze_column(blockstore, OptimisticSlots::NAME)
 }
 
@@ -160,7 +160,6 @@ fn raw_key_to_slot(key: &[u8], column_name: &str) -> Option<Slot> {
         cf::Blocktime::NAME => Some(cf::Blocktime::slot(cf::Blocktime::index(key))),
         cf::PerfSamples::NAME => Some(cf::PerfSamples::slot(cf::PerfSamples::index(key))),
         cf::BlockHeight::NAME => Some(cf::BlockHeight::slot(cf::BlockHeight::index(key))),
-        cf::ProgramCosts::NAME => None, // does not implement slot()
         cf::OptimisticSlots::NAME => {
             Some(cf::OptimisticSlots::slot(cf::OptimisticSlots::index(key)))
         }
@@ -676,7 +675,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     break;
                 }
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
-                if target.insert_shreds(shreds, None, true).is_err() {
+                let shreds = shreds.into_iter().map(Cow::Owned);
+                if target.insert_cow_shreds(shreds, None, true).is_err() {
                     warn!("error inserting shreds for slot {}", slot);
                 }
             }

@@ -33,6 +33,14 @@ steps:
         permit_on_passed: true
     timeout_in_minutes: 240
     branches: "!master"
+  - name: "trigger github actions windows build"
+    command: ".buildkite/scripts/trigger-github-actions-windows-build.sh"
+    agents:
+      queue: "release-build"
+    retry:
+      manual:
+        permit_on_passed: true
+    timeout_in_minutes: 5
   - name: "publish tarball (aarch64-apple-darwin)"
     command: "ci/publish-tarball.sh"
     agents:

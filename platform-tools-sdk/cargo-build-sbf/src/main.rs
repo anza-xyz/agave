@@ -21,7 +21,7 @@ use {
     tar::Archive,
 };
 
-const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.43";
+const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.47";
 
 #[derive(Debug)]
 struct Config<'a> {
@@ -44,6 +44,7 @@ struct Config<'a> {
     workspace: bool,
     jobs: Option<String>,
     arch: &'a str,
+    optimize_size: bool,
 }
 
 impl Default for Config<'_> {
@@ -73,7 +74,8 @@ impl Default for Config<'_> {
             verbose: false,
             workspace: false,
             jobs: None,
-            arch: "sbfv1",
+            arch: "v0",
+            optimize_size: false,
         }
     }
 }
@@ -517,6 +519,23 @@ fn check_undefined_symbols(config: &Config, program: &Path) {
     }
 }
 
+// Check if we have all binaries in place to execute the build command.
+// If the download failed or the binaries were somehow deleted, inform the user how to fix it.
+fn corrupted_toolchain(config: &Config) -> bool {
+    let toolchain_path = config
+        .sbf_sdk
+        .join("dependencies")
+        .join("platform-tools")
+        .join("rust");
+
+    let binaries = toolchain_path.join("bin");
+
+    !toolchain_path.try_exists().unwrap_or(false)
+        || !binaries.try_exists().unwrap_or(false)
+        || !binaries.join("rustc").try_exists().unwrap_or(false)
+        || !binaries.join("cargo").try_exists().unwrap_or(false)
+}
+
 // check whether custom solana toolchain is linked, and link it if it is not.
 fn link_solana_toolchain(config: &Config) {
     let toolchain_path = config
@@ -586,6 +605,21 @@ fn build_solana_package(
             .iter()
             .filter_map(|target| {
                 if target.crate_types.contains(&"cdylib".to_string()) {
+                    let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
+                        Some("rlib")
+                    } else if target.crate_types.contains(&"lib".to_string()) {
+                        Some("lib")
+                    } else {
+                        None
+                    };
+
+                    if let Some(other_crate) = other_crate_type {
+                        warn!("Package '{}' has two crate types defined: cdylib and {}. \
+                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
+                        to be deployed and rlib for packages to be imported by other programs as libraries.",
+                        package.name, other_crate);
+                    }
+
                     Some(&target.name)
                 } else {
                     None
@@ -594,13 +628,7 @@ fn build_solana_package(
             .collect::<Vec<_>>();
 
         match cdylib_targets.len() {
-            0 => {
-                warn!(
-                    "Note: {} crate does not contain a cdylib target",
-                    package.name
-                );
-                None
-            }
+            0 => None,
             1 => Some(cdylib_targets[0].replace('-', "_")),
             _ => {
                 error!(
@@ -612,7 +640,6 @@ fn build_solana_package(
         }
     };
 
-    let legacy_program_feature_present = package.name == "solana-sdk";
     let root_package_dir = &package.manifest_path.parent().unwrap_or_else(|| {
         error!("Unable to get directory of {}", package.manifest_path);
         exit(1);
@@ -624,7 +651,13 @@ fn build_solana_package(
         .cloned()
         .unwrap_or_else(|| target_directory.join("deploy"));
 
-    let target_build_directory = target_directory.join("sbf-solana-solana").join("release");
+    let target_triple = if config.arch == "v0" {
+        "sbpf-solana-solana".to_string()
+    } else {
+        format!("sbpf{}-solana-solana", config.arch)
+    };
+
+    let target_build_directory = target_directory.join(&target_triple).join("release");
 
     env::set_current_dir(root_package_dir).unwrap_or_else(|err| {
         error!(
@@ -656,9 +689,6 @@ fn build_solana_package(
     }
     if !config.features.is_empty() {
         info!("Features: {}", config.features.join(" "));
-    }
-    if legacy_program_feature_present {
-        info!("Legacy program feature detected");
     }
     let arch = if cfg!(target_arch = "aarch64") {
         "aarch64"
@@ -705,10 +735,9 @@ fn build_solana_package(
             exit(1);
         });
     }
-    let target = "sbf-solana-solana";
 
     if config.no_rustup_override {
-        check_solana_target_installed(target);
+        check_solana_target_installed(&target_triple);
     } else {
         link_solana_toolchain(config);
         // RUSTC variable overrides cargo +<toolchain> mechanism of
@@ -723,6 +752,14 @@ fn build_solana_package(
         }
     }
 
+    if corrupted_toolchain(config) {
+        error!(
+            "The Solana toolchain is corrupted. Please, run cargo-build-sbf with the \
+        --force-tools-install argument to fix it."
+        );
+        exit(1);
+    }
+
     let llvm_bin = config
         .sbf_sdk
         .join("dependencies")
@@ -734,7 +771,10 @@ fn build_solana_package(
     env::set_var("OBJDUMP", llvm_bin.join("llvm-objdump"));
     env::set_var("OBJCOPY", llvm_bin.join("llvm-objcopy"));
 
-    let cargo_target = "CARGO_TARGET_SBF_SOLANA_SOLANA_RUSTFLAGS";
+    let cargo_target = format!(
+        "CARGO_TARGET_{}_RUSTFLAGS",
+        target_triple.to_uppercase().replace("-", "_")
+    );
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
         warn!(
@@ -743,27 +783,27 @@ fn build_solana_package(
         );
         env::remove_var("RUSTFLAGS")
     }
-    let target_rustflags = env::var(cargo_target).ok();
+    let target_rustflags = env::var(&cargo_target).ok();
     let mut target_rustflags = Cow::Borrowed(target_rustflags.as_deref().unwrap_or_default());
     target_rustflags = Cow::Owned(format!("{} {}", &rustflags, &target_rustflags));
     if config.remap_cwd && !config.debug {
         target_rustflags = Cow::Owned(format!("{} -Zremap-cwd-prefix=", &target_rustflags));
     }
+    if config.optimize_size {
+        target_rustflags = Cow::Owned(format!("{} -C opt-level=s", &target_rustflags));
+    }
     if config.debug {
         // Replace with -Zsplit-debuginfo=packed when stabilized.
         target_rustflags = Cow::Owned(format!("{} -g", &target_rustflags));
     }
-    if config.arch == "sbfv2" {
-        target_rustflags = Cow::Owned(format!("{} -C target_cpu=sbfv2", &target_rustflags));
-    }
     if let Cow::Owned(flags) = target_rustflags {
-        env::set_var(cargo_target, flags);
+        env::set_var(&cargo_target, flags);
     }
     if config.verbose {
         debug!(
             "{}=\"{}\"",
             cargo_target,
-            env::var(cargo_target).ok().unwrap_or_default(),
+            env::var(&cargo_target).ok().unwrap_or_default(),
         );
     }
 
@@ -773,22 +813,13 @@ fn build_solana_package(
         cargo_build_args.push("+solana");
     };
 
-    cargo_build_args.append(&mut vec!["build", "--release", "--target", target]);
-    if config.arch == "sbfv2" {
-        cargo_build_args.push("-Zbuild-std=std,panic_abort");
-    }
+    cargo_build_args.append(&mut vec!["build", "--release", "--target", &target_triple]);
     if config.no_default_features {
         cargo_build_args.push("--no-default-features");
     }
     for feature in &config.features {
         cargo_build_args.push("--features");
         cargo_build_args.push(feature);
-    }
-    if legacy_program_feature_present {
-        if !config.no_default_features {
-            cargo_build_args.push("--no-default-features");
-        }
-        cargo_build_args.push("--features=program");
     }
     if config.verbose {
         cargo_build_args.push("--verbose");
@@ -911,7 +942,10 @@ fn build_solana_package(
             }
         }
 
-        check_undefined_symbols(config, &program_so);
+        if config.arch != "v3" {
+            // SBPFv3 shall not have any undefined syscall.
+            check_undefined_symbols(config, &program_so);
+        }
 
         info!("To deploy this program:");
         info!("  $ solana program deploy {}", program_so.display());
@@ -1138,9 +1172,15 @@ fn main() {
         .arg(
             Arg::new("arch")
                 .long("arch")
-                .possible_values(["sbfv1", "sbfv2"])
-                .default_value("sbfv1")
+                .possible_values(["v0", "v1", "v2", "v3"])
+                .default_value("v0")
                 .help("Build for the given target architecture"),
+        )
+        .arg(
+            Arg::new("optimize_size")
+                .long("optimize-size")
+                .takes_value(false)
+                .help("Optimize program for size. This option may reduce program size, potentially increasing CU consumption.")
         )
         .get_matches_from(args);
 
@@ -1211,6 +1251,7 @@ fn main() {
         workspace: matches.is_present("workspace"),
         jobs: matches.value_of_t("jobs").ok(),
         arch: matches.value_of("arch").unwrap(),
+        optimize_size: matches.is_present("optimize_size"),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {

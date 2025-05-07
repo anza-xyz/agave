@@ -8,21 +8,27 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
+rust-version = "1.83.0"
+
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"], optional = true }
+hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["socket"] }
+pcap-file = { version = "2.0.0", optional = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 socket2 = { workspace = true }
-solana-logger = { workspace = true, optional = true }
-solana-serde = { workspace = true }
+solana-logger = { version = "=2.3.1", optional = true }
+solana-serde = "=2.2.1"
 solana-version = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
@@ -33,7 +39,7 @@ solana-logger = { workspace = true }
 [features]
 default = []
 clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
-dev-context-only-utils = []
+dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
 
 [lib]
 name = "solana_net_utils"

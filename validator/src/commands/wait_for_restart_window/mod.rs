@@ -1,5 +1,9 @@
 use {
-    crate::{admin_rpc_service, cli::DefaultArgs, new_spinner_progress_bar, println_name_value},
+    crate::{
+        admin_rpc_service,
+        commands::{FromClapArgMatches, Result},
+        new_spinner_progress_bar, println_name_value,
+    },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     console::style,
     solana_clap_utils::{
@@ -16,13 +20,38 @@ use {
     std::{
         collections::VecDeque,
         path::Path,
-        process::exit,
         time::{Duration, SystemTime},
     },
 };
 
-pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
-    SubCommand::with_name("wait-for-restart-window")
+const COMMAND: &str = "wait-for-restart-window";
+
+const DEFAULT_MIN_IDLE_TIME: &str = "10";
+const DEFAULT_MAX_DELINQUENT_STAKE: &str = "5";
+
+#[derive(Debug, PartialEq)]
+pub struct WaitForRestartWindowArgs {
+    pub min_idle_time: usize,
+    pub identity: Option<Pubkey>,
+    pub max_delinquent_stake: u8,
+    pub skip_new_snapshot_check: bool,
+    pub skip_health_check: bool,
+}
+
+impl FromClapArgMatches for WaitForRestartWindowArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        Ok(WaitForRestartWindowArgs {
+            min_idle_time: value_t_or_exit!(matches, "min_idle_time", usize),
+            identity: pubkey_of(matches, "identity"),
+            max_delinquent_stake: value_t_or_exit!(matches, "max_delinquent_stake", u8),
+            skip_new_snapshot_check: matches.is_present("skip_new_snapshot_check"),
+            skip_health_check: matches.is_present("skip_health_check"),
+        })
+    }
+}
+
+pub(crate) fn command<'a>() -> App<'a, 'a> {
+    SubCommand::with_name(COMMAND)
         .about("Monitor the validator for a good time to restart")
         .arg(
             Arg::with_name("min_idle_time")
@@ -30,7 +59,7 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .takes_value(true)
                 .validator(is_parsable::<usize>)
                 .value_name("MINUTES")
-                .default_value(&default_args.wait_for_restart_window_min_idle_time)
+                .default_value(DEFAULT_MIN_IDLE_TIME)
                 .help(
                     "Minimum time that the validator should not be leader before restarting",
                 ),
@@ -48,8 +77,8 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
                 .long("max-delinquent-stake")
                 .takes_value(true)
                 .validator(is_valid_percentage)
-                .default_value(&default_args.wait_for_restart_window_max_delinquent_stake)
                 .value_name("PERCENT")
+                .default_value(DEFAULT_MAX_DELINQUENT_STAKE)
                 .help("The maximum delinquent stake % permitted for a restart"),
         )
         .arg(
@@ -67,25 +96,19 @@ pub(crate) fn command(default_args: &DefaultArgs) -> App<'_, '_> {
         )
 }
 
-pub fn execute(matches: &ArgMatches, ledger_path: &Path) {
-    let min_idle_time = value_t_or_exit!(matches, "min_idle_time", usize);
-    let identity = pubkey_of(matches, "identity");
-    let max_delinquent_stake = value_t_or_exit!(matches, "max_delinquent_stake", u8);
-    let skip_new_snapshot_check = matches.is_present("skip_new_snapshot_check");
-    let skip_health_check = matches.is_present("skip_health_check");
+pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
+    let wait_for_restart_window_args = WaitForRestartWindowArgs::from_clap_arg_match(matches)?;
 
     wait_for_restart_window(
         ledger_path,
-        identity,
-        min_idle_time,
-        max_delinquent_stake,
-        skip_new_snapshot_check,
-        skip_health_check,
-    )
-    .unwrap_or_else(|err| {
-        println!("{err}");
-        exit(1);
-    });
+        wait_for_restart_window_args.identity,
+        wait_for_restart_window_args.min_idle_time,
+        wait_for_restart_window_args.max_delinquent_stake,
+        wait_for_restart_window_args.skip_new_snapshot_check,
+        wait_for_restart_window_args.skip_health_check,
+    )?;
+
+    Ok(())
 }
 
 pub fn wait_for_restart_window(
@@ -95,7 +118,7 @@ pub fn wait_for_restart_window(
     max_delinquency_percentage: u8,
     skip_new_snapshot_check: bool,
     skip_health_check: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let sleep_interval = Duration::from_secs(5);
 
     let min_idle_slots = (min_idle_time_in_minutes as f64 * 60. / DEFAULT_S_PER_SLOT) as Slot;
@@ -103,11 +126,9 @@ pub fn wait_for_restart_window(
     let admin_client = admin_rpc_service::connect(ledger_path);
     let rpc_addr = admin_rpc_service::runtime()
         .block_on(async move { admin_client.await?.rpc_addr().await })
-        .map_err(|err| format!("Unable to get validator RPC address: {err}"))?;
-
-    let Some(rpc_client) = rpc_addr.map(RpcClient::new_socket) else {
-        return Err("RPC not available".into());
-    };
+        .map_err(|err| format!("validator RPC address request failed: {err}"))?
+        .ok_or("validator RPC is unavailable".to_string())?;
+    let rpc_client = RpcClient::new_socket(rpc_addr);
 
     let my_identity = rpc_client.get_identity()?;
     let identity = identity.unwrap_or(my_identity);
@@ -340,4 +361,100 @@ pub fn wait_for_restart_window(
     drop(progress_bar);
     println!("{}", style("Ready to restart").green());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::commands::tests::verify_args_struct_by_command, std::str::FromStr};
+
+    impl Default for WaitForRestartWindowArgs {
+        fn default() -> Self {
+            WaitForRestartWindowArgs {
+                min_idle_time: DEFAULT_MIN_IDLE_TIME
+                    .parse()
+                    .expect("invalid DEFAULT_MIN_IDLE_TIME"),
+                identity: None,
+                max_delinquent_stake: DEFAULT_MAX_DELINQUENT_STAKE
+                    .parse()
+                    .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
+                skip_new_snapshot_check: false,
+                skip_health_check: false,
+            }
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_default() {
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND],
+            WaitForRestartWindowArgs::default(),
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_skip_new_snapshot_check() {
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--skip-new-snapshot-check"],
+            WaitForRestartWindowArgs {
+                skip_new_snapshot_check: true,
+                ..WaitForRestartWindowArgs::default()
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_skip_health_check() {
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--skip-health-check"],
+            WaitForRestartWindowArgs {
+                skip_health_check: true,
+                ..WaitForRestartWindowArgs::default()
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_min_idle_time() {
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--min-idle-time", "60"],
+            WaitForRestartWindowArgs {
+                min_idle_time: 60,
+                ..WaitForRestartWindowArgs::default()
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_identity() {
+        verify_args_struct_by_command(
+            command(),
+            vec![
+                COMMAND,
+                "--identity",
+                "ch1do11111111111111111111111111111111111111",
+            ],
+            WaitForRestartWindowArgs {
+                identity: Some(
+                    Pubkey::from_str("ch1do11111111111111111111111111111111111111").unwrap(),
+                ),
+                ..WaitForRestartWindowArgs::default()
+            },
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_wait_for_restart_window_max_delinquent_stake() {
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--max-delinquent-stake", "10"],
+            WaitForRestartWindowArgs {
+                max_delinquent_stake: 10,
+                ..WaitForRestartWindowArgs::default()
+            },
+        );
+    }
 }

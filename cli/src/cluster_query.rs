@@ -1897,7 +1897,7 @@ pub fn process_show_stakes(
     })?;
     let new_rate_activation_epoch = get_feature_activation_epoch(
         rpc_client,
-        &solana_feature_set::reduce_stake_warmup_cooldown::id(),
+        &agave_feature_set::reduce_stake_warmup_cooldown::id(),
     )?;
     stake_account_progress_bar.finish_and_clear();
 

@@ -123,8 +123,7 @@ pub struct NullTowerStorage {}
 
 impl TowerStorage for NullTowerStorage {
     fn load(&self, _node_pubkey: &Pubkey) -> Result<Tower> {
-        Err(TowerError::IoError(io::Error::new(
-            io::ErrorKind::Other,
+        Err(TowerError::IoError(io::Error::other(
             "NullTowerStorage::load() not available",
         )))
     }
@@ -278,7 +277,7 @@ impl EtcdTowerStorage {
     }
 
     fn etdc_to_tower_error(error: etcd_client::Error) -> TowerError {
-        TowerError::IoError(io::Error::new(io::ErrorKind::Other, error.to_string()))
+        TowerError::IoError(io::Error::other(error.to_string()))
     }
 }
 
@@ -315,10 +314,9 @@ impl TowerStorage for EtcdTowerStorage {
             })?;
 
         if !response.succeeded() {
-            return Err(TowerError::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Lost etcd instance lock for {node_pubkey}"),
-            )));
+            return Err(TowerError::IoError(io::Error::other(format!(
+                "Lost etcd instance lock for {node_pubkey}"
+            ))));
         }
 
         for op_response in response.op_responses() {
@@ -332,8 +330,7 @@ impl TowerStorage for EtcdTowerStorage {
         }
 
         // Should never happen...
-        Err(TowerError::IoError(io::Error::new(
-            io::ErrorKind::Other,
+        Err(TowerError::IoError(io::Error::other(
             "Saved tower response missing".to_string(),
         )))
     }
@@ -363,10 +360,10 @@ impl TowerStorage for EtcdTowerStorage {
             .map_err(Self::etdc_to_tower_error)?;
 
         if !response.succeeded() {
-            return Err(TowerError::IoError(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Lost etcd instance lock for {}", saved_tower.pubkey()),
-            )));
+            return Err(TowerError::IoError(io::Error::other(format!(
+                "Lost etcd instance lock for {}",
+                saved_tower.pubkey()
+            ))));
         }
         Ok(())
     }

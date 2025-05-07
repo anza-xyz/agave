@@ -12,6 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
+    crate::syscalls::mem_ops::is_nonoverlapping,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -21,28 +22,18 @@ use {
         ALT_BN128_MULTIPLICATION_OUTPUT_LEN, ALT_BN128_PAIRING_ELEMENT_LEN,
         ALT_BN128_PAIRING_OUTPUT_LEN,
     },
-    solana_compute_budget::compute_budget::ComputeBudget,
     solana_cpi::MAX_RETURN_DATA,
-    solana_feature_set::{
-        self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
-        bpf_account_data_direct_mapping, curve25519_syscall_enabled,
-        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
-        enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
-        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
-        enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
-        enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
-        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
-        remaining_compute_units_syscall_enabled, FeatureSet,
-    },
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, ProcessedSiblingInstruction},
     solana_keccak_hasher as keccak,
     solana_log_collector::{ic_logger_msg, ic_msg},
     solana_poseidon as poseidon,
-    solana_precompiles::is_precompile,
     solana_program_entrypoint::{BPF_ALIGN_OF_U128, MAX_PERMITTED_DATA_INCREASE, SUCCESS},
-    solana_program_memory::is_nonoverlapping,
-    solana_program_runtime::{invoke_context::InvokeContext, stable_log},
+    solana_program_runtime::{
+        execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+        invoke_context::InvokeContext,
+        stable_log,
+    },
     solana_pubkey::{Pubkey, PubkeyError, MAX_SEEDS, MAX_SEED_LEN, PUBKEY_BYTES},
     solana_sbpf::{
         declare_builtin_function,
@@ -55,6 +46,7 @@ use {
         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
     solana_sha256_hasher::Hasher,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
@@ -140,9 +132,9 @@ trait HasherImpl {
     fn create_hasher() -> Self;
     fn hash(&mut self, val: &[u8]);
     fn result(self) -> Self::Output;
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64;
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64;
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64;
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64;
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64;
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64;
 }
 
 struct Sha256Hasher(Hasher);
@@ -165,13 +157,13 @@ impl HasherImpl for Sha256Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_base_cost
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_byte_cost
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -192,13 +184,13 @@ impl HasherImpl for Blake3Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_base_cost
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_byte_cost
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -219,13 +211,13 @@ impl HasherImpl for Keccak256Hasher {
         self.0.result()
     }
 
-    fn get_base_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_base_cost
+    fn get_base_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_base_cost
     }
-    fn get_byte_cost(compute_budget: &ComputeBudget) -> u64 {
-        compute_budget.sha256_byte_cost
+    fn get_byte_cost(compute_cost: &SVMTransactionExecutionCost) -> u64 {
+        compute_cost.sha256_byte_cost
     }
-    fn get_max_slices(compute_budget: &ComputeBudget) -> u64 {
+    fn get_max_slices(compute_budget: &SVMTransactionExecutionBudget) -> u64 {
         compute_budget.sha256_max_slices
     }
 }
@@ -330,40 +322,36 @@ pub(crate) fn morph_into_deployment_environment_v1(
 }
 
 pub fn create_program_runtime_environment_v1<'a>(
-    feature_set: &FeatureSet,
-    compute_budget: &ComputeBudget,
+    feature_set: &SVMFeatureSet,
+    compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
-    let enable_alt_bn128_syscall = feature_set.is_active(&enable_alt_bn128_syscall::id());
-    let enable_alt_bn128_compression_syscall =
-        feature_set.is_active(&enable_alt_bn128_compression_syscall::id());
-    let enable_big_mod_exp_syscall = feature_set.is_active(&enable_big_mod_exp_syscall::id());
-    let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
-    let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
-    let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
-    let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
-        && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
-    let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
-    let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
+    let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
+    let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
+    let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
+    let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
+    let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
+    let disable_fees_sysvar = feature_set.disable_fees_sysvar;
+    let disable_deploy_of_alloc_free_syscall =
+        reject_deployment_of_broken_elfs && feature_set.disable_deploy_of_alloc_free_syscall;
+    let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
+    let enable_poseidon_syscall = feature_set.enable_poseidon_syscall;
     let remaining_compute_units_syscall_enabled =
-        feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
-    let get_sysvar_syscall_enabled = feature_set.is_active(&get_sysvar_syscall_enabled::id());
-    let enable_get_epoch_stake_syscall =
-        feature_set.is_active(&enable_get_epoch_stake_syscall::id());
-    let min_sbpf_version = if !feature_set.is_active(&disable_sbpf_v0_execution::id())
-        || feature_set.is_active(&reenable_sbpf_v0_execution::id())
-    {
-        SBPFVersion::V0
-    } else {
+        feature_set.remaining_compute_units_syscall_enabled;
+    let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
+    let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let min_sbpf_version =
+        if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
+            SBPFVersion::V0
+        } else {
+            SBPFVersion::V3
+        };
+    let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
         SBPFVersion::V3
-    };
-    let max_sbpf_version = if feature_set.is_active(&enable_sbpf_v3_deployment_and_execution::id())
-    {
-        SBPFVersion::V3
-    } else if feature_set.is_active(&enable_sbpf_v2_deployment_and_execution::id()) {
+    } else if feature_set.enable_sbpf_v2_deployment_and_execution {
         SBPFVersion::V2
-    } else if feature_set.is_active(&enable_sbpf_v1_deployment_and_execution::id()) {
+    } else if feature_set.enable_sbpf_v1_deployment_and_execution {
         SBPFVersion::V1
     } else {
         SBPFVersion::V0
@@ -374,7 +362,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
+        enable_stack_frame_gaps: !feature_set.bpf_account_data_direct_mapping,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -384,7 +372,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
+        aligned_memory_mapping: !feature_set.bpf_account_data_direct_mapping,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     let mut result = BuiltinProgram::new_loader(config);
@@ -568,7 +556,7 @@ pub fn create_program_runtime_environment_v1<'a>(
 }
 
 pub fn create_program_runtime_environment_v2<'a>(
-    compute_budget: &ComputeBudget,
+    compute_budget: &SVMTransactionExecutionBudget,
     debugging_features: bool,
 ) -> BuiltinProgram<InvokeContext<'a>> {
     let config = Config {
@@ -886,7 +874,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
@@ -925,7 +913,7 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
@@ -989,7 +977,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let cost = invoke_context.get_compute_budget().secp256k1_recover_cost;
+        let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         consume_compute_meter(invoke_context, cost)?;
 
         let hash = translate_slice::<u8>(
@@ -1054,7 +1042,7 @@ declare_builtin_function!(
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_validate_point_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -1072,7 +1060,7 @@ declare_builtin_function!(
             }
             CURVE25519_RISTRETTO => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_validate_point_cost;
                 consume_compute_meter(invoke_context, cost)?;
 
@@ -1089,10 +1077,7 @@ declare_builtin_function!(
                 }
             }
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1121,7 +1106,7 @@ declare_builtin_function!(
             CURVE25519_EDWARDS => match group_op {
                 ADD => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_edwards_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1149,7 +1134,7 @@ declare_builtin_function!(
                 }
                 SUB => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_edwards_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1177,7 +1162,7 @@ declare_builtin_function!(
                 }
                 MUL => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_edwards_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1204,10 +1189,7 @@ declare_builtin_function!(
                     }
                 }
                 _ => {
-                    if invoke_context
-                        .get_feature_set()
-                        .is_active(&abort_on_invalid_curve::id())
-                    {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
                         Ok(1)
@@ -1218,7 +1200,7 @@ declare_builtin_function!(
             CURVE25519_RISTRETTO => match group_op {
                 ADD => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_ristretto_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1246,7 +1228,7 @@ declare_builtin_function!(
                 }
                 SUB => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_ristretto_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1276,7 +1258,7 @@ declare_builtin_function!(
                 }
                 MUL => {
                     let cost = invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .curve25519_ristretto_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
@@ -1303,10 +1285,7 @@ declare_builtin_function!(
                     }
                 }
                 _ => {
-                    if invoke_context
-                        .get_feature_set()
-                        .is_active(&abort_on_invalid_curve::id())
-                    {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
                         Ok(1)
@@ -1315,10 +1294,7 @@ declare_builtin_function!(
             },
 
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1351,11 +1327,11 @@ declare_builtin_function!(
         match curve_id {
             CURVE25519_EDWARDS => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_msm_base_cost
                     .saturating_add(
                         invoke_context
-                            .get_compute_budget()
+                            .get_execution_cost()
                             .curve25519_edwards_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
@@ -1389,11 +1365,11 @@ declare_builtin_function!(
 
             CURVE25519_RISTRETTO => {
                 let cost = invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_base_cost
                     .saturating_add(
                         invoke_context
-                            .get_compute_budget()
+                            .get_execution_cost()
                             .curve25519_ristretto_msm_incremental_cost
                             .saturating_mul(points_len.saturating_sub(1)),
                     );
@@ -1428,10 +1404,7 @@ declare_builtin_function!(
             }
 
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1453,12 +1426,12 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
         let cost = len
-            .checked_div(budget.cpi_bytes_per_unit)
+            .checked_div(execution_cost.cpi_bytes_per_unit)
             .unwrap_or(u64::MAX)
-            .saturating_add(budget.syscall_base_cost);
+            .saturating_add(execution_cost.syscall_base_cost);
         consume_compute_meter(invoke_context, cost)?;
 
         if len > MAX_RETURN_DATA as u64 {
@@ -1501,16 +1474,16 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         let (program_id, return_data) = invoke_context.transaction_context.get_return_data();
         let length = length.min(return_data.len() as u64);
         if length != 0 {
             let cost = length
                 .saturating_add(size_of::<Pubkey>() as u64)
-                .checked_div(budget.cpi_bytes_per_unit)
+                .checked_div(execution_cost.cpi_bytes_per_unit)
                 .unwrap_or(u64::MAX);
             consume_compute_meter(invoke_context, cost)?;
 
@@ -1565,9 +1538,9 @@ declare_builtin_function!(
         accounts_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         // Reverse iterate through the instruction trace,
         // ignoring anything except instructions on the same level
@@ -1703,9 +1676,9 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
 
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         Ok(invoke_context.get_stack_height() as u64)
     }
@@ -1724,28 +1697,28 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         use solana_bn254::prelude::{ALT_BN128_ADD, ALT_BN128_MUL, ALT_BN128_PAIRING};
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
         let (cost, output): (u64, usize) = match group_op {
             ALT_BN128_ADD => (
-                budget.alt_bn128_addition_cost,
+                execution_cost.alt_bn128_addition_cost,
                 ALT_BN128_ADDITION_OUTPUT_LEN,
             ),
             ALT_BN128_MUL => (
-                budget.alt_bn128_multiplication_cost,
+                execution_cost.alt_bn128_multiplication_cost,
                 ALT_BN128_MULTIPLICATION_OUTPUT_LEN,
             ),
             ALT_BN128_PAIRING => {
                 let ele_len = input_size
                     .checked_div(ALT_BN128_PAIRING_ELEMENT_LEN as u64)
                     .expect("div by non-zero constant");
-                let cost = budget
+                let cost = execution_cost
                     .alt_bn128_pairing_one_pair_cost_first
                     .saturating_add(
-                        budget
+                        execution_cost
                             .alt_bn128_pairing_one_pair_cost_other
                             .saturating_mul(ele_len.saturating_sub(1)),
                     )
-                    .saturating_add(budget.sha256_base_cost)
+                    .saturating_add(execution_cost.sha256_base_cost)
                     .saturating_add(input_size)
                     .saturating_add(ALT_BN128_PAIRING_OUTPUT_LEN as u64);
                 (cost, ALT_BN128_PAIRING_OUTPUT_LEN)
@@ -1776,7 +1749,7 @@ declare_builtin_function!(
             ALT_BN128_MUL => {
                 let fix_alt_bn128_multiplication_input_length = invoke_context
                     .get_feature_set()
-                    .is_active(&feature_set::fix_alt_bn128_multiplication_input_length::id());
+                    .fix_alt_bn128_multiplication_input_length;
                 if fix_alt_bn128_multiplication_input_length {
                     alt_bn128_multiplication
                 } else {
@@ -1791,7 +1764,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes;
 
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
@@ -1843,16 +1816,16 @@ declare_builtin_function!(
         let input_len: u64 = std::cmp::max(params.base_len, params.exponent_len);
         let input_len: u64 = std::cmp::max(input_len, params.modulus_len);
 
-        let budget = invoke_context.get_compute_budget();
+        let execution_cost = invoke_context.get_execution_cost();
         // the compute units are calculated by the quadratic equation `0.5 input_len^2 + 190`
         consume_compute_meter(
             invoke_context,
-            budget.syscall_base_cost.saturating_add(
+            execution_cost.syscall_base_cost.saturating_add(
                 input_len
                     .saturating_mul(input_len)
-                    .checked_div(budget.big_modular_exponentiation_cost_divisor)
+                    .checked_div(execution_cost.big_modular_exponentiation_cost_divisor)
                     .unwrap_or(u64::MAX)
-                    .saturating_add(budget.big_modular_exponentiation_base_cost),
+                    .saturating_add(execution_cost.big_modular_exponentiation_base_cost),
             ),
         )?;
 
@@ -1915,8 +1888,8 @@ declare_builtin_function!(
             return Err(SyscallError::InvalidLength.into());
         }
 
-        let budget = invoke_context.get_compute_budget();
-        let Some(cost) = budget.poseidon_cost(vals_len) else {
+        let execution_cost = invoke_context.get_execution_cost();
+        let Some(cost) = execution_cost.poseidon_cost(vals_len) else {
             ic_msg!(
                 invoke_context,
                 "Overflow while calculating the compute cost"
@@ -1944,7 +1917,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes;
 
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
@@ -1974,8 +1947,8 @@ declare_builtin_function!(
         _arg5: u64,
         _memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let budget = invoke_context.get_compute_budget();
-        consume_compute_meter(invoke_context, budget.syscall_base_cost)?;
+        let execution_cost = invoke_context.get_execution_cost();
+        consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
         use solana_sbpf::vm::ContextObject;
         Ok(invoke_context.get_remaining())
@@ -1999,22 +1972,22 @@ declare_builtin_function!(
             alt_bn128_g2_decompress, ALT_BN128_G1_COMPRESS, ALT_BN128_G1_DECOMPRESS,
             ALT_BN128_G2_COMPRESS, ALT_BN128_G2_DECOMPRESS, G1, G1_COMPRESSED, G2, G2_COMPRESSED,
         };
-        let budget = invoke_context.get_compute_budget();
-        let base_cost = budget.syscall_base_cost;
+        let execution_cost = invoke_context.get_execution_cost();
+        let base_cost = execution_cost.syscall_base_cost;
         let (cost, output): (u64, usize) = match op {
             ALT_BN128_G1_COMPRESS => (
-                base_cost.saturating_add(budget.alt_bn128_g1_compress),
+                base_cost.saturating_add(execution_cost.alt_bn128_g1_compress),
                 G1_COMPRESSED,
             ),
             ALT_BN128_G1_DECOMPRESS => {
-                (base_cost.saturating_add(budget.alt_bn128_g1_decompress), G1)
+                (base_cost.saturating_add(execution_cost.alt_bn128_g1_decompress), G1)
             }
             ALT_BN128_G2_COMPRESS => (
-                base_cost.saturating_add(budget.alt_bn128_g2_compress),
+                base_cost.saturating_add(execution_cost.alt_bn128_g2_compress),
                 G2_COMPRESSED,
             ),
             ALT_BN128_G2_DECOMPRESS => {
-                (base_cost.saturating_add(budget.alt_bn128_g2_decompress), G2)
+                (base_cost.saturating_add(execution_cost.alt_bn128_g2_decompress), G2)
             }
             _ => {
                 return Err(SyscallError::InvalidAttribute.into());
@@ -2039,7 +2012,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes;
 
         match op {
             ALT_BN128_G1_COMPRESS => {
@@ -2116,8 +2089,9 @@ declare_builtin_function!(
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
         let compute_budget = invoke_context.get_compute_budget();
-        let hash_base_cost = H::get_base_cost(compute_budget);
-        let hash_byte_cost = H::get_byte_cost(compute_budget);
+        let compute_cost = invoke_context.get_execution_cost();
+        let hash_base_cost = H::get_base_cost(compute_cost);
+        let hash_byte_cost = H::get_byte_cost(compute_cost);
         let hash_max_slices = H::get_max_slices(compute_budget);
         if hash_max_slices < vals_len {
             ic_msg!(
@@ -2149,7 +2123,7 @@ declare_builtin_function!(
 
             for val in vals.iter() {
                 let bytes = val.translate(memory_mapping, invoke_context.get_check_aligned())?;
-                let cost = compute_budget.mem_op_base_cost.max(
+                let cost = compute_cost.mem_op_base_cost.max(
                     hash_byte_cost.saturating_mul(
                         val.len()
                             .checked_div(2)
@@ -2177,7 +2151,7 @@ declare_builtin_function!(
         _arg5: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        let compute_budget = invoke_context.get_compute_budget();
+        let compute_cost = invoke_context.get_execution_cost();
 
         if var_addr == 0 {
             // As specified by SIMD-0133: If `var_addr` is a null pointer:
@@ -2187,7 +2161,7 @@ declare_builtin_function!(
             // ```
             // syscall_base
             // ```
-            let compute_units = compute_budget.syscall_base_cost;
+            let compute_units = compute_cost.syscall_base_cost;
             consume_compute_meter(invoke_context, compute_units)?;
             //
             // Control flow:
@@ -2196,7 +2170,7 @@ declare_builtin_function!(
             //     - Compute budget is exceeded.
             // - Otherwise, the syscall returns a `u64` integer representing the total active
             //   stake on the cluster for the current epoch.
-            Ok(invoke_context.get_epoch_total_stake())
+            Ok(invoke_context.get_epoch_stake())
         } else {
             // As specified by SIMD-0133: If `var_addr` is _not_ a null pointer:
             //
@@ -2205,14 +2179,14 @@ declare_builtin_function!(
             // ```
             // syscall_base + floor(PUBKEY_BYTES/cpi_bytes_per_unit) + mem_op_base
             // ```
-            let compute_units = compute_budget
+            let compute_units = compute_cost
                 .syscall_base_cost
                 .saturating_add(
                     (PUBKEY_BYTES as u64)
-                        .checked_div(compute_budget.cpi_bytes_per_unit)
+                        .checked_div(compute_cost.cpi_bytes_per_unit)
                         .unwrap_or(u64::MAX),
                 )
-                .saturating_add(compute_budget.mem_op_base_cost);
+                .saturating_add(compute_cost.mem_op_base_cost);
             consume_compute_meter(invoke_context, compute_units)?;
             //
             // Control flow:
@@ -2228,7 +2202,7 @@ declare_builtin_function!(
             let check_aligned = invoke_context.get_check_aligned();
             let vote_address = translate_type::<Pubkey>(memory_mapping, var_addr, check_aligned)?;
 
-            Ok(invoke_context.get_epoch_vote_account_stake(vote_address))
+            Ok(invoke_context.get_epoch_stake_for_vote_account(vote_address))
         }
     }
 );
@@ -2613,7 +2587,7 @@ mod tests {
     #[test]
     fn test_syscall_sol_log_u64() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-        let cost = invoke_context.get_compute_budget().log_64_units;
+        let cost = invoke_context.get_execution_cost().log_64_units;
 
         invoke_context.mock_set_remaining(cost);
         let config = Config::default();
@@ -2634,7 +2608,7 @@ mod tests {
     #[test]
     fn test_syscall_sol_pubkey() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-        let cost = invoke_context.get_compute_budget().log_pubkey_units;
+        let cost = invoke_context.get_execution_cost().log_pubkey_units;
 
         let pubkey = Pubkey::from_str("MoqiU1vryuCGQSxFKA1SZ316JdLEFFhoAu6cKUNk7dN").unwrap();
         let config = Config::default();
@@ -2723,7 +2697,6 @@ mod tests {
         // many small unaligned allocs
         {
             prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            invoke_context.mock_set_feature_set(Arc::new(FeatureSet::default()));
             mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
             let mut vm = vm.unwrap();
             let invoke_context = &mut vm.context_object_pointer;
@@ -2829,10 +2802,10 @@ mod tests {
         .unwrap();
 
         invoke_context.mock_set_remaining(
-            (invoke_context.get_compute_budget().sha256_base_cost
-                + invoke_context.get_compute_budget().mem_op_base_cost.max(
+            (invoke_context.get_execution_cost().sha256_base_cost
+                + invoke_context.get_execution_cost().mem_op_base_cost.max(
                     invoke_context
-                        .get_compute_budget()
+                        .get_execution_cost()
                         .sha256_byte_cost
                         .saturating_mul((bytes1.len() + bytes2.len()) as u64 / 2),
                 ))
@@ -2928,7 +2901,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_edwards_validate_point_cost)
                 * 2,
         );
@@ -3001,7 +2974,7 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_ristretto_validate_point_cost)
                 * 2,
         );
@@ -3088,13 +3061,13 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_edwards_add_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_subtract_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_multiply_cost)
                 * 2,
         );
@@ -3243,13 +3216,13 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             (invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_ristretto_add_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_subtract_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_multiply_cost)
                 * 2,
         );
@@ -3413,16 +3386,16 @@ mod tests {
 
         invoke_context.mock_set_remaining(
             invoke_context
-                .get_compute_budget()
+                .get_execution_cost()
                 .curve25519_edwards_msm_base_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_edwards_msm_incremental_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_base_cost
                 + invoke_context
-                    .get_compute_budget()
+                    .get_execution_cost()
                     .curve25519_ristretto_msm_incremental_cost,
         );
 
@@ -3677,12 +3650,13 @@ mod tests {
             let mut got_clock_buf = vec![0; Clock::size_of()];
             let got_clock_buf_va = 0x200000000;
             let clock_id_va = 0x300000000;
+            let clock_id = Clock::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(bytes_of_mut(&mut got_clock_obj), got_clock_obj_va),
                     MemoryRegion::new_writable(&mut got_clock_buf, got_clock_buf_va),
-                    MemoryRegion::new_readonly(&Clock::id().to_bytes(), clock_id_va),
+                    MemoryRegion::new_readonly(&clock_id, clock_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3698,7 +3672,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_clock_obj, src_clock);
 
             let mut clean_clock = create_filled_type::<Clock>(true);
@@ -3718,7 +3692,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let clock_from_buf = bincode::deserialize::<Clock>(&got_clock_buf).unwrap();
 
@@ -3734,6 +3708,7 @@ mod tests {
             let mut got_epochschedule_buf = vec![0; EpochSchedule::size_of()];
             let got_epochschedule_buf_va = 0x200000000;
             let epochschedule_id_va = 0x300000000;
+            let epochschedule_id = EpochSchedule::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
@@ -3745,10 +3720,7 @@ mod tests {
                         &mut got_epochschedule_buf,
                         got_epochschedule_buf_va,
                     ),
-                    MemoryRegion::new_readonly(
-                        &EpochSchedule::id().to_bytes(),
-                        epochschedule_id_va,
-                    ),
+                    MemoryRegion::new_readonly(&epochschedule_id, epochschedule_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3764,7 +3736,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_epochschedule_obj, src_epochschedule);
 
             let mut clean_epochschedule = create_filled_type::<EpochSchedule>(true);
@@ -3788,7 +3760,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let epochschedule_from_buf =
                 bincode::deserialize::<EpochSchedule>(&got_epochschedule_buf).unwrap();
@@ -3826,7 +3798,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_fees, src_fees);
 
             let mut clean_fees = create_filled_type::<Fees>(true);
@@ -3844,12 +3816,13 @@ mod tests {
             let mut got_rent_buf = vec![0; Rent::size_of()];
             let got_rent_buf_va = 0x200000000;
             let rent_id_va = 0x300000000;
+            let rent_id = Rent::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(bytes_of_mut(&mut got_rent_obj), got_rent_obj_va),
                     MemoryRegion::new_writable(&mut got_rent_buf, got_rent_buf_va),
-                    MemoryRegion::new_readonly(&Rent::id().to_bytes(), rent_id_va),
+                    MemoryRegion::new_readonly(&rent_id, rent_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3865,7 +3838,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_rent_obj, src_rent);
 
             let mut clean_rent = create_filled_type::<Rent>(true);
@@ -3883,7 +3856,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let rent_from_buf = bincode::deserialize::<Rent>(&got_rent_buf).unwrap();
 
@@ -3901,6 +3874,7 @@ mod tests {
             let mut got_rewards_buf = vec![0; EpochRewards::size_of()];
             let got_rewards_buf_va = 0x200000000;
             let rewards_id_va = 0x300000000;
+            let rewards_id = EpochRewards::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
@@ -3909,7 +3883,7 @@ mod tests {
                         got_rewards_obj_va,
                     ),
                     MemoryRegion::new_writable(&mut got_rewards_buf, got_rewards_buf_va),
-                    MemoryRegion::new_readonly(&EpochRewards::id().to_bytes(), rewards_id_va),
+                    MemoryRegion::new_readonly(&rewards_id, rewards_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3925,7 +3899,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_rewards_obj, src_rewards);
 
             let mut clean_rewards = create_filled_type::<EpochRewards>(true);
@@ -3948,7 +3922,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let rewards_from_buf = bincode::deserialize::<EpochRewards>(&got_rewards_buf).unwrap();
 
@@ -3966,6 +3940,7 @@ mod tests {
             let mut got_restart_buf = vec![0; LastRestartSlot::size_of()];
             let got_restart_buf_va = 0x200000000;
             let restart_id_va = 0x300000000;
+            let restart_id = LastRestartSlot::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
@@ -3974,7 +3949,7 @@ mod tests {
                         got_restart_obj_va,
                     ),
                     MemoryRegion::new_writable(&mut got_restart_buf, got_restart_buf_va),
-                    MemoryRegion::new_readonly(&LastRestartSlot::id().to_bytes(), restart_id_va),
+                    MemoryRegion::new_readonly(&restart_id, restart_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -3990,7 +3965,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
             assert_eq!(got_restart_obj, src_restart);
 
             let mut clean_restart = create_filled_type::<LastRestartSlot>(true);
@@ -4006,7 +3981,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let restart_from_buf =
                 bincode::deserialize::<LastRestartSlot>(&got_restart_buf).unwrap();
@@ -4055,11 +4030,12 @@ mod tests {
             let mut got_history_buf = vec![0; StakeHistory::size_of()];
             let got_history_buf_va = 0x100000000;
             let history_id_va = 0x200000000;
+            let history_id = StakeHistory::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(&mut got_history_buf, got_history_buf_va),
-                    MemoryRegion::new_readonly(&StakeHistory::id().to_bytes(), history_id_va),
+                    MemoryRegion::new_readonly(&history_id, history_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -4075,7 +4051,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let history_from_buf = bincode::deserialize::<StakeHistory>(&got_history_buf).unwrap();
             assert_eq!(history_from_buf, src_history);
@@ -4114,11 +4090,12 @@ mod tests {
             let mut got_hashes_buf = vec![0; SlotHashes::size_of()];
             let got_hashes_buf_va = 0x100000000;
             let hashes_id_va = 0x200000000;
+            let hashes_id = SlotHashes::id().to_bytes();
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![
                     MemoryRegion::new_writable(&mut got_hashes_buf, got_hashes_buf_va),
-                    MemoryRegion::new_readonly(&SlotHashes::id().to_bytes(), hashes_id_va),
+                    MemoryRegion::new_readonly(&hashes_id, hashes_id_va),
                 ],
                 &config,
                 SBPFVersion::V3,
@@ -4134,7 +4111,7 @@ mod tests {
                 0,
                 &mut memory_mapping,
             );
-            result.unwrap();
+            assert_eq!(result.unwrap(), 0);
 
             let hashes_from_buf = bincode::deserialize::<SlotHashes>(&got_hashes_buf).unwrap();
             assert_eq!(hashes_from_buf, src_hashes);
@@ -4153,6 +4130,7 @@ mod tests {
         src_clock.unix_timestamp = 5;
 
         let clock_id_va = 0x100000000;
+        let clock_id = Clock::id().to_bytes();
 
         let mut got_clock_buf_rw = vec![0; Clock::size_of()];
         let got_clock_buf_rw_va = 0x200000000;
@@ -4162,7 +4140,7 @@ mod tests {
 
         let mut memory_mapping = MemoryMapping::new(
             vec![
-                MemoryRegion::new_readonly(&Clock::id().to_bytes(), clock_id_va),
+                MemoryRegion::new_readonly(&clock_id, clock_id_va),
                 MemoryRegion::new_writable(&mut got_clock_buf_rw, got_clock_buf_rw_va),
                 MemoryRegion::new_readonly(&got_clock_buf_ro, got_clock_buf_ro_va),
             ],
@@ -4506,7 +4484,7 @@ mod tests {
             }
         }
 
-        let syscall_base_cost = invoke_context.get_compute_budget().syscall_base_cost;
+        let syscall_base_cost = invoke_context.get_execution_cost().syscall_base_cost;
 
         const VM_BASE_ADDRESS: u64 = 0x100000000;
         const META_OFFSET: usize = 0;
@@ -4717,7 +4695,7 @@ mod tests {
     fn test_find_program_address() {
         prepare_mockup!(invoke_context, program_id, bpf_loader::id());
         let cost = invoke_context
-            .get_compute_budget()
+            .get_execution_cost()
             .create_program_address_units;
         let address = bpf_loader_upgradeable::id();
         let max_tries = 256; // one per seed
@@ -4830,7 +4808,7 @@ mod tests {
             )
             .unwrap();
 
-            let budget = invoke_context.get_compute_budget();
+            let budget = invoke_context.get_execution_cost();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
                     + (MAX_LEN * MAX_LEN) / budget.big_modular_exponentiation_cost_divisor
@@ -4872,7 +4850,7 @@ mod tests {
             )
             .unwrap();
 
-            let budget = invoke_context.get_compute_budget();
+            let budget = invoke_context.get_execution_cost();
             invoke_context.mock_set_remaining(
                 budget.syscall_base_cost
                     + (INV_LEN * INV_LEN) / budget.big_modular_exponentiation_cost_divisor
@@ -4899,25 +4877,35 @@ mod tests {
     #[test]
     fn test_syscall_get_epoch_stake_total_stake() {
         let config = Config::default();
-        let mut compute_budget = ComputeBudget::default();
+        let compute_cost = SVMTransactionExecutionCost::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
-        let expected_total_stake = 200_000_000_000_000u64;
+        const EXPECTED_TOTAL_STAKE: u64 = 200_000_000_000_000;
+
+        struct MockCallback {}
+        impl InvokeContextCallback for MockCallback {
+            fn get_epoch_stake(&self) -> u64 {
+                EXPECTED_TOTAL_STAKE
+            }
+            // Vote accounts are not needed for this test.
+        }
+
         // Compute units, as specified by SIMD-0133.
         // cu = syscall_base_cost
-        let expected_cus = compute_budget.syscall_base_cost;
+        let expected_cus = compute_cost.syscall_base_cost;
 
         // Set the compute budget to the expected CUs to ensure the syscall
         // doesn't exceed the expected usage.
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let feature_set = SVMFeatureSet::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            expected_total_stake,
-            &|_| 0, // Vote accounts are not needed for this test.
-            Arc::<FeatureSet>::default(),
+            &MockCallback {},
+            &feature_set,
             &sysvar_cache,
         );
 
@@ -4936,43 +4924,50 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result, expected_total_stake);
+        assert_eq!(result, EXPECTED_TOTAL_STAKE);
     }
 
     #[test]
     fn test_syscall_get_epoch_stake_vote_account_stake() {
         let config = Config::default();
-        let mut compute_budget = ComputeBudget::default();
+        let mut compute_budget = SVMTransactionExecutionBudget::default();
+        let compute_cost = SVMTransactionExecutionCost::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
-        let expected_epoch_stake = 55_000_000_000u64;
+        const TARGET_VOTE_ADDRESS: Pubkey = Pubkey::new_from_array([2; 32]);
+        const EXPECTED_EPOCH_STAKE: u64 = 55_000_000_000;
+
+        struct MockCallback {}
+        impl InvokeContextCallback for MockCallback {
+            // Total stake is not needed for this test.
+            fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
+                if *vote_address == TARGET_VOTE_ADDRESS {
+                    EXPECTED_EPOCH_STAKE
+                } else {
+                    0
+                }
+            }
+        }
+
         // Compute units, as specified by SIMD-0133.
         // cu = syscall_base_cost
         //     + floor(32/cpi_bytes_per_unit)
         //     + mem_op_base_cost
-        let expected_cus = compute_budget.syscall_base_cost
-            + (PUBKEY_BYTES as u64) / compute_budget.cpi_bytes_per_unit
-            + compute_budget.mem_op_base_cost;
+        let expected_cus = compute_cost.syscall_base_cost
+            + (PUBKEY_BYTES as u64) / compute_cost.cpi_bytes_per_unit
+            + compute_cost.mem_op_base_cost;
 
         // Set the compute budget to the expected CUs to ensure the syscall
         // doesn't exceed the expected usage.
         compute_budget.compute_unit_limit = expected_cus;
 
-        let vote_address = Pubkey::new_unique();
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
-        let callback = |pubkey: &Pubkey| {
-            if *pubkey == vote_address {
-                expected_epoch_stake
-            } else {
-                0
-            }
-        };
+        let feature_set = SVMFeatureSet::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0, // Total stake is not needed for this test.
-            &callback,
-            Arc::<FeatureSet>::default(),
+            &MockCallback {},
+            &feature_set,
             &sysvar_cache,
         );
 
@@ -5013,7 +5008,7 @@ mod tests {
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![MemoryRegion::new_readonly(
-                    bytes_of(&vote_address),
+                    bytes_of(&TARGET_VOTE_ADDRESS),
                     vote_address_var,
                 )],
                 &config,
@@ -5032,7 +5027,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(result, expected_epoch_stake);
+            assert_eq!(result, EXPECTED_EPOCH_STAKE);
         }
 
         invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);

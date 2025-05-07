@@ -10,19 +10,18 @@ use {
         crds::Cursor,
         gossip_service::GossipService,
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_perf::packet::Packet,
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
     solana_streamer::{
         sendmmsg::{multi_target_send, SendPktsError},
         socket::SocketAddrSpace,
     },
+    solana_time_utils::timestamp,
+    solana_transaction::Transaction,
     solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
         net::UdpSocket,
@@ -156,7 +155,7 @@ fn retransmit_to(
 #[test]
 fn gossip_ring() {
     solana_logger::setup();
-    run_gossip_topo(50, |listen| {
+    run_gossip_topo(40, |listen| {
         let num = listen.len();
         for n in 0..num {
             let y = n % listen.len();

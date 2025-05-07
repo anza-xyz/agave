@@ -2,7 +2,7 @@
 pull_request_rules:
   - name: label changes from community
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
       - author≠@monorepo-triage
@@ -16,7 +16,7 @@ pull_request_rules:
           - need:merge-assist
   - name: request review for community changes
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠@monorepo-maintainers
       - author≠@monorepo-write
       - author≠@monorepo-triage
@@ -36,7 +36,7 @@ pull_request_rules:
           - "@anza-xyz/community-pr-subscribers"
   - name: label changes from monorepo-triage
     conditions:
-      - author≠@core-contributors
+      - author≠@anza
       - author≠mergify[bot]
       - author≠dependabot[bot]
       - author≠github-actions[bot]
@@ -193,7 +193,7 @@ pull_request_rules:
           If this PR represents a change to the public RPC API:
 
           1. Make sure it includes a complementary update to `rpc-client/` ([example](https://github.com/solana-labs/solana/pull/29558/files))
-          2. Open a follow-up PR to update the JavaScript client `@solana/web3.js` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
+          2. Open a follow-up PR to update the JavaScript client `@solana/kit` ([example](https://github.com/solana-labs/solana-web3.js/pull/2868/files))
 
           Thank you for keeping the RPC clients in sync with the server API @{{author}}.
   - name: Reminder to add Firedancer team to changes in `programs/`
@@ -223,4 +223,4 @@ commands_restrictions:
   # Restrict `copy` access to Core Contributors
   copy:
     conditions:
-    - author=@core-contributors
+    - author=@anza

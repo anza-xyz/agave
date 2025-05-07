@@ -1,6 +1,6 @@
 use {
+    agave_feature_set::{FeatureSet, FEATURE_NAMES},
     log::*,
-    solana_feature_set::{FeatureSet, FEATURE_NAMES},
     solana_sdk::{
         account::{Account, AccountSharedData},
         feature::{self, Feature},
@@ -29,7 +29,7 @@ pub fn bootstrap_validator_stake_lamports() -> u64 {
 
 // Number of lamports automatically used for genesis accounts
 pub const fn genesis_sysvar_and_builtin_program_lamports() -> u64 {
-    const NUM_BUILTIN_PROGRAMS: u64 = 9;
+    const NUM_BUILTIN_PROGRAMS: u64 = 7;
     const NUM_PRECOMPILES: u64 = 2;
     const STAKE_HISTORY_MIN_BALANCE: u64 = 114_979_200;
     const CLOCK_SYSVAR_MIN_BALANCE: u64 = 1_169_280;
@@ -222,8 +222,8 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
 
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
-    for feature_id in FeatureSet::default().inactive {
-        activate_feature(genesis_config, feature_id);
+    for feature_id in FeatureSet::default().inactive() {
+        activate_feature(genesis_config, *feature_id);
     }
 }
 
@@ -297,14 +297,14 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
 
     let native_mint_account = solana_sdk::account::AccountSharedData::from(Account {
-        owner: solana_inline_spl::token::id(),
-        data: solana_inline_spl::token::native_mint::ACCOUNT_DATA.to_vec(),
+        owner: spl_generic_token::token::id(),
+        data: spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
         lamports: sol_to_lamports(1.),
         executable: false,
         rent_epoch: 1,
     });
     initial_accounts.push((
-        solana_inline_spl::token::native_mint::id(),
+        spl_generic_token::token::native_mint::id(),
         native_mint_account,
     ));
 

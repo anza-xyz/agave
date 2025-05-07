@@ -83,7 +83,7 @@ fn transform(inc: &PathBuf) {
         let func = &caps[2].to_string();
         let args = &caps[3].to_string();
         let warn = format!("/* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE {} AND RUN `cargo run --bin gen-headers` */", inc.display());
-        let ifndef = format!("#ifndef SOL_SBFV2\n{ty} {func}({args});");
+        let ifndef = format!("#ifndef SOL_SBPFV3\n{ty} {func}({args});");
         let hash = sys_hash(func);
         let typedef_statement = format!("typedef {ty}(*{func}_pointer_type)({args});");
         let mut arg = 0;

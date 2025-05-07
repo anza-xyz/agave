@@ -5,7 +5,7 @@ use {
     itertools::Itertools,
     log::*,
     solana_core::{
-        banking_stage::unified_scheduler::ensure_banking_stage_setup,
+        banking_stage::{unified_scheduler::ensure_banking_stage_setup, BankingStage},
         banking_trace::BankingTracer,
         consensus::{
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
@@ -27,8 +27,8 @@ use {
     solana_perf::packet::to_packet_batches,
     solana_poh::poh_recorder::create_test_recorder,
     solana_runtime::{
-        accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
-        genesis_utils::GenesisConfigInfo, installed_scheduler_pool::SchedulingContext,
+        bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
+        installed_scheduler_pool::SchedulingContext,
         prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
@@ -165,7 +165,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
             root,
             &bank_forks,
             &mut progress,
-            &AbsRequestSender::default(),
+            None, // snapshot_controller
             None,
             &mut heaviest_subtree_fork_choice,
             &mut duplicate_slots_tracker,
@@ -223,12 +223,13 @@ fn test_scheduler_producing_blocks() {
     let genesis_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     genesis_bank.set_fork_graph_in_program_cache(Arc::downgrade(&bank_forks));
     let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&genesis_bank));
-    let (exit, poh_recorder, poh_service, signal_receiver) = create_test_recorder(
-        genesis_bank.clone(),
-        blockstore.clone(),
-        None,
-        Some(leader_schedule_cache),
-    );
+    let (exit, poh_recorder, transaction_recorder, poh_service, signal_receiver) =
+        create_test_recorder(
+            genesis_bank.clone(),
+            blockstore.clone(),
+            None,
+            Some(leader_schedule_cache),
+        );
     let pool = DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
@@ -243,7 +244,15 @@ fn test_scheduler_producing_blocks() {
             SocketAddrSpace::Unspecified,
         ))
     };
-    ensure_banking_stage_setup(&pool, &bank_forks, &channels, &cluster_info, &poh_recorder);
+    ensure_banking_stage_setup(
+        &pool,
+        &bank_forks,
+        &channels,
+        &cluster_info,
+        &poh_recorder,
+        transaction_recorder,
+        BankingStage::num_threads(),
+    );
     bank_forks.write().unwrap().install_scheduler_pool(pool);
 
     // Wait until genesis_bank reaches its tick height...
@@ -271,6 +280,7 @@ fn test_scheduler_producing_blocks() {
         .write()
         .unwrap()
         .set_bank(tpu_bank.clone_with_scheduler(), false);
+    tpu_bank.unpause_new_block_production_scheduler();
     let tpu_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     assert_eq!(tpu_bank.transaction_count(), 0);
 

@@ -1,6 +1,12 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
-    super::{scheduler_error::SchedulerError, transaction_state_container::StateContainer},
+    super::{
+        scheduler_common::SchedulingCommon, scheduler_error::SchedulerError,
+        transaction_state::TransactionState, transaction_state_container::StateContainer,
+    },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+    solana_sdk::saturating_add_assign,
 };
 
 pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
@@ -11,7 +17,7 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut S,
         pre_graph_filter: impl Fn(&[&Tx], &mut [bool]),
-        pre_lock_filter: impl Fn(&Tx) -> bool,
+        pre_lock_filter: impl Fn(&TransactionState<Tx>) -> PreLockFilterAction,
     ) -> Result<SchedulingSummary, SchedulerError>;
 
     /// Receive completed batches of transactions without blocking.
@@ -19,16 +25,48 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
     fn receive_completed(
         &mut self,
         container: &mut impl StateContainer<Tx>,
-    ) -> Result<(usize, usize), SchedulerError>;
+    ) -> Result<(usize, usize), SchedulerError> {
+        let mut total_num_transactions: usize = 0;
+        let mut total_num_retryable: usize = 0;
+        loop {
+            let (num_transactions, num_retryable) = self
+                .scheduling_common_mut()
+                .try_receive_completed(container)?;
+            if num_transactions == 0 {
+                break;
+            }
+            saturating_add_assign!(total_num_transactions, num_transactions);
+            saturating_add_assign!(total_num_retryable, num_retryable);
+        }
+        Ok((total_num_transactions, total_num_retryable))
+    }
+
+    /// All schedulers should have access to the common context for shared
+    /// implementation.
+    fn scheduling_common_mut(&mut self) -> &mut SchedulingCommon<Tx>;
+}
+
+/// Action to be taken by pre-lock filter.
+pub(crate) enum PreLockFilterAction {
+    /// Attempt to schedule the transaction.
+    AttemptToSchedule,
 }
 
 /// Metrics from scheduling transactions.
 #[derive(Default, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct SchedulingSummary {
+    /// Starting queue size
+    pub starting_queue_size: usize,
+    /// Starting buffer size (outstanding txs are not counted in queue)
+    pub starting_buffer_size: usize,
+
     /// Number of transactions scheduled.
     pub num_scheduled: usize,
     /// Number of transactions that were not scheduled due to conflicts.
-    pub num_unschedulable: usize,
+    pub num_unschedulable_conflicts: usize,
+    /// Number of transactions that were skipped due to thread capacity.
+    pub num_unschedulable_threads: usize,
     /// Number of transactions that were dropped due to filter.
     pub num_filtered_out: usize,
     /// Time spent filtering transactions

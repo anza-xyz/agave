@@ -1,75 +1,38 @@
-use {
-    crate::banking_stage::{
-        immutable_deserialized_packet::ImmutableDeserializedPacket, scheduler_messages::MaxAge,
-    },
-    solana_sdk::packet::{self},
-    std::sync::Arc,
-};
-
-/// Simple wrapper type to tie a sanitized transaction to max age slot.
-pub(crate) struct SanitizedTransactionTTL<Tx> {
-    pub(crate) transaction: Tx,
-    pub(crate) max_age: MaxAge,
-}
+use crate::banking_stage::scheduler_messages::MaxAge;
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 
 /// TransactionState is used to track the state of a transaction in the transaction scheduler
 /// and banking stage as a whole.
 ///
-/// There are two states a transaction can be in:
-///     1. `Unprocessed` - The transaction is available for scheduling.
-///     2. `Pending` - The transaction is currently scheduled or being processed.
-///
-/// Newly received transactions are initially in the `Unprocessed` state.
-/// When a transaction is scheduled, it is transitioned to the `Pending` state,
-///   using the `transition_to_pending` method.
-/// When a transaction finishes processing it may be retryable. If it is retryable,
-///   the transaction is transitioned back to the `Unprocessed` state using the
-///   `transition_to_unprocessed` method. If it is not retryable, the state should
-///   be dropped.
-///
-/// For performance, when a transaction is transitioned to the `Pending` state, the
-///   internal `SanitizedTransaction` is moved out of the `TransactionState` and sent
-///   to the appropriate thread for processing. This is done to avoid cloning the
-///  `SanitizedTransaction`.
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum TransactionState<Tx> {
-    /// The transaction is available for scheduling.
-    Unprocessed {
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
-        priority: u64,
-        cost: u64,
-        should_forward: bool,
-    },
-    /// The transaction is currently scheduled or being processed.
-    Pending {
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
-        priority: u64,
-        cost: u64,
-        should_forward: bool,
-    },
-    /// Only used during transition.
-    Transitioning,
+/// Newly received transactions initially have `Some(transaction)`.
+/// When a transaction is scheduled, the transaction is taken from the Option.
+/// When a transaction finishes processing it may be retryable. If it is
+/// retryable, the transaction is added back into the Option. If it si not
+/// retryable, the state is dropped.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) struct TransactionState<Tx> {
+    /// If `Some`, the transaction is available for scheduling.
+    /// If `None`, the transaction is currently scheduled or being processed.
+    transaction: Option<Tx>,
+    /// Tracks information on the maximum age the transaction's pre-processing
+    /// is valid for. This includes sanitization features, as well as resolved
+    /// address lookups.
+    max_age: MaxAge,
+    /// Priority of the transaction.
+    priority: u64,
+    /// Estimated cost of the transaction.
+    cost: u64,
 }
 
 impl<Tx> TransactionState<Tx> {
     /// Creates a new `TransactionState` in the `Unprocessed` state.
-    pub(crate) fn new(
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-        packet: Option<Arc<ImmutableDeserializedPacket>>,
-        priority: u64,
-        cost: u64,
-    ) -> Self {
-        let should_forward = packet
-            .as_ref()
-            .map(|packet| should_forward_from_meta(packet.original_packet().meta()))
-            .unwrap_or_default();
-        Self::Unprocessed {
-            transaction_ttl,
-            packet,
+    pub(crate) fn new(transaction: Tx, max_age: MaxAge, priority: u64, cost: u64) -> Self {
+        Self {
+            transaction: Some(transaction),
+            max_age,
             priority,
             cost,
-            should_forward,
         }
     }
 
@@ -77,153 +40,59 @@ impl<Tx> TransactionState<Tx> {
     /// This is *not* the same as the `compute_unit_price` of the transaction.
     /// The priority is used to order transactions for processing.
     pub(crate) fn priority(&self) -> u64 {
-        match self {
-            Self::Unprocessed { priority, .. } => *priority,
-            Self::Pending { priority, .. } => *priority,
-            Self::Transitioning => unreachable!(),
-        }
+        self.priority
     }
 
     /// Return the cost of the transaction.
     pub(crate) fn cost(&self) -> u64 {
-        match self {
-            Self::Unprocessed { cost, .. } => *cost,
-            Self::Pending { cost, .. } => *cost,
-            Self::Transitioning => unreachable!(),
-        }
+        self.cost
     }
 
-    /// Return whether packet should be attempted to be forwarded.
-    pub(crate) fn should_forward(&self) -> bool {
-        match self {
-            Self::Unprocessed {
-                should_forward: forwarded,
-                ..
-            } => *forwarded,
-            Self::Pending {
-                should_forward: forwarded,
-                ..
-            } => *forwarded,
-            Self::Transitioning => unreachable!(),
-        }
-    }
-
-    /// Mark the packet as forwarded.
-    /// This is used to prevent the packet from being forwarded multiple times.
-    pub(crate) fn mark_forwarded(&mut self) {
-        match self {
-            Self::Unprocessed { should_forward, .. } => *should_forward = false,
-            Self::Pending { should_forward, .. } => *should_forward = false,
-            Self::Transitioning => unreachable!(),
-        }
-    }
-
-    /// Return the packet of the transaction.
-    pub(crate) fn packet(&self) -> Option<&Arc<ImmutableDeserializedPacket>> {
-        match self {
-            Self::Unprocessed { packet, .. } => packet.as_ref(),
-            Self::Pending { packet, .. } => packet.as_ref(),
-            Self::Transitioning => unreachable!(),
-        }
-    }
-
-    /// Intended to be called when a transaction is scheduled. This method will
-    /// transition the transaction from `Unprocessed` to `Pending` and return the
-    /// `SanitizedTransactionTTL` for processing.
+    /// Intended to be called when a transaction is scheduled. This method
+    /// takes ownership of the transaction from the state.
     ///
     /// # Panics
-    /// This method will panic if the transaction is already in the `Pending` state,
-    ///   as this is an invalid state transition.
-    pub(crate) fn transition_to_pending(&mut self) -> SanitizedTransactionTTL<Tx> {
-        match self.take() {
-            TransactionState::Unprocessed {
-                transaction_ttl,
-                packet,
-                priority,
-                cost,
-                should_forward: forwarded,
-            } => {
-                *self = TransactionState::Pending {
-                    packet,
-                    priority,
-                    cost,
-                    should_forward: forwarded,
-                };
-                transaction_ttl
-            }
-            TransactionState::Pending { .. } => {
-                panic!("transaction already pending");
-            }
-            Self::Transitioning => unreachable!(),
-        }
+    /// This method will panic if the transaction has already been scheduled.
+    pub(crate) fn take_transaction_for_scheduling(&mut self) -> (Tx, MaxAge) {
+        let tx = self
+            .transaction
+            .take()
+            .expect("transaction not already pending");
+        (tx, self.max_age)
     }
 
     /// Intended to be called when a transaction is retried. This method will
-    /// transition the transaction from `Pending` to `Unprocessed`.
+    /// return ownership of the transaction to the state.
     ///
     /// # Panics
-    /// This method will panic if the transaction is already in the `Unprocessed`
-    ///   state, as this is an invalid state transition.
-    pub(crate) fn transition_to_unprocessed(
-        &mut self,
-        transaction_ttl: SanitizedTransactionTTL<Tx>,
-    ) {
-        match self.take() {
-            TransactionState::Unprocessed { .. } => panic!("already unprocessed"),
-            TransactionState::Pending {
-                packet,
-                priority,
-                cost,
-                should_forward: forwarded,
-            } => {
-                *self = Self::Unprocessed {
-                    transaction_ttl,
-                    packet,
-                    priority,
-                    cost,
-                    should_forward: forwarded,
-                }
-            }
-            Self::Transitioning => unreachable!(),
-        }
+    /// This method will panic if the transaction is not pending.
+    pub(crate) fn retry_transaction(&mut self, transaction: Tx) {
+        assert!(
+            self.transaction.replace(transaction).is_none(),
+            "transaction is pending"
+        );
     }
 
-    /// Get a reference to the `SanitizedTransactionTTL` for the transaction.
+    /// Get a reference to the transaction.
     ///
     /// # Panics
     /// This method will panic if the transaction is in the `Pending` state.
-    pub(crate) fn transaction_ttl(&self) -> &SanitizedTransactionTTL<Tx> {
-        match self {
-            Self::Unprocessed {
-                transaction_ttl, ..
-            } => transaction_ttl,
-            Self::Pending { .. } => panic!("transaction is pending"),
-            Self::Transitioning => unreachable!(),
-        }
+    pub(crate) fn transaction(&self) -> &Tx {
+        self.transaction
+            .as_ref()
+            .expect("transaction is not pending")
     }
-
-    /// Internal helper to transitioning between states.
-    /// Replaces `self` with a dummy state that will immediately be overwritten in transition.
-    fn take(&mut self) -> Self {
-        core::mem::replace(self, Self::Transitioning)
-    }
-}
-
-fn should_forward_from_meta(meta: &packet::Meta) -> bool {
-    !meta.forwarded() && meta.is_from_staked_node()
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
-        packet::PacketFlags,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_sdk::{
             compute_budget::ComputeBudgetInstruction,
             hash::Hash,
             message::Message,
-            packet::Packet,
             signature::Keypair,
             signer::Signer,
             system_instruction,
@@ -242,17 +111,10 @@ mod tests {
         let message = Message::new(&ixs, Some(&from_keypair.pubkey()));
         let tx = Transaction::new(&[&from_keypair], message, Hash::default());
 
-        let packet = Arc::new(
-            ImmutableDeserializedPacket::new(Packet::from_data(None, tx.clone()).unwrap()).unwrap(),
-        );
-        let transaction_ttl = SanitizedTransactionTTL {
-            transaction: RuntimeTransaction::from_transaction_for_tests(tx),
-            max_age: MaxAge::MAX,
-        };
         const TEST_TRANSACTION_COST: u64 = 5000;
         TransactionState::new(
-            transaction_ttl,
-            Some(packet),
+            RuntimeTransaction::from_transaction_for_tests(tx),
+            MaxAge::MAX,
             compute_unit_price,
             TEST_TRANSACTION_COST,
         )
@@ -260,60 +122,39 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "already pending")]
-    fn test_transition_to_pending_panic() {
+    fn test_take_transaction_for_scheduling_panic() {
         let mut transaction_state = create_transaction_state(0);
-        transaction_state.transition_to_pending();
-        transaction_state.transition_to_pending(); // invalid transition
+        transaction_state.take_transaction_for_scheduling();
+        transaction_state.take_transaction_for_scheduling(); // invalid transition
     }
 
     #[test]
-    fn test_transition_to_pending() {
+    fn test_take_transaction_for_scheduling() {
         let mut transaction_state = create_transaction_state(0);
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Unprocessed { .. }
-        ));
-        let _ = transaction_state.transition_to_pending();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Pending { .. }
-        ));
+        assert!(transaction_state.transaction.is_some());
+        let _ = transaction_state.take_transaction_for_scheduling();
+        assert!(transaction_state.transaction.is_none());
     }
 
     #[test]
-    #[should_panic(expected = "already unprocessed")]
-    fn test_transition_to_unprocessed_panic() {
+    #[should_panic(expected = "transaction is pending")]
+    fn test_retry_transaction_panic() {
         let mut transaction_state = create_transaction_state(0);
-
-        // Manually clone `SanitizedTransactionTTL`
-        let SanitizedTransactionTTL {
-            transaction,
-            max_age,
-        } = transaction_state.transaction_ttl();
-        let transaction_ttl = SanitizedTransactionTTL {
-            transaction: transaction.clone(),
-            max_age: *max_age,
-        };
-        transaction_state.transition_to_unprocessed(transaction_ttl); // invalid transition
+        // invalid transition since transaction is already some
+        assert!(transaction_state.transaction.is_some());
+        let transaction_clone = transaction_state.transaction.as_ref().unwrap().clone();
+        assert!(transaction_state.transaction.is_some());
+        transaction_state.retry_transaction(transaction_clone);
     }
 
     #[test]
-    fn test_transition_to_unprocessed() {
+    fn test_retry_transaction() {
         let mut transaction_state = create_transaction_state(0);
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Unprocessed { .. }
-        ));
-        let transaction_ttl = transaction_state.transition_to_pending();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Pending { .. }
-        ));
-        transaction_state.transition_to_unprocessed(transaction_ttl);
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Unprocessed { .. }
-        ));
+        assert!(transaction_state.transaction.is_some());
+        let (transaction, _max_age) = transaction_state.take_transaction_for_scheduling();
+        assert!(transaction_state.transaction.is_none());
+        transaction_state.retry_transaction(transaction);
+        assert!(transaction_state.transaction.is_some());
     }
 
     #[test]
@@ -323,73 +164,36 @@ mod tests {
         assert_eq!(transaction_state.priority(), priority);
 
         // ensure compute unit price is not lost through state transitions
-        let transaction_ttl = transaction_state.transition_to_pending();
+        let (transaction, _max_age) = transaction_state.take_transaction_for_scheduling();
         assert_eq!(transaction_state.priority(), priority);
-        transaction_state.transition_to_unprocessed(transaction_ttl);
+        transaction_state.retry_transaction(transaction);
         assert_eq!(transaction_state.priority(), priority);
     }
 
     #[test]
-    #[should_panic(expected = "transaction is pending")]
-    fn test_transaction_ttl_panic() {
+    #[should_panic(expected = "transaction is not pending")]
+    fn test_transaction_panic() {
         let mut transaction_state = create_transaction_state(0);
-        let transaction_ttl = transaction_state.transaction_ttl();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Unprocessed { .. }
-        ));
-        assert_eq!(transaction_ttl.max_age, MaxAge::MAX);
+        let _transaction = transaction_state.transaction();
+        assert!(transaction_state.transaction.is_some());
 
-        let _ = transaction_state.transition_to_pending();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Pending { .. }
-        ));
-        let _ = transaction_state.transaction_ttl(); // pending state, the transaction ttl is not available
+        let _ = transaction_state.take_transaction_for_scheduling();
+        assert!(transaction_state.transaction.is_none());
+        let _ = transaction_state.transaction(); // pending state, the transaction ttl is not available
     }
 
     #[test]
-    fn test_transaction_ttl() {
+    fn test_transaction() {
         let mut transaction_state = create_transaction_state(0);
-        let transaction_ttl = transaction_state.transaction_ttl();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Unprocessed { .. }
-        ));
-        assert_eq!(transaction_ttl.max_age, MaxAge::MAX);
+        let _transaction = transaction_state.transaction();
+        assert!(transaction_state.transaction.is_some());
 
         // ensure transaction_ttl is not lost through state transitions
-        let transaction_ttl = transaction_state.transition_to_pending();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Pending { .. }
-        ));
+        let (transaction, _max_age) = transaction_state.take_transaction_for_scheduling();
+        assert!(transaction_state.transaction.is_none());
 
-        transaction_state.transition_to_unprocessed(transaction_ttl);
-        let transaction_ttl = transaction_state.transaction_ttl();
-        assert!(matches!(
-            transaction_state,
-            TransactionState::Unprocessed { .. }
-        ));
-        assert_eq!(transaction_ttl.max_age, MaxAge::MAX);
-    }
-
-    #[test]
-    fn test_initialize_should_forward() {
-        let meta = packet::Meta::default();
-        assert!(!should_forward_from_meta(&meta));
-
-        let mut meta = packet::Meta::default();
-        meta.flags.set(PacketFlags::FORWARDED, true);
-        assert!(!should_forward_from_meta(&meta));
-
-        let mut meta = packet::Meta::default();
-        meta.set_from_staked_node(true);
-        assert!(should_forward_from_meta(&meta));
-
-        let mut meta = packet::Meta::default();
-        meta.flags.set(PacketFlags::FORWARDED, true);
-        meta.set_from_staked_node(true);
-        assert!(!should_forward_from_meta(&meta));
+        transaction_state.retry_transaction(transaction);
+        let _transaction = transaction_state.transaction();
+        assert!(transaction_state.transaction.is_some());
     }
 }

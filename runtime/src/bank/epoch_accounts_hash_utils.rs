@@ -2,9 +2,9 @@
 
 use {
     crate::bank::Bank,
+    agave_feature_set as feature_set,
     solana_sdk::{
         clock::{Epoch, Slot},
-        feature_set,
         vote::state::MAX_LOCKOUT_HISTORY,
     },
 };

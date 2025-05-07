@@ -1,16 +1,20 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::append_vec::StoredAccountMeta;
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::meta::StoredAccountMeta,
+        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
+        accounts_update_notifier_interface::AccountForGeyser,
         append_vec::{AppendVec, AppendVecError, IndexInfo},
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
         },
     },
+    solana_account::{AccountSharedData, ReadableAccount as _},
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_sdk::{account::AccountSharedData, clock::Slot},
     std::{
         mem,
         path::{Path, PathBuf},
@@ -24,7 +28,8 @@ pub const ALIGN_BOUNDARY_OFFSET: usize = mem::size_of::<u64>();
 #[macro_export]
 macro_rules! u64_align {
     ($addr: expr) => {
-        ($addr + (ALIGN_BOUNDARY_OFFSET - 1)) & !(ALIGN_BOUNDARY_OFFSET - 1)
+        ($addr + ($crate::accounts_file::ALIGN_BOUNDARY_OFFSET - 1))
+            & !($crate::accounts_file::ALIGN_BOUNDARY_OFFSET - 1)
     };
 }
 
@@ -84,6 +89,9 @@ impl AccountsFile {
     }
 
     /// true if this storage can possibly be appended to (independent of capacity check)
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     pub(crate) fn can_append(&self) -> bool {
         match self {
             Self::AppendVec(av) => av.can_append(),
@@ -156,6 +164,30 @@ impl AccountsFile {
     }
 
     /// calls `callback` with the account located at the specified index offset.
+    pub fn get_stored_account_callback<Ret>(
+        &self,
+        offset: usize,
+        callback: impl for<'local> FnMut(StoredAccountInfo<'local>) -> Ret,
+    ) -> Option<Ret> {
+        match self {
+            Self::AppendVec(av) => av.get_stored_account_callback(offset, callback),
+            Self::TieredStorage(ts) => {
+                // Note: The conversion here is needed as the AccountsDB currently
+                // assumes all offsets are multiple of 8 while TieredStorage uses
+                // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+                let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
+                ts.reader()?
+                    .get_stored_account_callback(index_offset, callback)
+                    .ok()?
+            }
+        }
+    }
+
+    /// calls `callback` with the account located at the specified index offset.
+    ///
+    /// Prefer get_stored_account_callback() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn get_stored_account_meta_callback<Ret>(
         &self,
         offset: usize,
@@ -163,16 +195,9 @@ impl AccountsFile {
     ) -> Option<Ret> {
         match self {
             Self::AppendVec(av) => av.get_stored_account_meta_callback(offset, callback),
-            // Note: The conversion here is needed as the AccountsDB currently
-            // assumes all offsets are multiple of 8 while TieredStorage uses
-            // IndexOffset that is equivalent to AccountInfo::reduced_offset.
-            Self::TieredStorage(ts) => ts
-                .reader()?
-                .get_stored_account_meta_callback(
-                    IndexOffset(AccountInfo::get_reduced_offset(offset)),
-                    callback,
-                )
-                .ok()?,
+            Self::TieredStorage(_) => {
+                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
+            }
         }
     }
 
@@ -186,6 +211,22 @@ impl AccountsFile {
                 // IndexOffset that is equivalent to AccountInfo::reduced_offset.
                 let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
                 ts.reader()?.get_account_shared_data(index_offset).ok()?
+            }
+        }
+    }
+
+    /// returns an `IndexInfo` for an account at `offset`, if any.  Otherwise, return None.
+    ///
+    /// Only intended to be used with the accounts index.
+    pub(crate) fn get_account_index_info(&self, offset: usize) -> Option<IndexInfo> {
+        match self {
+            Self::AppendVec(av) => av.get_account_index_info(offset),
+            Self::TieredStorage(ts) => {
+                // Note: The conversion here is needed as the AccountsDB currently
+                // assumes all offsets are multiple of 8 while TieredStorage uses
+                // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+                let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
+                ts.reader()?.get_account_index_info(index_offset).ok()?
             }
         }
     }
@@ -221,7 +262,27 @@ impl AccountsFile {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
-    pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountMeta<'local>)) {
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+    ) {
+        match self {
+            Self::AppendVec(av) => av.scan_accounts_without_data(callback),
+            Self::TieredStorage(ts) => {
+                if let Some(reader) = ts.reader() {
+                    _ = reader.scan_accounts_without_data(callback);
+                }
+            }
+        }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
+    pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
         match self {
             Self::AppendVec(av) => av.scan_accounts(callback),
             Self::TieredStorage(ts) => {
@@ -230,6 +291,42 @@ impl AccountsFile {
                 }
             }
         }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts() when possible, as it does not contain file format
+    /// implementation details, and thus potentially can read less and be faster.
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn scan_accounts_stored_meta(
+        &self,
+        callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
+    ) {
+        match self {
+            Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
+            Self::TieredStorage(_) => {
+                unimplemented!("StoredAccountMeta is only implemented for AppendVec")
+            }
+        }
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    /// Only intended to be used by Geyser.
+    pub fn scan_accounts_for_geyser(
+        &self,
+        mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
+    ) {
+        self.scan_accounts(|account| {
+            let account_for_geyser = AccountForGeyser {
+                pubkey: account.pubkey(),
+                lamports: account.lamports(),
+                owner: account.owner(),
+                executable: account.executable(),
+                rent_epoch: account.rent_epoch(),
+                data: account.data(),
+            };
+            callback(account_for_geyser)
+        })
     }
 
     /// for each offset in `sorted_offsets`, return the account size

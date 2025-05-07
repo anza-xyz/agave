@@ -54,12 +54,12 @@ pub(in crate::parse_token) fn parse_default_account_state_instruction(
 mod test {
     use {
         super::*,
+        solana_message::Message,
         solana_pubkey::Pubkey,
         spl_token_2022::{
             extension::default_account_state::instruction::{
                 initialize_default_account_state, update_default_account_state,
             },
-            solana_program::message::Message,
             state::AccountState,
         },
     };

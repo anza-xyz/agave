@@ -10,6 +10,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-solana-feature-set = { workspace = true }
+agave-feature-set = { workspace = true }
 solana-fee-structure = { workspace = true }
 solana-svm-transaction = { workspace = true }

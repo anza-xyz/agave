@@ -23,7 +23,7 @@ pub struct AccountsIndexStorage<T: IndexValue, U: DiskIndexValue + From<T> + Int
     _bg_threads: BgThreads,
 
     pub storage: Arc<BucketMapHolder<T, U>>,
-    pub in_mem: Vec<Arc<InMemAccountsIndex<T, U>>>,
+    pub in_mem: Box<[Arc<InMemAccountsIndex<T, U>>]>,
     exit: Arc<AtomicBool>,
 
     /// set_startup(true) creates bg threads which are kept alive until set_startup(false)
@@ -153,17 +153,16 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
     }
 
     /// allocate BucketMapHolder and InMemAccountsIndex[]
-    pub fn new(bins: usize, config: &Option<AccountsIndexConfig>, exit: Arc<AtomicBool>) -> Self {
+    pub fn new(bins: usize, config: &AccountsIndexConfig, exit: Arc<AtomicBool>) -> Self {
         let num_flush_threads = config
-            .as_ref()
-            .and_then(|config| config.num_flush_threads)
+            .num_flush_threads
             .unwrap_or_else(accounts_index::default_num_flush_threads);
 
         let storage = Arc::new(BucketMapHolder::new(bins, config, num_flush_threads.get()));
 
-        let in_mem = (0..bins)
+        let in_mem: Box<_> = (0..bins)
             .map(|bin| Arc::new(InMemAccountsIndex::new(&storage, bin)))
-            .collect::<Vec<_>>();
+            .collect();
 
         Self {
             _bg_threads: BgThreads::new(&storage, &in_mem, num_flush_threads, true, exit.clone()),

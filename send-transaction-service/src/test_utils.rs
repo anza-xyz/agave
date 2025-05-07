@@ -4,7 +4,9 @@
 use {
     crate::{
         tpu_info::NullTpuInfo,
-        transaction_client::{ConnectionCacheClient, TpuInfoWithSendStatic, TransactionClient},
+        transaction_client::{
+            ConnectionCacheClient, TpuClientNextClient, TpuInfoWithSendStatic, TransactionClient,
+        },
     },
     solana_client::connection_cache::ConnectionCache,
     std::{net::SocketAddr, sync::Arc},
@@ -14,7 +16,7 @@ use {
 // `maybe_runtime` argument is introduced to be able to use runtime from test
 // for the TpuClientNext, while ConnectionCache uses runtime created internally
 // in the quic-client module and it is impossible to pass test runtime there.
-pub trait CreateClient: TransactionClient {
+pub trait CreateClient: TransactionClient + Clone {
     fn create_client(
         maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
@@ -25,12 +27,11 @@ pub trait CreateClient: TransactionClient {
 
 impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     fn create_client(
-        maybe_runtime: Option<Handle>,
+        _maybe_runtime: Option<Handle>,
         my_tpu_address: SocketAddr,
         tpu_peers: Option<Vec<SocketAddr>>,
         leader_forward_count: u64,
     ) -> Self {
-        assert!(maybe_runtime.is_none());
         let connection_cache = Arc::new(ConnectionCache::new("connection_cache_test"));
         ConnectionCacheClient::new(
             connection_cache,
@@ -42,23 +43,52 @@ impl CreateClient for ConnectionCacheClient<NullTpuInfo> {
     }
 }
 
-pub trait Cancelable {
-    fn cancel(&self);
+impl CreateClient for TpuClientNextClient {
+    fn create_client(
+        maybe_runtime: Option<Handle>,
+        my_tpu_address: SocketAddr,
+        tpu_peers: Option<Vec<SocketAddr>>,
+        leader_forward_count: u64,
+    ) -> Self {
+        let runtime_handle =
+            maybe_runtime.expect("Runtime should be provided for the TpuClientNextClient.");
+        let bind_socket = solana_net_utils::bind_to_localhost()
+            .expect("Should be able to open UdpSocket for tests.");
+        Self::new::<NullTpuInfo>(
+            runtime_handle,
+            my_tpu_address,
+            tpu_peers,
+            None,
+            leader_forward_count,
+            None,
+            bind_socket,
+        )
+    }
 }
 
-impl<T> Cancelable for ConnectionCacheClient<T>
+pub trait Stoppable {
+    fn stop(&self);
+}
+
+impl<T> Stoppable for ConnectionCacheClient<T>
 where
     T: TpuInfoWithSendStatic,
 {
-    fn cancel(&self) {}
+    fn stop(&self) {}
+}
+
+impl Stoppable for TpuClientNextClient {
+    fn stop(&self) {
+        self.cancel();
+    }
 }
 
 // Define type alias to simplify definition of test functions.
 pub trait ClientWithCreator:
-    CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    CreateClient + TransactionClient + Stoppable + Send + Clone + 'static
 {
 }
 impl<T> ClientWithCreator for T where
-    T: CreateClient + TransactionClient + Cancelable + Send + Clone + 'static
+    T: CreateClient + TransactionClient + Stoppable + Send + Clone + 'static
 {
 }

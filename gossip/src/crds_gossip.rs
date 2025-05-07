@@ -22,15 +22,14 @@ use {
     itertools::Itertools,
     rand::{CryptoRng, Rng},
     rayon::ThreadPool,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::Shred,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        timing::timestamp,
-    },
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_time_utils::timestamp,
     std::{
         collections::{HashMap, HashSet},
         net::SocketAddr,
@@ -237,6 +236,7 @@ impl CrdsGossip {
         output_size_limit: usize, // Limit number of crds values returned.
         now: u64,
         should_retain_crds_value: impl Fn(&CrdsValue) -> bool + Sync,
+        self_shred_version: u16,
         stats: &GossipStats,
     ) -> Vec<Vec<CrdsValue>> {
         CrdsGossipPull::generate_pull_responses(
@@ -246,6 +246,7 @@ impl CrdsGossip {
             output_size_limit,
             now,
             should_retain_crds_value,
+            self_shred_version,
             stats,
         )
     }
@@ -300,12 +301,9 @@ impl CrdsGossip {
         now: u64,
         timeouts: &CrdsTimeouts,
     ) -> usize {
-        let mut rv = 0;
-        if now > self.pull.crds_timeout {
-            debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
-            debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
-            rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
-        }
+        debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
+        debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
+        let rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
         self.crds
             .write()
             .unwrap()
@@ -321,8 +319,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     now: u64,
     pubkey: &Pubkey, // This node.
     // By default, should only push to or pull from gossip nodes with the same
-    // shred-version. Except for spy nodes (shred_version == 0u16) which can
-    // pull from any node.
+    // shred-version.
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,
@@ -413,10 +410,7 @@ pub(crate) fn maybe_ping_gossip_addresses<R: Rng + CryptoRng>(
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*,
-        solana_sdk::{hash::hash, timing::timestamp},
-    };
+    use {super::*, solana_sha256_hasher::hash, solana_time_utils::timestamp};
 
     #[test]
     fn test_prune_errors() {
