@@ -37,8 +37,12 @@ use {
     std::num::{NonZeroU32, Saturating},
 };
 
-const HANA_FEATURE_GATE_PLACEHOLDER: bool = false;
+// Per SIMD-0186, all accounts are assigned a base size of 64 bytes to cover
+// the storage cost of metadata.
 const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
+
+// Per SIMD-0186, resolved address lookup tables are assigned a base size of 8248
+// bytes: 8192 bytes for the maximum table size plus 56 bytes for metadata.
 const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 
 // for the load instructions
@@ -200,7 +204,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         account_key: &Pubkey,
         is_writable: bool,
     ) -> Option<LoadedTransactionAccount> {
-        let base_account_size = if HANA_FEATURE_GATE_PLACEHOLDER {
+        let base_account_size = if self.feature_set.formalize_loaded_transaction_data_size {
             TRANSACTION_ACCOUNT_BASE_SIZE
         } else {
             0
@@ -522,7 +526,10 @@ fn load_transaction_accounts<CB: TransactionProcessingCallback>(
     error_metrics: &mut TransactionErrorMetrics,
     rent_collector: &dyn SVMRentCollector,
 ) -> Result<LoadedTransactionAccounts> {
-    if HANA_FEATURE_GATE_PLACEHOLDER {
+    if account_loader
+        .feature_set
+        .formalize_loaded_transaction_data_size
+    {
         load_transaction_accounts_simd186(
             account_loader,
             message,
@@ -962,8 +969,10 @@ mod tests {
         solana_transaction_context::{TransactionAccount, TransactionContext},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read},
+        test_case::test_case,
     };
 
+    // HANA enable all by default
     #[derive(Clone, Default)]
     struct TestCallbacks {
         accounts_map: HashMap<Pubkey, AccountSharedData>,
@@ -1055,22 +1064,9 @@ mod tests {
         ))
     }
 
-    fn load_accounts_aux_test(
-        tx: Transaction,
-        accounts: &[TransactionAccount],
-        error_metrics: &mut TransactionErrorMetrics,
-    ) -> TransactionLoadResult {
-        load_accounts_with_features_and_rent(
-            tx,
-            accounts,
-            &RentCollector::default(),
-            error_metrics,
-            SVMFeatureSet::all_enabled(),
-        )
-    }
-
-    #[test]
-    fn test_load_accounts_unknown_program_id() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_accounts_unknown_program_id(formalize_loaded_transaction_data_size: bool) {
         let mut accounts: Vec<TransactionAccount> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1093,7 +1089,16 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
+
+        let load_results = load_accounts_with_features_and_rent(
+            tx,
+            &accounts,
+            &RentCollector::default(),
+            &mut error_metrics,
+            feature_set,
+        );
 
         assert_eq!(error_metrics.account_not_found.0, 1);
         assert!(matches!(
@@ -1105,8 +1110,9 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_load_accounts_no_loaders() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_accounts_no_loaders(formalize_loaded_transaction_data_size: bool) {
         let mut accounts: Vec<TransactionAccount> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1131,12 +1137,15 @@ mod tests {
             instructions,
         );
 
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
+
         let loaded_accounts = load_accounts_with_features_and_rent(
             tx,
             &accounts,
             &RentCollector::default(),
             &mut error_metrics,
-            SVMFeatureSet::all_enabled(),
+            feature_set,
         );
 
         assert_eq!(error_metrics.account_not_found.0, 0);
@@ -1152,8 +1161,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_load_accounts_bad_owner() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_accounts_bad_owner(formalize_loaded_transaction_data_size: bool) {
         let mut accounts: Vec<TransactionAccount> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1165,7 +1175,6 @@ mod tests {
         accounts.push((key0, account));
 
         let mut account = AccountSharedData::new(40, 1, &Pubkey::default());
-        account.set_owner(bpf_loader_upgradeable::id());
         account.set_executable(true);
         accounts.push((key1, account));
 
@@ -1178,20 +1187,41 @@ mod tests {
             instructions,
         );
 
-        let load_results = load_accounts_aux_test(tx, &accounts, &mut error_metrics);
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
 
-        assert_eq!(error_metrics.account_not_found.0, 1);
-        assert!(matches!(
-            load_results,
-            TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                load_error: TransactionError::ProgramAccountNotFound,
-                ..
-            }),
-        ));
+        let load_results = load_accounts_with_features_and_rent(
+            tx,
+            &accounts,
+            &RentCollector::default(),
+            &mut error_metrics,
+            feature_set,
+        );
+
+        if formalize_loaded_transaction_data_size {
+            assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
+            assert!(matches!(
+                load_results,
+                TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                    load_error: TransactionError::InvalidProgramForExecution,
+                    ..
+                }),
+            ));
+        } else {
+            assert_eq!(error_metrics.account_not_found.0, 1);
+            assert!(matches!(
+                load_results,
+                TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                    load_error: TransactionError::ProgramAccountNotFound,
+                    ..
+                }),
+            ));
+        }
     }
 
-    #[test]
-    fn test_load_accounts_not_executable() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_accounts_not_executable(formalize_loaded_transaction_data_size: bool) {
         let mut accounts: Vec<TransactionAccount> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1216,6 +1246,8 @@ mod tests {
 
         let mut feature_set = SVMFeatureSet::all_enabled();
         feature_set.remove_accounts_executable_flag_checks = false;
+        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
+
         let load_results = load_accounts_with_features_and_rent(
             tx,
             &accounts,
@@ -1234,8 +1266,9 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_load_accounts_multiple_loaders() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_load_accounts_multiple_loaders(formalize_loaded_transaction_data_size: bool) {
         let mut accounts: Vec<TransactionAccount> = Vec::new();
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1272,12 +1305,15 @@ mod tests {
             instructions,
         );
 
+        let mut feature_set = SVMFeatureSet::all_enabled();
+        feature_set.formalize_loaded_transaction_data_size = formalize_loaded_transaction_data_size;
+
         let loaded_accounts = load_accounts_with_features_and_rent(
             tx,
             &accounts,
             &RentCollector::default(),
             &mut error_metrics,
-            SVMFeatureSet::all_enabled(),
+            feature_set,
         );
 
         assert_eq!(error_metrics.account_not_found.0, 0);
@@ -1632,6 +1668,7 @@ mod tests {
         );
     }
 
+    // HANA fails with feature
     #[test]
     fn test_load_transaction_accounts_native_loader() {
         let key1 = Keypair::new();
@@ -1782,6 +1819,7 @@ mod tests {
         );
     }
 
+    // HANA fails with feature
     #[test]
     fn test_load_transaction_accounts_native_loader_owner() {
         let key1 = Keypair::new();
@@ -1951,6 +1989,7 @@ mod tests {
         );
     }
 
+    // HANA fails with feature
     #[test]
     fn test_load_transaction_accounts_program_success_complete() {
         let key1 = Keypair::new();
@@ -2026,6 +2065,7 @@ mod tests {
         );
     }
 
+    // HANA fails with feature
     #[test]
     fn test_load_transaction_accounts_program_builtin_saturating_add() {
         let key1 = Keypair::new();
@@ -2496,6 +2536,9 @@ mod tests {
         assert_eq!(actual_inspected_accounts, expected_inspected_accounts,);
     }
 
+    // HANA fails with feature, need a new version of this
+    // our new one is much less arbitrary so probably a totally new test
+    // just generate accounts knowing what the sizes should be
     #[test]
     fn test_load_transaction_accounts_data_sizes() {
         let mut mock_bank = TestCallbacks::default();
