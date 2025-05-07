@@ -1,9 +1,6 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 
-#[macro_use]
-extern crate lazy_static;
-
 mod account_saver;
 pub mod accounts_background_service;
 pub mod bank;

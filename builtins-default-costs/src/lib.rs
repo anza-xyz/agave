@@ -3,7 +3,6 @@
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
     ahash::AHashMap,
-    lazy_static::lazy_static,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, ed25519_program,
@@ -75,24 +74,24 @@ impl BuiltinCost {
     }
 }
 
-lazy_static! {
-    /// Number of compute units for each built-in programs
-    ///
-    /// DEVELOPER WARNING: This map CANNOT be modified without causing a
-    /// consensus failure because this map is used to calculate the compute
-    /// limit for transactions that don't specify a compute limit themselves as
-    /// of https://github.com/anza-xyz/agave/issues/2212.  It's also used to
-    /// calculate the cost of a transaction which is used in replay to enforce
-    /// block cost limits as of
-    /// https://github.com/solana-labs/solana/issues/29595.
-    static ref BUILTIN_INSTRUCTION_COSTS: AHashMap<Pubkey, BuiltinCost> =
+/// Number of compute units for each built-in programs
+///
+/// DEVELOPER WARNING: This map CANNOT be modified without causing a
+/// consensus failure because this map is used to calculate the compute
+/// limit for transactions that don't specify a compute limit themselves as
+/// of https://github.com/anza-xyz/agave/issues/2212.  It's also used to
+/// calculate the cost of a transaction which is used in replay to enforce
+/// block cost limits as of
+/// https://github.com/solana-labs/solana/issues/29595.
+static BUILTIN_INSTRUCTION_COSTS: std::sync::LazyLock<AHashMap<Pubkey, BuiltinCost>> =
+    std::sync::LazyLock::new(|| {
         MIGRATING_BUILTINS_COSTS
-          .iter()
-          .chain(NON_MIGRATING_BUILTINS_COSTS.iter())
-          .cloned()
-          .collect();
-    // DO NOT ADD MORE ENTRIES TO THIS MAP
-}
+            .iter()
+            .chain(NON_MIGRATING_BUILTINS_COSTS.iter())
+            .cloned()
+            .collect()
+    });
+// DO NOT ADD MORE ENTRIES TO THIS MAP
 
 /// DEVELOPER WARNING: please do not add new entry into MIGRATING_BUILTINS_COSTS or
 /// NON_MIGRATING_BUILTINS_COSTS, do so will modify BUILTIN_INSTRUCTION_COSTS therefore
@@ -171,19 +170,17 @@ const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     ),
 ];
 
-lazy_static! {
-    /// A table of 256 booleans indicates whether the first `u8` of a Pubkey exists in
-    /// BUILTIN_INSTRUCTION_COSTS. If the value is true, the Pubkey might be a builtin key;
-    /// if false, it cannot be a builtin key. This table allows for quick filtering of
-    /// builtin program IDs without the need for hashing.
-    pub static ref MAYBE_BUILTIN_KEY: [bool; 256] = {
-        let mut temp_table: [bool; 256] = [false; 256];
-        BUILTIN_INSTRUCTION_COSTS
-            .keys()
-            .for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
-        temp_table
-    };
-}
+/// A table of 256 booleans indicates whether the first `u8` of a Pubkey exists in
+/// BUILTIN_INSTRUCTION_COSTS. If the value is true, the Pubkey might be a builtin key;
+/// if false, it cannot be a builtin key. This table allows for quick filtering of
+/// builtin program IDs without the need for hashing.
+pub static MAYBE_BUILTIN_KEY: std::sync::LazyLock<[bool; 256]> = std::sync::LazyLock::new(|| {
+    let mut temp_table: [bool; 256] = [false; 256];
+    BUILTIN_INSTRUCTION_COSTS
+        .keys()
+        .for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
+    temp_table
+});
 
 pub fn get_builtin_instruction_cost<'a>(
     program_id: &'a Pubkey,

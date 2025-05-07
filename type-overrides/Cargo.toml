@@ -10,7 +10,6 @@ edition = { workspace = true }
 
 [dependencies]
 futures = { workspace = true, optional = true }
-lazy_static = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true, optional = true }
 

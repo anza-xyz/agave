@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 // Wallet settings that can be configured for long-term use
 use {
     serde_derive::{Deserialize, Serialize},
@@ -5,24 +6,20 @@ use {
     url::Url,
 };
 
-lazy_static! {
-    /// The default path to the CLI configuration file.
-    ///
-    /// This is a [lazy_static] of `Option<String>`, the value of which is
-    ///
-    /// > `~/.config/solana/cli/config.yml`
-    ///
-    /// It will only be `None` if it is unable to identify the user's home
-    /// directory, which should not happen under typical OS environments.
-    ///
-    /// [lazy_static]: https://docs.rs/lazy_static
-    pub static ref CONFIG_FILE: Option<String> = {
-        dirs_next::home_dir().map(|mut path| {
-            path.extend([".config", "solana", "cli", "config.yml"]);
-            path.to_str().unwrap().to_string()
-        })
-    };
-}
+/// The default path to the CLI configuration file.
+///
+/// This is a [LazyLock] of `Option<String>`, the value of which is
+///
+/// > `~/.config/solana/cli/config.yml`
+///
+/// It will only be `None` if it is unable to identify the user's home
+/// directory, which should not happen under typical OS environments.
+pub static CONFIG_FILE: LazyLock<Option<String>> = LazyLock::new(|| {
+    dirs_next::home_dir().map(|mut path| {
+        path.extend([".config", "solana", "cli", "config.yml"]);
+        path.to_str().unwrap().to_string()
+    })
+});
 
 /// The Solana CLI configuration.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

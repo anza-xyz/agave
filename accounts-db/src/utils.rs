@@ -1,5 +1,4 @@
 use {
-    lazy_static,
     log::*,
     solana_measure::measure_time,
     std::{
@@ -75,9 +74,8 @@ pub fn move_and_async_delete_path_contents(path: impl AsRef<Path>) {
 /// If there's an in-progress deleting thread for this path, return.
 /// Then spawn a thread to delete the renamed path.
 pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
-    lazy_static! {
-        static ref IN_PROGRESS_DELETES: Mutex<HashSet<PathBuf>> = Mutex::new(HashSet::new());
-    };
+    static IN_PROGRESS_DELETES: std::sync::LazyLock<Mutex<HashSet<PathBuf>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
     // Grab the mutex so no new async delete threads can be spawned for this path.
     let mut lock = IN_PROGRESS_DELETES.lock().unwrap();

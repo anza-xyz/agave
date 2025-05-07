@@ -1347,9 +1347,8 @@ mod tests {
         std::str::FromStr, tempfile::tempdir,
     };
 
-    lazy_static! {
-        static ref ACTIVE_STATS: ActiveStats = ActiveStats::default();
-    }
+    static ACTIVE_STATS: std::sync::LazyLock<ActiveStats> =
+        std::sync::LazyLock::new(ActiveStats::default);
 
     impl AccountsHasher<'_> {
         fn new(dir_for_temp_cache_files: PathBuf) -> Self {

@@ -42,10 +42,8 @@ const TRANSFER_AMOUNT_LO_NEGATED_BITS: usize = 16;
 const TRANSFER_AMOUNT_HI_BITS: usize = 32;
 
 #[cfg(not(target_os = "solana"))]
-lazy_static::lazy_static! {
-    pub static ref COMMITMENT_MAX: PedersenCommitment = Pedersen::encode((1_u64 <<
-                                                                         TRANSFER_AMOUNT_LO_NEGATED_BITS) - 1);
-}
+pub static COMMITMENT_MAX: std::sync::LazyLock<PedersenCommitment> =
+    std::sync::LazyLock::new(|| Pedersen::encode((1_u64 << TRANSFER_AMOUNT_LO_NEGATED_BITS) - 1));
 
 /// The instruction data that is needed for the `ProofInstruction::VerifyTransfer` instruction.
 ///

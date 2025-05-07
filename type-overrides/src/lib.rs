@@ -23,8 +23,6 @@ pub mod hint {
 }
 
 pub mod lazy_static {
-    #[cfg(not(feature = "shuttle-test"))]
-    pub use lazy_static::*;
     #[cfg(feature = "shuttle-test")]
     pub use shuttle::lazy_static::*;
 }

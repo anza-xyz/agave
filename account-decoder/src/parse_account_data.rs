@@ -16,38 +16,36 @@ use {
     spl_token_2022::extension::{
         interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
     },
-    std::collections::HashMap,
+    std::{collections::HashMap, sync::LazyLock},
     thiserror::Error,
 };
 
-lazy_static! {
-    static ref ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::id();
-    static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = bpf_loader_upgradeable::id();
-    static ref CONFIG_PROGRAM_ID: Pubkey = config::id();
-    static ref STAKE_PROGRAM_ID: Pubkey = stake::id();
-    static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
-    static ref SYSVAR_PROGRAM_ID: Pubkey = sysvar::id();
-    static ref VOTE_PROGRAM_ID: Pubkey = vote::id();
-    pub static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableAccount> = {
-        let mut m = HashMap::new();
-        m.insert(
-            *ADDRESS_LOOKUP_PROGRAM_ID,
-            ParsableAccount::AddressLookupTable,
-        );
-        m.insert(
-            *BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
-            ParsableAccount::BpfUpgradeableLoader,
-        );
-        m.insert(*CONFIG_PROGRAM_ID, ParsableAccount::Config);
-        m.insert(*SYSTEM_PROGRAM_ID, ParsableAccount::Nonce);
-        m.insert(spl_token::id(), ParsableAccount::SplToken);
-        m.insert(spl_token_2022::id(), ParsableAccount::SplToken2022);
-        m.insert(*STAKE_PROGRAM_ID, ParsableAccount::Stake);
-        m.insert(*SYSVAR_PROGRAM_ID, ParsableAccount::Sysvar);
-        m.insert(*VOTE_PROGRAM_ID, ParsableAccount::Vote);
-        m
-    };
-}
+const ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::id();
+const BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = bpf_loader_upgradeable::id();
+const CONFIG_PROGRAM_ID: Pubkey = config::id();
+const STAKE_PROGRAM_ID: Pubkey = stake::id();
+const SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
+const SYSVAR_PROGRAM_ID: Pubkey = sysvar::id();
+const VOTE_PROGRAM_ID: Pubkey = vote::id();
+pub static PARSABLE_PROGRAM_IDS: LazyLock<HashMap<Pubkey, ParsableAccount>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+    m.insert(
+        ADDRESS_LOOKUP_PROGRAM_ID,
+        ParsableAccount::AddressLookupTable,
+    );
+    m.insert(
+        BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
+        ParsableAccount::BpfUpgradeableLoader,
+    );
+    m.insert(CONFIG_PROGRAM_ID, ParsableAccount::Config);
+    m.insert(SYSTEM_PROGRAM_ID, ParsableAccount::Nonce);
+    m.insert(spl_token::id(), ParsableAccount::SplToken);
+    m.insert(spl_token_2022::id(), ParsableAccount::SplToken2022);
+    m.insert(STAKE_PROGRAM_ID, ParsableAccount::Stake);
+    m.insert(SYSVAR_PROGRAM_ID, ParsableAccount::Sysvar);
+    m.insert(VOTE_PROGRAM_ID, ParsableAccount::Vote);
+    m
+});
 
 #[derive(Error, Debug)]
 pub enum ParseAccountError {
