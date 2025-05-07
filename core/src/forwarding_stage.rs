@@ -135,7 +135,7 @@ pub(crate) fn spawn_forwarding_stage(
     match client {
         ForwardingClientOption::ConnectionCache(connection_cache) => {
             let non_vote_client =
-                ConnectionCacheClient::new(connection_cache, forward_address_getter);
+                ConnectionCacheClient::new(connection_cache.clone(), forward_address_getter);
             let forwarding_stage = ForwardingStage::new(
                 receiver,
                 vote_client,
@@ -148,7 +148,7 @@ pub(crate) fn spawn_forwarding_stage(
                     .name("solFwdStage".to_string())
                     .spawn(move || forwarding_stage.run())
                     .unwrap(),
-                client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+                client_updater: connection_cache as Arc<dyn NotifyKeyUpdate + Send + Sync>,
             }
         }
         ForwardingClientOption::TpuClientNext((
@@ -528,12 +528,6 @@ impl ForwardingClient for ConnectionCacheClient {
         let conn = self.connection_cache.get_connection(&current_address);
         conn.send_data_batch_async(wire_transactions)?;
         Ok(())
-    }
-}
-
-impl NotifyKeyUpdate for ConnectionCacheClient {
-    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
-        self.connection_cache.update_key(identity)
     }
 }
 
