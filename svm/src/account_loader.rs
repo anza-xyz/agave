@@ -39,7 +39,7 @@ use {
 
 // Per SIMD-0186, all accounts are assigned a base size of 64 bytes to cover
 // the storage cost of metadata.
-const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
+pub(crate) const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
 
 // Per SIMD-0186, resolved address lookup tables are assigned a base size of 8248
 // bytes: 8192 bytes for the maximum table size plus 56 bytes for metadata.
