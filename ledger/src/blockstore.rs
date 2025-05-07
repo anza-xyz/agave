@@ -7724,39 +7724,30 @@ pub mod tests {
             );
         let coding_shred = code_shreds[0].clone();
 
-        // Insert a good coding shred
+        assert!(
+            Blockstore::should_insert_coding_shred(&coding_shred, max_root),
+            "Insertion of a good coding shred should be allowed"
+        );
+
+        blockstore
+            .insert_shreds(vec![coding_shred.clone()], None, false)
+            .expect("Insertion should succeed");
+
         assert!(Blockstore::should_insert_coding_shred(
             &coding_shred,
             max_root
-        ));
+        ),
+        "Inserting the same shred again should be allowed since this doesn't check for duplicate index");
 
-        // Insertion should succeed
-        blockstore
-            .insert_shreds(vec![coding_shred.clone()], None, false)
-            .unwrap();
+        assert!(
+            Blockstore::should_insert_coding_shred(&code_shreds[1], max_root),
+            "Inserting next shred should be allowed"
+        );
 
-        // Trying to insert the same shred again should pass since this doesn't check for
-        // duplicate index
-        {
-            assert!(Blockstore::should_insert_coding_shred(
-                &coding_shred,
-                max_root
-            ));
-        }
-
-        assert!(Blockstore::should_insert_coding_shred(
-            &code_shreds[1],
-            max_root
-        ));
-
-        // Trying to insert value into slot <= than last root should fail
-        {
-            let coding_shred = coding_shred.clone();
-            assert!(!Blockstore::should_insert_coding_shred(
-                &coding_shred,
-                coding_shred.slot()
-            ));
-        }
+        assert!(
+            !Blockstore::should_insert_coding_shred(&coding_shred, coding_shred.slot()),
+            "Trying to insert shred into slot <= last root should not be allowed"
+        );
     }
 
     #[test]
