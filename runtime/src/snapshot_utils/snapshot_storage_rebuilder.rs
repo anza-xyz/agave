@@ -35,11 +35,6 @@ use {
     },
 };
 
-lazy_static! {
-    static ref VERSION_FILE_REGEX: Regex = Regex::new(r"^version$").unwrap();
-    static ref BANK_FIELDS_FILE_REGEX: Regex = Regex::new(r"^[0-9]+(\.pre)?$").unwrap();
-}
-
 /// Convenient wrapper for snapshot version and rebuilt storages
 pub(crate) struct RebuiltSnapshotStorage {
     /// Snapshot version
@@ -413,6 +408,11 @@ enum SnapshotFileKind {
 
 /// Determines `SnapshotFileKind` for `filename` if any
 fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
+    static VERSION_FILE_REGEX: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^version$").unwrap());
+    static BANK_FIELDS_FILE_REGEX: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^[0-9]+(\.pre)?$").unwrap());
+
     if VERSION_FILE_REGEX.is_match(filename) {
         Some(SnapshotFileKind::Version)
     } else if BANK_FIELDS_FILE_REGEX.is_match(filename) {

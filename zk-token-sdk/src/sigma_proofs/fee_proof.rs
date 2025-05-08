@@ -174,13 +174,13 @@ impl FeeSigmaProof {
 
         let Y_delta = RistrettoPoint::multiscalar_mul(
             vec![z_x, z_delta, -c_equality],
-            vec![&(*G), &(*H), C_delta],
+            vec![&G, &(*H), C_delta],
         )
         .compress();
 
         let Y_claimed = RistrettoPoint::multiscalar_mul(
             vec![z_x, z_claimed, -c_equality],
-            vec![&(*G), &(*H), C_claimed],
+            vec![&G, &(*H), C_claimed],
         )
         .compress();
 
@@ -247,7 +247,7 @@ impl FeeSigmaProof {
         // solve for Y_max in the verification algebraic relation
         let Y_max_proof = RistrettoPoint::multiscalar_mul(
             vec![z_max_proof, -c_max_proof, c_max_proof * m],
-            vec![&(*H), C_fee, &(*G)],
+            vec![&(*H), C_fee, &G],
         )
         .compress();
 
@@ -268,9 +268,9 @@ impl FeeSigmaProof {
         let y_claimed = Scalar::random(&mut OsRng);
 
         let Y_delta =
-            RistrettoPoint::multiscalar_mul(vec![y_x, y_delta], vec![&(*G), &(*H)]).compress();
+            RistrettoPoint::multiscalar_mul(vec![y_x, y_delta], vec![&G, &(*H)]).compress();
         let Y_claimed =
-            RistrettoPoint::multiscalar_mul(vec![y_x, y_claimed], vec![&(*G), &(*H)]).compress();
+            RistrettoPoint::multiscalar_mul(vec![y_x, y_claimed], vec![&G, &(*H)]).compress();
 
         transcript.append_point(b"Y_max_proof", &Y_max_proof);
         transcript.append_point(b"Y_delta", &Y_delta);
@@ -370,14 +370,14 @@ impl FeeSigmaProof {
             ],
             vec![
                 C_max,
-                &(*G),
+                &G,
                 &(*H),
                 &Y_max,
-                &(*G),
+                &G,
                 &(*H),
                 C_delta,
                 &Y_delta_real,
-                &(*G),
+                &G,
                 &(*H),
                 C_claimed,
                 &Y_claimed,

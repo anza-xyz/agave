@@ -222,7 +222,7 @@ impl RangeProof {
         // compute the inner product argument on the commitment:
         // P = <l(x), G> + <r(x), H'> + <l(x), r(x)>*Q
         let w = transcript.challenge_scalar(b"w");
-        let Q = w * &(*G);
+        let Q = w * &G;
 
         let G_factors: Vec<Scalar> = iter::repeat_n(Scalar::ONE, nm).collect();
         let H_factors: Vec<Scalar> = util::exp_iter(y.invert()).take(nm).collect();
@@ -341,7 +341,7 @@ impl RangeProof {
                 .chain(iter::once(self.T_1.decompress()))
                 .chain(iter::once(self.T_2.decompress()))
                 .chain(iter::once(Some(*H)))
-                .chain(iter::once(Some(*G)))
+                .chain(iter::once(Some(G)))
                 .chain(self.ipp_proof.L_vec.iter().map(|L| L.decompress()))
                 .chain(self.ipp_proof.R_vec.iter().map(|R| R.decompress()))
                 .chain(bp_gens.G(nm).map(|&x| Some(x)))

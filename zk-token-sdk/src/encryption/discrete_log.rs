@@ -89,14 +89,13 @@ fn decode_u32_precomputation(generator: RistrettoPoint) -> DecodePrecomputation 
     DecodePrecomputation(hashmap)
 }
 
-lazy_static::lazy_static! {
-    /// Pre-computed HashMap needed for decryption. The HashMap is independent of (works for) any key.
-    pub static ref DECODE_PRECOMPUTATION_FOR_G: DecodePrecomputation = {
+/// Pre-computed HashMap needed for decryption. The HashMap is independent of (works for) any key.
+pub static DECODE_PRECOMPUTATION_FOR_G: std::sync::LazyLock<DecodePrecomputation> =
+    std::sync::LazyLock::new(|| {
         static DECODE_PRECOMPUTATION_FOR_G_BINCODE: &[u8] =
             include_bytes!("decode_u32_precomputation_for_G.bincode");
         bincode::deserialize(DECODE_PRECOMPUTATION_FOR_G_BINCODE).unwrap_or_default()
-    };
-}
+    });
 
 /// Solves the discrete log instance using a 16/16 bit offline/online split
 impl DiscreteLog {
