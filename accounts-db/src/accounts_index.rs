@@ -1786,8 +1786,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             .insert_new_entry_if_missing_with_lock(pubkey, new_entry)
                         {
                             InsertNewEntryResults::DidNotExist => {}
-                            InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
-                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
+                            InsertNewEntryResults::ExistedNewEntryZeroLamports(other_slot)
+                            | InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
                                 if let Some(other_slot) = other_slot {
                                     duplicates_from_in_memory.push((other_slot, pubkey));
                                 }
