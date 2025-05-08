@@ -17,10 +17,13 @@ pub(crate) struct TlvRecord {
 #[macro_export]
 macro_rules! define_tlv_enum {
     (
+        $(#[$meta:meta])*
         $vis:vis enum $enum_name:ident {
             $($typ:literal => $variant:ident($inner:ty)),* $(,)?
         }
     ) => {
+        // add the doc-comment if present
+        $(#[$meta])*
         // define the enum itself
         #[derive(Debug, Clone, Eq, PartialEq)]
         $vis enum $enum_name {
@@ -44,7 +47,7 @@ macro_rules! define_tlv_enum {
         impl TryFrom<&TlvRecord> for $enum_name {
             type Error = bincode::Error;
             fn try_from(value: &TlvRecord) -> Result<Self, Self::Error> {
-                use serde::ser::Error;
+                use serde::de::Error;
                 match value.typ {
                     $(
                         $typ => Ok(Self::$variant(bincode::deserialize::<$inner>(&value.bytes)?)),
@@ -57,6 +60,7 @@ macro_rules! define_tlv_enum {
         impl TryFrom<&$enum_name> for TlvRecord {
             type Error = bincode::Error;
             fn try_from(value: &$enum_name) -> Result<Self, Self::Error> {
+                use serde::ser::Error;
                 match value {
                     $(
                         $enum_name::$variant(inner) => Ok(TlvRecord {
@@ -64,6 +68,8 @@ macro_rules! define_tlv_enum {
                             bytes: bincode::serialize(inner)?,
                         }),
                     )*
+                    #[allow(unreachable_patterns)]
+                    _ => Err(bincode::Error::custom("Unsupported enum variant")),
                 }
             }
         }
@@ -114,7 +120,11 @@ mod tests {
         // Make sure legacy recover works correctly
         let legacy: Vec<ExtensionLegacy> = crate::tlv::parse(&tlv_vec);
         assert!(matches!(legacy[0], ExtensionLegacy::Test(42)));
-        assert_eq!(legacy.len(), 1, "Legacy parser should only recover ")
+        assert_eq!(
+            legacy.len(),
+            1,
+            "Legacy parser should only recover  1 entry"
+        )
     }
 
     /// Test that TLV encoded data is forwards-compatible,

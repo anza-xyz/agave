@@ -118,8 +118,19 @@ struct SocketEntry {
     offset: u16, // Port offset with respect to the previous entry.
 }
 
-// The Extension enum for optional features in gossip
-define_tlv_enum! (pub(crate) enum Extension {});
+define_tlv_enum!(
+    /// TLV encoded Extensions in ContactInfo messages
+    ///
+    /// On the wire each record is: [type: u8][len: varint][bytes]
+    /// Extensions with unknown types are skipped by tlv::parse,
+    /// so new types can be added without breaking legacy code,
+    /// and support by all clients is not required.
+    ///
+    /// Always add new TLV records to the end of this enum.
+    /// Never reorder or reuse a type.
+    /// Ensure new type collisions do not happen.
+    pub(crate) enum Extension {}
+);
 
 // As part of deserialization, self.addrs and self.sockets should be cross
 // verified and self.cache needs to be populated. This type serves as a
@@ -1185,15 +1196,5 @@ mod tests {
             assert_eq!(node.overrides(&other), Some(false));
             assert_eq!(other.overrides(&node), Some(true));
         }
-    }
-
-    #[test]
-    fn test_extensions() {
-        let mut ci = ContactInfo::new_localhost(&Pubkey::new_unique(), 42);
-        ci.extensions.push(Extension::SupportSenderSignatures(42));
-        let bytes = bincode::serialize(&ci).unwrap();
-        let cil: ContactInfoLite = bincode::deserialize(&bytes).unwrap();
-        let ci2 = ContactInfo::try_from(cil).unwrap();
-        assert_eq!(ci, ci2);
     }
 }
