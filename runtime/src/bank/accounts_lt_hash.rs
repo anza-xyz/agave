@@ -412,9 +412,11 @@ mod tests {
             snapshot_config::SnapshotConfig,
             snapshot_utils,
         },
-<<<<<<< HEAD
-        solana_accounts_db::accounts_db::{
-            AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_accounts_db::{
+            accounts_db::{AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_index::{
+                AccountsIndexConfig, IndexLimitMb, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
+            },
         },
         solana_sdk::{
             account::{ReadableAccount as _, WritableAccount as _},
@@ -426,24 +428,7 @@ mod tests {
             signature::Signer as _,
             signer::keypair::Keypair,
         },
-        std::{cmp, collections::HashMap, ops::RangeFull, str::FromStr as _, sync::Arc},
-=======
-        solana_account::{ReadableAccount as _, WritableAccount as _},
-        solana_accounts_db::{
-            accounts_db::{AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-            accounts_index::{
-                AccountsIndexConfig, IndexLimitMb, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
-            },
-        },
-        solana_feature_gate_interface::{self as feature, Feature},
-        solana_fee_calculator::FeeRateGovernor,
-        solana_genesis_config::{self, GenesisConfig},
-        solana_keypair::Keypair,
-        solana_native_token::LAMPORTS_PER_SOL,
-        solana_pubkey::{self as pubkey, Pubkey},
-        solana_signer::Signer as _,
         std::{cmp, collections::HashMap, iter, ops::RangeFull, str::FromStr as _, sync::Arc},
->>>>>>> da304a8ee (Expands test_verify_accounts_lt_hash_at_startup() to test with and without the disk index (#6162))
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -945,7 +930,7 @@ mod tests {
     #[test_matrix(
         [Features::None, Features::All],
         [Cli::Off, Cli::On],
-        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly]
+        [IndexLimitMb::Unlimited, IndexLimitMb::InMemOnly]
     )]
     fn test_verify_accounts_lt_hash_at_startup(
         features: Features,
