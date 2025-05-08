@@ -34,7 +34,8 @@ use {
         stake::state::Delegation,
         sysvar::epoch_rewards::EpochRewards,
     },
-    solana_vote_program::vote_state::VoteState,
+    solana_vote::vote_account::VoteAccount,
+    solana_vote_program::vote_state::VoteStateVersions,
     std::sync::{
         atomic::{AtomicU64, Ordering::Relaxed},
         Arc,
@@ -329,8 +330,9 @@ impl Bank {
                     if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
                         let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
                         if let Some(account_from_db) = account_from_db {
-                            if account_from_db.owner() == &solana_vote_program::id()
-                                && VoteState::deserialize(account_from_db.data()).is_ok()
+                            if VoteStateVersions::is_correct_size_and_initialized(
+                                account_from_db.data(),
+                            ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
                             {
                                 panic!(
                                     "Vote account {} not found in cache, but found in db: {:?}",
