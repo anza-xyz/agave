@@ -16,10 +16,10 @@
     "lint:fix": "npm run lint -- --fix"
   },
   "dependencies": {
-    "@docusaurus/core": "^2.4.3",
-    "@docusaurus/plugin-google-gtag": "^2.4.3",
-    "@docusaurus/preset-classic": "^2.4.3",
-    "@docusaurus/theme-search-algolia": "^2.4.3",
+    "@docusaurus/core": "^3.7.0",
+    "@docusaurus/plugin-google-gtag": "^3.7.0",
+    "@docusaurus/preset-classic": "^3.7.0",
+    "@docusaurus/theme-search-algolia": "^3.7.0",
     "babel-eslint": "^10.1.0",
     "clsx": "^1.2.1",
     "eslint": "^7.32.0",
