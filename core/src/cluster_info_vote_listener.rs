@@ -22,7 +22,7 @@ use {
     solana_perf::packet::{self, PacketBatch},
     solana_pubkey::Pubkey,
     solana_rpc::{
-        optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
+        optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSenderConfig},
         rpc_subscriptions::RpcSubscriptions,
     },
     solana_runtime::{
@@ -198,7 +198,7 @@ impl ClusterInfoVoteListener {
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_votes_receiver: ReplayVoteReceiver,
         blockstore: Arc<Blockstore>,
-        bank_notification_sender: Option<BankNotificationSender>,
+        bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
     ) -> Self {
         let (verified_vote_transactions_sender, verified_vote_transactions_receiver) = unbounded();
@@ -323,7 +323,7 @@ impl ClusterInfoVoteListener {
         verified_vote_sender: VerifiedVoteSender,
         replay_votes_receiver: ReplayVoteReceiver,
         blockstore: Arc<Blockstore>,
-        bank_notification_sender: Option<BankNotificationSender>,
+        bank_notification_sender: Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
     ) -> Result<()> {
         let mut confirmation_verifier = OptimisticConfirmationVerifier::new(bank_hash_cache.root());
@@ -393,7 +393,7 @@ impl ClusterInfoVoteListener {
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
         verified_vote_sender: &VerifiedVoteSender,
         replay_votes_receiver: &ReplayVoteReceiver,
-        bank_notification_sender: &Option<BankNotificationSender>,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
@@ -451,7 +451,7 @@ impl ClusterInfoVoteListener {
         diff: &mut HashMap<Slot, HashMap<Pubkey, bool>>,
         new_optimistic_confirmed_slots: &mut ThresholdConfirmedSlots,
         is_gossip_vote: bool,
-        bank_notification_sender: &Option<BankNotificationSender>,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,
         bank_hash_cache: &mut BankHashCache,
@@ -542,8 +542,16 @@ impl ClusterInfoVoteListener {
                     new_optimistic_confirmed_slots.push((slot, hash));
                     // Notify subscribers about new optimistic confirmation
                     if let Some(sender) = bank_notification_sender {
+                        let event_sequence = sender
+                            .event_notification_synchronizer
+                            .as_ref()
+                            .map(|s| s.get_new_event_sequence());
                         sender
-                            .send(BankNotification::OptimisticallyConfirmed(slot))
+                            .sender
+                            .send((
+                                BankNotification::OptimisticallyConfirmed(slot),
+                                event_sequence,
+                            ))
                             .unwrap_or_else(|err| {
                                 warn!("bank_notification_sender failed: {:?}", err)
                             });
@@ -600,7 +608,7 @@ impl ClusterInfoVoteListener {
         subscriptions: &RpcSubscriptions,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
         verified_vote_sender: &VerifiedVoteSender,
-        bank_notification_sender: &Option<BankNotificationSender>,
+        bank_notification_sender: &Option<BankNotificationSenderConfig>,
         duplicate_confirmed_slot_sender: &Option<DuplicateConfirmedSlotsSender>,
         vote_processing_time: &mut Option<VoteProcessingTiming>,
         latest_vote_slot_per_validator: &mut HashMap<Pubkey, Slot>,

@@ -13,6 +13,7 @@ pub mod bank_hash_cache;
 pub mod bank_utils;
 pub mod commitment;
 pub mod epoch_stakes;
+pub mod event_notification_synchronizer;
 pub mod genesis_utils;
 pub mod inflation_rewards;
 pub mod installed_scheduler_pool;

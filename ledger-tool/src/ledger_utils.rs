@@ -321,6 +321,7 @@ pub fn load_and_process_ledger(
             transaction_notifier,
             write_blockstore.clone(),
             arg_matches.is_present("enable_extended_tx_metadata_storage"),
+            None,
             tss_exit.clone(),
         );
 
@@ -337,6 +338,7 @@ pub fn load_and_process_ledger(
         (
             Some(TransactionStatusSender {
                 sender: transaction_status_sender,
+                event_notification_synchronizer: None,
             }),
             Some(transaction_status_service),
             Some(block_meta_sender),
