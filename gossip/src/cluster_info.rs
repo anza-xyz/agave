@@ -1501,17 +1501,15 @@ impl ClusterInfo {
                         .cloned()
                         .unwrap_or_default();
 
-                    // Make pull requests every PULL_REQUEST_PERIOD rounds
-                    let generate_pull_requests = gossip_round % PULL_REQUEST_PERIOD == 0;
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
                         &recycler,
                         &stakes,
                         &sender,
-                        generate_pull_requests,
+                        // Make pull requests every PULL_REQUEST_PERIOD rounds
+                        gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
-
                     let epoch_duration = epoch_specs
                         .as_mut()
                         .map(EpochSpecs::epoch_duration)
