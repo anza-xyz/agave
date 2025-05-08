@@ -773,6 +773,7 @@ pub fn execute(
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         retransmit_xdp,
+        use_tpu_client_next: matches.is_present("use_tpu_client_next"),
         ..ValidatorConfig::default()
     };
 
