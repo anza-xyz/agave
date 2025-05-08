@@ -140,7 +140,10 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
 ) {
     let fee_payer_address = transaction.fee_payer();
     match rollback_accounts {
-        RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+        RollbackAccounts::FeePayerOnly {
+            fee_payer_account,
+            fee_payer_address: _,
+        } => {
             collected_accounts.push((fee_payer_address, fee_payer_account));
             if let Some(collected_account_transactions) = collected_account_transactions {
                 collected_account_transactions
@@ -157,6 +160,7 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
         RollbackAccounts::SeparateNonceAndFeePayer {
             nonce,
             fee_payer_account,
+            fee_payer_address: _,
         } => {
             collected_accounts.push((fee_payer_address, fee_payer_account));
             if let Some(collected_account_transactions) = collected_account_transactions {
@@ -352,6 +356,7 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer_account: from_account_pre.clone(),
+                fee_payer_address: from_address,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             rent: 0,
@@ -447,6 +452,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: nonce.clone(),
                 fee_payer_account: from_account_pre.clone(),
+                fee_payer_address: from_address,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             rent: 0,
@@ -623,6 +629,7 @@ mod tests {
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer_account: from_account_pre.clone(),
+                    fee_payer_address: from_address,
                 },
             },
         )))];

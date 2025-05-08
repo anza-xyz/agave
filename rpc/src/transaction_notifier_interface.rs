@@ -1,5 +1,9 @@
 use {
-    solana_sdk::{clock::Slot, signature::Signature, transaction::SanitizedTransaction},
+    solana_pubkey::Pubkey,
+    solana_sdk::{
+        account::AccountSharedData, clock::Slot, signature::Signature,
+        transaction::SanitizedTransaction,
+    },
     solana_transaction_status::TransactionStatusMeta,
     std::sync::Arc,
 };
@@ -12,6 +16,7 @@ pub trait TransactionNotifier {
         signature: &Signature,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &SanitizedTransaction,
+        post_accounts_states: &[(Pubkey, AccountSharedData)],
     );
 }
 
