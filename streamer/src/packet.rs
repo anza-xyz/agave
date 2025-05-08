@@ -12,9 +12,7 @@ use {
 };
 pub use {
     solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
-    solana_perf::packet::{
-        to_packet_batches, PacketBatch, PacketBatchRecycler, NUM_PACKETS, PACKETS_PER_BATCH,
-    },
+    solana_perf::packet::{PacketBatch, PacketBatchRecycler, NUM_PACKETS, PACKETS_PER_BATCH},
 };
 
 pub(crate) fn recv_from(
