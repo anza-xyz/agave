@@ -66,6 +66,8 @@ use {
         str::FromStr,
         sync::{Arc, RwLock},
         time::Duration,
+        future::Future,
+        pin::Pin,
     },
     tokio::time::sleep,
 };
@@ -165,9 +167,22 @@ impl Default for TestValidatorGenesis {
             transaction_account_lock_limit: Option::<usize>::default(),
             tpu_enable_udp: DEFAULT_TPU_ENABLE_UDP,
             geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::new())),
-            admin_rpc_service_post_init:
-                Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
+            admin_rpc_service_post_init: Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
         }
+    }
+}
+
+impl std::fmt::Debug for TestValidatorGenesis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestValidatorGenesis")
+            .field("ledger_path", &self.ledger_path)
+            .field("rpc_ports", &self.rpc_ports)
+            .field("warp_slot", &self.warp_slot)
+            .field("deactivated_features", &self.deactivate_feature_set.len())
+            .field("account_count", &self.accounts.len())
+            .field("upgradeable_programs", &self.upgradeable_programs.len())
+            .field("tpu_enable_udp", &self.tpu_enable_udp)
+            .finish()
     }
 }
 
@@ -682,6 +697,52 @@ impl TestValidatorGenesis {
             Err(err) => panic!("Test validator failed to start: {err}"),
         }
     }
+
+    /// Start the validator, automatically choosing between sync and async based on context
+    pub fn start_with_context() -> Pin<Box<dyn Future<Output = (TestValidator, Keypair)>>> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            Box::pin(async { 
+                Self::default().start_async().await 
+            })
+        } else {
+            Box::pin(async { 
+                Self::default().start()
+            })
+        }
+    }
+
+    /// Clone state from a running validator
+    pub fn clone_state(
+        &mut self, 
+        rpc_url: &str, 
+        accounts: &[Pubkey],
+        chunk_size: Option<usize>,
+    ) -> Result<&mut Self, String> {
+        let rpc_client = RpcClient::new(rpc_url.to_string());
+        let chunk_size = chunk_size.unwrap_or(MAX_MULTIPLE_ACCOUNTS);
+        
+        // Fetch all accounts in chunks to respect RPC limits
+        for chunk in accounts.chunks(chunk_size) {
+            let fetched_accounts = rpc_client
+                .get_multiple_accounts(chunk)
+                .map_err(|err| format!("Failed to fetch accounts: {}", err))?;
+
+            // Add each account to our test validator
+            for (address, maybe_account) in chunk.iter().zip(fetched_accounts) {
+                match maybe_account {
+                    Some(account) => {
+                        let account_data = AccountSharedData::from(account);
+                        self.add_account(*address, account_data);
+                    }
+                    None => {
+                        return Err(format!("Account {} not found", address));
+                    }
+                }
+            }
+        }
+
+        Ok(self)
+    }
 }
 
 pub struct TestValidator {
@@ -928,7 +989,7 @@ impl TestValidator {
     }
 
     /// Starts a TestValidator at the provided ledger directory
-    fn start(
+    pub fn start(
         mint_address: Pubkey,
         config: &TestValidatorGenesis,
         socket_addr_space: SocketAddrSpace,
@@ -1058,6 +1119,10 @@ impl TestValidator {
             validator,
             vote_account_address,
         };
+
+        // Automatically set startup verification complete
+        test_validator.set_startup_verification_complete_for_tests();
+
         Ok(test_validator)
     }
 
@@ -1185,12 +1250,15 @@ impl Drop for TestValidator {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_sdk::feature::Feature};
+    use {
+        super::*,
+        solana_sdk::feature::Feature,
+        solana_sdk::system_program,
+    };
 
     #[test]
     fn get_health() {
         let (test_validator, _payer) = TestValidatorGenesis::default().start();
-        test_validator.set_startup_verification_complete_for_tests();
         let rpc_client = test_validator.get_rpc_client();
         rpc_client.get_health().expect("health");
     }
@@ -1198,7 +1266,6 @@ mod test {
     #[tokio::test]
     async fn nonblocking_get_health() {
         let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
-        test_validator.set_startup_verification_complete_for_tests();
         let rpc_client = test_validator.get_async_rpc_client();
         rpc_client.get_health().await.expect("health");
     }
@@ -1333,5 +1400,121 @@ mod test {
         let account = fetched_programs[3].as_ref().unwrap();
         assert_eq!(account.owner, solana_sdk_ids::native_loader::id());
         assert!(account.executable);
+    }
+
+    #[test]
+    fn test_start_with_context_sync() {
+        // Don't create a runtime in sync context
+        let (test_validator, _payer) = TestValidatorGenesis::default().start();
+        let rpc_client = test_validator.get_rpc_client();
+        rpc_client.get_health().expect("health");
+    }
+
+    #[tokio::test]
+    async fn test_start_with_context_async() {
+        let (test_validator, _payer) = TestValidatorGenesis::start_with_context().await;
+        
+        let rpc_client = test_validator.get_async_rpc_client();
+        rpc_client.get_health().await.expect("health");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_clone_state() {
+        // First create a source validator with known state
+        let source_account = Keypair::new();
+        
+        let (source_validator, _) = TestValidatorGenesis::default()
+            .add_account(
+                source_account.pubkey(),
+                AccountSharedData::new(42, 0, &system_program::id()),
+            )
+            .start_async()
+            .await;
+
+        // Create target validator and clone state
+        let mut target = TestValidatorGenesis::default();
+        target.clone_state(
+            &source_validator.rpc_url(),
+            &[source_account.pubkey()],
+            None,
+        )
+        .expect("Failed to clone state");
+
+        let (target_validator, _) = target
+            .start_async()
+            .await;
+
+        // Use async RPC client
+        let rpc_client = target_validator.get_async_rpc_client();
+        let cloned_account = rpc_client
+            .get_account(&source_account.pubkey())
+            .await
+            .expect("Failed to get cloned account");
+
+        assert_eq!(cloned_account.lamports(), 42);
+        assert_eq!(cloned_account.owner(), &system_program::id());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_clone_state_missing_account() {
+        let nonexistent = Pubkey::new_unique();
+        
+        let (source_validator, _) = TestValidatorGenesis::default()
+            .start_async()
+            .await;
+
+        // Store the instance instead of using a temporary
+        let mut target = TestValidatorGenesis::default();
+        let result = target.clone_state(&source_validator.rpc_url(), &[nonexistent], None);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_clone_multiple_accounts() {
+        let account1 = Keypair::new();
+        let account2 = Keypair::new();
+        
+        // Create source validator with multiple accounts
+        let (source_validator, _) = TestValidatorGenesis::default()
+            .add_account(
+                account1.pubkey(),
+                AccountSharedData::new(42, 0, &system_program::id()),
+            )
+            .add_account(
+                account2.pubkey(),
+                AccountSharedData::new(43, 0, &system_program::id()),
+            )
+            .start_async()  // Changed to async
+            .await;
+
+        // Clone both accounts
+        let mut target = TestValidatorGenesis::default();
+        target.clone_state(
+            &source_validator.rpc_url(),
+            &[account1.pubkey(), account2.pubkey()],
+            Some(1),  // Test with small chunk size
+        )
+        .expect("Failed to clone state");
+
+        let (target_validator, _) = target
+            .start_async()
+            .await;
+
+        let rpc_client = target_validator.get_async_rpc_client();
+        
+        // Verify both accounts
+        let cloned1 = rpc_client
+            .get_account(&account1.pubkey())
+            .await
+            .expect("Failed to get first account");
+        let cloned2 = rpc_client
+            .get_account(&account2.pubkey())
+            .await
+            .expect("Failed to get second account");
+
+        assert_eq!(cloned1.lamports(), 42);
+        assert_eq!(cloned2.lamports(), 43);
     }
 }
