@@ -181,14 +181,13 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             Some(self.chained_merkle_root),
             self.next_shred_index,
             self.next_code_index,
-            true, // merkle_variant
             &self.reed_solomon_cache,
             &mut stats,
         );
@@ -201,28 +200,26 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
-                let (original_last_data_shred, _) = shredder.entries_to_shreds(
+                let (original_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
                     &[original_last_entry],
                     true,
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
                 // trying to repair.
-                let (partition_last_data_shred, _) = shredder.entries_to_shreds(
+                let (partition_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
                     &duplicate_extra_last_entries,
                     true,
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut stats,
                 );
