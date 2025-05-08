@@ -10775,19 +10775,43 @@ pub mod tests {
 
     #[test]
     fn test_duplicate_last_index() {
-        let num_shreds = 2;
-        let num_entries = max_ticks_per_n_shreds(num_shreds, None);
         let slot = 1;
-        let (mut shreds, _) =
-            make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
+        let entries = make_slot_entries_with_transactions(1);
+        let leader_keypair = Arc::new(Keypair::new());
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
+        let (shreds1, code1) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true, // is_last_in_slot
+            Some(Hash::new_unique()),
+            0,    // next_shred_index
+            0,    // next_code_index,
+            true, // merkle_variant
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        let last_data1 = shreds1.last().unwrap();
+        let last_code1 = code1.last().unwrap();
+        let (shreds2, _) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true, // is_last_in_slot
+            Some(Hash::new_unique()),
+            last_data1.index(), // next_shred_index
+            last_code1.index(), // next_code_index,
+            true,               // merkle_variant
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        let last_data2 = shreds2.last().unwrap();
 
-        // Mark both as last shred
-        shreds[0].set_last_in_slot();
-        shreds[1].set_last_in_slot();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore
+            .insert_shreds(vec![last_data1.clone(), last_data2.clone()], None, false)
+            .unwrap();
 
         assert!(blockstore.get_duplicate_slot(slot).is_some());
     }
