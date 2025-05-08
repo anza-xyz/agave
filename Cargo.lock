@@ -9710,6 +9710,7 @@ dependencies = [
  "bv",
  "bytemuck",
  "bzip2",
+ "criterion",
  "crossbeam-channel",
  "dashmap",
  "dir-diff",

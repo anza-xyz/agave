@@ -1,9 +1,7 @@
-#![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate test;
-
 use {
+    criterion::{criterion_group, criterion_main, Criterion},
     log::*,
     solana_program_runtime::declare_process_instruction,
     solana_runtime::{
@@ -22,7 +20,6 @@ use {
     },
     solana_svm::transaction_processing_callback::TransactionProcessingCallback,
     std::{sync::Arc, thread::sleep, time::Duration},
-    test::Bencher,
 };
 
 const BUILTIN_PROGRAM_ID: [u8; 32] = [
@@ -113,12 +110,11 @@ fn async_bencher(bank: &Bank, bank_client: &BankClient, transactions: &[Transact
 
 #[allow(clippy::type_complexity)]
 fn do_bench_transactions(
-    bencher: &mut Bencher,
+    c: &mut Criterion,
     bench_work: &dyn Fn(&Bank, &BankClient, &[Transaction]),
     create_transactions: &dyn Fn(&BankClient, &Keypair) -> Vec<Transaction>,
 ) {
     solana_logger::setup();
-    let ns_per_s = 1_000_000_000;
     let (mut genesis_config, mint_keypair) = create_genesis_config(100_000_000_000_000);
     genesis_config.ticks_per_slot = 100;
 
@@ -142,47 +138,32 @@ fn do_bench_transactions(
     let results = bank.process_transactions(transactions.iter());
     assert!(results.iter().all(Result::is_ok));
 
-    bencher.iter(|| {
+    c.bench_function("process_transactions", |b| {
         // Since bencher runs this multiple times, we need to clear the signatures.
         bank.clear_signatures();
-        bench_work(&bank, &bank_client, &transactions);
+        b.iter(|| {
+            bench_work(&bank, &bank_client, &transactions);
+        });
     });
-
-    let summary = bencher.bench(|_bencher| Ok(())).unwrap().unwrap();
-    info!("  {:?} transactions", transactions.len());
-    info!("  {:?} ns/iter median", summary.median as u64);
-    assert!(0f64 != summary.median);
-    let tps = transactions.len() as u64 * (ns_per_s / summary.median as u64);
-    info!("  {:?} TPS", tps);
 }
 
-#[bench]
-#[ignore]
-fn bench_bank_sync_process_builtin_transactions(bencher: &mut Bencher) {
-    do_bench_transactions(bencher, &sync_bencher, &create_builtin_transactions);
+fn bench_bank_sync_process_builtin_transactions(c: &mut Criterion) {
+    do_bench_transactions(c, &sync_bencher, &create_builtin_transactions);
 }
 
-#[bench]
-#[ignore]
-fn bench_bank_sync_process_native_loader_transactions(bencher: &mut Bencher) {
-    do_bench_transactions(bencher, &sync_bencher, &create_native_loader_transactions);
+fn bench_bank_sync_process_native_loader_transactions(c: &mut Criterion) {
+    do_bench_transactions(c, &sync_bencher, &create_native_loader_transactions);
 }
 
-#[bench]
-#[ignore]
-fn bench_bank_async_process_builtin_transactions(bencher: &mut Bencher) {
-    do_bench_transactions(bencher, &async_bencher, &create_builtin_transactions);
+fn bench_bank_async_process_builtin_transactions(c: &mut Criterion) {
+    do_bench_transactions(c, &async_bencher, &create_builtin_transactions);
 }
 
-#[bench]
-#[ignore]
-fn bench_bank_async_process_native_loader_transactions(bencher: &mut Bencher) {
-    do_bench_transactions(bencher, &async_bencher, &create_native_loader_transactions);
+fn bench_bank_async_process_native_loader_transactions(c: &mut Criterion) {
+    do_bench_transactions(c, &async_bencher, &create_native_loader_transactions);
 }
 
-#[bench]
-#[ignore]
-fn bench_bank_update_recent_blockhashes(bencher: &mut Bencher) {
+fn bench_bank_update_recent_blockhashes(c: &mut Criterion) {
     let (genesis_config, _mint_keypair) = create_genesis_config(100);
     let mut bank = Arc::new(Bank::new_for_benches(&genesis_config));
     goto_end_of_slot(bank.clone());
@@ -198,7 +179,19 @@ fn bench_bank_update_recent_blockhashes(bencher: &mut Bencher) {
     }
     // Verify blockhash_queue is full (genesis hash has been kicked out)
     assert!(!bank.is_hash_valid_for_age(&genesis_hash, MAX_RECENT_BLOCKHASHES));
-    bencher.iter(|| {
-        bank.update_recent_blockhashes();
+    c.bench_function("update_recent_blockhashes", |b| {
+        b.iter(|| {
+            bank.update_recent_blockhashes();
+        });
     });
 }
+
+criterion_group!(
+    benches,
+    bench_bank_async_process_builtin_transactions,
+    bench_bank_async_process_native_loader_transactions,
+    bench_bank_sync_process_builtin_transactions,
+    bench_bank_sync_process_native_loader_transactions,
+    bench_bank_update_recent_blockhashes,
+);
+criterion_main!(benches);

@@ -108,6 +108,7 @@ crate-type = ["lib"]
 name = "solana_runtime"
 
 [dev-dependencies]
+criterion = { workspace = true }
 agave-transaction-view = { workspace = true }
 ed25519-dalek = { workspace = true }
 libsecp256k1 = { workspace = true }
@@ -157,6 +158,19 @@ frozen-abi = [
 
 [[bench]]
 name = "prioritization_fee_cache"
+harness = false
+
+[[bench]]
+name = "accounts"
+harness = false
+
+[[bench]]
+name = "status_cache"
+harness = false
+
+[[bench]]
+name = "bank"
+harness = false
 
 [lints]
 workspace = true
