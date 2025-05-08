@@ -16,10 +16,12 @@ use {
     itertools::Itertools,
     log::*,
     solana_client::connection_cache::ConnectionCache,
+    solana_hash::Hash,
+    solana_nonce_account as nonce_account,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::{
-        hash::Hash, nonce_account, pubkey::Pubkey, saturating_add_assign, signature::Signature,
-    },
+    solana_sdk::saturating_add_assign,
+    solana_signature::Signature,
     std::{
         collections::hash_map::{Entry, HashMap},
         net::SocketAddr,
@@ -572,14 +574,13 @@ mod test {
             transaction_client::TpuClientNextClient,
         },
         crossbeam_channel::{bounded, unbounded},
-        solana_sdk::{
-            account::AccountSharedData,
-            genesis_config::create_genesis_config,
-            nonce::{self, state::DurableNonce},
-            pubkey::Pubkey,
-            signature::Signer,
-            system_program, system_transaction,
-        },
+        solana_account::AccountSharedData,
+        solana_genesis_config::create_genesis_config,
+        solana_nonce::{self as nonce, state::DurableNonce},
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
+        solana_system_interface::program as system_program,
+        solana_system_transaction as system_transaction,
         std::ops::Sub,
         tokio::runtime::Handle,
     };
@@ -672,7 +673,7 @@ mod test {
         solana_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
-        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
         let leader_forward_count = 1;
@@ -931,7 +932,7 @@ mod test {
         solana_logger::setup();
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(4);
-        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
         let (_, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let leader_forward_count = 1;
         let config = Config::default();
@@ -953,7 +954,7 @@ mod test {
 
         let nonce_address = Pubkey::new_unique();
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let nonce_state = nonce::state::Versions::new(nonce::State::Initialized(
+        let nonce_state = nonce::versions::Versions::new(nonce::state::State::Initialized(
             nonce::state::Data::new(Pubkey::default(), durable_nonce, 42),
         ));
         let nonce_account =
@@ -1202,7 +1203,7 @@ mod test {
             transaction.last_sent_time = Some(Instant::now().sub(Duration::from_millis(4000)));
         }
         let new_durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
-        let new_nonce_state = nonce::state::Versions::new(nonce::State::Initialized(
+        let new_nonce_state = nonce::versions::Versions::new(nonce::state::State::Initialized(
             nonce::state::Data::new(Pubkey::default(), new_durable_nonce, 42),
         ));
         let nonce_account =
