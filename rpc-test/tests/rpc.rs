@@ -1,4 +1,5 @@
 use {
+    base64::{prelude::BASE64_STANDARD, Engine},
     bincode::serialize,
     crossbeam_channel::unbounded,
     futures_util::StreamExt,
@@ -90,7 +91,7 @@ fn test_rpc_send_tx() {
         Rent::default().minimum_balance(0),
         blockhash,
     );
-    let serialized_encoded_tx = bs58::encode(serialize(&tx).unwrap()).into_string();
+    let serialized_encoded_tx = BASE64_STANDARD.encode(serialize(&tx).unwrap());
 
     let req = json_req!("sendTransaction", json!([serialized_encoded_tx]));
     let json: Value = post_rpc(req, &rpc_url);
