@@ -123,47 +123,42 @@ impl From<CompletedDataIndexesV1> for CompletedDataIndexesV2 {
     }
 }
 
-/// Helper to define the `SlotMeta` version variants.
-macro_rules! slot_meta_version {
-    ($slot_meta:ident => $completed_data_indexes:ident) => {
-        #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
-        /// The Meta column family
-        pub struct $slot_meta {
-            /// The number of slots above the root (the genesis block). The first
-            /// slot has slot 0.
-            pub slot: Slot,
-            /// The total number of consecutive shreds starting from index 0 we have received for this slot.
-            /// At the same time, it is also an index of the first missing shred for this slot, while the
-            /// slot is incomplete.
-            pub consumed: u64,
-            /// The index *plus one* of the highest shred received for this slot.  Useful
-            /// for checking if the slot has received any shreds yet, and to calculate the
-            /// range where there is one or more holes: `(consumed..received)`.
-            pub received: u64,
-            /// The timestamp of the first time a shred was added for this slot
-            pub first_shred_timestamp: u64,
-            /// The index of the shred that is flagged as the last shred for this slot.
-            /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
-            #[serde(with = "serde_compat")]
-            pub last_index: Option<u64>,
-            /// The slot height of the block this one derives from.
-            /// The parent slot of the head of a detached chain of slots is None.
-            #[serde(with = "serde_compat")]
-            pub parent_slot: Option<Slot>,
-            /// The list of slots, each of which contains a block that derives
-            /// from this one.
-            pub next_slots: Vec<Slot>,
-            /// Connected status flags of this slot
-            pub connected_flags: ConnectedFlags,
-            /// Shreds indices which are marked data complete.  That is, those that have the
-            /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
-            pub completed_data_indexes: $completed_data_indexes,
-        }
-    };
+#[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+/// The Meta column family
+pub struct SlotMetaBase<T> {
+    /// The number of slots above the root (the genesis block). The first
+    /// slot has slot 0.
+    pub slot: Slot,
+    /// The total number of consecutive shreds starting from index 0 we have received for this slot.
+    /// At the same time, it is also an index of the first missing shred for this slot, while the
+    /// slot is incomplete.
+    pub consumed: u64,
+    /// The index *plus one* of the highest shred received for this slot.  Useful
+    /// for checking if the slot has received any shreds yet, and to calculate the
+    /// range where there is one or more holes: `(consumed..received)`.
+    pub received: u64,
+    /// The timestamp of the first time a shred was added for this slot
+    pub first_shred_timestamp: u64,
+    /// The index of the shred that is flagged as the last shred for this slot.
+    /// None until the shred with LAST_SHRED_IN_SLOT flag is received.
+    #[serde(with = "serde_compat")]
+    pub last_index: Option<u64>,
+    /// The slot height of the block this one derives from.
+    /// The parent slot of the head of a detached chain of slots is None.
+    #[serde(with = "serde_compat")]
+    pub parent_slot: Option<Slot>,
+    /// The list of slots, each of which contains a block that derives
+    /// from this one.
+    pub next_slots: Vec<Slot>,
+    /// Connected status flags of this slot
+    pub connected_flags: ConnectedFlags,
+    /// Shreds indices which are marked data complete.  That is, those that have the
+    /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
+    pub completed_data_indexes: T,
 }
 
-slot_meta_version!(SlotMetaV1 => CompletedDataIndexesV1);
-slot_meta_version!(SlotMetaV2 => CompletedDataIndexesV2);
+pub type SlotMetaV1 = SlotMetaBase<CompletedDataIndexesV1>;
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexesV2>;
 
 impl From<SlotMetaV1> for SlotMetaV2 {
     fn from(value: SlotMetaV1) -> Self {
