@@ -11,21 +11,20 @@ use {
         program::ProgramCliCommand,
     },
     solana_client::transaction_executor::TransactionExecutor,
+    solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::{request_airdrop_transaction, FAUCET_PORT},
     solana_gossip::gossip_service::discover,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_message::Message,
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        packet::PACKET_DATA_SIZE,
-        pubkey::Pubkey,
-        rpc_port::DEFAULT_RPC_PORT,
-        signature::{read_keypair_file, Keypair, Signer},
-        system_instruction,
-        transaction::Transaction,
-    },
+    solana_sdk::rpc_port::DEFAULT_RPC_PORT,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::Transaction,
     std::{
         net::{Ipv4Addr, SocketAddr},
         process::exit,
@@ -670,7 +669,7 @@ pub mod test {
             validator_configs::make_identical_validator_configs,
         },
         solana_measure::measure::Measure,
-        solana_sdk::poh_config::PohConfig,
+        solana_poh_config::PohConfig,
     };
 
     #[test]
@@ -693,7 +692,7 @@ pub mod test {
             &account_metas,
         );
         let signers: Vec<&Keypair> = vec![&keypair];
-        let blockhash = solana_sdk::hash::Hash::default();
+        let blockhash = solana_hash::Hash::default();
         let tx = Transaction::new(&signers, message, blockhash);
         let size = bincode::serialized_size(&tx).unwrap();
         info!("size:{}", size);
