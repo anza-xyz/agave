@@ -119,9 +119,7 @@ struct SocketEntry {
 }
 
 // The Extension enum for optional features in gossip
-define_tlv_enum! (pub(crate) enum Extension {
-    1=>SupportSenderSignatures(u8),
-});
+define_tlv_enum! (pub(crate) enum Extension {});
 
 // As part of deserialization, self.addrs and self.sockets should be cross
 // verified and self.cache needs to be populated. This type serves as a
