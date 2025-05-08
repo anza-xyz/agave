@@ -629,6 +629,38 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(count, 1);
     }
 
+    /// Lock the slot list for the given `pubkey` and insert the new value into it.
+    /// If the slot have an existing entry, return the slot for the existing entry.
+    /// This is used for index generation at startup.
+    /// The returned slot is used to populate the `duplicates` list.
+    pub fn lock_and_insert_into_slot_list(
+        current: &AccountMapEntry<T>,
+        new_value: (Slot, T),
+    ) -> Option<Slot> {
+        let mut slot_list = current.slot_list.write().unwrap();
+        let (slot, new_entry) = new_value;
+
+        let other_slot = if slot_list.len() == 1 {
+            Some(slot_list[0].0)
+        } else {
+            None
+        };
+
+        let addref = Self::update_slot_list(
+            &mut slot_list,
+            slot,
+            new_entry,
+            None,
+            &mut Vec::default(),
+            UpsertReclaim::IgnoreReclaims,
+        );
+        if addref {
+            current.addref();
+        }
+        current.set_dirty(true);
+        other_slot
+    }
+
     /// Try to update an item in the slot list the given `slot` If an item for the slot
     /// already exists in the list, remove the older item, add it to `reclaims`, and insert
     /// the new item.
@@ -798,39 +830,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             Entry::Occupied(occupied) => {
                 // in cache, so merge into cache
                 let (slot, account_info) = new_entry.into();
-
-                let slot_list = occupied.get().slot_list.read().unwrap();
-
-                // If there is only one entry in the slot list, it means that
-                // the previous entry inserted was a duplicate, which should be
-                // added to the duplicates list too. Note that we only need to do
-                // this for slot_list.len() == 1. For slot_list.len() > 1, the
-                // items, previously inserted into the slot_list, have already
-                // been added. We don't need to add them again.
-                if slot_list.len() == 1 {
-                    other_slot = Some(slot_list[0].0);
-                }
-                drop(slot_list);
-
-                let updated_slot_list_len = InMemAccountsIndex::<T, U>::lock_and_update_slot_list(
+                other_slot = InMemAccountsIndex::<T, U>::lock_and_insert_into_slot_list(
                     occupied.get(),
                     (slot, account_info),
-                    None, // should be None because we don't expect a different slot # during index generation
-                    &mut Vec::default(),
-                    UpsertReclaim::IgnoreReclaims,
                 );
-
-                // In case of a race condition, multiple threads try to insert
-                // to the same pubkey with different slots. We only need to
-                // record `other_slot` once. If the slot list length after
-                // update is not 2, it means that someone else has already
-                // recorded `other_slot` before us. Therefore, We don't need to
-                // record it again.
-                if updated_slot_list_len != 2 {
-                    // clear `other_slot` if we don't win the race.
-                    other_slot = None;
-                }
-
                 (
                     true, /* found in mem */
                     true, /* already existed */
