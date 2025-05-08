@@ -1148,23 +1148,20 @@ fn update_callee_account(
     if direct_mapping {
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm as usize;
-        match callee_account.can_data_be_resized(post_len) {
-            Ok(()) => {
-                let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
-                // bpf_loader_deprecated programs don't have a realloc region
-                if is_loader_deprecated && realloc_bytes_used > 0 {
-                    return Err(InstructionError::InvalidRealloc.into());
-                }
-                if prev_len != post_len {
-                    callee_account.set_data_length(post_len)?;
-                    // pointer to data may have changed, so caller must be updated
-                    must_update_caller = true;
-                }
+        if prev_len != post_len {
+            let address_space_reserved_for_account = if is_loader_deprecated {
+                caller_account.original_data_len
+            } else {
+                caller_account
+                    .original_data_len
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+            };
+            if post_len > address_space_reserved_for_account {
+                return Err(InstructionError::InvalidRealloc.into());
             }
-            Err(err) if prev_len != post_len => {
-                return Err(Box::new(err));
-            }
-            _ => {}
+            callee_account.set_data_length(post_len)?;
+            // pointer to data may have changed, so caller must be updated
+            must_update_caller = true;
         }
     } else {
         // The redundant check helps to avoid the expensive data comparison if we can
@@ -1235,16 +1232,17 @@ fn update_caller_account(
     let prev_len = *caller_account.ref_to_len_in_vm as usize;
     let post_len = callee_account.get_data().len();
     if prev_len != post_len {
-        let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
-            0
+        let is_loader_deprecated = !invoke_context.get_check_aligned();
+        let address_space_reserved_for_account = if direct_mapping && is_loader_deprecated {
+            caller_account.original_data_len
         } else {
-            MAX_PERMITTED_DATA_INCREASE
-        };
-        let data_overflow = post_len
-            > caller_account
+            caller_account
                 .original_data_len
-                .saturating_add(max_increase);
-        if data_overflow {
+                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+        };
+        if post_len > address_space_reserved_for_account {
+            let max_increase =
+                address_space_reserved_for_account.saturating_sub(caller_account.original_data_len);
             ic_msg!(
                 invoke_context,
                 "Account data size realloc limited to {max_increase} in inner instructions",
