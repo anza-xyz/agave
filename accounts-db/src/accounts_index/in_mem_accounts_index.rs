@@ -143,7 +143,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for InMemAccoun
 
 pub enum InsertNewEntryResults {
     DidNotExist,
-    ExistedNewEntryZeroLamports,
+    ExistedNewEntryZeroLamports(Option<Slot>),
     ExistedNewEntryNonZeroLamports(Option<Slot>),
 }
 
@@ -876,7 +876,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if !already_existed {
             InsertNewEntryResults::DidNotExist
         } else if new_entry_zero_lamports {
-            InsertNewEntryResults::ExistedNewEntryZeroLamports
+            InsertNewEntryResults::ExistedNewEntryZeroLamports(other_slot)
         } else {
             InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot)
         }
