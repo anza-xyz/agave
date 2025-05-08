@@ -37,16 +37,21 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
 solana-rent-debits = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
@@ -86,7 +91,7 @@ solana-program-runtime = { workspace = true, features = ["dev-context-only-utils
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sdk = { workspace = true, default-features = false }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signature = { workspace = true }
@@ -97,7 +102,7 @@ solana-svm-conformance = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 spl-token = { workspace = true }
 test-case = { workspace = true }

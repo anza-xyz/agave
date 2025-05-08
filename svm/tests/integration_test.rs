@@ -8,28 +8,22 @@ use {
         WALLCLOCK_TIME,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
-    solana_account::PROGRAM_OWNERS,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
+    solana_clock::Slot,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_structure::FeeDetails,
+    solana_hash::Hash,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_loader_v3_interface as bpf_loader_upgradeable,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_nonce::{self as nonce, state::DurableNonce},
+    solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
     solana_pubkey::{pubkey, Pubkey},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable,
-        clock::Slot,
-        compute_budget::ComputeBudgetInstruction,
-        entrypoint::MAX_PERMITTED_DATA_INCREASE,
-        hash::Hash,
-        instruction::{AccountMeta, Instruction},
-        native_loader,
-        native_token::LAMPORTS_PER_SOL,
-        nonce::{self, state::DurableNonce},
-        signature::Signer,
-        signer::keypair::Keypair,
-        system_instruction, system_program, system_transaction,
-        sysvar::rent::Rent,
-        transaction::{SanitizedTransaction, Transaction, TransactionError},
-    },
+    solana_sdk_ids::native_loader,
+    solana_signer::Signer,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         nonce_info::NonceInfo,
@@ -43,7 +37,12 @@ use {
         },
     },
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
+    solana_system_transaction as system_transaction,
+    solana_sysvar::rent::Rent,
+    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::TransactionError,
     solana_type_overrides::sync::{Arc, RwLock},
     std::collections::HashMap,
     test_case::test_case,
@@ -981,7 +980,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             Pubkey::new_unique()
         };
 
-        let nonce_size = nonce::State::size();
+        let nonce_size = nonce::state::State::size();
         let mut nonce_balance = Rent::default().minimum_balance(nonce_size);
 
         if !fake_fee_payer && !fee_paying_nonce {
@@ -1001,7 +1000,7 @@ fn simple_nonce(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             nonce::state::Data::new(fee_payer, nonce_initial_hash, LAMPORTS_PER_SIGNATURE);
         let nonce_account = AccountSharedData::new_data(
             nonce_balance,
-            &nonce::state::Versions::new(nonce::State::Initialized(nonce_data.clone())),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce_data.clone())),
             &system_program::id(),
         )
         .unwrap();
@@ -1433,13 +1432,15 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
         non_fee_nonce_keypair.pubkey()
     };
 
-    let nonce_size = nonce::State::size();
+    let nonce_size = nonce::state::State::size();
     let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
     let initial_nonce_data =
         nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
     let initial_nonce_account = AccountSharedData::new_data(
         LAMPORTS_PER_SOL,
-        &nonce::state::Versions::new(nonce::State::Initialized(initial_nonce_data.clone())),
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(
+            initial_nonce_data.clone(),
+        )),
         &system_program::id(),
     )
     .unwrap();
@@ -1851,7 +1852,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             nonce::state::Data::new(new_authority, initial_durable, LAMPORTS_PER_SIGNATURE);
         let final_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
-            &nonce::state::Versions::new(nonce::State::Initialized(final_nonce_data)),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(final_nonce_data)),
             &system_program::id(),
         )
         .unwrap();
@@ -1900,7 +1901,7 @@ fn simd83_nonce_reuse(fee_paying_nonce: bool) -> Vec<SvmTestEntry> {
             nonce::state::Data::new(new_authority, advanced_durable, LAMPORTS_PER_SIGNATURE);
         let final_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
-            &nonce::state::Versions::new(nonce::State::Initialized(final_nonce_data)),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(final_nonce_data)),
             &system_program::id(),
         )
         .unwrap();
@@ -1939,7 +1940,7 @@ impl WriteProgramInstruction {
                 vec![2],
                 vec![
                     AccountMeta::new(target, false),
-                    AccountMeta::new(solana_sdk::incinerator::id(), false),
+                    AccountMeta::new(solana_sdk_ids::incinerator::id(), false),
                 ],
             ),
             Self::Realloc(new_size) => {
@@ -2141,7 +2142,9 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
             nonce::state::Data::new(dealloc_fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
         let initial_nonce_account = AccountSharedData::new_data(
             LAMPORTS_PER_SOL,
-            &nonce::state::Versions::new(nonce::State::Initialized(initial_nonce_data.clone())),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(
+                initial_nonce_data.clone(),
+            )),
             &system_program::id(),
         )
         .unwrap();
@@ -2295,7 +2298,7 @@ fn program_cache_update_tombstone() -> Vec<SvmTestEntry> {
         .push((program_name.to_string(), DEPLOYMENT_SLOT, Some(fee_payer)));
 
     // 0: close a deployed program
-    let instruction = bpf_loader_upgradeable::close_any(
+    let instruction = bpf_loader_upgradeable::instruction::close_any(
         &bpf_loader_upgradeable::get_program_data_address(&program_id),
         &Pubkey::new_unique(),
         Some(&fee_payer),
@@ -2648,7 +2651,8 @@ mod balance_collector {
     use {
         super::*,
         rand0_7::prelude::*,
-        solana_sdk::{bpf_loader, program_pack::Pack},
+        solana_program_pack::Pack,
+        solana_sdk_ids::bpf_loader,
         spl_generic_token::token_2022,
         spl_token::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         test_case::test_case,
