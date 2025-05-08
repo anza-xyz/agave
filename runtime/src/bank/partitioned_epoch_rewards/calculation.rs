@@ -363,7 +363,7 @@ impl Bank {
                             .entry(vote_pubkey)
                             .or_insert(VoteReward {
                                 commission,
-                                vote_account: vote_account.account().clone(),
+                                vote_account: vote_account.into(),
                                 vote_rewards: 0,
                             });
 
