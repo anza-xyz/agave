@@ -105,25 +105,6 @@ pub fn get_cluster_shred_version_with_binding(
 // in case the port ranges provided are very large.
 const MAX_PORT_VERIFY_THREADS: usize = 64;
 
-/// Checks if all of the provided TCP/UDP ports are reachable by the machine at
-/// `ip_echo_server_addr`. Tests must complete within timeout provided.
-/// Tests will run concurrently when possible, using up to 64 threads for IO.
-/// This function assumes that all sockets are bound to the same IP, and will panic otherwise
-#[deprecated(
-    since = "2.2.0",
-    note = "use `verify_all_reachable_udp` and `verify_all_reachable_tcp` instead"
-)]
-pub fn verify_reachable_ports(
-    ip_echo_server_addr: &SocketAddr,
-    tcp_listeners: Vec<(u16, TcpListener)>,
-    udp_sockets: &[&UdpSocket],
-) -> bool {
-    verify_all_reachable_tcp(
-        ip_echo_server_addr,
-        tcp_listeners.into_iter().map(|(_, l)| l).collect(),
-    ) && verify_all_reachable_udp(ip_echo_server_addr, udp_sockets)
-}
-
 /// Checks if all of the provided UDP ports are reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
 /// Tests will run concurrently when possible, using up to 64 threads for IO.
@@ -330,18 +311,6 @@ pub fn bind_common_in_range_with_config(
     )))
 }
 
-// Find a port in the given range that is available for both TCP and UDP
-#[deprecated(
-    since = "2.2.0",
-    note = "use `bind_common_in_range_with_config` instead"
-)]
-pub fn bind_common_in_range(
-    ip_addr: IpAddr,
-    range: PortRange,
-) -> io::Result<(u16, (UdpSocket, TcpListener))> {
-    bind_common_in_range_with_config(ip_addr, range, SocketConfig::default())
-}
-
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
     let config = SocketConfig::default();
     bind_in_range_with_config(ip_addr, range, config)
@@ -378,11 +347,6 @@ pub fn bind_with_any_port_with_config(
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
-}
-
-#[deprecated(since = "2.2.0", note = "use `bind_with_any_port_with_config` instead")]
-pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
-    bind_with_any_port_with_config(ip_addr, SocketConfig::default())
 }
 
 /// binds num sockets to the same port in a range with config
@@ -436,22 +400,6 @@ pub fn multi_bind_in_range_with_config(
         error.unwrap()?;
     }
     Ok((port, sockets))
-}
-
-// binds many sockets to the same port in a range
-// Note: The `mut` modifier for `num` is unused but kept for compatibility with the public API.
-#[deprecated(
-    since = "2.2.0",
-    note = "use `multi_bind_in_range_with_config` instead"
-)]
-#[allow(unused_mut)]
-pub fn multi_bind_in_range(
-    ip_addr: IpAddr,
-    range: PortRange,
-    mut num: usize,
-) -> io::Result<(u16, Vec<UdpSocket>)> {
-    let config = SocketConfig::default().reuseport(true);
-    multi_bind_in_range_with_config(ip_addr, range, config, num)
 }
 
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
