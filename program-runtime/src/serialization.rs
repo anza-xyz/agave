@@ -555,23 +555,17 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
             {
                 return Err(InstructionError::InvalidRealloc);
             }
-            // The redundant check helps to avoid the expensive data comparison if we can
-            let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
             if copy_account_data {
                 let data = buffer
                     .get(start..start + post_len)
                     .ok_or(InstructionError::InvalidArgument)?;
+                // The redundant check helps to avoid the expensive data comparison if we can
                 match borrowed_account.can_data_be_resized(post_len) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
                 }
-                start += pre_len; // data
-                start += MAX_PERMITTED_DATA_INCREASE; // realloc padding
             } else {
-                // See Serializer::write_account() as to why we have this
-                // padding before the realloc region here.
-                start += BPF_ALIGN_OF_U128.saturating_sub(alignment_offset);
                 let data = buffer
                     .get(start..start + MAX_PERMITTED_DATA_INCREASE)
                     .ok_or(InstructionError::InvalidArgument)?;
@@ -594,7 +588,15 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                     _ => {}
                 }
             }
-            start += alignment_offset;
+            start += if copy_account_data {
+                let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                pre_len // data
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE) // realloc padding
+                    .saturating_add(alignment_offset)
+            } else {
+                // See Serializer::write_account() as to why we have this
+                BPF_ALIGN_OF_U128
+            };
             start += size_of::<u64>(); // rent_epoch
             if borrowed_account.get_owner().to_bytes() != owner {
                 // Change the owner at the end so that we are allowed to change the lamports and data before
