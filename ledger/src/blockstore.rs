@@ -7172,8 +7172,10 @@ pub mod tests {
             )
             .0;
 
+        let terminator_shred = terminator.last().unwrap().clone();
+        assert!(terminator_shred.last_in_slot());
         assert!(blockstore.should_insert_data_shred(
-            &terminator[0],
+            &terminator_shred,
             &slot_meta,
             &HashMap::new(),
             max_root,
@@ -7197,7 +7199,7 @@ pub mod tests {
         // Now we check if terminator is eligible to be inserted
         assert!(
             !blockstore.should_insert_data_shred(
-                terminator.last().unwrap(),
+                &terminator_shred,
                 &slot_meta,
                 &HashMap::new(),
                 max_root,
