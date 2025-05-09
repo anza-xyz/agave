@@ -1,13 +1,13 @@
-use std::{
-    borrow::Borrow,
-    collections::{BTreeMap, HashMap},
-    time::Duration,
-};
 /// A helper for calculating a stake-weighted timestamp estimate from a set of timestamps and epoch
 /// stake.
 use {
     solana_clock::{Slot, UnixTimestamp},
     solana_pubkey::Pubkey,
+    std::{
+        borrow::Borrow,
+        collections::{BTreeMap, HashMap},
+        time::Duration,
+    },
 };
 
 // Obsolete limits
