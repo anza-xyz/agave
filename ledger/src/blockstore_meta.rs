@@ -73,6 +73,10 @@ impl CompletedDataIndexesV2 {
         self.index.iter_ones().map(|i| i as u32)
     }
 
+    /// Only needed for V1 / V2 test compatibility.
+    ///
+    /// TODO: Remove once the migration is complete.
+    #[cfg(test)]
     #[inline]
     pub fn into_iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
         self.iter()
@@ -113,7 +117,7 @@ impl FromIterator<u32> for CompletedDataIndexesV2 {
 
 impl From<CompletedDataIndexesV2> for CompletedDataIndexesV1 {
     fn from(value: CompletedDataIndexesV2) -> Self {
-        value.into_iter().collect()
+        value.iter().collect()
     }
 }
 
