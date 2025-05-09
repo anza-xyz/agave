@@ -4,6 +4,7 @@ use {
     crate::poh_recorder::{PohRecorder, Record},
     crossbeam_channel::Receiver,
     log::*,
+    solana_clock::UPDATED_HASHES_PER_SECOND_6,
     solana_entry::poh::Poh,
     solana_measure::{measure::Measure, measure_us},
     solana_poh_config::PohConfig,
@@ -21,13 +22,15 @@ pub struct PohService {
     tick_producer: JoinHandle<()>,
 }
 
-// Number of hashes to batch together.
+// Amount of time to hash continuously.
+//
 // * If this number is too small, PoH hash rate will suffer.
-// * The larger this number is from 1, the speed of recording transactions will suffer due to lock
-//   contention with the PoH hashing within `tick_producer()`.
+// * If this number is too large, PoH will be less responsive to record requests.
 //
 // Can use test_poh_service to calibrate this
-pub const DEFAULT_HASHES_PER_BATCH: u64 = 64;
+const TARGET_HASH_BATCH_TIME_US: u64 = 50;
+pub const DEFAULT_HASHES_PER_BATCH: u64 =
+    TARGET_HASH_BATCH_TIME_US * UPDATED_HASHES_PER_SECOND_6 / 1_000_000;
 
 pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
 
