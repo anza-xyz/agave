@@ -1,10 +1,11 @@
 use {
     assert_matches::assert_matches,
     common::{add_upgradeable_loader_account, assert_ix_error, setup_test_context},
+    solana_loader_v3_interface::instruction::extend_program_checked,
     solana_program_test::*,
     solana_sdk::{
         account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable::{extend_program, id, UpgradeableLoaderState},
+        bpf_loader_upgradeable::{id, UpgradeableLoaderState},
         instruction::InstructionError,
         pubkey::Pubkey,
         signature::{Keypair, Signer},
@@ -21,6 +22,7 @@ async fn test_extend_program() {
     let mut context = setup_test_context().await;
     let program_file = find_file("noop.so").expect("Failed to find the file");
     let data = read_file(program_file);
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -41,7 +43,7 @@ async fn test_extend_program() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         program_data_len,
         |account| account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&data),
@@ -53,13 +55,14 @@ async fn test_extend_program() {
     let recent_blockhash = context.last_blockhash;
     const ADDITIONAL_BYTES: u32 = 42;
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program(
+        &[extend_program_checked(
             &program_address,
+            &upgrade_authority.pubkey(),
             Some(&payer.pubkey()),
             ADDITIONAL_BYTES,
         )],
         Some(&payer.pubkey()),
-        &[payer],
+        &[payer, &upgrade_authority],
         recent_blockhash,
     );
 
@@ -80,6 +83,7 @@ async fn test_failed_extend_twice_in_same_slot() {
     let mut context = setup_test_context().await;
     let program_file = find_file("noop.so").expect("Failed to find the file");
     let data = read_file(program_file);
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -100,7 +104,7 @@ async fn test_failed_extend_twice_in_same_slot() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         program_data_len,
         |account| account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&data),
@@ -112,13 +116,14 @@ async fn test_failed_extend_twice_in_same_slot() {
     let recent_blockhash = context.last_blockhash;
     const ADDITIONAL_BYTES: u32 = 42;
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program(
+        &[extend_program_checked(
             &program_address,
+            &upgrade_authority.pubkey(),
             Some(&payer.pubkey()),
             ADDITIONAL_BYTES,
         )],
         Some(&payer.pubkey()),
-        &[payer],
+        &[payer, &upgrade_authority],
         recent_blockhash,
     );
 
@@ -139,8 +144,68 @@ async fn test_failed_extend_twice_in_same_slot() {
         .unwrap();
     // Extending the program in the same slot should fail
     let transaction = Transaction::new_signed_with_payer(
-        &[extend_program(
+        &[extend_program_checked(
             &program_address,
+            &upgrade_authority.pubkey(),
+            Some(&payer.pubkey()),
+            ADDITIONAL_BYTES,
+        )],
+        Some(&payer.pubkey()),
+        &[payer, &upgrade_authority],
+        recent_blockhash,
+    );
+
+    assert_matches!(
+        client
+            .process_transaction(transaction)
+            .await
+            .unwrap_err()
+            .unwrap(),
+        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
+    );
+}
+
+#[tokio::test]
+async fn test_failed_extend_upgrade_authority_did_not_sign() {
+    let mut context = setup_test_context().await;
+    let program_file = find_file("noop.so").expect("Failed to find the file");
+    let data = read_file(program_file);
+    let upgrade_authority = Keypair::new();
+
+    let program_address = Pubkey::new_unique();
+    let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
+    add_upgradeable_loader_account(
+        &mut context,
+        &program_address,
+        &UpgradeableLoaderState::Program {
+            programdata_address,
+        },
+        UpgradeableLoaderState::size_of_program(),
+        |_| {},
+    )
+    .await;
+    let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+    let program_data_len = data.len() + programdata_data_offset;
+    add_upgradeable_loader_account(
+        &mut context,
+        &programdata_address,
+        &UpgradeableLoaderState::ProgramData {
+            slot: 0,
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
+        },
+        program_data_len,
+        |account| account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&data),
+    )
+    .await;
+
+    let client = &mut context.banks_client;
+    let payer = &context.payer;
+    let recent_blockhash = context.last_blockhash;
+    const ADDITIONAL_BYTES: u32 = 42;
+    let transaction = Transaction::new_signed_with_payer(
+        &[extend_program_checked(
+            &program_address,
+            &payer.pubkey(),
             Some(&payer.pubkey()),
             ADDITIONAL_BYTES,
         )],
@@ -155,7 +220,30 @@ async fn test_failed_extend_twice_in_same_slot() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
+        TransactionError::InstructionError(0, InstructionError::IncorrectAuthority)
+    );
+
+    let mut ix = extend_program_checked(
+        &program_address,
+        &upgrade_authority.pubkey(),
+        Some(&payer.pubkey()),
+        ADDITIONAL_BYTES,
+    );
+    ix.accounts[2].is_signer = false;
+    let transaction = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&payer.pubkey()),
+        &[payer],
+        recent_blockhash,
+    );
+
+    assert_matches!(
+        client
+            .process_transaction(transaction)
+            .await
+            .unwrap_err()
+            .unwrap(),
+        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature)
     );
 }
 
@@ -190,7 +278,7 @@ async fn test_extend_program_not_upgradeable() {
     let payer_address = context.payer.pubkey();
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 42),
+        extend_program_checked(&program_address, &payer_address, Some(&payer_address), 42),
         None,
         InstructionError::Immutable,
         "should fail because the program data account isn't upgradeable",
@@ -201,6 +289,7 @@ async fn test_extend_program_not_upgradeable() {
 #[tokio::test]
 async fn test_extend_program_by_zero_bytes() {
     let mut context = setup_test_context().await;
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -219,7 +308,7 @@ async fn test_extend_program_by_zero_bytes() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         100,
         |_| {},
@@ -229,8 +318,13 @@ async fn test_extend_program_by_zero_bytes() {
     let payer_address = context.payer.pubkey();
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 0),
-        None,
+        extend_program_checked(
+            &program_address,
+            &upgrade_authority.pubkey(),
+            Some(&payer_address),
+            0,
+        ),
+        Some(&upgrade_authority),
         InstructionError::InvalidInstructionData,
         "should fail because the program data account must be extended by more than 0 bytes",
     )
@@ -240,6 +334,7 @@ async fn test_extend_program_by_zero_bytes() {
 #[tokio::test]
 async fn test_extend_program_past_max_size() {
     let mut context = setup_test_context().await;
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -258,7 +353,7 @@ async fn test_extend_program_past_max_size() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         MAX_PERMITTED_DATA_LENGTH as usize,
         |_| {},
@@ -268,8 +363,13 @@ async fn test_extend_program_past_max_size() {
     let payer_address = context.payer.pubkey();
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 1),
-        None,
+        extend_program_checked(
+            &program_address,
+            &upgrade_authority.pubkey(),
+            Some(&payer_address),
+            1,
+        ),
+        Some(&upgrade_authority),
         InstructionError::InvalidRealloc,
         "should fail because the program data account cannot be extended past the max data size",
     )
@@ -280,6 +380,7 @@ async fn test_extend_program_past_max_size() {
 async fn test_extend_program_with_invalid_payer() {
     let mut context = setup_test_context().await;
     let rent = context.banks_client.get_rent().await.unwrap();
+    let upgrade_authority_address = context.payer.pubkey();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -298,7 +399,7 @@ async fn test_extend_program_with_invalid_payer() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority_address),
         },
         100,
         |_| {},
@@ -325,8 +426,9 @@ async fn test_extend_program_with_invalid_payer() {
 
     assert_ix_error(
         &mut context,
-        extend_program(
+        extend_program_checked(
             &program_address,
+            &upgrade_authority_address,
             Some(&payer_with_insufficient_funds.pubkey()),
             1024,
         ),
@@ -338,8 +440,9 @@ async fn test_extend_program_with_invalid_payer() {
 
     assert_ix_error(
         &mut context,
-        extend_program(
+        extend_program_checked(
             &program_address,
+            &upgrade_authority_address,
             Some(&payer_with_invalid_owner.pubkey()),
             1,
         ),
@@ -349,8 +452,9 @@ async fn test_extend_program_with_invalid_payer() {
     )
     .await;
 
-    let mut ix = extend_program(
+    let mut ix = extend_program_checked(
         &program_address,
+        &upgrade_authority_address,
         Some(&payer_with_sufficient_funds.pubkey()),
         1,
     );
@@ -382,6 +486,7 @@ async fn test_extend_program_without_payer() {
 
     let program_file = find_file("noop.so").expect("Failed to find the file");
     let data = read_file(program_file);
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -402,7 +507,7 @@ async fn test_extend_program_without_payer() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         program_data_len,
         |account| account.data_as_mut_slice()[programdata_data_offset..].copy_from_slice(&data),
@@ -411,8 +516,8 @@ async fn test_extend_program_without_payer() {
 
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, None, 1024),
-        None,
+        extend_program_checked(&program_address, &upgrade_authority.pubkey(), None, 1024),
+        Some(&upgrade_authority),
         InstructionError::NotEnoughAccountKeys,
         "should fail because program data has insufficient funds to cover rent",
     )
@@ -434,10 +539,15 @@ async fn test_extend_program_without_payer() {
                 &programdata_address,
                 min_balance_increase_for_extend,
             ),
-            extend_program(&program_address, None, ADDITIONAL_BYTES),
+            extend_program_checked(
+                &program_address,
+                &upgrade_authority.pubkey(),
+                None,
+                ADDITIONAL_BYTES,
+            ),
         ],
         Some(&payer.pubkey()),
-        &[payer],
+        &[payer, &upgrade_authority],
         recent_blockhash,
     );
 
@@ -456,6 +566,7 @@ async fn test_extend_program_without_payer() {
 #[tokio::test]
 async fn test_extend_program_with_invalid_system_program() {
     let mut context = setup_test_context().await;
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -475,7 +586,7 @@ async fn test_extend_program_with_invalid_system_program() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         program_data_len,
         |_| {},
@@ -483,7 +594,12 @@ async fn test_extend_program_with_invalid_system_program() {
     .await;
 
     let payer_address = context.payer.pubkey();
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program_checked(
+        &program_address,
+        &upgrade_authority.pubkey(),
+        Some(&payer_address),
+        1,
+    );
 
     // Change system program to an invalid key
     {
@@ -498,7 +614,7 @@ async fn test_extend_program_with_invalid_system_program() {
     assert_ix_error(
         &mut context,
         ix,
-        None,
+        Some(&upgrade_authority),
         InstructionError::MissingAccount,
         "should fail because the system program is missing",
     )
@@ -509,6 +625,7 @@ async fn test_extend_program_with_invalid_system_program() {
 async fn test_extend_program_with_mismatch_program_data() {
     let mut context = setup_test_context().await;
     let payer_address = context.payer.pubkey();
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -529,14 +646,19 @@ async fn test_extend_program_with_mismatch_program_data() {
         &mismatch_programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         100,
         |_| {},
     )
     .await;
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program_checked(
+        &program_address,
+        &upgrade_authority.pubkey(),
+        Some(&payer_address),
+        1,
+    );
 
     // Replace ProgramData account meta with invalid account
     {
@@ -551,7 +673,7 @@ async fn test_extend_program_with_mismatch_program_data() {
     assert_ix_error(
         &mut context,
         ix,
-        None,
+        Some(&upgrade_authority),
         InstructionError::InvalidArgument,
         "should fail because the program data account doesn't match the program",
     )
@@ -562,6 +684,7 @@ async fn test_extend_program_with_mismatch_program_data() {
 async fn test_extend_program_with_readonly_program_data() {
     let mut context = setup_test_context().await;
     let payer_address = context.payer.pubkey();
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -580,14 +703,19 @@ async fn test_extend_program_with_readonly_program_data() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         100,
         |_| {},
     )
     .await;
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program_checked(
+        &program_address,
+        &upgrade_authority.pubkey(),
+        Some(&payer_address),
+        1,
+    );
 
     // Demote ProgramData account meta to read-only
     {
@@ -602,7 +730,7 @@ async fn test_extend_program_with_readonly_program_data() {
     assert_ix_error(
         &mut context,
         ix,
-        None,
+        Some(&upgrade_authority),
         InstructionError::InvalidArgument,
         "should fail because the program data account is not writable",
     )
@@ -613,6 +741,7 @@ async fn test_extend_program_with_readonly_program_data() {
 async fn test_extend_program_with_invalid_program_data_state() {
     let mut context = setup_test_context().await;
     let payer_address = context.payer.pubkey();
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -639,8 +768,13 @@ async fn test_extend_program_with_invalid_program_data_state() {
 
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 1024),
-        None,
+        extend_program_checked(
+            &program_address,
+            &upgrade_authority.pubkey(),
+            Some(&payer_address),
+            1024,
+        ),
+        Some(&upgrade_authority),
         InstructionError::InvalidAccountData,
         "should fail because the program data account state isn't valid",
     )
@@ -680,7 +814,7 @@ async fn test_extend_program_with_invalid_program_data_owner() {
 
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 1024),
+        extend_program_checked(&program_address, &payer_address, Some(&payer_address), 1024),
         None,
         InstructionError::InvalidAccountOwner,
         "should fail because the program data account owner isn't valid",
@@ -692,6 +826,7 @@ async fn test_extend_program_with_invalid_program_data_owner() {
 async fn test_extend_program_with_readonly_program() {
     let mut context = setup_test_context().await;
     let payer_address = context.payer.pubkey();
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -710,14 +845,19 @@ async fn test_extend_program_with_readonly_program() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         100,
         |_| {},
     )
     .await;
 
-    let mut ix = extend_program(&program_address, Some(&payer_address), 1);
+    let mut ix = extend_program_checked(
+        &program_address,
+        &upgrade_authority.pubkey(),
+        Some(&payer_address),
+        1,
+    );
 
     // Demote Program account meta to read-only
     {
@@ -732,7 +872,7 @@ async fn test_extend_program_with_readonly_program() {
     assert_ix_error(
         &mut context,
         ix,
-        None,
+        Some(&upgrade_authority),
         InstructionError::InvalidArgument,
         "should fail because the program account is not writable",
     )
@@ -743,6 +883,7 @@ async fn test_extend_program_with_readonly_program() {
 async fn test_extend_program_with_invalid_program_owner() {
     let mut context = setup_test_context().await;
     let payer_address = context.payer.pubkey();
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -762,7 +903,7 @@ async fn test_extend_program_with_invalid_program_owner() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         100,
         |_| {},
@@ -771,8 +912,13 @@ async fn test_extend_program_with_invalid_program_owner() {
 
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 1024),
-        None,
+        extend_program_checked(
+            &program_address,
+            &upgrade_authority.pubkey(),
+            Some(&payer_address),
+            1024,
+        ),
+        Some(&upgrade_authority),
         InstructionError::InvalidAccountOwner,
         "should fail because the program account owner isn't valid",
     )
@@ -783,6 +929,7 @@ async fn test_extend_program_with_invalid_program_owner() {
 async fn test_extend_program_with_invalid_program_state() {
     let mut context = setup_test_context().await;
     let payer_address = context.payer.pubkey();
+    let upgrade_authority = Keypair::new();
 
     let program_address = Pubkey::new_unique();
     let (programdata_address, _) = Pubkey::find_program_address(&[program_address.as_ref()], &id());
@@ -802,7 +949,7 @@ async fn test_extend_program_with_invalid_program_state() {
         &programdata_address,
         &UpgradeableLoaderState::ProgramData {
             slot: 0,
-            upgrade_authority_address: Some(Pubkey::new_unique()),
+            upgrade_authority_address: Some(upgrade_authority.pubkey()),
         },
         100,
         |_| {},
@@ -811,8 +958,13 @@ async fn test_extend_program_with_invalid_program_state() {
 
     assert_ix_error(
         &mut context,
-        extend_program(&program_address, Some(&payer_address), 1024),
-        None,
+        extend_program_checked(
+            &program_address,
+            &upgrade_authority.pubkey(),
+            Some(&payer_address),
+            1024,
+        ),
+        Some(&upgrade_authority),
         InstructionError::InvalidAccountData,
         "should fail because the program account state isn't valid",
     )
