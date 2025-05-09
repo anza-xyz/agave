@@ -24,6 +24,7 @@ use {
     solana_clap_utils::input_parsers::{
         keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
     },
+    solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
@@ -39,6 +40,8 @@ use {
         cluster_info::{Node, NodeConfig},
         contact_info::ContactInfo,
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         blockstore_options::{
@@ -50,6 +53,7 @@ use {
     solana_logger::redirect_stderr_to_file,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
@@ -60,13 +64,8 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
     solana_send_transaction_service::send_transaction_service,
+    solana_signer::Signer,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::xdp::{set_cpu_affinity, XdpConfig},

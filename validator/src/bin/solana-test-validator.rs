@@ -7,30 +7,29 @@ use {
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::*,
+    solana_account::AccountSharedData,
     solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkeys_of, value_of},
         input_validators::normalize_to_url_if_moniker,
     },
+    solana_clock::Slot,
     solana_core::consensus::tower_storage::FileTowerStorage,
+    solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::run_local_faucet_with_port,
+    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
+    solana_native_token::sol_to_lamports,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
     },
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        account::AccountSharedData,
-        clock::Slot,
-        epoch_schedule::EpochSchedule,
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
-        system_program,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::program as system_program,
     solana_test_validator::*,
     std::{
         collections::{HashMap, HashSet},
@@ -215,7 +214,7 @@ fn main() {
 
             upgradeable_programs_to_load.push(UpgradeableProgramInfo {
                 program_id: address,
-                loader: solana_sdk::bpf_loader_upgradeable::id(),
+                loader: solana_sdk_ids::bpf_loader_upgradeable::id(),
                 upgrade_authority: Pubkey::default(),
                 program_path,
             });
@@ -244,7 +243,7 @@ fn main() {
 
             upgradeable_programs_to_load.push(UpgradeableProgramInfo {
                 program_id: address,
-                loader: solana_sdk::bpf_loader_upgradeable::id(),
+                loader: solana_sdk_ids::bpf_loader_upgradeable::id(),
                 upgrade_authority: upgrade_authority_address,
                 program_path,
             });

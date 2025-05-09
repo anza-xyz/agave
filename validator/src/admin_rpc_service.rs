@@ -17,13 +17,12 @@ use {
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
-    solana_sdk::{
-        exit::Exit,
-        pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair, Signer},
-    },
+    solana_signer::Signer,
+    solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
         env, error,
@@ -898,6 +897,7 @@ mod tests {
     use {
         super::*,
         serde_json::Value,
+        solana_account::{Account, AccountSharedData},
         solana_accounts_db::{
             accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_index::AccountSecondaryIndexes,
@@ -916,17 +916,14 @@ mod tests {
         solana_net_utils::bind_to_unspecified,
         solana_program_option::COption,
         solana_program_pack::Pack,
+        solana_pubkey::Pubkey,
         solana_rpc::rpc::create_validator_exit,
         solana_runtime::{
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
         },
-        solana_sdk::{
-            account::{Account, AccountSharedData},
-            pubkey::Pubkey,
-            system_program,
-        },
         solana_streamer::socket::SocketAddrSpace,
+        solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         spl_generic_token::token,
         spl_token_2022::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
@@ -954,8 +951,8 @@ mod tests {
             let cluster_info = Arc::new(ClusterInfo::new(
                 ContactInfo::new(
                     keypair.pubkey(),
-                    solana_sdk::timing::timestamp(), // wallclock
-                    0u16,                            // shred_version
+                    solana_time_utils::timestamp(), // wallclock
+                    0u16,                           // shred_version
                 ),
                 keypair,
                 SocketAddrSpace::Unspecified,
