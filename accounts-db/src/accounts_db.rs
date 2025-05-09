@@ -1073,6 +1073,13 @@ pub struct AccountStorageEntry {
     /// account as "dead" twice. However, this should be fine. It just makes
     /// shrink more likely to visit this storage.
     zero_lamport_single_ref_offsets: RwLock<IntSet<Offset>>,
+
+    /// Dead Accounts. These are accounts that are still present in the storage
+    /// but should be ignored during rebuild. They have been removed
+    /// from the accounts index, so they will not be picked up by scan.
+    /// Slot is the slot that the account was rewritten to a newer
+    /// Slot and invalidated from this storage.
+    dead_account_offsets: RwLock<Vec<(Offset, usize, Slot)>>,
 }
 
 impl AccountStorageEntry {
@@ -1094,6 +1101,7 @@ impl AccountStorageEntry {
             count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
+            dead_account_offsets: RwLock::default(),
         }
     }
 
@@ -1112,6 +1120,7 @@ impl AccountStorageEntry {
             alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
             zero_lamport_single_ref_offsets: RwLock::default(),
+            dead_account_offsets: RwLock::default(),
         })
     }
 
@@ -1128,6 +1137,7 @@ impl AccountStorageEntry {
             count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
+            dead_account_offsets: RwLock::default(),
         }
     }
 
@@ -1162,6 +1172,44 @@ impl AccountStorageEntry {
 
     pub fn alive_bytes(&self) -> usize {
         self.alive_bytes.load(Ordering::Acquire)
+    }
+
+    /// Adds passed in offset to the dead account vector
+    pub fn add_dead_account(&self, offset: Offset, data_len: usize, slot: Slot) {
+        self.dead_account_offsets
+            .write()
+            .unwrap()
+            .push((offset, data_len, slot));
+    }
+
+    /// Returns the dead accounts that were dead as of Slot or older
+    /// If slot is None then it will be assumed to be the max root
+    /// and all dead accounts will be returned
+    pub fn get_dead_accounts(&self, slot: Option<Slot>) -> Vec<(Offset, usize)> {
+        self.dead_account_offsets
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, _, dead_slot)| slot.is_none_or(|s| *dead_slot <= s))
+            .map(|(offset, data_len, _)| (*offset, *data_len))
+            .collect()
+    }
+
+    /// Returns the number of dead bytes in the storage as of a given slot
+    /// If slot is None then it will be assumed to be the max root
+    /// and all dead bytes will be returned
+    pub fn get_dead_account_bytes(&self, slot: Option<Slot>) -> usize {
+        let dead_accounts = self.dead_account_offsets.read().unwrap();
+        let dead_bytes = dead_accounts
+            .iter()
+            .filter(|(_, _, dead_slot)| slot.is_none_or(|s| *dead_slot <= s))
+            .map(|(offset, data_len, _)| {
+                self.accounts
+                    .calculate_stored_size(*data_len)
+                    .min(self.accounts.len() - offset)
+            })
+            .sum();
+        dead_bytes
     }
 
     /// Return true if offset is "new" and inserted successfully. Otherwise,
@@ -1213,6 +1261,13 @@ impl AccountStorageEntry {
         let mut count_and_status = self.count_and_status.lock_write();
         *count_and_status = (count_and_status.0 + num_accounts, count_and_status.1);
         self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
+    }
+
+    #[cfg(feature = "dev-context-only-utils")]
+    /// This is a test hook to allow us to reopen the storage as readonly
+    /// This is only used in tests, and should not be used in production code
+    pub fn reopen_as_readonly_test_hook(&self, storage_access: StorageAccess) -> Option<Self> {
+        self.reopen_as_readonly(storage_access)
     }
 
     // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
