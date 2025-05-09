@@ -27,7 +27,7 @@ pub struct PohService {
 //   contention with the PoH hashing within `tick_producer()`.
 //
 // Can use test_poh_service to calibrate this
-pub const DEFAULT_HASHES_PER_BATCH: u64 = 64;
+pub const DEFAULT_HASHES_PER_BATCH: u64 = 512;
 
 pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
 
