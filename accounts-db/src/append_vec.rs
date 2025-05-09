@@ -300,13 +300,11 @@ impl AppendVec {
 
         //UNSAFE: Required to create a Mmap
         let mmap = unsafe { MmapMut::map_mut(&data) };
-        let mmap = mmap.unwrap_or_else(|e| {
-            error!(
-                "Failed to map the data file (size: {}): {}.\n
-                    Please increase sysctl vm.max_map_count or equivalent for your platform.",
-                size, e
+        let mmap = mmap.unwrap_or_else(|err| {
+            panic!(
+                "Failed to map the data file (size: {size}): {err}. \
+                 Please increase sysctl vm.max_map_count or equivalent for your platform.",
             );
-            std::process::exit(1);
         });
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
