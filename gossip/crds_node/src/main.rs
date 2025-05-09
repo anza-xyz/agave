@@ -19,6 +19,14 @@ use {
 pub(crate) const SHRED_VERSION: u16 = 42;
 mod commands;
 #[derive(Parser, Debug)]
+/// Standalone Gossip/CRDS node
+///
+/// This is an internal dev tool, use this at your own risk!
+/// No guarantees are given about the reliability of
+/// this tool, its interface stability and fitness for a
+/// particular purpose.
+/// This is using Agave Gossip implementation, so should be
+/// 100% compatible with Solana of corresponding release.
 #[command(version, about, long_about = None)]
 struct CliArgs {
     /// Gossip address to bind to
@@ -68,12 +76,8 @@ fn main() -> anyhow::Result<()> {
     let mut rl = rustyline::DefaultEditor::new()?;
     loop {
         let readline = rl.readline(">> ");
-        let input_line = match readline {
-            Ok(line) => line,
-            Err(_) => break,
-        };
+        let Ok(input_line) = readline else { break };
         rl.add_history_entry(&input_line)?;
-
         let command = if input_line.starts_with("{") {
             match serde_json::from_str::<Command>(&input_line) {
                 Ok(cmd) => cmd,

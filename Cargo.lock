@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "crds_node"
-version = "0.1.0"
+version = "2.3.0"
 dependencies = [
  "anyhow",
  "borsh 1.5.7",
@@ -2023,6 +2023,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-logger",
+ "solana-net-utils",
  "solana-packet",
  "solana-pubkey",
  "solana-signer",
