@@ -865,15 +865,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         drop(map);
         self.update_entry_stats(m, found_in_mem);
         let stats = self.stats();
-        if !already_existed {
-            stats.inc_insert();
-        } else {
+        if already_existed {
             Self::update_stat(&stats.updates_in_mem, 1);
-        }
-        if !already_existed {
-            InsertNewEntryResults::DidNotExist
-        } else {
             InsertNewEntryResults::Existed(other_slot)
+        } else {
+            stats.inc_insert();
+            InsertNewEntryResults::DidNotExist
         }
     }
 
