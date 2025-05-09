@@ -5610,7 +5610,6 @@ dependencies = [
  "libsecp256k1 0.6.0",
  "num-traits",
  "qualifier_attr",
- "scopeguard",
  "solana-account",
  "solana-account-info",
  "solana-big-mod-exp",
@@ -8328,8 +8327,7 @@ dependencies = [
 [[package]]
 name = "solana-sbpf"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87e98d6559bd2d5664ed8ee28c7dbc2a813c2a78188a76b07cc64df021b6dd69"
+source = "git+https://github.com/anza-xyz/sbpf.git?branch=refactor%2Faccess_violation_handler#5c8336b851f6ac7501a8a7369db964b357b07e91"
 dependencies = [
  "byteorder 1.5.0",
  "combine 3.8.1",
@@ -9182,6 +9180,7 @@ dependencies = [
  "solana-instructions-sysvar",
  "solana-pubkey",
  "solana-rent",
+ "solana-sbpf",
  "solana-signature",
 ]
 

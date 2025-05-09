@@ -9,12 +9,13 @@
 ))]
 use solana_signature::Signature;
 #[cfg(not(target_os = "solana"))]
-use {solana_account::WritableAccount, solana_rent::Rent, std::mem::MaybeUninit};
+use {solana_account::WritableAccount, solana_rent::Rent};
 use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_instruction::error::InstructionError,
     solana_instructions_sysvar as instructions,
     solana_pubkey::Pubkey,
+    solana_sbpf::memory_region::{AccessType, MemoryCowCallback, MemoryRegion},
     std::{
         cell::{Ref, RefCell, RefMut},
         collections::HashSet,
@@ -520,29 +521,70 @@ impl TransactionContext {
     }
 
     /// Returns a new account data write access handler
-    pub fn account_data_write_access_handler(&self) -> Box<dyn Fn(u32) -> Result<u64, ()>> {
+    pub fn account_data_write_access_handler(&self) -> MemoryCowCallback {
         let accounts = Rc::clone(&self.accounts);
-        Box::new(move |index_in_transaction| {
-            // The two calls below can't really fail. If they fail because of a bug,
-            // whatever is writing will trigger an EbpfError::AccessViolation like
-            // if the region was readonly, and the transaction will fail gracefully.
-            let mut account = accounts
-                .accounts
-                .get(index_in_transaction as usize)
-                .ok_or(())?
-                .try_borrow_mut()
-                .map_err(|_| ())?;
-            accounts
-                .touch(index_in_transaction as IndexOfAccount)
-                .map_err(|_| ())?;
+        Box::new(
+            move |region: &mut MemoryRegion, _access_type: AccessType, vm_addr: u64, len: u64| {
+                if region.cow_callback_payload == u32::MAX {
+                    return;
+                }
+                let index_in_transaction = region.cow_callback_payload & 0xFF;
+                let address_space_reserved_for_account =
+                    (region.cow_callback_payload.wrapping_shr(8) & 0xFFFFFF) as usize;
+                let requested_length =
+                    vm_addr.saturating_add(len).saturating_sub(region.vm_addr) as usize;
+                if requested_length > address_space_reserved_for_account {
+                    return;
+                }
 
-            if account.is_shared() {
-                // See BorrowedAccount::make_data_mut() as to why we reserve extra
-                // MAX_PERMITTED_DATA_INCREASE bytes here.
-                account.reserve(MAX_PERMITTED_DATA_INCREASE);
-            }
-            Ok(account.data_as_mut_slice().as_mut_ptr() as u64)
-        })
+                // The four calls below can't really fail. If they fail because of a bug,
+                // whatever is writing will trigger an EbpfError::AccessViolation like
+                // if the region was readonly, and the transaction will fail gracefully.
+                let Some(account) = accounts.accounts.get(index_in_transaction as usize) else {
+                    return;
+                };
+                let Ok(mut account) = account.try_borrow_mut() else {
+                    return;
+                };
+                if accounts
+                    .touch(index_in_transaction as IndexOfAccount)
+                    .is_err()
+                {
+                    return;
+                }
+                let Ok(remaining_allowed_growth) =
+                    accounts.resize_delta.try_borrow().map(|resize_delta| {
+                        MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+                            .saturating_sub(*resize_delta) as usize
+                    })
+                else {
+                    return;
+                };
+
+                if requested_length > region.len as usize {
+                    const PAGE_SIZE: usize = 0x1000; // 4 KiB
+                    let old_len = account.data().len();
+                    let new_len = requested_length
+                        .div_ceil(PAGE_SIZE)
+                        .saturating_mul(PAGE_SIZE)
+                        .min(address_space_reserved_for_account)
+                        .min(MAX_PERMITTED_DATA_LENGTH as usize)
+                        .min(old_len.saturating_add(remaining_allowed_growth));
+                    // The last two min operations ensure the following:
+                    debug_assert!(accounts.can_data_be_resized(old_len, new_len).is_ok());
+                    if accounts
+                        .update_accounts_resize_delta(old_len, new_len)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    account.resize(new_len, 0);
+                    region.len = new_len as u64;
+                }
+                region.host_addr = account.data_as_mut_slice().as_mut_ptr() as u64;
+                region.writable = true;
+            },
+        )
     }
 }
 
@@ -941,16 +983,6 @@ impl BorrowedAccount<'_> {
         Ok(self.account.data_as_mut_slice())
     }
 
-    /// Returns the spare capacity of the vector backing the account data.
-    ///
-    /// This method should only ever be used during CPI, where after a shrinking
-    /// realloc we want to zero the spare capacity.
-    #[cfg(not(target_os = "solana"))]
-    pub fn spare_data_capacity_mut(&mut self) -> Result<&mut [MaybeUninit<u8>], InstructionError> {
-        debug_assert!(!self.account.is_shared());
-        Ok(self.account.spare_data_capacity_mut())
-    }
-
     /// Overwrites the account data and size (transaction wide).
     ///
     /// You should always prefer set_data_from_slice(). Calling this method is
@@ -1021,26 +1053,6 @@ impl BorrowedAccount<'_> {
         self.make_data_mut();
         self.account.extend_from_slice(data);
         Ok(())
-    }
-
-    /// Reserves capacity for at least additional more elements to be inserted
-    /// in the given account. Does nothing if capacity is already sufficient.
-    #[cfg(not(target_os = "solana"))]
-    pub fn reserve(&mut self, additional: usize) -> Result<(), InstructionError> {
-        // Note that we don't need to call can_data_be_changed() here nor
-        // touch() the account. reserve() only changes the capacity of the
-        // memory that holds the account but it doesn't actually change content
-        // nor length of the account.
-        self.make_data_mut();
-        self.account.reserve(additional);
-
-        Ok(())
-    }
-
-    /// Returns the number of bytes the account can hold without reallocating.
-    #[cfg(not(target_os = "solana"))]
-    pub fn capacity(&self) -> usize {
-        self.account.capacity()
     }
 
     /// Returns whether the underlying AccountSharedData is shared.
