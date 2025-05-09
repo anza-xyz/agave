@@ -11,6 +11,7 @@ use {
     lru::LruCache,
     rand::Rng,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
@@ -18,6 +19,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_perf::deduper::Deduper,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions,
         slot_status_notifier::SlotStatusNotifier,
@@ -27,11 +29,11 @@ use {
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_sdk::{clock::Slot, pubkey::Pubkey, timing::timestamp},
     solana_streamer::{
         sendmmsg::{multi_target_send, SendPktsError},
         socket::SocketAddrSpace,
     },
+    solana_time_utils::timestamp,
     static_assertions::const_assert_eq,
     std::{
         borrow::Cow,
@@ -830,8 +832,9 @@ mod tests {
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
         solana_entry::entry::create_ticks,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-        solana_sdk::{hash::Hash, signature::Keypair},
     };
 
     fn get_keypair() -> Keypair {

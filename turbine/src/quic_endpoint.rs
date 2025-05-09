@@ -13,8 +13,9 @@ use {
         pki_types::{CertificateDer, PrivateKeyDer},
         CertificateError, KeyLogFile,
     },
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{pubkey::Pubkey, signature::Keypair},
     solana_tls_utils::{
         new_dummy_x509_certificate, tls_client_config_builder, tls_server_config_builder,
     },
@@ -824,7 +825,7 @@ mod tests {
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_net_utils::bind_to_localhost,
         solana_runtime::bank::Bank,
-        solana_sdk::signature::Signer,
+        solana_signer::Signer,
         std::{iter::repeat_with, time::Duration},
     };
 
