@@ -1,15 +1,16 @@
 use {
     crossbeam_channel::unbounded,
     log::info,
+    solana_keypair::Keypair,
     solana_local_cluster::{
         cluster::ClusterValidatorInfo,
         local_cluster::{ClusterConfig, LocalCluster},
     },
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::VALIDATOR_PORT_RANGE,
-    solana_sdk::{
-        native_token::LAMPORTS_PER_SOL, net::DEFAULT_TPU_COALESCE, pubkey::Pubkey,
-        signature::Keypair, signer::Signer,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk::net::DEFAULT_TPU_COALESCE,
+    solana_signer::Signer,
     solana_streamer::{
         nonblocking::testing_utilities::check_multiple_streams,
         quic::{

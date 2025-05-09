@@ -5,11 +5,9 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     log::{error, info, warn},
     solana_client::{pubsub_client::PubsubClient, rpc_client::RpcClient},
+    solana_clock::Slot,
+    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_metrics::{datapoint_error, datapoint_info},
-    solana_sdk::{
-        clock::Slot,
-        commitment_config::{CommitmentConfig, CommitmentLevel},
-    },
     std::{
         collections::HashMap,
         sync::{

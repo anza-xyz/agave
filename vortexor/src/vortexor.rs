@@ -4,9 +4,10 @@ use {
         banking_trace::TracedSender, sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
     },
+    solana_keypair::Keypair,
     solana_net_utils::{multi_bind_in_range_with_config, SocketConfig},
     solana_perf::packet::PacketBatch,
-    solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
