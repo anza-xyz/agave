@@ -411,9 +411,10 @@ impl Shred {
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    // Only for tests.
-    dispatch!(pub fn set_index(&mut self, index: u32));
-    dispatch!(pub fn set_slot(&mut self, slot: Slot));
+    #[deprecated(since = "2.3.0")]
+    pub fn set_index(&mut self, _index: u32) {}
+    #[deprecated(since = "2.3.0")]
+    pub fn set_slot(&mut self, _slot: Slot) {}
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
@@ -471,6 +472,7 @@ impl Shred {
         })
     }
 
+    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
     pub fn new_from_parity_shard(
         slot: Slot,
         index: u32,
@@ -1737,48 +1739,6 @@ mod tests {
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
         let payload = bs58_decode(PAYLOAD);
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
-        assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
-        verify_shred_layout(&shred, &packet);
-    }
-
-    #[test]
-    fn test_serde_compat_shred_code() {
-        const SEED: &str = "4jfjh3UZVyaEgvyG9oQmNyFY9yHDmbeH9eUhnBKkrcrN";
-        const PAYLOAD: &str = "3xGsXwzkPpLFuKwbbfKMUxt1B6VqQPzbvvAkxRNCX9kNEP\
-        sa2VifwGBtFuNm3CWXdmQizDz5vJjDHu6ZqqaBCSfrHurag87qAXwTtjNPhZzKEew5pLc\
-        aY6cooiAch2vpfixNYSDjnirozje5cmUtGuYs1asXwsAKSN3QdWHz3XGParWkZeUMAzRV\
-        1UPEDZ7vETKbxeNixKbzZzo47Lakh3C35hS74ocfj23CWoW1JpkETkXjUpXcfcv6cS";
-        let mut rng = {
-            let seed = <[u8; 32]>::try_from(bs58_decode(SEED)).unwrap();
-            ChaChaRng::from_seed(seed)
-        };
-        let mut parity_shard = vec![0u8; legacy::SIZE_OF_ERASURE_ENCODED_SLICE];
-        rng.fill(&mut parity_shard[..]);
-        let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
-        rng.fill(&mut seed[..]);
-        let keypair = keypair_from_seed(&seed).unwrap();
-        let mut shred = Shred::new_from_parity_shard(
-            141945197, // slot
-            23418,     // index
-            &parity_shard,
-            21259, // fec_set_index
-            32,    // num_data_shreds
-            58,    // num_coding_shreds
-            43,    // position
-            47298, // version
-        );
-        shred.sign(&keypair);
-        assert!(shred.verify(&keypair.pubkey()));
-        assert_matches!(shred.sanitize(), Ok(()));
-        let mut payload = bs58_decode(PAYLOAD);
-        payload.extend({
-            let skip = payload.len() - SIZE_OF_CODING_SHRED_HEADERS;
-            parity_shard.iter().skip(skip).copied()
-        });
         let mut packet = Packet::default();
         packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
         packet.meta_mut().size = payload.len();

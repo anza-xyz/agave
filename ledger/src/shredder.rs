@@ -260,6 +260,7 @@ impl Shredder {
                 .into_iter()
                 .zip(next_code_index)
                 .flat_map(|(shreds, next_code_index)| {
+                    #[allow(deprecated)]
                     Shredder::generate_coding_shreds(&shreds, next_code_index, reed_solomon_cache)
                 })
                 .collect()
@@ -269,6 +270,7 @@ impl Shredder {
                     .into_par_iter()
                     .zip(next_code_index)
                     .flat_map(|(shreds, next_code_index)| {
+                        #[allow(deprecated)]
                         Shredder::generate_coding_shreds(
                             &shreds,
                             next_code_index,
@@ -295,6 +297,7 @@ impl Shredder {
     }
 
     /// Generates coding shreds for the data shreds in the current FEC set
+    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
     pub fn generate_coding_shreds<T: Borrow<Shred>>(
         data: &[T],
         next_code_index: u32,
@@ -345,6 +348,7 @@ impl Shredder {
             .enumerate()
             .map(|(i, parity)| {
                 let index = next_code_index + u32::try_from(i).unwrap();
+                #[allow(deprecated)]
                 Shred::new_from_parity_shard(
                     slot,
                     index,

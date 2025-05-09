@@ -33,10 +33,6 @@ pub(super) trait Shred<'a>: Sized {
 
     // Portion of the payload which is signed.
     fn signed_data(&'a self) -> Result<Self::SignedData, Error>;
-
-    // Only for tests.
-    fn set_index(&mut self, index: u32);
-    fn set_slot(&mut self, slot: Slot);
 }
 
 pub(super) trait ShredData: for<'a> Shred<'a> {

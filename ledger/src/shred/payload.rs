@@ -37,9 +37,6 @@ macro_rules! dispatch {
 }
 
 impl Payload {
-    #[cfg(test)]
-    dispatch!(pub(crate) fn push(&mut self, byte: u8));
-
     #[inline]
     pub(crate) fn resize(&mut self, size: usize, byte: u8) {
         if self.len() != size {
