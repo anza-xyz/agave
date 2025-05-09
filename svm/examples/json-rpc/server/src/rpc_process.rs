@@ -120,6 +120,7 @@ struct TransactionSimulationResult {
     pub logs: TransactionLogMessages,
     pub post_simulation_accounts: Vec<TransactionAccount>,
     pub units_consumed: u64,
+    pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }
@@ -365,12 +366,14 @@ impl JsonRpcRequestProcessor {
             };
         let logs = logs.unwrap_or_default();
         let units_consumed: u64 = 0;
+        let loaded_accounts_data_size: u32 = 0;
 
         TransactionSimulationResult {
             result: flattened_result,
             logs,
             post_simulation_accounts,
             units_consumed,
+            loaded_accounts_data_size,
             return_data,
             inner_instructions,
         }
@@ -686,6 +689,7 @@ pub mod rpc {
                 logs,
                 post_simulation_accounts,
                 units_consumed,
+                loaded_accounts_data_size,
                 return_data,
                 inner_instructions,
             } = meta.simulate_transaction_unchecked(&transaction, enable_cpi_recording);
@@ -751,6 +755,7 @@ pub mod rpc {
                     logs: Some(logs),
                     accounts,
                     units_consumed: Some(units_consumed),
+                    loaded_accounts_data_size: Some(loaded_accounts_data_size),
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
                     replacement_blockhash: None,
