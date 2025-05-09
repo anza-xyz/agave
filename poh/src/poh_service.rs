@@ -378,7 +378,7 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         rand::{thread_rng, Rng},
-        solana_clock::DEFAULT_HASHES_PER_TICK,
+        solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT},
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -504,7 +504,9 @@ mod tests {
 
         let time = Instant::now();
         while run_time != 0 || need_tick || need_entry || need_partial {
-            let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
+            let (_bank, (entry, _tick_height)) = entry_receiver
+                .recv_timeout(Duration::from_millis(DEFAULT_MS_PER_SLOT))
+                .expect("Expected to receive an entry");
 
             if entry.is_tick() {
                 num_ticks += 1;
