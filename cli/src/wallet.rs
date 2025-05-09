@@ -271,7 +271,7 @@ impl WalletSubCommands for App<'_, '_> {
                         .takes_value(true)
                         .validator(is_amount_or_all)
                         .required(true)
-                        .help("The amount to send, in SOL; accepts keyword ALL"),
+                        .help("The amount to send, in SOL, truncated to 9 decimals; accepts keyword ALL"),
                 )
                 .arg(pubkey!(
                     Arg::with_name("from")
