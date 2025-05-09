@@ -98,7 +98,7 @@ pub struct ContactInfo {
     #[serde(with = "short_vec")]
     sockets: Vec<SocketEntry>,
     #[serde(with = "short_vec")]
-    extensions: Vec<Extension>,
+    extensions: Vec<u8>,
     // Only sanitized socket-addrs can be cached!
     #[serde(skip_serializing)]
     cache: [SocketAddr; SOCKET_CACHE_SIZE],
@@ -112,9 +112,6 @@ struct SocketEntry {
     #[serde(with = "serde_varint")]
     offset: u16, // Port offset with respect to the previous entry.
 }
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-enum Extension {}
 
 // As part of deserialization, self.addrs and self.sockets should be cross
 // verified and self.cache needs to be populated. This type serves as a
@@ -133,7 +130,7 @@ struct ContactInfoLite {
     #[serde(with = "short_vec")]
     sockets: Vec<SocketEntry>,
     #[serde(with = "short_vec")]
-    extensions: Vec<Extension>,
+    extensions: Vec<u8>,
 }
 
 macro_rules! get_socket {
@@ -220,7 +217,7 @@ impl ContactInfo {
             version: solana_version::Version::default(),
             addrs: Vec::<IpAddr>::default(),
             sockets: Vec::<SocketEntry>::default(),
-            extensions: Vec::<Extension>::default(),
+            extensions: Vec::<u8>::default(),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
     }
