@@ -1,11 +1,11 @@
 use {
     super::error::CoreBpfMigrationError,
     crate::bank::Bank,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        pubkey::Pubkey,
-    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_hash::Hash,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
 };
 
 /// The account details of a buffer account slated to replace a built-in
@@ -47,15 +47,38 @@ impl SourceBuffer {
         }
         Err(CoreBpfMigrationError::InvalidBufferAccount(*buffer_address))
     }
+
+    /// [`SourceBuffer::new_checked`] but also verifies the build hash
+    /// https://github.com/Ellipsis-Labs/solana-verifiable-build
+    pub(crate) fn new_checked_with_verified_build_hash(
+        bank: &Bank,
+        buffer_address: &Pubkey,
+        expected_hash: Hash,
+    ) -> Result<Self, CoreBpfMigrationError> {
+        let buffer = Self::new_checked(bank, buffer_address)?;
+        let data = buffer.buffer_account.data();
+
+        let offset = UpgradeableLoaderState::size_of_buffer_metadata();
+        let end_offset = data.iter().rposition(|&x| x != 0).map_or(offset, |i| i + 1);
+        let buffer_program_data = &data[offset..end_offset];
+        let hash = solana_sha256_hasher::hash(buffer_program_data);
+
+        if hash != expected_hash {
+            return Err(CoreBpfMigrationError::BuildHashMismatch(
+                hash,
+                expected_hash,
+            ));
+        }
+
+        Ok(buffer)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        crate::bank::tests::create_simple_test_bank,
-        assert_matches::assert_matches,
-        solana_sdk::{account::WritableAccount, bpf_loader_upgradeable},
+        super::*, crate::bank::tests::create_simple_test_bank, assert_matches::assert_matches,
+        solana_account::WritableAccount, solana_sdk_ids::bpf_loader_upgradeable,
     };
 
     fn store_account(bank: &Bank, address: &Pubkey, data: &[u8], owner: &Pubkey) {

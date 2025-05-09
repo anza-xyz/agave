@@ -44,7 +44,7 @@ use {
     },
     solana_storage_bigtable::CredentialType,
     std::{
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -52,7 +52,7 @@ use {
         },
         thread::{self, Builder, JoinHandle},
     },
-    tokio::runtime::{Builder as TokioBuilder, Runtime as TokioRuntime},
+    tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
     tokio_util::codec::{BytesCodec, FramedRead},
 };
 
@@ -404,12 +404,12 @@ pub struct JsonRpcServiceConfig<'a> {
 /// [`ClientOption`] enum represents the available client types for TPU
 /// communication:
 /// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
-///       connections efficiently.
+///   connections efficiently.
 /// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate and
-///       requires a reference to a [`Keypair`].
+///   requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(&'a Keypair),
+    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle),
 }
 
 impl JsonRpcService {
@@ -466,7 +466,7 @@ impl JsonRpcService {
                 )?;
                 Ok(json_rpc_service)
             }
-            ClientOption::TpuClientNext(identity_keypair) => {
+            ClientOption::TpuClientNext(identity_keypair, tpu_client_socket, client_runtime) => {
                 let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
@@ -476,12 +476,13 @@ impl JsonRpcService {
                         Protocol::QUIC
                     ))?;
                 let client = TpuClientNextClient::new(
-                    runtime.handle().clone(),
+                    client_runtime,
                     my_tpu_address,
                     config.send_transaction_service_config.tpu_peers.clone(),
                     leader_info,
                     config.send_transaction_service_config.leader_forward_count,
                     Some(identity_keypair),
+                    tpu_client_socket,
                 );
 
                 let json_rpc_service = Self::new_with_client(
@@ -502,7 +503,7 @@ impl JsonRpcService {
                     config.send_transaction_service_config,
                     config.max_slots,
                     config.leader_schedule_cache,
-                    client.clone(),
+                    client,
                     config.max_complete_transaction_status_slot,
                     config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,

@@ -1,7 +1,6 @@
 use {
-    solana_measure::measure_us,
-    solana_sdk::{clock::Slot, pubkey::Pubkey, saturating_add_assign},
-    std::collections::HashMap,
+    solana_clock::Slot, solana_measure::measure_us, solana_pubkey::Pubkey,
+    solana_sdk::saturating_add_assign, std::collections::HashMap,
 };
 
 #[derive(Debug, Default)]

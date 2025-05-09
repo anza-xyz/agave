@@ -97,7 +97,6 @@ impl ConnectionWorker {
         send_txs_stats: Arc<SendTransactionStats>,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
-
         let this = Self {
             endpoint,
             peer,
@@ -201,7 +200,7 @@ impl ConnectionWorker {
     ///
     /// If an error occurs, the state may transition to `Retry` or `Closing`,
     /// depending on the nature of the error.
-    async fn create_connection(&mut self, max_retries_attempt: usize) {
+    async fn create_connection(&mut self, retries_attempt: usize) {
         let connecting = self.endpoint.connect(self.peer, "connect");
         match connecting {
             Ok(connecting) => {
@@ -220,8 +219,7 @@ impl ConnectionWorker {
                     Err(err) => {
                         warn!("Connection error {}: {}", self.peer, err);
                         record_error(err.into(), &self.send_txs_stats);
-                        self.connection =
-                            ConnectionState::Retry(max_retries_attempt.saturating_add(1));
+                        self.connection = ConnectionState::Retry(retries_attempt.saturating_add(1));
                     }
                 }
             }

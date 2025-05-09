@@ -1,8 +1,7 @@
 use {
     log::*,
-    solana_sdk::{
-        clock::DEFAULT_MS_PER_SLOT, commitment_config::CommitmentConfig, slot_history::Slot,
-    },
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_commitment_config::CommitmentConfig,
     solana_tps_client::{TpsClient, TpsClientResult},
     std::{sync::Arc, thread::sleep, time::Duration},
 };

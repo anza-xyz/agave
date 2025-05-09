@@ -5,7 +5,7 @@ use {
         blockstore_meta::SlotMeta,
         entry_notifier_service::{EntryNotification, EntryNotifierSender},
         leader_schedule_cache::LeaderScheduleCache,
-        token_balances::collect_token_balances,
+        transaction_balances::compile_collected_balances,
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -18,12 +18,17 @@ use {
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
         epoch_accounts_hash::EpochAccountsHash,
     },
+    solana_clock::{Slot, MAX_PROCESSING_AGE},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::entry::{
         self, create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers,
     },
+    solana_genesis_config::GenesisConfig,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
+    solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime::{
         accounts_background_service::SnapshotRequestKind,
@@ -42,17 +47,7 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::{
-        clock::{Slot, MAX_PROCESSING_AGE},
-        genesis_config::GenesisConfig,
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature},
-        transaction::{
-            Result, SanitizedTransaction, TransactionError, TransactionVerificationMode,
-            VersionedTransaction,
-        },
-    },
+    solana_signature::Signature,
     solana_svm::{
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::ProcessedTransaction,
@@ -60,6 +55,11 @@ use {
     },
     solana_svm_transaction::{svm_message::SVMMessage, svm_transaction::SVMTransaction},
     solana_timings::{report_execute_timings, ExecuteTimingType, ExecuteTimings},
+    solana_transaction::{
+        sanitized::SanitizedTransaction, versioned::VersionedTransaction,
+        TransactionVerificationMode,
+    },
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::token_balances::TransactionTokenBalancesSet,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
@@ -177,26 +177,23 @@ pub fn execute_batch<'a>(
     //   None    => block verification path(s)
     let block_verification = extra_pre_commit_callback.is_none();
     let record_transaction_meta = transaction_status_sender.is_some();
-
     let mut transaction_indexes = Cow::from(transaction_indexes);
-    let mut mint_decimals: HashMap<Pubkey, u8> = HashMap::new();
-
-    let pre_token_balances = if record_transaction_meta {
-        collect_token_balances(bank, batch, &mut mint_decimals)
-    } else {
-        vec![]
-    };
 
     let pre_commit_callback = |_timings: &mut _, processing_results: &_| -> PreCommitResult {
         match extra_pre_commit_callback {
             None => {
+                // We're entering into one of the block-verification methods.
                 get_first_error(batch, processing_results)?;
                 Ok(None)
             }
             Some(extra_pre_commit_callback) => {
-                // We're entering into the block-producing unified scheduler special case...
+                // We're entering into the block-production unified scheduler special case...
                 // `processing_results` should always contain exactly only 1 result in that case.
-                assert_eq!(processing_results.len(), 1);
+                let [result] = processing_results else {
+                    panic!("unexpected result count: {}", processing_results.len());
+                };
+                // transaction_indexes is intended to be populated later; so barely-initialized vec
+                // should be provided.
                 assert!(transaction_indexes.is_empty());
 
                 // From now on, we need to freeze-lock the tpu bank, in order to prevent it from
@@ -205,7 +202,15 @@ pub fn execute_batch<'a>(
                 // invariant violation.
                 let freeze_lock = bank.freeze_lock();
 
-                if let Some(index) = extra_pre_commit_callback(&processing_results[0])? {
+                // `result` won't be examined at all here. Rather, `extra_pre_commit_callback` is
+                // responsible for all result handling, including the very basic precondition of
+                // successful execution of transactions as well.
+                let committed_index = extra_pre_commit_callback(result)?;
+
+                // The callback succeeded. Optionally, update transaction_indexes as well.
+                // Refer to TaskHandler::handle()'s transaction_indexes initialization for further
+                // background.
+                if let Some(index) = committed_index {
                     let transaction_indexes = transaction_indexes.to_mut();
                     // Adjust the empty new vec with the exact needed capacity. Otherwise, excess
                     // cap would be reserved on `.push()` in it.
@@ -222,12 +227,11 @@ pub fn execute_batch<'a>(
         }
     };
 
-    let (commit_results, balances) = batch
+    let (commit_results, balance_collector) = batch
         .bank()
         .load_execute_and_commit_transactions_with_pre_commit_callback(
             batch,
             MAX_PROCESSING_AGE,
-            transaction_status_sender.is_some(),
             ExecutionRecordingConfig::new_single_setting(transaction_status_sender.is_some()),
             timings,
             log_messages_bytes_limit,
@@ -278,14 +282,17 @@ pub fn execute_batch<'a>(
             .iter()
             .map(|tx| tx.as_sanitized_transaction().into_owned())
             .collect();
-        let post_token_balances = if record_transaction_meta {
-            collect_token_balances(bank, batch, &mut mint_decimals)
-        } else {
-            vec![]
-        };
 
-        let token_balances =
-            TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances);
+        // There are two cases where balance_collector could be None:
+        // * Balance recording is disabled. If that were the case, there would
+        //   be no TransactionStatusSender, and we would not be in this branch.
+        // * The batch was aborted in its entirety in SVM. In that case, nothing
+        //   would have been committed.
+        // Therefore this should always be true.
+        debug_assert!(balance_collector.is_some());
+
+        let (balances, token_balances) =
+            compile_collected_balances(balance_collector.unwrap_or_default());
 
         // The length of costs vector needs to be consistent with all other
         // vectors that are sent over (such as `transactions`). So, replace the
@@ -2332,9 +2339,16 @@ pub mod tests {
         },
         assert_matches::assert_matches,
         rand::{thread_rng, Rng},
+        solana_account::{AccountSharedData, WritableAccount},
         solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
+        solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
+        solana_instruction::{error::InstructionError, Instruction},
+        solana_keypair::Keypair,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::declare_process_instruction,
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::bank_hash_details::SlotDetails,
             genesis_utils::{
@@ -2345,20 +2359,13 @@ pub mod tests {
                 SchedulingContext,
             },
         },
-        solana_sdk::{
-            account::{AccountSharedData, WritableAccount},
-            epoch_schedule::EpochSchedule,
-            hash::Hash,
-            instruction::{Instruction, InstructionError},
-            native_token::LAMPORTS_PER_SOL,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            signer::SeedDerivable,
-            system_instruction::SystemError,
-            system_transaction,
-            transaction::{Transaction, TransactionError},
-        },
+        solana_seed_derivable::SeedDerivable,
+        solana_signer::Signer,
         solana_svm::transaction_processor::ExecutionRecordingConfig,
+        solana_system_interface::error::SystemError,
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
+        solana_transaction_error::TransactionError,
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
@@ -4416,7 +4423,6 @@ pub mod tests {
         let (commit_results, _) = batch.bank().load_execute_and_commit_transactions(
             &batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig::new_single_setting(false),
             &mut ExecuteTimings::default(),
             None,
@@ -5061,7 +5067,7 @@ pub mod tests {
         poh_result: Result<Option<usize>>,
     ) {
         solana_logger::setup();
-        let dummy_leader_pubkey = solana_sdk::pubkey::new_rand();
+        let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -5070,7 +5076,7 @@ pub mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let bank = Arc::new(bank);
-        let pubkey = solana_sdk::pubkey::new_rand();
+        let pubkey = solana_pubkey::new_rand();
         let (tx, expected_tx_result) = match tx_result {
             TxResult::ExecutedWithSuccess => (
                 RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(

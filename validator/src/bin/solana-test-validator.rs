@@ -181,7 +181,6 @@ fn main() {
         eprintln!("Failed to parse --bind-address: {err}");
         exit(1);
     });
-
     let compute_unit_limit = value_t!(matches, "compute_unit_limit", u64).ok();
 
     let faucet_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), faucet_port);

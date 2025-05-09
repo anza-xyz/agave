@@ -6,19 +6,17 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_keypair::Keypair,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
+    solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
         Packet, PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        packet::{Meta, PACKET_DATA_SIZE},
-        pubkey::Pubkey,
-        signature::Keypair,
-    },
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
@@ -117,7 +115,7 @@ impl ShredFetchStage {
                     );
                 }
                 // Discard packets if repair nonce does not verify.
-                let now = solana_sdk::timing::timestamp();
+                let now = solana_time_utils::timestamp();
                 let mut outstanding_repair_requests =
                     repair_context.outstanding_repair_requests.write().unwrap();
                 packet_batch
@@ -378,7 +376,7 @@ impl RepairContext {
 #[must_use]
 fn verify_repair_nonce(
     packet: &Packet,
-    now: u64, // solana_sdk::timing::timestamp()
+    now: u64, // solana_time_utils::timestamp()
     outstanding_repair_requests: &mut OutstandingShredRepairs,
 ) -> bool {
     debug_assert!(packet.meta().flags.contains(PacketFlags::REPAIR));

@@ -55,24 +55,25 @@ use {
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, get_client},
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
+    solana_message::{compiled_instruction::CompiledInstruction, Message},
     solana_net_utils::bind_to_unspecified,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        hash::Hash,
-        instruction::CompiledInstruction,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        stake,
-        system_instruction::{self, SystemInstruction},
-        system_program,
-        timing::timestamp,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
+    solana_stake_interface as stake,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::{
+        instruction::{self as system_instruction, SystemInstruction},
+        program as system_program,
+    },
+    solana_time_utils::timestamp,
     solana_tps_client::TpsClient,
     solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
+    solana_transaction::Transaction,
     std::{
         net::SocketAddr,
         process::exit,
@@ -433,7 +434,7 @@ fn get_target(
     let mut target = None;
     if nodes.is_empty() {
         // skip-gossip case
-        target = Some((solana_sdk::pubkey::new_rand(), entrypoint_addr));
+        target = Some((solana_pubkey::new_rand(), entrypoint_addr));
     } else {
         info!("************ NODE ***********");
         for node in nodes {
@@ -838,7 +839,7 @@ pub mod test {
         },
         solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
         solana_rpc::rpc::JsonRpcConfig,
-        solana_sdk::timing::timestamp,
+        solana_time_utils::timestamp,
         solana_tpu_client::tpu_client::TpuClient,
     };
 
@@ -855,7 +856,7 @@ pub mod test {
     #[test]
     fn test_dos() {
         let nodes = [ContactInfo::new_localhost(
-            &solana_sdk::pubkey::new_rand(),
+            &solana_pubkey::new_rand(),
             timestamp(),
         )];
         let entrypoint_addr = nodes[0].gossip().unwrap();

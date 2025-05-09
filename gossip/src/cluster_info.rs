@@ -51,11 +51,12 @@ use {
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::{
-        bind_common_in_range_with_config, bind_common_with_config, bind_in_range,
-        bind_in_range_with_config, bind_more_with_config, bind_to_localhost, bind_to_unspecified,
-        bind_to_with_config, bind_two_in_range_with_offset_and_config,
-        find_available_port_in_range, multi_bind_in_range_with_config, PortRange, SocketConfig,
-        VALIDATOR_PORT_RANGE,
+        bind_common_in_range_with_config, bind_in_range, bind_in_range_with_config,
+        bind_more_with_config, bind_to_localhost, bind_to_unspecified, bind_to_with_config,
+        bind_two_in_range_with_offset_and_config, find_available_ports_in_range,
+        multi_bind_in_range_with_config,
+        sockets::{bind_gossip_port_in_range, localhost_port_range_for_tests},
+        PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,
@@ -102,8 +103,11 @@ use {
 
 const DEFAULT_EPOCH_DURATION: Duration =
     Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
-/// milliseconds we sleep for between gossip requests
+/// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
+/// Interval between pull requests (in gossip rounds)
+const PULL_REQUEST_PERIOD: usize = 5;
+
 /// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
 /// intermediate packet batch buffers.
 ///
@@ -504,9 +508,7 @@ impl ClusterInfo {
                     .rpc()
                     .filter(|addr| self.socket_addr_space.check(addr))?;
                 let node_version = self.get_node_version(node.pubkey());
-                if my_shred_version != 0
-                    && (node.shred_version() != 0 && node.shred_version() != my_shred_version)
-                {
+                if node.shred_version() != 0 && node.shred_version() != my_shred_version {
                     return None;
                 }
                 let rpc_addr = node_rpc.ip();
@@ -561,7 +563,7 @@ impl ClusterInfo {
                 }
 
                 let node_version = self.get_node_version(node.pubkey());
-                if my_shred_version != 0 && (node.shred_version() != 0 && node.shred_version() != my_shred_version) {
+                if node.shred_version() != 0 && node.shred_version() != my_shred_version {
                     different_shred_nodes = different_shred_nodes.saturating_add(1);
                     None
                 } else {
@@ -1392,27 +1394,9 @@ impl ClusterInfo {
                 }
             }
         }
-        // Adopt an entrypoint's `shred_version` if ours is unset
-        if self.my_shred_version() == 0 {
-            if let Some(entrypoint) = entrypoints
-                .iter()
-                .find(|entrypoint| entrypoint.shred_version() != 0)
-            {
-                info!(
-                    "Setting shred version to {:?} from entrypoint {:?}",
-                    entrypoint.shred_version(),
-                    entrypoint.pubkey()
-                );
-                self.my_contact_info
-                    .write()
-                    .unwrap()
-                    .set_shred_version(entrypoint.shred_version());
-            }
-        }
-        self.my_shred_version() != 0
-            && entrypoints
-                .iter()
-                .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
+        entrypoints
+            .iter()
+            .all(|entrypoint| entrypoint.pubkey() != &Pubkey::default())
     }
 
     fn handle_purge(
@@ -1487,8 +1471,11 @@ impl ClusterInfo {
                 let mut last_contact_info_save = timestamp();
                 let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
-                let mut generate_pull_requests = true;
-                while !exit.load(Ordering::Relaxed) {
+
+                for gossip_round in 0usize.. {
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let start = timestamp();
                     if self.contact_debug_interval != 0
                         && start - last_contact_info_trace > self.contact_debug_interval
@@ -1513,13 +1500,15 @@ impl ClusterInfo {
                         .map(EpochSpecs::current_epoch_staked_nodes)
                         .cloned()
                         .unwrap_or_default();
+
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
                         &recycler,
                         &stakes,
                         &sender,
-                        generate_pull_requests,
+                        // Make pull requests every PULL_REQUEST_PERIOD rounds
+                        gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
                     let epoch_duration = epoch_specs
                         .as_mut()
@@ -1544,7 +1533,6 @@ impl ClusterInfo {
                         let time_left = GOSSIP_SLEEP_MILLIS - elapsed;
                         sleep(Duration::from_millis(time_left));
                     }
-                    generate_pull_requests = !generate_pull_requests;
                 }
             })
             .unwrap()
@@ -1974,7 +1962,7 @@ impl ClusterInfo {
         let self_pubkey = self.id();
         // Filter out values if the shred-versions are different.
         let self_shred_version = self.my_shred_version();
-        if self_shred_version != 0 {
+        {
             let gossip_crds = self.gossip.crds.read().unwrap();
             let discard_different_shred_version = |msg| {
                 discard_different_shred_version(msg, self_shred_version, &gossip_crds, &self.stats)
@@ -2148,7 +2136,7 @@ impl ClusterInfo {
                     return None;
                 }
             }
-            protocol.par_verify().then(|| {
+            protocol.verify().then(|| {
                 stats.packets_received_verified_count.add_relaxed(1);
                 (packet.meta().socket_addr(), protocol)
             })
@@ -2332,7 +2320,7 @@ impl ClusterInfo {
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
         let bind_ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let (port, (gossip_socket, ip_echo)) =
-            Node::get_gossip_port(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
+            bind_gossip_port_in_range(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
         let contact_info =
             Self::gossip_contact_info(id, SocketAddr::new(gossip_addr.ip(), port), shred_version);
 
@@ -2382,8 +2370,15 @@ pub struct Sockets {
     pub tpu_forwards_quic: Vec<UdpSocket>,
     pub tpu_vote_quic: Vec<UdpSocket>,
 
-    /// Client-side socket for ForwardingStage.
-    pub tpu_vote_forwards_client: UdpSocket,
+    /// Client-side socket for ForwardingStage vote transactions
+    pub tpu_vote_forwarding_client: UdpSocket,
+    /// Client-side socket for ForwardingStage non-vote transactions
+    pub tpu_transaction_forwarding_client: UdpSocket,
+    /// Connection cache endpoint for QUIC-based Vote
+    pub quic_vote_client: UdpSocket,
+    /// Client-side socket for RPC/SendTransactionService.
+    pub rpc_sts_client: UdpSocket,
+    pub vortexor_receivers: Option<Vec<UdpSocket>>,
 }
 
 pub struct NodeConfig {
@@ -2392,6 +2387,8 @@ pub struct NodeConfig {
     pub bind_ip_addr: IpAddr,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
+    pub vortexor_receiver_addr: Option<SocketAddr>,
+
     /// The number of TVU receive sockets to create
     pub num_tvu_receive_sockets: NonZeroUsize,
     /// The number of TVU retransmit sockets to create
@@ -2421,8 +2418,7 @@ impl Node {
         num_quic_endpoints: usize,
     ) -> Self {
         let localhost_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port_range = (1024, 65535);
-
+        let port_range = localhost_port_range_for_tests();
         let udp_config = SocketConfig::default();
         let quic_config = SocketConfig::default().reuseport(true);
         let ((_tpu_port, tpu), (_tpu_quic_port, tpu_quic)) =
@@ -2458,9 +2454,9 @@ impl Node {
 
         let repair = bind_to_localhost().unwrap();
         let repair_quic = bind_to_localhost().unwrap();
-        let rpc_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
+        let [rpc_port, rpc_pubsub_port] =
+            find_available_ports_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
-        let rpc_pubsub_port = find_available_port_in_range(localhost_ip_addr, port_range).unwrap();
         let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_pubsub_port);
         let broadcast = vec![bind_to_unspecified().unwrap()];
         let retransmit_socket = bind_to_unspecified().unwrap();
@@ -2469,7 +2465,10 @@ impl Node {
         let ancestor_hashes_requests = bind_to_unspecified().unwrap();
         let ancestor_hashes_requests_quic = bind_to_unspecified().unwrap();
 
-        let tpu_vote_forwards_client = bind_to_localhost().unwrap();
+        let tpu_vote_forwarding_client = bind_to_localhost().unwrap();
+        let tpu_transaction_forwarding_client = bind_to_localhost().unwrap();
+        let quic_vote_client = bind_to_localhost().unwrap();
+        let rpc_sts_client = bind_to_localhost().unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2547,27 +2546,12 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
-                tpu_vote_forwards_client,
+                tpu_vote_forwarding_client,
+                tpu_transaction_forwarding_client,
+                quic_vote_client,
+                rpc_sts_client,
+                vortexor_receivers: None,
             },
-        }
-    }
-
-    fn get_gossip_port(
-        gossip_addr: &SocketAddr,
-        port_range: PortRange,
-        bind_ip_addr: IpAddr,
-    ) -> (u16, (UdpSocket, TcpListener)) {
-        let config = SocketConfig::default();
-        if gossip_addr.port() != 0 {
-            (
-                gossip_addr.port(),
-                bind_common_with_config(bind_ip_addr, gossip_addr.port(), config).unwrap_or_else(
-                    |e| panic!("gossip_addr bind_to port {}: {}", gossip_addr.port(), e),
-                ),
-            )
-        } else {
-            bind_common_in_range_with_config(bind_ip_addr, port_range, config)
-                .expect("Failed to bind")
         }
     }
 
@@ -2579,7 +2563,6 @@ impl Node {
         bind_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
     }
 
-    #[deprecated(since = "2.3.0", note = "Please use `new_with_external_ip` instead.")]
     pub fn new_single_bind(
         pubkey: &Pubkey,
         gossip_addr: &SocketAddr,
@@ -2587,7 +2570,7 @@ impl Node {
         bind_ip_addr: IpAddr,
     ) -> Self {
         let (gossip_port, (gossip, ip_echo)) =
-            Self::get_gossip_port(gossip_addr, port_range, bind_ip_addr);
+            bind_gossip_port_in_range(gossip_addr, port_range, bind_ip_addr);
 
         let socket_config = SocketConfig::default();
         let socket_config_reuseport = SocketConfig::default().reuseport(true);
@@ -2648,11 +2631,16 @@ impl Node {
         let (_, ancestor_hashes_requests_quic) =
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
 
-        let rpc_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
-        let rpc_pubsub_port = find_available_port_in_range(bind_ip_addr, port_range).unwrap();
+        let [rpc_port, rpc_pubsub_port] =
+            find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
 
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
-        let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let tpu_vote_forwarding_client =
+            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let tpu_transaction_forwarding_client =
+            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
 
         let addr = gossip_addr.ip();
         let mut info = ContactInfo::new(
@@ -2715,7 +2703,11 @@ impl Node {
                 tpu_quic,
                 tpu_forwards_quic,
                 tpu_vote_quic,
-                tpu_vote_forwards_client,
+                tpu_vote_forwarding_client,
+                quic_vote_client,
+                tpu_transaction_forwarding_client,
+                rpc_sts_client,
+                vortexor_receivers: None,
             },
         }
     }
@@ -2730,10 +2722,11 @@ impl Node {
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
+            vortexor_receiver_addr,
         } = config;
 
         let (gossip_port, (gossip, ip_echo)) =
-            Self::get_gossip_port(&gossip_addr, port_range, bind_ip_addr);
+            bind_gossip_port_in_range(&gossip_addr, port_range, bind_ip_addr);
 
         let socket_config = SocketConfig::default();
         let socket_config_reuseport = SocketConfig::default().reuseport(true);
@@ -2786,7 +2779,8 @@ impl Node {
                 .expect("tpu_vote multi_bind");
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config_reuseport);
+            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+
         let tpu_vote_quic = bind_more_with_config(
             tpu_vote_quic,
             num_quic_endpoints.get(),
@@ -2820,7 +2814,12 @@ impl Node {
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
 
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
-        let tpu_vote_forwards_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let tpu_vote_forwarding_client =
+            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let tpu_transaction_forwarding_client =
+            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
+        let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
 
         let mut info = ContactInfo::new(
             *pubkey,
@@ -2845,32 +2844,51 @@ impl Node {
         info.set_serve_repair(QUIC, (addr, serve_repair_quic_port))
             .unwrap();
 
-        trace!("new ContactInfo: {:?}", info);
+        let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
+            multi_bind_in_range_with_config(
+                vortexor_receiver_addr.ip(),
+                (
+                    vortexor_receiver_addr.port(),
+                    vortexor_receiver_addr.port() + 1,
+                ),
+                socket_config_reuseport,
+                32,
+            )
+            .unwrap_or_else(|_| {
+                panic!("Could not bind to the set vortexor_receiver_addr {vortexor_receiver_addr}")
+            })
+            .1
+        });
 
-        Node {
-            info,
-            sockets: Sockets {
-                gossip,
-                tvu: tvu_sockets,
-                tvu_quic,
-                tpu: tpu_sockets,
-                tpu_forwards: tpu_forwards_sockets,
-                tpu_vote: tpu_vote_sockets,
-                broadcast,
-                repair,
-                repair_quic,
-                retransmit_sockets,
-                serve_repair,
-                serve_repair_quic,
-                ip_echo: Some(ip_echo),
-                ancestor_hashes_requests,
-                ancestor_hashes_requests_quic,
-                tpu_quic,
-                tpu_forwards_quic,
-                tpu_vote_quic,
-                tpu_vote_forwards_client,
-            },
-        }
+        info!("vortexor_receivers is {vortexor_receivers:?}");
+        trace!("new ContactInfo: {:?}", info);
+        let sockets = Sockets {
+            gossip,
+            tvu: tvu_sockets,
+            tvu_quic,
+            tpu: tpu_sockets,
+            tpu_forwards: tpu_forwards_sockets,
+            tpu_vote: tpu_vote_sockets,
+            broadcast,
+            repair,
+            repair_quic,
+            retransmit_sockets,
+            serve_repair,
+            serve_repair_quic,
+            ip_echo: Some(ip_echo),
+            ancestor_hashes_requests,
+            ancestor_hashes_requests_quic,
+            tpu_quic,
+            tpu_forwards_quic,
+            tpu_vote_quic,
+            tpu_vote_forwarding_client,
+            quic_vote_client,
+            tpu_transaction_forwarding_client,
+            rpc_sts_client,
+            vortexor_receivers,
+        };
+        info!("Bound all network sockets as follows: {:#?}", &sockets);
+        Node { info, sockets }
     }
 }
 
@@ -2903,8 +2921,7 @@ fn check_pull_request_shred_version(self_shred_version: u16, caller: &CrdsValue)
         CrdsData::LegacyContactInfo(node) => node.shred_version(),
         _ => return false,
     };
-    // Allow spy nodes with shred-verion == 0 to pull from other nodes.
-    shred_version == 0u16 || shred_version == self_shred_version
+    shred_version == self_shred_version
 }
 
 // Discards CrdsValues in PushMessages and PullResponses from nodes with
@@ -3060,7 +3077,6 @@ mod tests {
         itertools::izip,
         solana_keypair::Keypair,
         solana_ledger::shred::Shredder,
-        solana_net_utils::bind_to,
         solana_signer::Signer,
         solana_vote_program::{
             vote_instruction,
@@ -3074,7 +3090,7 @@ mod tests {
         },
     };
     const DEFAULT_NUM_QUIC_ENDPOINTS: NonZeroUsize =
-        unsafe { NonZeroUsize::new_unchecked(DEFAULT_QUIC_ENDPOINTS) };
+        NonZeroUsize::new(DEFAULT_QUIC_ENDPOINTS).unwrap();
 
     impl ClusterInfo {
         // Wrapper for ClusterInfo.new_pull_requests replicating old return
@@ -3334,30 +3350,31 @@ mod tests {
     #[test]
     fn new_with_external_ip_test_random() {
         let ip = Ipv4Addr::LOCALHOST;
+        let port_range = localhost_port_range_for_tests();
         let config = NodeConfig {
             gossip_addr: socketaddr!(ip, 0),
-            port_range: VALIDATOR_PORT_RANGE,
+            port_range,
             bind_ip_addr: IpAddr::V4(ip),
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
+            vortexor_receiver_addr: None,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
 
-        check_node_sockets(&node, IpAddr::V4(ip), VALIDATOR_PORT_RANGE);
+        check_node_sockets(&node, IpAddr::V4(ip), port_range);
     }
 
     #[test]
     fn new_with_external_ip_test_gossip() {
         // Can't use VALIDATOR_PORT_RANGE because if this test runs in parallel with others, the
         // port returned by `bind_in_range()` might be snatched up before `Node::new_with_external_ip()` runs
-        let (start, end) = VALIDATOR_PORT_RANGE;
-        let port_range = (end, end + (end - start));
+        let port_range = localhost_port_range_for_tests();
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port = bind_in_range(ip, port_range).expect("Failed to bind").0;
+        let port = port_range.0;
         let config = NodeConfig {
             gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port),
             port_range,
@@ -3367,6 +3384,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
+            vortexor_receiver_addr: None,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
@@ -3946,89 +3964,6 @@ mod tests {
     }
 
     #[test]
-    fn test_process_entrypoint_adopt_shred_version() {
-        let node_keypair = Arc::new(Keypair::new());
-        let cluster_info = Arc::new(ClusterInfo::new(
-            ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
-            node_keypair,
-            SocketAddrSpace::Unspecified,
-        ));
-        assert_eq!(cluster_info.my_shred_version(), 0);
-
-        // Simulating starting up with two entrypoints, no known id, only a gossip
-        // address
-        let entrypoint1_gossip_addr = socketaddr!("127.0.0.2:1234");
-        let mut entrypoint1 = ContactInfo::new_localhost(&Pubkey::default(), timestamp());
-        entrypoint1.set_gossip(entrypoint1_gossip_addr).unwrap();
-        assert_eq!(entrypoint1.shred_version(), 0);
-
-        let entrypoint2_gossip_addr = socketaddr!("127.0.0.2:5678");
-        let mut entrypoint2 = ContactInfo::new_localhost(&Pubkey::default(), timestamp());
-        entrypoint2.set_gossip(entrypoint2_gossip_addr).unwrap();
-        assert_eq!(entrypoint2.shred_version(), 0);
-        cluster_info.set_entrypoints(vec![entrypoint1, entrypoint2]);
-
-        // Simulate getting entrypoint ContactInfo from gossip with an entrypoint1 shred version of
-        // 0
-        let mut gossiped_entrypoint1_info =
-            ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
-        gossiped_entrypoint1_info
-            .set_gossip(entrypoint1_gossip_addr)
-            .unwrap();
-        gossiped_entrypoint1_info.set_shred_version(0);
-        cluster_info.insert_info(gossiped_entrypoint1_info.clone());
-        assert!(!cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint1_info));
-
-        // Adopt the entrypoint's gossiped contact info and verify
-        let entrypoints_processed = ClusterInfo::process_entrypoints(&cluster_info);
-        assert_eq!(cluster_info.entrypoints.read().unwrap().len(), 2);
-        assert!(cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint1_info));
-
-        assert!(!entrypoints_processed); // <--- entrypoint processing incomplete because shred adoption still pending
-        assert_eq!(cluster_info.my_shred_version(), 0); // <-- shred version still 0
-
-        // Simulate getting entrypoint ContactInfo from gossip with an entrypoint2 shred version of
-        // !0
-        let mut gossiped_entrypoint2_info =
-            ContactInfo::new_localhost(&solana_pubkey::new_rand(), timestamp());
-        gossiped_entrypoint2_info
-            .set_gossip(entrypoint2_gossip_addr)
-            .unwrap();
-        gossiped_entrypoint2_info.set_shred_version(1);
-        cluster_info.insert_info(gossiped_entrypoint2_info.clone());
-        assert!(!cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint2_info));
-
-        // Adopt the entrypoint's gossiped contact info and verify
-        error!("Adopt the entrypoint's gossiped contact info and verify");
-        let entrypoints_processed = ClusterInfo::process_entrypoints(&cluster_info);
-        assert_eq!(cluster_info.entrypoints.read().unwrap().len(), 2);
-        assert!(cluster_info
-            .entrypoints
-            .read()
-            .unwrap()
-            .iter()
-            .any(|entrypoint| *entrypoint == gossiped_entrypoint2_info));
-
-        assert!(entrypoints_processed);
-        assert_eq!(cluster_info.my_shred_version(), 1); // <-- shred version now adopted from entrypoint2
-    }
-
-    #[test]
     fn test_process_entrypoint_without_adopt_shred_version() {
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = Arc::new(ClusterInfo::new(
@@ -4329,13 +4264,7 @@ mod tests {
         );
 
         let cluster_info44 = Arc::new({
-            let mut node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            node.sockets.gossip = bind_to(
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
-                /*port*/ 65534,
-                /*reuseport:*/ false,
-            )
-            .unwrap();
+            let node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
             info!("{:?}", node);
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });

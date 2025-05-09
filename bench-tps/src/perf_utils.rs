@@ -1,6 +1,6 @@
 use {
     log::*,
-    solana_sdk::commitment_config::CommitmentConfig,
+    solana_commitment_config::CommitmentConfig,
     solana_tps_client::TpsClient,
     std::{
         sync::{

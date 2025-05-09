@@ -5,7 +5,7 @@ use {
         PerfContext,
     },
     solana_metrics::datapoint_info,
-    solana_sdk::timing::timestamp,
+    solana_time_utils::timestamp,
     std::{
         cell::RefCell,
         fmt::Debug,

@@ -1,15 +1,16 @@
 use {
     crate::{
         account_locks::{validate_account_locks, AccountLocks},
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_db::{
             AccountStorageEntry, AccountsAddRootTiming, AccountsDb, LoadHint, LoadedAccount,
             ScanAccountStorageData, ScanStorageResult, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_index::{IndexKey, ScanConfig, ScanError, ScanOrder, ScanResult},
         ancestors::Ancestors,
+        is_loadable::IsLoadable as _,
         storable_accounts::StorableAccounts,
     },
-    dashmap::DashMap,
     log::*,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_address_lookup_table_interface::{
@@ -27,7 +28,7 @@ use {
     solana_transaction_error::TransactionResult as Result,
     std::{
         cmp::Reverse,
-        collections::{BinaryHeap, HashSet},
+        collections::{BinaryHeap, HashMap, HashSet},
         ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -215,21 +216,23 @@ impl Accounts {
                 // Cache only has one version per key, don't need to worry about versioning
                 func(loaded_account)
             },
-            |accum: &DashMap<Pubkey, B>, loaded_account: &LoadedAccount, _data| {
+            |accum: &mut HashMap<Pubkey, B>, stored_account, data| {
+                // SAFETY: We called scan_account_storage() with
+                // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
+                let data = data.unwrap();
+                let loaded_account =
+                    LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
                 let loaded_account_pubkey = *loaded_account.pubkey();
-                if let Some(val) = func(loaded_account) {
+                if let Some(val) = func(&loaded_account) {
                     accum.insert(loaded_account_pubkey, val);
                 }
             },
-            ScanAccountStorageData::NoData,
+            ScanAccountStorageData::DataRefForStorage,
         );
 
         match scan_result {
             ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result
-                .into_iter()
-                .map(|(_pubkey, val)| val)
-                .collect(),
+            ScanStorageResult::Stored(stored_result) => stored_result.into_values().collect(),
         }
     }
 
@@ -328,19 +331,13 @@ impl Accounts {
         }
     }
 
-    pub fn is_loadable(lamports: u64) -> bool {
-        // Don't ever load zero lamport accounts into runtime because
-        // the existence of zero-lamport accounts are never deterministic!!
-        lamports > 0
-    }
-
     fn load_while_filtering<F: Fn(&AccountSharedData) -> bool>(
         collector: &mut Vec<TransactionAccount>,
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
         filter: F,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()) && filter(account))
+            .filter(|(_, account, _)| account.is_loadable() && filter(account))
             .map(|(pubkey, account, _slot)| (*pubkey, account))
         {
             collector.push(mapped_account_tuple)
@@ -352,7 +349,7 @@ impl Accounts {
         some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
     ) {
         if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+            .filter(|(_, account, _)| account.is_loadable())
             .map(|(pubkey, account, slot)| (*pubkey, account, slot))
         {
             collector.push(mapped_account_tuple)
@@ -501,8 +498,8 @@ impl Accounts {
                 ancestors,
                 bank_id,
                 |some_account_tuple| {
-                    if let Some((pubkey, account, slot)) = some_account_tuple
-                        .filter(|(_, account, _)| Self::is_loadable(account.lamports()))
+                    if let Some((pubkey, account, slot)) =
+                        some_account_tuple.filter(|(_, account, _)| account.is_loadable())
                     {
                         collector.push((*pubkey, account, slot))
                     }

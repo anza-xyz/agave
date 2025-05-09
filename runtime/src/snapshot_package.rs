@@ -7,18 +7,18 @@ use {
     agave_feature_set as feature_set,
     log::*,
     solana_accounts_db::{
-        account_storage::meta::StoredMetaWriteVersion,
         accounts::Accounts,
         accounts_db::AccountStorageEntry,
         accounts_hash::{
             AccountsDeltaHash, AccountsHash, AccountsHashKind, MerkleOrLatticeAccountsHash,
         },
+        append_vec::StoredMetaWriteVersion,
         epoch_accounts_hash::EpochAccountsHash,
     },
-    solana_sdk::{
-        clock::Slot, hash::Hash, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_clock::Slot,
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
+    solana_rent_collector::RentCollector,
     std::{
         sync::{atomic::Ordering, Arc},
         time::Instant,

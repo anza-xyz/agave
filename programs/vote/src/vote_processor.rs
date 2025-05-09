@@ -2,7 +2,6 @@
 
 use {
     crate::vote_state,
-    agave_feature_set as feature_set,
     log::*,
     solana_bincode::limited_deserialize,
     solana_instruction::error::InstructionError,
@@ -130,10 +129,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             )
         }
         VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-            {
+            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let slot_hashes =
@@ -144,10 +140,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::UpdateVoteState(vote_state_update)
         | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-            {
+            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let sysvar_cache = invoke_context.get_sysvar_cache();
@@ -163,10 +156,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
         }
         VoteInstruction::CompactUpdateVoteState(vote_state_update)
         | VoteInstruction::CompactUpdateVoteStateSwitch(vote_state_update, _) => {
-            if invoke_context
-                .get_feature_set()
-                .is_active(&feature_set::deprecate_legacy_vote_ixs::id())
-            {
+            if invoke_context.is_deprecate_legacy_vote_ixs_active() {
                 return Err(InstructionError::InvalidInstructionData);
             }
             let sysvar_cache = invoke_context.get_sysvar_cache();

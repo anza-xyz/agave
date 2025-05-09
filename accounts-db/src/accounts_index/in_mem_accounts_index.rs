@@ -143,7 +143,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for InMemAccoun
 
 pub enum InsertNewEntryResults {
     DidNotExist,
-    ExistedNewEntryZeroLamports,
+    ExistedNewEntryZeroLamports(Option<Slot>),
     ExistedNewEntryNonZeroLamports(Option<Slot>),
 }
 
@@ -876,7 +876,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         if !already_existed {
             InsertNewEntryResults::DidNotExist
         } else if new_entry_zero_lamports {
-            InsertNewEntryResults::ExistedNewEntryZeroLamports
+            InsertNewEntryResults::ExistedNewEntryZeroLamports(other_slot)
         } else {
             InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot)
         }
@@ -1636,7 +1636,7 @@ mod tests {
     fn new_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let holder = Arc::new(BucketMapHolder::new(
             BINS_FOR_TESTING,
-            &Some(AccountsIndexConfig::default()),
+            &AccountsIndexConfig::default(),
             1,
         ));
         let bin = 0;
@@ -1646,7 +1646,7 @@ mod tests {
     fn new_disk_buckets_for_test<T: IndexValue>() -> InMemAccountsIndex<T, T> {
         let holder = Arc::new(BucketMapHolder::new(
             BINS_FOR_TESTING,
-            &Some(AccountsIndexConfig::default()),
+            &AccountsIndexConfig::default(),
             1,
         ));
         let bin = 0;

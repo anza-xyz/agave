@@ -11,6 +11,7 @@ edition = { workspace = true }
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-xdp = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -44,6 +45,9 @@ static_assertions = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+caps = { workspace = true }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
 bs58 = { workspace = true }
@@ -56,6 +60,3 @@ name = "cluster_info"
 
 [[bench]]
 name = "cluster_nodes"
-
-[[bench]]
-name = "retransmit_stage"

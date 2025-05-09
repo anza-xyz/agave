@@ -3,12 +3,10 @@ use {
     crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     log::*,
     solana_accounts_db::account_locks::validate_account_locks,
+    solana_clock::{BankId, Slot},
     solana_measure::measure_us,
+    solana_pubkey::Pubkey,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{
-        clock::{BankId, Slot},
-        pubkey::Pubkey,
-    },
     std::{
         collections::{BTreeMap, HashMap},
         sync::{
@@ -440,14 +438,12 @@ mod tests {
             bank_forks::BankForks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            message::Message,
-            pubkey::Pubkey,
-            system_instruction,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     };
 
     fn build_sanitized_transaction_for_test(

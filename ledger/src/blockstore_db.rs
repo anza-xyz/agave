@@ -4,6 +4,7 @@ use {
         blockstore::{
             column::{
                 columns, Column, ColumnIndexDeprecation, ColumnName, ProtobufColumn, TypedColumn,
+                DEPRECATED_PROGRAM_COSTS_COLUMN_NAME,
             },
             error::{BlockstoreError, Result},
         },
@@ -27,7 +28,7 @@ use {
         IteratorMode as RocksIteratorMode, LiveFile, Options, WriteBatch as RWriteBatch, DB,
     },
     serde::de::DeserializeOwned,
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{
         collections::HashSet,
         ffi::{CStr, CString},
@@ -119,7 +120,7 @@ impl Rocks {
         let column_options = Arc::from(options.column_options);
 
         // Open the database
-        let db = match options.access_type {
+        let mut db = match options.access_type {
             AccessType::Primary | AccessType::PrimaryForMaintenance => {
                 DB::open_cf_descriptors(&db_options, &path, cf_descriptors)?
             }
@@ -138,6 +139,12 @@ impl Rocks {
                 )?
             }
         };
+
+        // Delete the now unused program_costs column if it is present
+        if db.cf_handle(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME).is_some() {
+            db.drop_cf(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME)?;
+        }
+
         let rocks = Rocks {
             db,
             path,
@@ -185,7 +192,6 @@ impl Rocks {
             new_cf_descriptor::<columns::Blocktime>(options, oldest_slot),
             new_cf_descriptor::<columns::PerfSamples>(options, oldest_slot),
             new_cf_descriptor::<columns::BlockHeight>(options, oldest_slot),
-            new_cf_descriptor::<columns::ProgramCosts>(options, oldest_slot),
             new_cf_descriptor::<columns::OptimisticSlots>(options, oldest_slot),
             new_cf_descriptor::<columns::MerkleRootMeta>(options, oldest_slot),
         ];
@@ -236,7 +242,7 @@ impl Rocks {
         cf_descriptors
     }
 
-    const fn columns() -> [&'static str; 21] {
+    const fn columns() -> [&'static str; 20] {
         [
             columns::ErasureMeta::NAME,
             columns::DeadSlots::NAME,
@@ -256,7 +262,6 @@ impl Rocks {
             columns::Blocktime::NAME,
             columns::PerfSamples::NAME,
             columns::BlockHeight::NAME,
-            columns::ProgramCosts::NAME,
             columns::OptimisticSlots::NAME,
             columns::MerkleRootMeta::NAME,
         ]
@@ -1155,24 +1160,18 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     // pool is used for compactions whereas the high priority pool is used for
     // memtable flushes. Separate pools are created so that compactions are
     // unable to stall memtable flushes (which could stall memtable writes).
-    let mut env = rocksdb::Env::new().unwrap();
-    env.set_low_priority_background_threads(
-        blockstore_options.num_rocksdb_compaction_threads.get() as i32,
-    );
-    env.set_high_priority_background_threads(
-        blockstore_options.num_rocksdb_flush_threads.get() as i32
-    );
-    options.set_env(&env);
-    // rocksdb will try to scale threadpool sizes automatically based on the
-    // value set for max_background_jobs. The automatic scaling can increase,
-    // but not decrease the number of threads in each pool. But, we already
-    // set desired threadpool sizes with set_low_priority_background_threads()
-    // and set_high_priority_background_threads(). So, set max_background_jobs
-    // to a small number (2) so that rocksdb will leave the previously
-    // configured threadpool sizes as-is. The value (2) would result in one
-    // low priority and one high priority thread which is the minimum for each.
-    options.set_max_background_jobs(2);
-
+    //
+    // For now, use the deprecated methods to configure the exact amount of
+    // threads for each pool. The new method, set_max_background_jobs(N),
+    // configures N/4 low priority threads and 3N/4 high priority threads.
+    #[allow(deprecated)]
+    {
+        options.set_max_background_compactions(
+            blockstore_options.num_rocksdb_compaction_threads.get() as i32,
+        );
+        options
+            .set_max_background_flushes(blockstore_options.num_rocksdb_flush_threads.get() as i32);
+    }
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
 
@@ -1375,6 +1374,55 @@ pub mod tests {
             };
             let _ = Rocks::open(db_path.to_path_buf(), options).unwrap();
         }
+    }
+
+    #[test]
+    fn test_remove_deprecated_progam_costs_column_compat() {
+        solana_logger::setup();
+
+        fn is_program_costs_column_present(path: &Path) -> bool {
+            DB::list_cf(&Options::default(), path)
+                .unwrap()
+                .iter()
+                .any(|column_name| column_name == DEPRECATED_PROGRAM_COSTS_COLUMN_NAME)
+        }
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path();
+
+        let options = BlockstoreOptions {
+            access_type: AccessType::Primary,
+            enforce_ulimit_nofile: false,
+            ..BlockstoreOptions::default()
+        };
+
+        // Create a new database
+        {
+            let _rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+        }
+
+        // The newly created database should not contain the deprecated column
+        assert!(!is_program_costs_column_present(db_path));
+
+        // Create a program_costs column to simulate an old database that had the column
+        {
+            let mut rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+            rocks
+                .db
+                .create_cf(DEPRECATED_PROGRAM_COSTS_COLUMN_NAME, &Options::default())
+                .unwrap();
+        }
+
+        // Ensure the column we just created is detected
+        assert!(is_program_costs_column_present(db_path));
+
+        // Reopen the database which has logic to delete program_costs column
+        {
+            let _rocks = Rocks::open(db_path.to_path_buf(), options.clone()).unwrap();
+        }
+
+        // The deprecated column should have been dropped by Rocks::open()
+        assert!(!is_program_costs_column_present(db_path));
     }
 
     impl<C> LedgerColumn<C>

@@ -143,9 +143,19 @@ impl GossipService {
 }
 
 /// Discover Validators in a cluster
+#[deprecated(since = "3.0.0", note = "use `discover_validators` instead")]
 pub fn discover_cluster(
     entrypoint: &SocketAddr,
     num_nodes: usize,
+    socket_addr_space: SocketAddrSpace,
+) -> std::io::Result<Vec<ContactInfo>> {
+    discover_validators(entrypoint, num_nodes, 0, socket_addr_space)
+}
+
+pub fn discover_validators(
+    entrypoint: &SocketAddr,
+    num_nodes: usize,
+    my_shred_version: u16,
     socket_addr_space: SocketAddrSpace,
 ) -> std::io::Result<Vec<ContactInfo>> {
     const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -154,10 +164,10 @@ pub fn discover_cluster(
         Some(entrypoint),
         Some(num_nodes),
         DISCOVER_CLUSTER_TIMEOUT,
-        None, // find_nodes_by_pubkey
-        None, // find_node_by_gossip_addr
-        None, // my_gossip_addr
-        0,    // my_shred_version
+        None,             // find_nodes_by_pubkey
+        None,             // find_node_by_gossip_addr
+        None,             // my_gossip_addr
+        my_shred_version, // my_shred_version
         socket_addr_space,
     )?;
     Ok(validators)
@@ -232,10 +242,7 @@ pub fn discover(
     }
 
     info!("discover failed...\n{}", spy_ref.contact_info_trace());
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        "Discover failed",
-    ))
+    Err(std::io::Error::other("Discover failed"))
 }
 
 /// Creates a TpuClient by selecting a valid node at random

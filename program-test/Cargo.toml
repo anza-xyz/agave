@@ -23,7 +23,6 @@ solana-banks-client = { workspace = true }
 solana-banks-interface = { workspace = true }
 solana-banks-server = { workspace = true }
 solana-compute-budget = { workspace = true }
-solana-inline-spl = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
@@ -36,6 +35,7 @@ solana-svm = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-vote-program = { workspace = true }
+spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

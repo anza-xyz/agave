@@ -75,6 +75,10 @@ lazy_static! {
         .unwrap();
 }
 
+pub fn get_runtime() -> &'static Runtime {
+    &RUNTIME
+}
+
 async fn send_data_async(
     connection: Arc<NonblockingQuicConnection>,
     buffer: Vec<u8>,

@@ -1,9 +1,11 @@
 use {
     crate::replay_stage::DUPLICATE_THRESHOLD,
+    solana_clock::Slot,
     solana_gossip::{
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
-    solana_sdk::{clock::Slot, pubkey::Pubkey, timing::AtomicInterval},
+    solana_pubkey::Pubkey,
+    solana_time_utils::AtomicInterval,
     std::{
         collections::{HashMap, VecDeque},
         hash::RandomState,

@@ -62,6 +62,7 @@ solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-turbine = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -73,10 +74,10 @@ tokio = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 solana-account-decoder = { workspace = true }
-solana-inline-spl = { workspace = true }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+spl-generic-token = { workspace = true }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 tempfile = { workspace = true }
 

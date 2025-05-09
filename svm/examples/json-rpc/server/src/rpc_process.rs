@@ -332,6 +332,7 @@ impl JsonRpcRequestProcessor {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
+                    enable_transaction_balance_recording: true,
                 },
             },
         );
@@ -544,7 +545,7 @@ impl JsonRpcRequestProcessor {
             blockhash,
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
-            feature_set: Arc::clone(&bank.feature_set),
+            feature_set: bank.feature_set.runtime_features(),
             rent_collector: None,
         };
 

@@ -9,15 +9,13 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
+    solana_account::AccountSharedData,
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
     },
-    solana_sdk::{
-        account::AccountSharedData,
-        pubkey::Pubkey,
-        reward_info::RewardInfo,
-        stake::state::{Delegation, Stake},
-    },
+    solana_pubkey::Pubkey,
+    solana_reward_info::RewardInfo,
+    solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
 };
@@ -267,21 +265,18 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
+        solana_account::{state_traits::StateMut, Account},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        solana_sdk::{
-            account::Account,
-            account_utils::StateMut,
-            epoch_schedule::EpochSchedule,
-            native_token::LAMPORTS_PER_SOL,
-            reward_type::RewardType,
-            signature::Signer,
-            signer::keypair::Keypair,
-            stake::{instruction::StakeError, state::StakeStateV2},
-            system_transaction,
-            transaction::Transaction,
-            vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        },
+        solana_epoch_schedule::EpochSchedule,
+        solana_keypair::Keypair,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_reward_info::RewardType,
+        solana_signer::Signer,
+        solana_stake_interface::{error::StakeError, state::StakeStateV2},
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
         solana_vote::vote_transaction,
+        solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
         solana_vote_program::vote_state::{self, TowerSync},
     };
 
@@ -635,10 +630,10 @@ mod tests {
                 );
 
                 let account = curr_bank
-                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
-                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                    solana_sdk::account::from_account(&account).unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
                 assert_eq!(post_cap, pre_cap + epoch_rewards.distributed_rewards);
             } else {
                 // 2. when curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
@@ -657,7 +652,7 @@ mod tests {
             // Ensure the sysvar persists thereafter.
             if slot >= SLOTS_PER_EPOCH {
                 let epoch_rewards_lamports =
-                    curr_bank.get_balance(&solana_sdk::sysvar::epoch_rewards::id());
+                    curr_bank.get_balance(&solana_sysvar::epoch_rewards::id());
                 assert!(epoch_rewards_lamports > 0);
             }
             previous_bank = Arc::new(curr_bank);
@@ -680,10 +675,10 @@ mod tests {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
-                .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                .get_account(&solana_sysvar::epoch_rewards::id())
                 .unwrap_or_default();
-            let pre_epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                solana_sdk::account::from_account(&pre_sysvar_account).unwrap_or_default();
+            let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
 
             let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
@@ -715,10 +710,10 @@ mod tests {
                 assert!(curr_bank.is_partitioned());
 
                 let account = curr_bank
-                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
-                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                    solana_sdk::account::from_account(&account).unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -735,10 +730,10 @@ mod tests {
                 );
 
                 let account = curr_bank
-                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
-                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                    solana_sdk::account::from_account(&account).unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -765,7 +760,7 @@ mod tests {
     /// but a withdrawal should fail.
     #[test]
     fn test_program_execution_restricted_for_stake_account_in_reward_period() {
-        use solana_sdk::transaction::TransactionError::InstructionError;
+        use solana_transaction_error::TransactionError::InstructionError;
 
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
@@ -842,7 +837,7 @@ mod tests {
             assert!(system_result.is_ok());
 
             // Attempt to withdraw from new stake account to the mint
-            let stake_ix = solana_sdk::stake::instruction::withdraw(
+            let stake_ix = solana_stake_interface::instruction::withdraw(
                 &new_stake_address,
                 &new_stake_address,
                 &mint_keypair.pubkey(),

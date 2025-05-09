@@ -97,11 +97,11 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
         .load_execute_and_commit_transactions(
             &tx_batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig {
                 enable_cpi_recording: true,
                 enable_log_recording: true,
                 enable_return_data_recording: false,
+                enable_transaction_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
             None,
@@ -1299,20 +1299,20 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_rust")]
     {
         programs.extend_from_slice(&[
-            ("solana_sbf_rust_128bit", 967),
-            ("solana_sbf_rust_alloc", 4940),
-            ("solana_sbf_rust_custom_heap", 286),
+            ("solana_sbf_rust_128bit", 969),
+            ("solana_sbf_rust_alloc", 5077),
+            ("solana_sbf_rust_custom_heap", 304),
             ("solana_sbf_rust_dep_crate", 2),
             ("solana_sbf_rust_iter", 1514),
             ("solana_sbf_rust_many_args", 1290),
             ("solana_sbf_rust_mem", 1302),
-            ("solana_sbf_rust_membuiltins", 327),
-            ("solana_sbf_rust_noop", 275),
+            ("solana_sbf_rust_membuiltins", 331),
+            ("solana_sbf_rust_noop", 314),
             ("solana_sbf_rust_param_passing", 108),
             ("solana_sbf_rust_rand", 278),
             ("solana_sbf_rust_sanity", 51325),
             ("solana_sbf_rust_secp256k1_recover", 89388),
-            ("solana_sbf_rust_sha", 22850),
+            ("solana_sbf_rust_sha", 22855),
         ]);
     }
 
@@ -1713,7 +1713,7 @@ fn test_program_sbf_invoke_in_same_tx_as_deployment() {
                 // Asserting the instruction number as an upper bound, since the quantity of
                 // instructions depends on the program size, which in turn depends on the SBPF
                 // versions.
-                assert!(instr_no <= 39);
+                assert!(instr_no <= 41);
                 assert_eq!(ty, InstructionError::UnsupportedProgramId);
             } else {
                 panic!("Invalid error type");
@@ -1754,7 +1754,8 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
             Some(&program_id),
         );
     let undeployment_instruction = loader_v4::retract(&program_id, &authority_keypair.pubkey());
-    let deployment_instruction = deployment_instructions.pop().unwrap();
+    let redeployment_instructions =
+        deployment_instructions.split_off(deployment_instructions.len() - 3);
     let signers: &[&[&Keypair]] = &[
         &[&mint_keypair, &source_program_keypair],
         &[&mint_keypair, &authority_keypair],
@@ -1797,7 +1798,7 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
         ),
         (
             indirect_invoke_instruction,
-            TransactionError::InstructionError(2, InstructionError::UnsupportedProgramId),
+            TransactionError::InstructionError(4, InstructionError::UnsupportedProgramId),
         ),
     ] {
         // Call upgradeable program
@@ -1809,7 +1810,9 @@ fn test_program_sbf_invoke_in_same_tx_as_redeployment() {
         let message = Message::new(
             &[
                 undeployment_instruction.clone(),
-                deployment_instruction.clone(),
+                redeployment_instructions[0].clone(),
+                redeployment_instructions[1].clone(),
+                redeployment_instructions[2].clone(),
                 invoke_instruction,
             ],
             Some(&mint_keypair.pubkey()),
@@ -2076,7 +2079,7 @@ fn test_program_sbf_upgrade() {
             Some(&program_id),
         );
     deployment_instructions.insert(
-        deployment_instructions.len() - 1,
+        deployment_instructions.len() - 3,
         loader_v4::retract(&program_id, &new_authority_keypair.pubkey()),
     );
     let signers: &[&[&Keypair]] = &[
@@ -2182,7 +2185,7 @@ fn test_program_sbf_upgrade_via_cpi() {
             Some(&program_id),
         );
     deployment_instructions.insert(
-        deployment_instructions.len() - 1,
+        deployment_instructions.len() - 3,
         loader_v4::retract(&program_id, &new_authority_keypair.pubkey()),
     );
     let mut upgrade_instruction = deployment_instructions.pop().unwrap();
@@ -2202,13 +2205,9 @@ fn test_program_sbf_upgrade_via_cpi() {
         .accounts
         .insert(0, AccountMeta::new(loader_v4::id(), false));
     let message = Message::new(&[upgrade_instruction], Some(&mint_keypair.pubkey()));
-    let result =
-        bank_client.send_and_confirm_message(&[&mint_keypair, &new_authority_keypair], message);
-    // This fails for now because of the `callee_account.is_executable()` check in CPI `translate_and_update_accounts()`
-    assert_eq!(
-        result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::AccountDataSizeChanged)
-    );
+    bank_client
+        .send_and_confirm_message(&[&mint_keypair, &new_authority_keypair], message)
+        .unwrap();
     bank_client
         .advance_slot(1, &bank_forks, &Pubkey::default())
         .expect("Failed to advance the slot");
@@ -2218,7 +2217,7 @@ fn test_program_sbf_upgrade_via_cpi() {
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction.clone());
     assert_eq!(
         result.unwrap_err().unwrap(),
-        TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
+        TransactionError::InstructionError(0, InstructionError::Custom(43))
     );
 }
 
@@ -5068,11 +5067,11 @@ fn test_function_call_args() {
         .load_execute_and_commit_transactions(
             &tx_batch,
             MAX_PROCESSING_AGE,
-            false,
             ExecutionRecordingConfig {
                 enable_cpi_recording: false,
                 enable_log_recording: false,
                 enable_return_data_recording: true,
+                enable_transaction_balance_recording: false,
             },
             &mut ExecuteTimings::default(),
             None,

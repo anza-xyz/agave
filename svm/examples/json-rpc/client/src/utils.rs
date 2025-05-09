@@ -8,6 +8,7 @@ use {
     yaml_rust::YamlLoader,
 };
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("failed to read solana config file: ({0})")]

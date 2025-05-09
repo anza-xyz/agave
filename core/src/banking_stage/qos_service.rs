@@ -6,19 +6,21 @@
 use {
     super::{committer::CommitTransactionDetails, BatchedTransactionDetails},
     agave_feature_set::FeatureSet,
+    solana_clock::Slot,
     solana_cost_model::{
         cost_model::CostModel, cost_tracker::UpdatedCosts, transaction_cost::TransactionCost,
     },
     solana_measure::measure::Measure,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{
-        clock::Slot,
-        saturating_add_assign,
-        transaction::{self, TransactionError},
-    },
+    solana_sdk::saturating_add_assign,
+    solana_transaction_error::TransactionError,
     std::sync::atomic::{AtomicU64, Ordering},
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 // QosService is local to each banking thread, each instance of QosService provides services to
 // one banking thread.
@@ -611,13 +613,12 @@ mod tests {
         super::*,
         itertools::Itertools,
         solana_cost_model::transaction_cost::{UsageCostDetails, WritableKeysTransaction},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_runtime::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-            system_transaction,
-        },
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::sync::Arc,
@@ -726,10 +727,10 @@ mod tests {
         let transaction_count = 5;
         let keypair = Keypair::new();
         let loaded_accounts_data_size: u32 = 1_000_000;
-        let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
             &[
-                solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
+                solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
+                solana_system_interface::instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
             ],
             Some(&keypair.pubkey()),
         ));
@@ -850,10 +851,10 @@ mod tests {
         let transaction_count = 5;
         let keypair = Keypair::new();
         let loaded_accounts_data_size: u32 = 1_000_000;
-        let transaction = solana_sdk::transaction::Transaction::new_unsigned(solana_sdk::message::Message::new(
+        let transaction = solana_transaction::Transaction::new_unsigned(solana_message::Message::new(
             &[
-                solana_sdk::compute_budget::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
-                solana_sdk::system_instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
+                solana_compute_budget_interface::ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(loaded_accounts_data_size),
+                solana_system_interface::instruction::transfer(&keypair.pubkey(), &solana_pubkey::Pubkey::new_unique(), 1),
             ],
             Some(&keypair.pubkey()),
         ));

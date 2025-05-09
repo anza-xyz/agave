@@ -3,6 +3,7 @@
 extern crate serde_derive;
 pub use self::legacy::{LegacyVersion1, LegacyVersion2};
 use {
+    rand::{thread_rng, Rng},
     serde_derive::{Deserialize, Serialize},
     solana_sanitize::Sanitize,
     solana_serde_varint as serde_varint,
@@ -61,7 +62,9 @@ impl Default for Version {
             major: env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap(),
             minor: env!("CARGO_PKG_VERSION_MINOR").parse().unwrap(),
             patch: env!("CARGO_PKG_VERSION_PATCH").parse().unwrap(),
-            commit: compute_commit(option_env!("CI_COMMIT")).unwrap_or_default(),
+            commit: compute_commit(option_env!("CI_COMMIT"))
+                .or(compute_commit(option_env!("AGAVE_GIT_COMMIT_HASH")))
+                .unwrap_or_else(|| thread_rng().gen::<u32>()),
             feature_set,
             // Other client implementations need to modify this line.
             client: u16::try_from(ClientId::Agave).unwrap(),

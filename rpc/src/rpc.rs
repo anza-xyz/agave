@@ -32,10 +32,6 @@ use {
     solana_entry::entry::Entry,
     solana_faucet::faucet::request_airdrop_transaction,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_inline_spl::{
-        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
-    },
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
         blockstore_meta::{PerfSample, PerfSampleV1, PerfSampleV2},
@@ -97,6 +93,10 @@ use {
         UiConfirmedBlock, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
+    spl_generic_token::{
+        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
+        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
+    },
     spl_token_2022::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
@@ -670,29 +670,28 @@ impl JsonRpcRequestProcessor {
     }
 
     fn filter_map_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
+        rewards: Option<Rewards>,
         slot: Slot,
         addresses: &'a [String],
         reward_type_filter: &'a F,
-    ) -> HashMap<String, (Reward, Slot)>
+    ) -> impl Iterator<Item = (String, (Reward, Slot))> + use<'a, F>
     where
         F: Fn(RewardType) -> bool,
     {
         Self::filter_rewards(rewards, reward_type_filter)
             .filter(|reward| addresses.contains(&reward.pubkey))
-            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
-            .collect()
+            .map(move |reward| (reward.pubkey.clone(), (reward, slot)))
     }
 
-    fn filter_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
-        reward_type_filter: &'a F,
-    ) -> impl Iterator<Item = &'a Reward>
+    fn filter_rewards<F>(
+        rewards: Option<Rewards>,
+        reward_type_filter: &F,
+    ) -> impl Iterator<Item = Reward> + use<'_, F>
     where
         F: Fn(RewardType) -> bool,
     {
         rewards
-            .iter()
+            .into_iter()
             .flatten()
             .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
     }
@@ -781,7 +780,7 @@ impl JsonRpcRequestProcessor {
             let addresses: Vec<String> =
                 addresses.iter().map(|pubkey| pubkey.to_string()).collect();
             Self::filter_map_rewards(
-                &epoch_boundary_block.rewards,
+                epoch_boundary_block.rewards,
                 first_confirmed_block_in_epoch,
                 &addresses,
                 &|reward_type| -> bool {
@@ -789,6 +788,7 @@ impl JsonRpcRequestProcessor {
                         || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
                 },
             )
+            .collect()
         };
 
         // Append stake account rewards from partitions if partitions epoch
@@ -862,7 +862,7 @@ impl JsonRpcRequestProcessor {
                 };
 
                 let index_reward_map = Self::filter_map_rewards(
-                    &block.rewards,
+                    block.rewards,
                     slot,
                     addresses,
                     &|reward_type| -> bool { reward_type == RewardType::Staking },
@@ -2380,8 +2380,10 @@ impl JsonRpcRequestProcessor {
 
     fn get_stake_minimum_delegation(&self, config: RpcContextConfig) -> Result<RpcResponse<u64>> {
         let bank = self.get_bank_with_config(config)?;
-        let stake_minimum_delegation =
-            solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        let stake_minimum_delegation = solana_stake_program::get_minimum_delegation(
+            bank.feature_set
+                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+        );
         Ok(new_response(&bank, stake_minimum_delegation))
     }
 
@@ -7801,7 +7803,7 @@ pub mod tests {
             let token_account_pubkey = solana_pubkey::new_rand();
             let token_with_different_mint_pubkey = solana_pubkey::new_rand();
             let new_mint = Pubkey::new_from_array([5; 32]);
-            if program_id == solana_inline_spl::token_2022::id() {
+            if program_id == spl_generic_token::token_2022::id() {
                 // Add the token account
                 let account_base = TokenAccount {
                     mint,
@@ -8058,7 +8060,7 @@ pub mod tests {
                 .expect("actual response deserialization");
             let accounts: Vec<RpcKeyedAccount> =
                 serde_json::from_value(result["result"].clone()).unwrap();
-            if program_id == solana_inline_spl::token::id() {
+            if program_id == spl_generic_token::token::id() {
                 // native mint is included for token-v3
                 assert_eq!(accounts.len(), 4);
             } else {
@@ -8306,7 +8308,7 @@ pub mod tests {
         let supply = 500;
         let decimals = 2;
         let (program_name, account_size, mint_size, additional_data) = if program_id
-            == solana_inline_spl::token_2022::id()
+            == spl_generic_token::token_2022::id()
         {
             let account_base = TokenAccount {
                 mint,
@@ -8477,7 +8479,7 @@ pub mod tests {
                 }
             }
         });
-        if program_id == solana_inline_spl::token_2022::id() {
+        if program_id == spl_generic_token::token_2022::id() {
             expected_value["parsed"]["info"]["extensions"] = json!([
                 {
                     "extension": "immutableOwner"
@@ -8513,7 +8515,7 @@ pub mod tests {
                 }
             }
         });
-        if program_id == solana_inline_spl::token_2022::id() {
+        if program_id == spl_generic_token::token_2022::id() {
             if interest_bearing_config.is_some() {
                 expected_value["parsed"]["info"]["extensions"] = json!([
                     {
@@ -8601,7 +8603,7 @@ pub mod tests {
 
         // Can't filter on account type for token-v3
         assert!(get_spl_token_owner_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8611,7 +8613,7 @@ pub mod tests {
 
         // Filtering on mint instead of owner
         assert!(get_spl_token_owner_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, owner.to_bytes().to_vec())),
                 RpcFilterType::DataSize(165)
@@ -8644,7 +8646,7 @@ pub mod tests {
         let mint = Pubkey::new_unique();
         assert_eq!(
             get_spl_token_mint_filter(
-                &solana_inline_spl::token::id(),
+                &spl_generic_token::token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::DataSize(165)
@@ -8657,7 +8659,7 @@ pub mod tests {
         // Filtering on token-2022 account type
         assert_eq!(
             get_spl_token_mint_filter(
-                &solana_inline_spl::token_2022::id(),
+                &spl_generic_token::token_2022::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8670,7 +8672,7 @@ pub mod tests {
         // Filtering on token account state
         assert_eq!(
             get_spl_token_mint_filter(
-                &solana_inline_spl::token::id(),
+                &spl_generic_token::token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::TokenAccountState,
@@ -8682,7 +8684,7 @@ pub mod tests {
 
         // Can't filter on account type for token-v3
         assert!(get_spl_token_mint_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8692,7 +8694,7 @@ pub mod tests {
 
         // Filtering on owner instead of mint
         assert!(get_spl_token_mint_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, mint.to_bytes().to_vec())),
                 RpcFilterType::DataSize(165)
@@ -9034,8 +9036,10 @@ pub mod tests {
     fn test_rpc_get_stake_minimum_delegation() {
         let rpc = RpcHandler::start();
         let bank = rpc.working_bank();
-        let expected_stake_minimum_delegation =
-            solana_stake_program::get_minimum_delegation(&bank.feature_set);
+        let expected_stake_minimum_delegation = solana_stake_program::get_minimum_delegation(
+            bank.feature_set
+                .is_active(&agave_feature_set::stake_raise_minimum_delegation_to_1_sol::id()),
+        );
 
         let request = create_test_request("getStakeMinimumDelegation", None);
         let response: RpcResponse<u64> = parse_success_result(rpc.handle_request_sync(request));

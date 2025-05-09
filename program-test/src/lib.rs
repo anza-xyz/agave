@@ -131,7 +131,7 @@ pub fn invoke_builtin_function(
     // Serialize entrypoint parameters with SBF ABI
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
-        .is_active(&agave_feature_set::mask_out_rent_epoch_in_vm_serialization::id());
+        .mask_out_rent_epoch_in_vm_serialization;
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,
@@ -186,7 +186,6 @@ pub fn invoke_builtin_function(
                 if borrowed_account
                     .can_data_be_resized(account_info.data_len())
                     .is_ok()
-                    && borrowed_account.can_data_be_changed().is_ok()
                 {
                     borrowed_account.set_data_from_slice(&account_info.data.borrow())?;
                 }
@@ -307,10 +306,7 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
             }
             let account_info_data = account_info.try_borrow_data().unwrap();
             // The redundant check helps to avoid the expensive data comparison if we can
-            match borrowed_account
-                .can_data_be_resized(account_info_data.len())
-                .and_then(|_| borrowed_account.can_data_be_changed())
-            {
+            match borrowed_account.can_data_be_resized(account_info_data.len()) {
                 Ok(()) => borrowed_account
                     .set_data_from_slice(&account_info_data)
                     .unwrap(),
@@ -1007,15 +1003,12 @@ impl ProgramTestBanksClientExt for BanksClient {
             num_retries += 1;
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "Unable to get new blockhash after {}ms (retried {} times), stuck at {}",
-                start.elapsed().as_millis(),
-                num_retries,
-                blockhash
-            ),
-        ))
+        Err(io::Error::other(format!(
+            "Unable to get new blockhash after {}ms (retried {} times), stuck at {}",
+            start.elapsed().as_millis(),
+            num_retries,
+            blockhash
+        )))
     }
 }
 

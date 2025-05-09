@@ -254,7 +254,7 @@ impl CrdsGossipPull {
             &self_keypair.pubkey(),
             // Pull from nodes with the same shred version, unless this is a
             // spy node which then can pull from any node.
-            |shred_version| self_shred_version == 0u16 || shred_version == self_shred_version,
+            |shred_version| shred_version == self_shred_version,
             crds,
             gossip_validators,
             stakes,

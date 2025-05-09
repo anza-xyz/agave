@@ -301,12 +301,9 @@ impl CrdsGossip {
         now: u64,
         timeouts: &CrdsTimeouts,
     ) -> usize {
-        let mut rv = 0;
-        if now > self.pull.crds_timeout {
-            debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
-            debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
-            rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
-        }
+        debug_assert_eq!(timeouts[self_pubkey], u64::MAX);
+        debug_assert_ne!(timeouts[&Pubkey::default()], 0u64);
+        let rv = CrdsGossipPull::purge_active(thread_pool, &self.crds, now, timeouts);
         self.crds
             .write()
             .unwrap()
@@ -322,8 +319,7 @@ pub(crate) fn get_gossip_nodes<R: Rng>(
     now: u64,
     pubkey: &Pubkey, // This node.
     // By default, should only push to or pull from gossip nodes with the same
-    // shred-version. Except for spy nodes (shred_version == 0u16) which can
-    // pull from any node.
+    // shred-version.
     verify_shred_version: impl Fn(/*shred_version:*/ u16) -> bool,
     crds: &RwLock<Crds>,
     gossip_validators: Option<&HashSet<Pubkey>>,

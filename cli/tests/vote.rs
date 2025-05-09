@@ -1,5 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    solana_account::state_traits::StateMut,
     solana_cli::{
         check_balance,
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
@@ -8,12 +9,10 @@ use {
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_commitment_config::CommitmentConfig,
     solana_faucet::faucet::run_local_faucet,
+    solana_keypair::Keypair,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},
-    solana_sdk::{
-        account_utils::StateMut,
-        signature::{Keypair, NullSigner, Signer},
-    },
+    solana_signer::{null_signer::NullSigner, Signer},
     solana_streamer::socket::SocketAddrSpace,
     solana_test_validator::TestValidator,
     solana_vote_program::vote_state::{VoteAuthorize, VoteState, VoteStateVersions},

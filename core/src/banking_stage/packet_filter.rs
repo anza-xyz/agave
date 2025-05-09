@@ -3,8 +3,8 @@ use {
     agave_feature_set::FeatureSet,
     lazy_static::lazy_static,
     solana_builtins_default_costs::get_builtin_instruction_cost,
-    solana_sdk::{ed25519_program, saturating_add_assign, secp256k1_program},
-    solana_sdk_ids::secp256r1_program,
+    solana_sdk::saturating_add_assign,
+    solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
     thiserror::Error,
 };
 

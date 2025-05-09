@@ -25,12 +25,11 @@ use {
     assert_matches::assert_matches,
     log::*,
     solana_clock::Slot,
+    solana_hash::Hash,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        hash::Hash,
-        transaction::{Result, SanitizedTransaction, TransactionError},
-    },
     solana_timings::ExecuteTimings,
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         fmt::{self, Debug},
@@ -264,7 +263,8 @@ impl SchedulingContext {
         }
     }
 
-    pub fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
         Self {
             mode,
             bank: Some(bank),
@@ -796,9 +796,8 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
-        solana_sdk::system_transaction,
+        solana_system_transaction as system_transaction,
         std::sync::Mutex,
     };
 

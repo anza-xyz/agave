@@ -3,7 +3,9 @@ use {
     crate::stake_history::StakeHistory,
     im::HashMap as ImHashMap,
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
-    solana_sdk::{clock::Epoch, pubkey::Pubkey, stake::state::Delegation},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+    solana_stake_interface::state::Delegation,
     solana_stake_program::stake_state::Stake,
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
@@ -255,7 +257,7 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::stakes::StakesCache, rand::Rng, solana_sdk::rent::Rent,
+        super::*, crate::stakes::StakesCache, rand::Rng, solana_rent::Rent,
         solana_stake_program::stake_state, solana_vote_program::vote_state,
     };
 

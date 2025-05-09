@@ -11,6 +11,7 @@ use {
         },
         sorted_storages::SortedStorages,
     },
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_measure::measure_us,
     solana_runtime::{
         serde_snapshot::BankIncrementalSnapshotPersistence,
@@ -22,7 +23,6 @@ use {
         },
         snapshot_utils,
     },
-    solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
     std::{
         io::Result as IoResult,
         sync::{

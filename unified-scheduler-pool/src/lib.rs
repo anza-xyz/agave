@@ -63,6 +63,7 @@ use {
         time::{Duration, Instant},
     },
     trait_set::trait_set,
+    unwrap_none::UnwrapNone,
     vec_extract_if_polyfill::MakeExtractIf,
 };
 
@@ -815,6 +816,8 @@ impl TaskHandler for DefaultTaskHandler {
                 // via the replaying stage.
                 // Refer `record_token_balances` in `execute_batch()` as this treatment is mirrored
                 // from it.
+                // This is code path is directly corresponds to the pre_commit_callback in
+                // execute_batch().
                 vec![]
             }
         };
@@ -1205,9 +1208,8 @@ where
         // assert that this is called after ::into_inner()
         assert_matches!(self.session_result_with_timings, None);
 
-        // Ensure to initiate thread shutdown via disconnected new_task_receiver by replacing the
-        // current new_task_sender with a random one...
-        self.new_task_sender = crossbeam_channel::unbounded().0;
+        // Ensure to initiate thread shutdown by disconnecting new_task_receiver
+        self.disconnect_new_task_sender();
 
         self.ensure_join_threads(true);
         assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
@@ -1484,11 +1486,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn put_session_result_with_timings(&mut self, result_with_timings: ResultWithTimings) {
-        assert_matches!(
-            self.session_result_with_timings
-                .replace(result_with_timings),
-            None
-        );
+        self.session_result_with_timings
+            .replace(result_with_timings)
+            .unwrap_none();
     }
 
     // This method must take same set of session-related arguments as start_session() to avoid
@@ -1746,8 +1746,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                         sleepless_testing::at(CheckPoint::SessionEnding);
                                         session_ending = true;
                                     }
-                                    Ok(NewTaskPayload::OpenSubchannel(_) | NewTaskPayload::UnpauseOpenedSubchannel) =>
-                                        unreachable!(),
+                                    Ok(
+                                        NewTaskPayload::OpenSubchannel(_)
+                                        | NewTaskPayload::UnpauseOpenedSubchannel
+                                    ) => unreachable!(),
                                     Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
                                         // abandoned forks...
@@ -1800,7 +1802,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // UnpauseOpenedSubchannel won't be used by itself, which would leave
                     // `result_with_timings` uninitialized after sending it via
                     // session_result_sender just above
-                    let mut new_result_with_timings = initialized_result_with_timings();
+                    let mut new_result_with_timings = None;
 
                     loop {
                         // Prepare for the new session.
@@ -1809,13 +1811,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 sleepless_testing::at(CheckPoint::NewBufferedTask(
                                     task.task_index(),
                                 ));
-                                assert_eq!(scheduling_mode, BlockProduction);
+                                assert_matches!(scheduling_mode, BlockProduction);
                                 state_machine.buffer_task(task);
                             }
                             Ok(NewTaskPayload::OpenSubchannel(context_and_result_with_timings)) => {
-                                let new_context;
-                                (new_context, new_result_with_timings) =
-                                    *context_and_result_with_timings;
+                                let new_context = context_and_result_with_timings.0;
+                                new_result_with_timings
+                                    .replace(context_and_result_with_timings.1)
+                                    .unwrap_none();
                                 // We just received subsequent (= not initial) session and about to
                                 // enter into the preceding `while(!is_finished) {...}` loop again.
                                 // Before that, propagate new SchedulingContext to handler threads
@@ -1841,9 +1844,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 break;
                             }
                             Ok(NewTaskPayload::CloseSubchannel) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
                                 // This match arm can be hit if context.is_preallocated()
+                                // or abort is hinted from task results, before explicit
+                                // session ending is sent from the poh or the replay thread.
                             }
-                            Err(_) => {
+                            Err(RecvError) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
                                 // Initialize result_with_timings with a harmless value...
                                 result_with_timings = initialized_result_with_timings();
@@ -1851,7 +1857,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                         }
                     }
-                    result_with_timings = new_result_with_timings;
+                    result_with_timings = new_result_with_timings.unwrap();
                 }
 
                 // There are several code-path reaching here out of the preceding unconditional
@@ -1957,9 +1963,14 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             }
         };
 
+        let mode_char = match scheduling_mode {
+            BlockVerification => 'V',
+            BlockProduction => 'P',
+        };
+
         self.scheduler_thread = Some(
             thread::Builder::new()
-                .name("solScheduler".to_owned())
+                .name(format!("solSchedule{mode_char}"))
                 .spawn_tracked(scheduler_main_loop)
                 .unwrap(),
         );
@@ -1968,7 +1979,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .map({
                 |thx| {
                     thread::Builder::new()
-                        .name(format!("solScHandler{:02}", thx))
+                        .name(format!("solScHandle{mode_char}{:02}", thx))
                         .spawn_tracked(handler_main_loop())
                         .unwrap()
                 }
@@ -2067,14 +2078,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .send(NewTaskPayload::CloseSubchannel)
             .is_err();
 
-        // In addition to the later session result receiving, also skip thread joining, which is
-        // part of necessary bookkeeping on scheduler abortion, even if detected; Otherwise, we
-        // could be dead-locked around poh, because we would technically wait on handler thread
-        // before joining in _the poh thread_. Nonblocking session ending is guaranteed to be
-        // followed by blocking session ending in the replay stage thread. The first nonblocking
-        // session ending is special-cased only for block production poh. The second real session
-        // ending will properly take care of all the skipped clean up.
         if nonblocking {
+            // Bail out session ending bookkeeping under this special case codepath for block
+            // production. This means skipping the `abort_detected`-dependant thread joining step
+            // as well; Otherwise, we could be dead-locked around poh, because we would technically
+            // wait for joining handler threads in _the poh thread_, which holds the poh lock (This
+            // `nonblocking` special case is called by the thread).
+            //
+            // This nonblocking session ending is guaranteed to be followed by a blocking session ending
+            // in the replay stage thread. The next real session ending will properly take care of
+            // all the skipped bookkeeping.
             return;
         }
 
@@ -2113,6 +2126,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                 result_with_timings,
             ))))
             .expect("no new session after aborted");
+    }
+
+    fn disconnect_new_task_sender(&mut self) {
+        self.new_task_sender = crossbeam_channel::unbounded().0;
     }
 }
 
@@ -2169,15 +2186,14 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         context: SchedulingContext,
         result_with_timings: ResultWithTimings,
     ) -> Self {
-        let mut inner = Self::Inner {
-            thread_manager: ThreadManager::new(pool.clone()),
+        let mut thread_manager = ThreadManager::new(pool.clone());
+        let handler_context =
+            pool.create_handler_context(context.mode(), &thread_manager.new_task_sender);
+        thread_manager.start_threads(context.clone(), result_with_timings, handler_context);
+        let inner = Self::Inner {
+            thread_manager,
             usage_queue_loader: UsageQueueLoader::default(),
         };
-        inner.thread_manager.start_threads(
-            context.clone(),
-            result_with_timings,
-            pool.create_handler_context(context.mode(), &inner.thread_manager.new_task_sender),
-        );
         Self { inner, context }
     }
 }
@@ -2570,7 +2586,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -2752,7 +2768,7 @@ mod tests {
         fn handle(
             result: &mut Result<()>,
             _timings: &mut ExecuteTimings,
-            _bank: &SchedulingContext,
+            _scheduling_context: &SchedulingContext,
             _task: &Task,
             _handler_context: &HandlerContext,
         ) {
@@ -2862,7 +2878,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 _task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -3198,7 +3214,7 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -3278,7 +3294,7 @@ mod tests {
             fn handle(
                 result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                _bank: &SchedulingContext,
+                _scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
@@ -3651,12 +3667,15 @@ mod tests {
             fn handle(
                 _result: &mut Result<()>,
                 _timings: &mut ExecuteTimings,
-                context: &SchedulingContext,
+                scheduling_context: &SchedulingContext,
                 task: &Task,
                 _handler_context: &HandlerContext,
             ) {
                 // The task index must always be matched to the slot.
-                assert_eq!(task.task_index() as Slot, context.slot().unwrap());
+                assert_eq!(
+                    task.task_index() as Slot,
+                    scheduling_context.slot().unwrap()
+                );
             }
         }
 

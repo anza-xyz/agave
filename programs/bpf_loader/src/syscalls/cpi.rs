@@ -1,16 +1,10 @@
 use {
     super::*,
-    agave_feature_set::{self as feature_set, enable_bpf_loader_set_authority_checked_ix},
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
-    solana_program_runtime::{
-        invoke_context::SerializedAccountMetadata, serialization::account_data_region_memory_state,
-    },
-    solana_sbpf::{
-        ebpf,
-        memory_region::{MemoryRegion, MemoryState},
-    },
+    solana_program_runtime::invoke_context::SerializedAccountMetadata,
+    solana_sbpf::{ebpf, memory_region::MemoryRegion},
     solana_stable_layout::stable_instruction::StableInstruction,
     solana_transaction_context::BorrowedAccount,
     std::{mem, ptr},
@@ -119,7 +113,7 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+            .bpf_account_data_direct_mapping;
 
         if direct_mapping {
             check_account_info_pointer(
@@ -263,7 +257,7 @@ impl<'a> CallerAccount<'a> {
     ) -> Result<CallerAccount<'a>, Error> {
         let direct_mapping = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+            .bpf_account_data_direct_mapping;
 
         if direct_mapping {
             check_account_info_pointer(
@@ -365,7 +359,7 @@ impl<'a> CallerAccount<'a> {
         &self,
         memory_mapping: &'a MemoryMapping<'_>,
         is_loader_deprecated: bool,
-    ) -> Result<Option<&'a MemoryRegion>, Error> {
+    ) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
         account_realloc_region(
             memory_mapping,
             self.vm_data_addr,
@@ -453,10 +447,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
 
         check_instruction_size(account_metas.len(), data.len(), invoke_context)?;
 
-        if invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::loosen_cpi_size_restriction::id())
-        {
+        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
@@ -671,10 +662,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
 
         check_instruction_size(ix_c.accounts_len as usize, data.len(), invoke_context)?;
 
-        if invoke_context
-            .get_feature_set()
-            .is_active(&feature_set::loosen_cpi_size_restriction::id())
-        {
+        if invoke_context.get_feature_set().loosen_cpi_size_restriction {
             consume_compute_meter(
                 invoke_context,
                 (data.len() as u64)
@@ -806,7 +794,7 @@ where
 {
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping;
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
@@ -880,7 +868,7 @@ where
 
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping;
 
     for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
     {
@@ -974,10 +962,7 @@ fn check_instruction_size(
     data_len: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
-    if invoke_context
-        .get_feature_set()
-        .is_active(&feature_set::loosen_cpi_size_restriction::id())
-    {
+    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
         let data_len = data_len as u64;
         let max_data_len = MAX_CPI_INSTRUCTION_DATA_LEN;
         if data_len > max_data_len {
@@ -1011,13 +996,10 @@ fn check_account_infos(
     num_account_infos: usize,
     invoke_context: &mut InvokeContext,
 ) -> Result<(), Error> {
-    if invoke_context
-        .get_feature_set()
-        .is_active(&feature_set::loosen_cpi_size_restriction::id())
-    {
+    if invoke_context.get_feature_set().loosen_cpi_size_restriction {
         let max_cpi_account_infos = if invoke_context
             .get_feature_set()
-            .is_active(&feature_set::increase_tx_account_lock_limit::id())
+            .increase_tx_account_lock_limit
         {
             MAX_CPI_ACCOUNT_INFOS
         } else {
@@ -1056,7 +1038,7 @@ fn check_authorized_program(
                 || bpf_loader_upgradeable::is_set_authority_instruction(instruction_data)
                 || (invoke_context
                     .get_feature_set()
-                    .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
+                    .enable_bpf_loader_set_authority_checked_ix
                     && bpf_loader_upgradeable::is_set_authority_checked_instruction(
                         instruction_data,
                     ))
@@ -1076,7 +1058,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     account_infos_len: u64,
     signers_seeds_addr: u64,
     signers_seeds_len: u64,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
     // CPI entry.
     //
@@ -1139,7 +1121,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     // Synchronize the callee's account changes so the caller can see them.
     let direct_mapping = invoke_context
         .get_feature_set()
-        .is_active(&feature_set::bpf_account_data_direct_mapping::id());
+        .bpf_account_data_direct_mapping;
 
     if direct_mapping {
         // Update all perms at once before doing account data updates. This
@@ -1148,12 +1130,12 @@ fn cpi_common<S: SyscallInvokeSigned>(
         // it's better to be safe than sorry.
         for (index_in_caller, caller_account) in accounts.iter() {
             if let Some(caller_account) = caller_account {
-                let callee_account = instruction_context
+                let mut callee_account = instruction_context
                     .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
                 update_caller_account_perms(
                     memory_mapping,
                     caller_account,
-                    &callee_account,
+                    &mut callee_account,
                     is_loader_deprecated,
                 )?;
             }
@@ -1207,10 +1189,7 @@ fn update_callee_account(
     if direct_mapping {
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm.get(memory_mapping)? as usize;
-        match callee_account
-            .can_data_be_resized(post_len)
-            .and_then(|_| callee_account.can_data_be_changed())
-        {
+        match callee_account.can_data_be_resized(post_len) {
             Ok(()) => {
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
                 // bpf_loader_deprecated programs don't have a realloc region
@@ -1245,10 +1224,7 @@ fn update_callee_account(
         }
     } else {
         // The redundant check helps to avoid the expensive data comparison if we can
-        match callee_account
-            .can_data_be_resized(caller_account.serialized_data.len())
-            .and_then(|_| callee_account.can_data_be_changed())
-        {
+        match callee_account.can_data_be_resized(caller_account.serialized_data.len()) {
             Ok(()) => callee_account.set_data_from_slice(caller_account.serialized_data)?,
             Err(err) if callee_account.get_data() != caller_account.serialized_data => {
                 return Err(Box::new(err));
@@ -1266,9 +1242,9 @@ fn update_callee_account(
 }
 
 fn update_caller_account_perms(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
     caller_account: &CallerAccount,
-    callee_account: &BorrowedAccount<'_>,
+    callee_account: &mut BorrowedAccount<'_>,
     is_loader_deprecated: bool,
 ) -> Result<(), Error> {
     let CallerAccount {
@@ -1277,26 +1253,66 @@ fn update_caller_account_perms(
         ..
     } = caller_account;
 
-    let data_region = account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?;
-    if let Some(region) = data_region {
-        region
-            .state
-            .set(account_data_region_memory_state(callee_account));
+    if let Some((region_index, region)) =
+        account_data_region(memory_mapping, *vm_data_addr, *original_data_len)?
+    {
+        let writable = callee_account.can_data_be_changed().is_ok();
+        let shared = callee_account.is_shared();
+        let mut new_region = if writable && !shared {
+            MemoryRegion::new_writable(
+                unsafe {
+                    std::slice::from_raw_parts_mut(
+                        region.host_addr.get() as *mut u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        } else {
+            MemoryRegion::new_readonly(
+                unsafe {
+                    std::slice::from_raw_parts(
+                        region.host_addr.get() as *const u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        };
+        if writable && shared {
+            new_region.cow_callback_payload = callee_account.get_index_in_transaction() as u32;
+        }
+        memory_mapping.replace_region(region_index, new_region)?;
     }
-    let realloc_region = account_realloc_region(
+
+    if let Some((region_index, region)) = account_realloc_region(
         memory_mapping,
         *vm_data_addr,
         *original_data_len,
         is_loader_deprecated,
-    )?;
-    if let Some(region) = realloc_region {
-        region
-            .state
-            .set(if callee_account.can_data_be_changed().is_ok() {
-                MemoryState::Writable
-            } else {
-                MemoryState::Readable
-            });
+    )? {
+        let new_region = if callee_account.can_data_be_changed().is_ok() {
+            MemoryRegion::new_writable(
+                unsafe {
+                    std::slice::from_raw_parts_mut(
+                        region.host_addr.get() as *mut u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        } else {
+            MemoryRegion::new_readonly(
+                unsafe {
+                    std::slice::from_raw_parts(
+                        region.host_addr.get() as *const u8,
+                        region.len as usize,
+                    )
+                },
+                region.vm_addr,
+            )
+        };
+        memory_mapping.replace_region(region_index, new_region)?;
     }
 
     Ok(())
@@ -1323,7 +1339,7 @@ fn update_caller_account(
 
     let mut zero_all_mapped_spare_capacity = false;
     if direct_mapping {
-        if let Some(region) = account_data_region(
+        if let Some((_region_index, region)) = account_data_region(
             memory_mapping,
             caller_account.vm_data_addr,
             caller_account.original_data_len,
@@ -1412,12 +1428,12 @@ fn update_caller_account(
 
                     // Temporarily configure the realloc region as writable then set it back to
                     // whatever state it had.
-                    let realloc_region = caller_account
+                    let (_realloc_region_index, realloc_region) = caller_account
                         .realloc_region(memory_mapping, is_loader_deprecated)?
                         .unwrap(); // unwrapping here is fine, we already asserted !is_loader_deprecated
-                    let original_state = realloc_region.state.replace(MemoryState::Writable);
+                    let original_state = realloc_region.writable.replace(true);
                     defer! {
-                        realloc_region.state.set(original_state);
+                        realloc_region.writable.set(original_state);
                     };
 
                     // We need to zero the unused space in the realloc region, starting after the
@@ -1521,12 +1537,12 @@ fn update_caller_account(
                 //
                 // Therefore we temporarily configure the realloc region as writable
                 // then set it back to whatever state it had.
-                let realloc_region = caller_account
+                let (_realloc_region_index, realloc_region) = caller_account
                     .realloc_region(memory_mapping, is_loader_deprecated)?
                     .unwrap(); // unwrapping here is fine, we asserted !is_loader_deprecated
-                let original_state = realloc_region.state.replace(MemoryState::Writable);
+                let original_state = realloc_region.writable.replace(true);
                 defer! {
-                    realloc_region.state.set(original_state);
+                    realloc_region.writable.set(original_state);
                 };
 
                 translate_slice_mut::<u8>(
@@ -1566,17 +1582,17 @@ fn account_data_region<'a>(
     memory_mapping: &'a MemoryMapping<'_>,
     vm_data_addr: u64,
     original_data_len: usize,
-) -> Result<Option<&'a MemoryRegion>, Error> {
+) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
     if original_data_len == 0 {
         return Ok(None);
     }
 
     // We can trust vm_data_addr to point to the correct region because we
     // enforce that in CallerAccount::from_(sol_)account_info.
-    let data_region = memory_mapping.region(AccessType::Load, vm_data_addr)?;
+    let (data_region_index, data_region) = memory_mapping.region(AccessType::Load, vm_data_addr)?;
     // vm_data_addr must always point to the beginning of the region
     debug_assert_eq!(data_region.vm_addr, vm_data_addr);
-    Ok(Some(data_region))
+    Ok(Some((data_region_index, data_region)))
 }
 
 fn account_realloc_region<'a>(
@@ -1584,19 +1600,20 @@ fn account_realloc_region<'a>(
     vm_data_addr: u64,
     original_data_len: usize,
     is_loader_deprecated: bool,
-) -> Result<Option<&'a MemoryRegion>, Error> {
+) -> Result<Option<(usize, &'a MemoryRegion)>, Error> {
     if is_loader_deprecated {
         return Ok(None);
     }
 
     let realloc_vm_addr = vm_data_addr.saturating_add(original_data_len as u64);
-    let realloc_region = memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
+    let (realloc_region_index, realloc_region) =
+        memory_mapping.region(AccessType::Load, realloc_vm_addr)?;
     debug_assert_eq!(realloc_region.vm_addr, realloc_vm_addr);
     debug_assert!((MAX_PERMITTED_DATA_INCREASE
         ..MAX_PERMITTED_DATA_INCREASE.saturating_add(BPF_ALIGN_OF_U128))
         .contains(&(realloc_region.len as usize)));
-    debug_assert!(!matches!(realloc_region.state.get(), MemoryState::Cow(_)));
-    Ok(Some(realloc_region))
+    debug_assert_eq!(realloc_region.cow_callback_payload, u32::MAX);
+    Ok(Some((realloc_region_index, realloc_region)))
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -1606,13 +1623,12 @@ mod tests {
     use {
         super::*,
         crate::mock_create_vm,
-        agave_feature_set::bpf_account_data_direct_mapping,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
         solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{
-            invoke_context::SerializedAccountMetadata, with_mock_invoke_context,
+            invoke_context::SerializedAccountMetadata, with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
@@ -1653,10 +1669,15 @@ mod tests {
                 .into_iter()
                 .map(|a| (a.0, a.1))
                 .collect::<Vec<TransactionAccount>>();
-            with_mock_invoke_context!($invoke_context, $transaction_context, transaction_accounts);
-            let mut feature_set = $invoke_context.get_feature_set().clone();
-            feature_set.deactivate(&bpf_account_data_direct_mapping::id());
-            $invoke_context.mock_set_feature_set(Arc::new(feature_set));
+            let mut feature_set = SVMFeatureSet::all_enabled();
+            feature_set.bpf_account_data_direct_mapping = false;
+            let feature_set = &feature_set;
+            with_mock_invoke_context_with_feature_set!(
+                $invoke_context,
+                $transaction_context,
+                feature_set,
+                transaction_accounts
+            );
             $invoke_context
                 .transaction_context
                 .get_next_instruction_context()

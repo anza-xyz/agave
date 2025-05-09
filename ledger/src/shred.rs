@@ -51,7 +51,10 @@
 
 #[cfg(test)]
 pub(crate) use self::shred_code::MAX_CODE_SHREDS_PER_SLOT;
-pub(crate) use self::{merkle_tree::SIZE_OF_MERKLE_ROOT, payload::serde_bytes_payload};
+pub(crate) use self::{
+    merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
+    payload::serde_bytes_payload,
+};
 pub use {
     self::{
         payload::Payload,
@@ -68,14 +71,15 @@ use {
     num_enum::{IntoPrimitive, TryFromPrimitive},
     rayon::ThreadPool,
     serde::{Deserialize, Serialize},
+    solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_perf::packet::Packet,
-    solana_sdk::{
-        clock::Slot,
-        hash::{hashv, Hash},
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer, SIGNATURE_BYTES},
-    },
+    solana_pubkey::Pubkey,
+    solana_sha256_hasher::hashv,
+    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signer::Signer,
     static_assertions::const_assert_eq,
     std::{fmt::Debug, time::Instant},
     thiserror::Error,
@@ -115,6 +119,23 @@ const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 // each erasure batch depends on the number of shreds obtained from serializing
 // a &[Entry].
 pub const DATA_SHREDS_PER_FEC_BLOCK: usize = 32;
+pub const CODING_SHREDS_PER_FEC_BLOCK: usize = 32;
+pub const SHREDS_PER_FEC_BLOCK: usize = DATA_SHREDS_PER_FEC_BLOCK + CODING_SHREDS_PER_FEC_BLOCK;
+
+// Statically compute the typical data batch size assuming:
+// 1. 32:32 erasure coding batch
+// 2. Merkles are chained
+// 3. No retransmit signature (only included for last batch)
+pub const fn get_data_shred_bytes_per_batch_typical() -> u64 {
+    let capacity =
+        match merkle::ShredData::const_capacity(PROOF_ENTRIES_FOR_32_32_BATCH, true, false) {
+            Ok(v) => v,
+            Err(_proof_size) => {
+                panic!("this is unreachable");
+            }
+        };
+    (DATA_SHREDS_PER_FEC_BLOCK * capacity) as u64
+}
 
 // For legacy tests and benchmarks.
 const_assert_eq!(LEGACY_SHRED_DATA_CAPACITY, 1051);
@@ -781,7 +802,7 @@ impl TryFrom<u8> for ShredVariant {
     }
 }
 
-pub(crate) fn recover(
+pub fn recover(
     shreds: impl IntoIterator<Item = Shred>,
     reed_solomon_cache: &ReedSolomonCache,
 ) -> Result<impl Iterator<Item = Result<Shred, Error>>, Error> {
@@ -1013,7 +1034,8 @@ mod tests {
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
-        solana_sdk::{shred_version, signature::Signer, signer::keypair::keypair_from_seed},
+        solana_keypair::keypair_from_seed,
+        solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
         test_case::test_case,
     };
@@ -1139,19 +1161,19 @@ mod tests {
             0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a,
             0xa5, 0xa5, 0x5a, 0x5a,
         ];
-        let version = shred_version::version_from_hash(&Hash::new_from_array(hash));
+        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
         assert_eq!(version, 1);
         let hash = [
             0xa5u8, 0xa5, 0x5a, 0x5a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0,
         ];
-        let version = shred_version::version_from_hash(&Hash::new_from_array(hash));
+        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
         assert_eq!(version, 0xffff);
         let hash = [
             0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ];
-        let version = shred_version::version_from_hash(&Hash::new_from_array(hash));
+        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
         assert_eq!(version, 0x5a5b);
     }
 

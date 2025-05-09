@@ -49,6 +49,8 @@ async fn test_vortexor() {
     let tpu_sockets = Vortexor::create_tpu_sockets(
         bind_address,
         VALIDATOR_PORT_RANGE,
+        None, // tpu_address
+        None, // tpu_forward_address
         DEFAULT_NUM_QUIC_ENDPOINTS,
     );
 

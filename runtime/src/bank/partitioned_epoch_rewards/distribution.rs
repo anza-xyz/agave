@@ -11,16 +11,12 @@ use {
         stake_account::StakeAccount,
     },
     log::error,
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        account_utils::StateMut,
-        pubkey::Pubkey,
-        reward_info::RewardInfo,
-        reward_type::RewardType,
-        stake::state::{Delegation, StakeStateV2},
-    },
+    solana_pubkey::Pubkey,
+    solana_reward_info::{RewardInfo, RewardType},
+    solana_stake_interface::state::{Delegation, StakeStateV2},
     std::sync::{atomic::Ordering::Relaxed, Arc},
     thiserror::Error,
 };
@@ -317,22 +313,19 @@ mod tests {
             inflation_rewards::points::PointValue,
         },
         rand::Rng,
+        solana_account::from_account,
         solana_accounts_db::stake_rewards::StakeReward,
-        solana_sdk::{
-            account::from_account,
-            epoch_schedule::EpochSchedule,
-            hash::Hash,
-            native_token::LAMPORTS_PER_SOL,
-            rent::Rent,
-            reward_info::RewardInfo,
-            reward_type::RewardType,
-            stake::{
-                stake_flags::StakeFlags,
-                state::{Meta, Stake},
-            },
-            sysvar,
+        solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_rent::Rent,
+        solana_reward_info::{RewardInfo, RewardType},
+        solana_stake_interface::{
+            stake_flags::StakeFlags,
+            state::{Meta, Stake},
         },
         solana_stake_program::stake_state,
+        solana_sysvar as sysvar,
         solana_vote_program::vote_state,
         std::sync::Arc,
     };
@@ -640,7 +633,7 @@ mod tests {
         let mut stake_account = AccountSharedData::new(
             u64::MAX - stake_reward + 1,
             StakeStateV2::size_of(),
-            &solana_sdk::stake::program::id(),
+            &solana_stake_interface::program::id(),
         );
         stake_account
             .set_state(&StakeStateV2::Stake(
@@ -671,7 +664,7 @@ mod tests {
         let mut stake_account = AccountSharedData::new(
             starting_lamports,
             StakeStateV2::size_of(),
-            &solana_sdk::stake::program::id(),
+            &solana_stake_interface::program::id(),
         );
         let other_stake = Stake {
             delegation: Delegation {
@@ -701,7 +694,7 @@ mod tests {
         let mut expected_stake_account = AccountSharedData::new(
             expected_lamports,
             StakeStateV2::size_of(),
-            &solana_sdk::stake::program::id(),
+            &solana_stake_interface::program::id(),
         );
         expected_stake_account
             .set_state(&StakeStateV2::Stake(

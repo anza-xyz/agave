@@ -18,6 +18,9 @@ use {
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     crossbeam_channel::unbounded,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
@@ -25,7 +28,7 @@ use {
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
     },
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
+    solana_signer::Signer,
     solana_vote::vote_transaction,
     solana_vote_program::vote_state::{Lockout, TowerSync},
     std::{

@@ -388,6 +388,10 @@ impl PercentageWithCapProof {
         let c_max_proof = self.percentage_max_proof.c_max_proof;
         let c_equality = c - c_max_proof;
 
+        transcript.append_scalar(b"z_max", &z_max);
+        transcript.append_scalar(b"z_x", &z_x);
+        transcript.append_scalar(b"z_delta_real", &z_delta_real);
+        transcript.append_scalar(b"z_claimed", &z_claimed);
         let w = transcript.challenge_scalar(b"w");
         let ww = w * w;
 

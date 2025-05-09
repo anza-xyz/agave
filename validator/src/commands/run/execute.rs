@@ -10,7 +10,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDb, AccountsDbConfig, CreateAncientStorage},
+        accounts_db::{AccountShrinkThreshold, AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
@@ -21,7 +21,9 @@ use {
             create_and_canonicalize_directory,
         },
     },
-    solana_clap_utils::input_parsers::{keypair_of, keypairs_of, pubkey_of, value_of, values_of},
+    solana_clap_utils::input_parsers::{
+        keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
+    },
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
@@ -67,6 +69,7 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+    solana_turbine::xdp::{set_cpu_affinity, XdpConfig},
     std::{
         collections::HashSet,
         fs::{self, File},
@@ -408,7 +411,7 @@ pub fn execute(
     accounts_index_config.index_limit_mb = if matches.is_present("disable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
     } else {
-        IndexLimitMb::Unlimited
+        IndexLimitMb::Minimal
     };
 
     {
@@ -467,17 +470,6 @@ pub fn execute(
                 }
             }
         });
-    let create_ancient_storage = matches
-        .value_of("accounts_db_squash_storages_method")
-        .map(|method| match method {
-            "pack" => CreateAncientStorage::Pack,
-            "append" => CreateAncientStorage::Append,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-squash-storages-method")
-            }
-        })
-        .unwrap_or_default();
     let storage_access = matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -529,13 +521,11 @@ pub fn execute(
         )
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
-        create_ancient_storage,
-        test_skip_rewrites_but_include_in_bank_hash: matches
-            .is_present("accounts_db_test_skip_rewrites"),
+        test_skip_rewrites_but_include_in_bank_hash: false,
         storage_access,
         scan_filter_for_shrinking,
-        enable_experimental_accumulator_hash: matches
-            .is_present("accounts_db_experimental_accumulator_hash"),
+        enable_experimental_accumulator_hash: !matches
+            .is_present("no_accounts_db_experimental_accumulator_hash"),
         verify_experimental_accumulator_hash: matches
             .is_present("accounts_db_verify_experimental_accumulator_hash"),
         snapshots_use_experimental_accumulator_hash: matches
@@ -624,6 +614,16 @@ pub fn execute(
         };
 
     let full_api = matches.is_present("full_rpc_api");
+
+    let xdp_interface = matches.value_of("retransmit_xdp_interface");
+    let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
+    let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
+        XdpConfig::new(
+            xdp_interface,
+            parse_cpu_ranges(cpus).unwrap(),
+            xdp_zero_copy,
+        )
+    });
 
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
@@ -773,8 +773,25 @@ pub fn execute(
             .is_present("delay_leader_block_for_pending_fork"),
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
+        retransmit_xdp,
         ..ValidatorConfig::default()
     };
+
+    let available = core_affinity::get_core_ids()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|core_id| core_id.id)
+        .collect::<HashSet<_>>();
+    let reserved = validator_config
+        .retransmit_xdp
+        .as_ref()
+        .map(|xdp| xdp.cpus.clone())
+        .unwrap_or_default()
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let available = available.difference(&reserved);
+    set_cpu_affinity(available.into_iter().copied()).unwrap();
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {
@@ -1017,24 +1034,21 @@ pub fn execute(
     }
 
     configure_banking_trace_dir_byte_limit(&mut validator_config, matches);
-    validator_config.block_verification_method = value_t!(
+    validator_config.block_verification_method = value_t_or_exit!(
         matches,
         "block_verification_method",
         BlockVerificationMethod
-    )
-    .unwrap_or_default();
-    validator_config.block_production_method = value_t!(
+    );
+    validator_config.block_production_method = value_t_or_exit!(
         matches, // comment to align formatting...
         "block_production_method",
         BlockProductionMethod
-    )
-    .unwrap_or_default();
-    validator_config.transaction_struct = value_t!(
+    );
+    validator_config.transaction_struct = value_t_or_exit!(
         matches, // comment to align formatting...
         "transaction_struct",
         TransactionStructure
-    )
-    .unwrap_or_default();
+    );
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
     validator_config.unified_scheduler_handler_threads =
         value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
@@ -1140,6 +1154,19 @@ pub fn execute(
         })
         .transpose()?;
 
+    let tpu_vortexor_receiver_address =
+        matches
+            .value_of("tpu_vortexor_receiver_address")
+            .map(|tpu_vortexor_receiver_address| {
+                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
+                        exit(1);
+                    },
+                )
+            });
+
+    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
 
     let tpu_max_connections_per_peer =
@@ -1166,6 +1193,7 @@ pub fn execute(
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
+        vortexor_receiver_addr: tpu_vortexor_receiver_address,
     };
 
     let cluster_entrypoints = entrypoint_addrs

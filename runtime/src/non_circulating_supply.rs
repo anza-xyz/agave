@@ -1,12 +1,10 @@
 use {
     crate::bank::Bank,
     log::*,
+    solana_account::ReadableAccount,
     solana_accounts_db::accounts_index::{AccountIndex, IndexKey, ScanConfig, ScanResult},
-    solana_sdk::{
-        account::ReadableAccount,
-        pubkey::Pubkey,
-        stake::{self, state::StakeStateV2},
-    },
+    solana_pubkey::Pubkey,
+    solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_stake_program::stake_state,
     std::collections::HashSet,
 };
@@ -81,7 +79,7 @@ pub fn calculate_non_circulating_supply(bank: &Bank) -> ScanResult<NonCirculatin
 }
 
 // Mainnet-beta accounts that should be considered non-circulating
-solana_sdk::pubkeys!(
+solana_sdk_macro::pubkeys!(
     non_circulating_accounts,
     [
         "9huDUZfxoJ7wGMTffUE7vh1xePqef7gyrLJu9NApncqA",
@@ -198,7 +196,7 @@ solana_sdk::pubkeys!(
 );
 
 // Withdraw authority for autostaked accounts on mainnet-beta
-solana_sdk::pubkeys!(
+solana_sdk_macro::pubkeys!(
     withdraw_authority,
     [
         "8CUUMKYNGxdgYio5CLHRHyzMEhhVRMcqefgE6dLqnVRK",
@@ -219,12 +217,10 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::genesis_sysvar_and_builtin_program_lamports,
-        solana_sdk::{
-            account::{Account, AccountSharedData},
-            epoch_schedule::EpochSchedule,
-            genesis_config::{ClusterType, GenesisConfig},
-            stake::state::{Authorized, Lockup, Meta},
-        },
+        solana_account::{Account, AccountSharedData},
+        solana_epoch_schedule::EpochSchedule,
+        solana_genesis_config::{ClusterType, GenesisConfig},
+        solana_stake_interface::state::{Authorized, Lockup, Meta},
         std::{collections::BTreeMap, sync::Arc},
     };
 

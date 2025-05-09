@@ -16,10 +16,13 @@ use {
     crossbeam_channel::{unbounded, Sender},
     itertools::Itertools,
     log::*,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
+    solana_genesis_config::GenesisConfig,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::ContactInfoQuery,
     },
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, PurgeType},
         leader_schedule_cache::LeaderScheduleCache,
@@ -30,20 +33,15 @@ use {
         poh_service::{PohService, DEFAULT_HASHES_PER_BATCH, DEFAULT_PINNED_CPU_CORE},
         transaction_recorder::TransactionRecorder,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, HashOverrides},
         bank_forks::BankForks,
         installed_scheduler_pool::BankWithScheduler,
         prioritization_fee_cache::PrioritizationFeeCache,
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
-        genesis_config::GenesisConfig,
-        pubkey::Pubkey,
-        shred_version::compute_shred_version,
-        signature::Signer,
-        signer::keypair::Keypair,
-    },
+    solana_shred_version::compute_shred_version,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
     std::{

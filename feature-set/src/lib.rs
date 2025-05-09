@@ -6,6 +6,7 @@ use {
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::Hasher,
+    solana_svm_feature_set::SVMFeatureSet,
     std::sync::LazyLock,
 };
 
@@ -97,6 +98,61 @@ impl FeatureSet {
     pub fn new_warmup_cooldown_rate_epoch(&self, epoch_schedule: &EpochSchedule) -> Option<u64> {
         self.activated_slot(&reduce_stake_warmup_cooldown::id())
             .map(|slot| epoch_schedule.get_epoch(slot))
+    }
+
+    pub fn runtime_features(&self) -> SVMFeatureSet {
+        SVMFeatureSet {
+            lift_cpi_caller_restriction: self.is_active(&lift_cpi_caller_restriction::id()),
+            move_precompile_verification_to_svm: self
+                .is_active(&move_precompile_verification_to_svm::id()),
+            remove_accounts_executable_flag_checks: self
+                .is_active(&remove_accounts_executable_flag_checks::id()),
+            bpf_account_data_direct_mapping: self.is_active(&bpf_account_data_direct_mapping::id()),
+            enable_bpf_loader_set_authority_checked_ix: self
+                .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
+            enable_loader_v4: self.is_active(&enable_loader_v4::id()),
+            deplete_cu_meter_on_vm_failure: self.is_active(&deplete_cu_meter_on_vm_failure::id()),
+            abort_on_invalid_curve: self.is_active(&abort_on_invalid_curve::id()),
+            blake3_syscall_enabled: self.is_active(&blake3_syscall_enabled::id()),
+            curve25519_syscall_enabled: self.is_active(&curve25519_syscall_enabled::id()),
+            disable_deploy_of_alloc_free_syscall: self
+                .is_active(&disable_deploy_of_alloc_free_syscall::id()),
+            disable_fees_sysvar: self.is_active(&disable_fees_sysvar::id()),
+            disable_sbpf_v0_execution: self.is_active(&disable_sbpf_v0_execution::id()),
+            enable_alt_bn128_compression_syscall: self
+                .is_active(&enable_alt_bn128_compression_syscall::id()),
+            enable_alt_bn128_syscall: self.is_active(&enable_alt_bn128_syscall::id()),
+            enable_big_mod_exp_syscall: self.is_active(&enable_big_mod_exp_syscall::id()),
+            enable_get_epoch_stake_syscall: self.is_active(&enable_get_epoch_stake_syscall::id()),
+            enable_poseidon_syscall: self.is_active(&enable_poseidon_syscall::id()),
+            enable_sbpf_v1_deployment_and_execution: self
+                .is_active(&enable_sbpf_v1_deployment_and_execution::id()),
+            enable_sbpf_v2_deployment_and_execution: self
+                .is_active(&enable_sbpf_v2_deployment_and_execution::id()),
+            enable_sbpf_v3_deployment_and_execution: self
+                .is_active(&enable_sbpf_v3_deployment_and_execution::id()),
+            get_sysvar_syscall_enabled: self.is_active(&get_sysvar_syscall_enabled::id()),
+            last_restart_slot_sysvar: self.is_active(&last_restart_slot_sysvar::id()),
+            reenable_sbpf_v0_execution: self.is_active(&reenable_sbpf_v0_execution::id()),
+            remaining_compute_units_syscall_enabled: self
+                .is_active(&remaining_compute_units_syscall_enabled::id()),
+            remove_bpf_loader_incorrect_program_id: self
+                .is_active(&remove_bpf_loader_incorrect_program_id::id()),
+            move_stake_and_move_lamports_ixs: self
+                .is_active(&move_stake_and_move_lamports_ixs::id()),
+            stake_raise_minimum_delegation_to_1_sol: self
+                .is_active(&stake_raise_minimum_delegation_to_1_sol::id()),
+            deprecate_legacy_vote_ixs: self.is_active(&deprecate_legacy_vote_ixs::id()),
+            mask_out_rent_epoch_in_vm_serialization: self
+                .is_active(&mask_out_rent_epoch_in_vm_serialization::id()),
+            simplify_alt_bn128_syscall_error_codes: self
+                .is_active(&simplify_alt_bn128_syscall_error_codes::id()),
+            fix_alt_bn128_multiplication_input_length: self
+                .is_active(&fix_alt_bn128_multiplication_input_length::id()),
+            loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
+            increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
+            disable_rent_fees_collection: self.is_active(&disable_rent_fees_collection::id()),
+        }
     }
 }
 
@@ -763,7 +819,7 @@ pub mod remaining_compute_units_syscall_enabled {
 }
 
 pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("8Cb77yHjPWe9wuWUfXeh6iszFGCDGNCoFk3tprViYHNm");
+    solana_pubkey::declare_id!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1030,6 +1086,10 @@ pub mod mask_out_rent_epoch_in_vm_serialization {
     solana_pubkey::declare_id!("RENtePQcDLrAbxAsP3k8dwVcnNYQ466hi2uKvALjnXx");
 }
 
+pub mod enshrine_slashing_program {
+    solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1263,6 +1323,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (require_static_nonce_account::id(), "SIMD-0242: Static Nonce Account Only"),
         (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
+        (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

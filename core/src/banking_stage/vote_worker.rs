@@ -3,6 +3,7 @@ use {
         consumer::Consumer,
         decision_maker::{BufferedPacketsDecision, DecisionMaker},
         immutable_deserialized_packet::ImmutableDeserializedPacket,
+        latest_validator_vote_packet::VoteSource,
         leader_slot_metrics::{
             CommittedTransactionsCounts, LeaderSlotMetricsTracker, ProcessTransactionsSummary,
         },
@@ -16,60 +17,65 @@ use {
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
     solana_accounts_db::account_locks::validate_account_locks,
+    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{BankStart, PohRecorderError},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::{
-        clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
-        timing::timestamp,
-        transaction::{self, SanitizedTransaction, TransactionError},
-    },
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
     },
+    solana_time_utils::timestamp,
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_error::TransactionError,
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         time::Instant,
     },
 };
 
-// Step-size set to be 64, equal to the maximum batch/entry size.
-pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 64;
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
+
+// This vote batch size was selected to balance the following two things:
+// 1. Amortize execution overhead (Larger is better)
+// 2. Constrain max entry size for FEC set packing (Smaller is better)
+pub const UNPROCESSED_BUFFER_STEP_SIZE: usize = 16;
 
 pub struct VoteWorker {
     decision_maker: DecisionMaker,
-    packet_receiver: PacketReceiver,
+    tpu_receiver: PacketReceiver,
+    gossip_receiver: PacketReceiver,
     storage: VoteStorage,
     bank_forks: Arc<RwLock<BankForks>>,
     consumer: Consumer,
-    id: u32,
 }
 
 impl VoteWorker {
     pub fn new(
         decision_maker: DecisionMaker,
-        packet_receiver: PacketReceiver,
+        tpu_receiver: PacketReceiver,
+        gossip_receiver: PacketReceiver,
         storage: VoteStorage,
         bank_forks: Arc<RwLock<BankForks>>,
         consumer: Consumer,
-        id: u32,
     ) -> Self {
         Self {
             decision_maker,
-            packet_receiver,
+            tpu_receiver,
+            gossip_receiver,
             storage,
             bank_forks,
             consumer,
-            id,
         }
     }
 
     pub fn run(mut self) {
-        let mut banking_stage_stats = BankingStageStats::new(self.id);
-        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(self.id);
+        let mut banking_stage_stats = BankingStageStats::new();
+        let mut slot_metrics_tracker = LeaderSlotMetricsTracker::default();
 
         let mut last_metrics_update = Instant::now();
 
@@ -84,10 +90,22 @@ impl VoteWorker {
                 last_metrics_update = Instant::now();
             }
 
-            match self.packet_receiver.receive_and_buffer_packets(
+            // Check for new packets from the tpu receiver
+            match self.tpu_receiver.receive_and_buffer_packets(
                 &mut self.storage,
                 &mut banking_stage_stats,
                 &mut slot_metrics_tracker,
+                VoteSource::Tpu,
+            ) {
+                Ok(()) | Err(RecvTimeoutError::Timeout) => (),
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            // Check for new packets from the gossip receiver
+            match self.gossip_receiver.receive_and_buffer_packets(
+                &mut self.storage,
+                &mut banking_stage_stats,
+                &mut slot_metrics_tracker,
+                VoteSource::Gossip,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -101,9 +119,6 @@ impl VoteWorker {
         banking_stage_stats: &mut BankingStageStats,
         slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
     ) {
-        if self.storage.should_not_process() {
-            return;
-        }
         let (decision, make_decision_us) =
             measure_us!(self.decision_maker.make_consume_or_forward_decision());
         let metrics_action = slot_metrics_tracker.check_leader_slot_boundary(decision.bank_start());

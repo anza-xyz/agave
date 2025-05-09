@@ -15,12 +15,12 @@ mod spl_memo_3_0 {
 
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
-        solana_inline_spl::token::ID,
+        spl_generic_token::token::ID,
         solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_token-3.5.0.so"),
     ),
     (
-        solana_inline_spl::token_2022::ID,
+        spl_generic_token::token_2022::ID,
         solana_sdk_ids::bpf_loader_upgradeable::ID,
         include_bytes!("programs/spl_token_2022-8.0.0.so"),
     ),
@@ -35,7 +35,7 @@ static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
         include_bytes!("programs/spl_memo-3.0.0.so"),
     ),
     (
-        solana_inline_spl::associated_token_account::ID,
+        spl_generic_token::associated_token_account::ID,
         solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_associated_token_account-1.1.1.so"),
     ),

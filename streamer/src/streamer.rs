@@ -195,8 +195,14 @@ fn recv_loop(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    if let Err(TrySendError::Full(_)) = packet_batch_sender.try_send(packet_batch) {
-                        stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
+                    match packet_batch_sender.try_send(packet_batch) {
+                        Ok(_) => {}
+                        Err(TrySendError::Full(_)) => {
+                            stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
+                        }
+                        Err(TrySendError::Disconnected(err)) => {
+                            return Err(StreamerError::Send(SendError(err)))
+                        }
                     }
                 }
                 break;
