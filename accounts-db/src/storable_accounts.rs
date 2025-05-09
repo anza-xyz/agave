@@ -8,7 +8,10 @@ use {
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::{Epoch, Slot},
     solana_pubkey::Pubkey,
-    std::sync::{Arc, RwLock},
+    std::{
+        cmp::Ordering,
+        sync::{Arc, RwLock},
+    },
 };
 
 /// hold a ref to an account to store. The account could be represented in memory a few different ways
@@ -256,9 +259,13 @@ impl<'a> StorableAccountsBySlot<'a> {
             cached_storage: RwLock::default(),
         }
     }
+
+    #[cfg(feature = "dev-context-only-utils")]
     /// given an overall index for all accounts in self:
     /// return (slots_and_accounts index, index within those accounts)
-    fn find_internal_index(&self, index: usize) -> (usize, usize) {
+    /// This is the baseline unoptimized implementation. It is not used in the validator. It
+    /// is used for testing an optimized version below - `find_internal_index.`
+    pub fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
         // search offsets for the accounts slice that contains 'index'.
         // This could be a binary search.
         for (offset_index, next_offset) in self.starting_offsets.iter().enumerate() {
@@ -273,6 +280,28 @@ impl<'a> StorableAccountsBySlot<'a> {
             }
         }
         panic!("failed");
+    }
+
+    /// given an overall index for all accounts in self:
+    /// return (slots_and_accounts index, index within those accounts)
+    fn find_internal_index(&self, index: usize) -> (usize, usize) {
+        let upper_bound =
+            self.starting_offsets
+                .binary_search_by(|element| match element.cmp(&index) {
+                    Ordering::Equal => Ordering::Less,
+                    ord => ord,
+                });
+        match upper_bound {
+            Ok(offset_index) => (offset_index, 0),
+            Err(offset_index) => {
+                let prior_offset = if offset_index > 0 {
+                    self.starting_offsets[offset_index - 1]
+                } else {
+                    0
+                };
+                (offset_index, index - prior_offset)
+            }
+        }
     }
 }
 
@@ -351,6 +380,7 @@ pub mod tests {
             accounts_hash::AccountHash,
             append_vec::{AccountMeta, StoredAccountMeta, StoredMeta},
         },
+        rand::Rng,
         solana_account::{accounts_equal, AccountSharedData, WritableAccount},
         solana_hash::Hash,
         std::sync::Arc,
@@ -802,6 +832,51 @@ pub mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_find_internal_index() {
+        let db = AccountsDb::new_single_for_tests();
+        let account_from_storage =
+            AccountFromStorage::new(&StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                meta: &StoredMeta {
+                    write_version_obsolete: 0,
+                    pubkey: Pubkey::new_unique(),
+                    data_len: 0,
+                },
+                account_meta: &AccountMeta {
+                    lamports: 0,
+                    owner: Pubkey::new_unique(),
+                    executable: false,
+                    rent_epoch: 0,
+                },
+                data: &[],
+                offset: 0,
+                stored_size: 0,
+                hash: &AccountHash(Hash::new_unique()),
+            }));
+
+        let mut slot_accounts = Vec::new();
+        let mut all_accounts = Vec::new();
+        let mut total = 0;
+        for _slot in 0..10_u64 {
+            // generate random accounts per slot
+            let n = rand::thread_rng().gen_range(1..10);
+            total += n;
+            let accounts = (0..n).map(|_| &account_from_storage).collect::<Vec<_>>();
+            all_accounts.push(accounts);
+        }
+        for slot in 0..10_u64 {
+            slot_accounts.push((slot, &all_accounts[slot as usize][..]));
+        }
+        let storable_accounts = StorableAccountsBySlot::new(0, &slot_accounts[..], &db);
+        // check that the optimized version is correct by comparing it to the unoptimized version
+        for i in 0..total {
+            let (slot_index, account_index) = storable_accounts.find_internal_index_loop(i);
+            let (slot_index2, account_index2) = storable_accounts.find_internal_index(i);
+            assert_eq!(slot_index, slot_index2);
+            assert_eq!(account_index, account_index2);
         }
     }
 }
