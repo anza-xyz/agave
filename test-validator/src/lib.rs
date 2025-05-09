@@ -52,6 +52,11 @@ use {
         pubkey::Pubkey,
         rent::Rent,
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
+        sysvar::{
+            self,
+            epoch_rewards::{self, EpochRewards},
+            Sysvar,
+        },
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
@@ -138,7 +143,7 @@ pub struct TestValidatorGenesis {
 
 impl Default for TestValidatorGenesis {
     fn default() -> Self {
-        Self {
+        let mut test_validator_genesis = Self {
             fee_rate_governor: FeeRateGovernor::default(),
             ledger_path: Option::<PathBuf>::default(),
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
@@ -167,7 +172,20 @@ impl Default for TestValidatorGenesis {
             geyser_plugin_manager: Arc::new(RwLock::new(GeyserPluginManager::new())),
             admin_rpc_service_post_init:
                 Arc::<RwLock<Option<AdminRpcRequestMetadataPostInit>>>::default(),
-        }
+        };
+
+        test_validator_genesis.add_account(
+            epoch_rewards::id(),
+            AccountSharedData::create(
+                1,
+                vec![0; EpochRewards::size_of()],
+                sysvar::id(),
+                false,
+                u64::MAX,
+            ),
+        );
+
+        test_validator_genesis
     }
 }
 
