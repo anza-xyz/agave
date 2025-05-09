@@ -14,6 +14,7 @@ use {
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_net_utils::bind_to_localhost,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_time_utils::timestamp,
@@ -92,7 +93,7 @@ pub(crate) fn execute_command(
             let mut cursor = Cursor::new(slot);
             let (labels, votes) = cluster_info.get_votes_with_labels(&mut cursor);
             let senders = labels.into_iter().map(|e| e.pubkey());
-            let data: Vec<_> = senders.zip(votes.into_iter()).collect();
+            let data: Vec<_> = senders.zip(votes).collect();
             println!("{}", json!({ "command_ok":true, "votes": &data }));
         }
         Command::SendVote => {
@@ -126,7 +127,7 @@ pub(crate) fn execute_command(
             };
             let (state, maybe_pkt) = cluster_info.check_ping(target, target_addr);
             let ping_sent = if let Some(pkt) = maybe_pkt {
-                let sock = std::net::UdpSocket::bind("0.0.0.0:9999")?;
+                let sock = bind_to_localhost()?;
                 sock.send_to(pkt.data(..).unwrap(), target_addr)?;
                 true
             } else {
