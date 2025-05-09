@@ -17,6 +17,7 @@ use {
         sysvar::{clock, slot_history},
         transaction::Transaction,
     },
+    std::{thread::sleep, time::Duration},
 };
 
 #[test]
@@ -81,7 +82,22 @@ fn test_no_panic_rpc_client() {
         blockhash,
     );
 
-    rpc_client
-        .send_and_confirm_transaction(&transaction)
-        .unwrap();
+    // Wait till program is usable (eg no more "Program is not deployed" error)
+    const MAX_ATTEMPTS: u64 = 10;
+    let mut attempt = 0;
+    loop {
+        match rpc_client.send_and_confirm_transaction(&transaction) {
+            Ok(_) => break,
+            Err(e) => {
+                if !format!("{:?}", e).contains("Program is not deployed") {
+                    panic!("Unexpected error: {:?}", e);
+                }
+                attempt += 1;
+                if attempt > MAX_ATTEMPTS {
+                    panic!("Timeout waiting for program to become deployable");
+                }
+                sleep(Duration::from_millis(100));
+            }
+        }
+    }
 }
