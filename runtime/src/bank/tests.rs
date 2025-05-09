@@ -7177,11 +7177,15 @@ fn test_bank_load_program() {
 }
 
 #[allow(deprecated)]
-#[test]
-fn test_bpf_loader_upgradeable_deploy_with_max_len() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_bpf_loader_upgradeable_deploy_with_max_len(formalize_loaded_transaction_data_size: bool) {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee(1_000_000_000);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.feature_set = Arc::new(FeatureSet::all_enabled());
+    if !formalize_loaded_transaction_data_size {
+        bank.deactivate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
 
@@ -8376,10 +8380,15 @@ fn test_timestamp_fast() {
     }
 }
 
-#[test]
-fn test_program_is_native_loader() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_program_is_native_loader(formalize_loaded_transaction_data_size: bool) {
     let (genesis_config, mint_keypair) = create_genesis_config(50000);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if formalize_loaded_transaction_data_size {
+        bank.activate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let tx = Transaction::new_signed_with_payer(
         &[Instruction::new_with_bincode(
@@ -8400,12 +8409,17 @@ fn test_program_is_native_loader() {
     );
 }
 
-// HANA this breaks, expects UnsupportedProgramId but we produce InvalidProgramForExecution
-#[test]
-fn test_invoke_non_program_account_owned_by_a_builtin() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_invoke_non_program_account_owned_by_a_builtin(
+    formalize_loaded_transaction_data_size: bool,
+) {
     let (genesis_config, mint_keypair) = create_genesis_config(10000000);
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
+    if formalize_loaded_transaction_data_size {
+        bank.activate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let bogus_program = Pubkey::new_unique();
@@ -8432,13 +8446,12 @@ fn test_invoke_non_program_account_owned_by_a_builtin() {
         &[&mint_keypair, &created_account_keypair],
         bank.last_blockhash(),
     );
-    assert_eq!(
-        bank.process_transaction(&tx),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::UnsupportedProgramId
-        ))
-    );
+    let expected_error = if formalize_loaded_transaction_data_size {
+        TransactionError::InvalidProgramForExecution
+    } else {
+        TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
+    };
+    assert_eq!(bank.process_transaction(&tx), Err(expected_error),);
 }
 
 #[test]
@@ -12225,8 +12238,11 @@ fn test_is_in_slot_hashes_history() {
     assert!(!new_bank.is_in_slot_hashes_history(&0));
 }
 
-#[test]
-fn test_feature_activation_loaded_programs_cache_preparation_phase() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_feature_activation_loaded_programs_cache_preparation_phase(
+    formalize_loaded_transaction_data_size: bool,
+) {
     solana_logger::setup();
 
     // Bank Setup
@@ -12235,6 +12251,9 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     let mut feature_set = FeatureSet::all_enabled();
     feature_set.deactivate(&feature_set::disable_sbpf_v0_execution::id());
     feature_set.deactivate(&feature_set::reenable_sbpf_v0_execution::id());
+    if !formalize_loaded_transaction_data_size {
+        feature_set.deactivate(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
     bank.feature_set = Arc::new(feature_set);
     let (root_bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
@@ -13384,9 +13403,9 @@ fn test_deploy_last_epoch_slot() {
     assert_eq!(result_with_feature_enabled, Ok(()));
 }
 
-// HANA this breaks, expects UnsupportedProgramId but we produce InvalidProgramForExecution
-#[test]
-fn test_loader_v3_to_v4_migration() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) {
     solana_logger::setup();
 
     // Bank Setup
@@ -13397,6 +13416,9 @@ fn test_loader_v3_to_v4_migration() {
     );
     let mut bank = Bank::new_for_tests(&genesis_config);
     bank.activate_feature(&feature_set::remove_accounts_executable_flag_checks::id());
+    if formalize_loaded_transaction_data_size {
+        bank.activate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let fee_calculator = genesis_config.fee_rate_governor.create_fee_calculator();
     let mut next_slot = 1;
