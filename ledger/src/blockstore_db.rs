@@ -1155,24 +1155,18 @@ fn get_db_options(blockstore_options: &BlockstoreOptions) -> Options {
     // pool is used for compactions whereas the high priority pool is used for
     // memtable flushes. Separate pools are created so that compactions are
     // unable to stall memtable flushes (which could stall memtable writes).
-    let mut env = rocksdb::Env::new().unwrap();
-    env.set_low_priority_background_threads(
-        blockstore_options.num_rocksdb_compaction_threads.get() as i32,
-    );
-    env.set_high_priority_background_threads(
-        blockstore_options.num_rocksdb_flush_threads.get() as i32
-    );
-    options.set_env(&env);
-    // rocksdb will try to scale threadpool sizes automatically based on the
-    // value set for max_background_jobs. The automatic scaling can increase,
-    // but not decrease the number of threads in each pool. But, we already
-    // set desired threadpool sizes with set_low_priority_background_threads()
-    // and set_high_priority_background_threads(). So, set max_background_jobs
-    // to a small number (2) so that rocksdb will leave the previously
-    // configured threadpool sizes as-is. The value (2) would result in one
-    // low priority and one high priority thread which is the minimum for each.
-    options.set_max_background_jobs(2);
-
+    //
+    // For now, use the deprecated methods to configure the exact amount of
+    // threads for each pool. The new method, set_max_background_jobs(N),
+    // configures N/4 low priority threads and 3N/4 high priority threads.
+    #[allow(deprecated)]
+    {
+        options.set_max_background_compactions(
+            blockstore_options.num_rocksdb_compaction_threads.get() as i32,
+        );
+        options
+            .set_max_background_flushes(blockstore_options.num_rocksdb_flush_threads.get() as i32);
+    }
     // Set max total wal size to 4G.
     options.set_max_total_wal_size(4 * 1024 * 1024 * 1024);
 
