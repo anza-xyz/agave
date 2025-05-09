@@ -244,7 +244,7 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-log-collector",
  "solana-logger",
  "solana-measure",
@@ -6544,7 +6544,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-hash",
  "solana-instruction",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-nonce",
  "solana-program-option",
  "solana-program-pack",
@@ -7081,7 +7081,7 @@ dependencies = [
  "solana-instruction",
  "solana-keccak-hasher",
  "solana-last-restart-slot",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
@@ -7325,7 +7325,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
  "solana-logger",
@@ -7763,7 +7763,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-ledger",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-logger",
  "solana-measure",
  "solana-message",
@@ -8307,7 +8307,7 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-ledger",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-logger",
  "solana-native-token",
  "solana-poh-config",
@@ -8777,6 +8777,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-loader-v3-interface"
+version = "4.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5539bcadd5c3b306045563e9d102bbaa42b3643f335ae02bc9b5260a70ad9742"
+dependencies = [
+ "serde",
+ "serde_bytes",
+ "serde_derive",
+ "solana-instruction",
+ "solana-pubkey",
+ "solana-sdk-ids",
+]
+
+[[package]]
 name = "solana-loader-v4-interface"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8803,7 +8817,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-clock",
  "solana-instruction",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
@@ -9303,7 +9317,7 @@ dependencies = [
  "solana-keccak-hasher",
  "solana-last-restart-slot",
  "solana-loader-v2-interface",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 3.0.0",
  "solana-loader-v4-interface",
  "solana-message",
  "solana-msg",
@@ -9985,7 +9999,7 @@ dependencies = [
  "solana-instruction",
  "solana-keypair",
  "solana-lattice-hash",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-loader-v4-interface",
  "solana-logger",
  "solana-measure",
@@ -10678,7 +10692,7 @@ dependencies = [
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-keypair",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
  "solana-log-collector",
@@ -11250,7 +11264,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-loader-v2-interface",
- "solana-loader-v3-interface",
+ "solana-loader-v3-interface 4.0.1",
  "solana-message",
  "solana-program-option",
  "solana-pubkey",
