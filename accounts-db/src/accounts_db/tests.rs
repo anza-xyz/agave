@@ -7120,7 +7120,7 @@ fn test_shrink_ancient_overflow_with_min_size() {
     assert!(ancient.capacity() > ideal_av_size);
 
     // combine 1 normal append vec into existing oversize ancient append vec.
-    db.combine_ancient_slots(
+    db.combine_ancient_slots_packed(
         (ancient_slot..max_slot_inclusive).collect(),
         CAN_RANDOMLY_SHRINK_FALSE,
     );
@@ -7143,7 +7143,7 @@ fn test_shrink_ancient_overflow_with_min_size() {
     // Combine normal append vec(s) into existing ancient append vec this
     // will overflow the original ancient append vec because of the oversized
     // ancient append vec is full.
-    db.combine_ancient_slots(
+    db.combine_ancient_slots_packed(
         (ancient_slot..=max_slot_inclusive).collect(),
         CAN_RANDOMLY_SHRINK_FALSE,
     );
@@ -7175,7 +7175,7 @@ fn test_shrink_ancient_overflow_with_min_size() {
 }
 
 #[test]
-fn test_shink_overflow_too_much() {
+fn test_shrink_overflow_too_much() {
     let num_normal_slots = 2;
     let ideal_av_size = ancient_append_vecs::get_ancient_append_vec_capacity();
     let fat_account_size = (1.5 * ideal_av_size as f64) as u64;
@@ -7206,14 +7206,13 @@ fn test_shink_overflow_too_much() {
 
     // Combine append vec into ancient append vec.
     let slots_to_combine: Vec<Slot> = (slot1..slot1 + (num_normal_slots + 1) as Slot).collect();
-    db.combine_ancient_slots(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
+    db.combine_ancient_slots_packed(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
 
     // slot2 is too big to fit into ideal ancient append vec at slot1. So slot2 won't be merged into slot1.
     // slot1 will have its own ancient append vec.
     assert!(db.storage.get_slot_storage_entry(slot1).is_some());
     let ancient = db.get_storage_for_slot(slot1).unwrap();
-    assert!(is_ancient(&ancient.accounts));
-    assert_eq!(ancient.capacity(), ideal_av_size);
+    assert!(ancient.capacity() <= ideal_av_size);
 
     let after_store = db.get_storage_for_slot(slot1).unwrap();
     let GetUniqueAccountsResult {
@@ -7228,7 +7227,6 @@ fn test_shink_overflow_too_much() {
     // slot2, even after shrinking, is still oversized. Therefore, slot 2
     // exists as an ancient append vec.
     let storage2_after = db.storage.get_slot_storage_entry(slot2).unwrap();
-    assert!(is_ancient(&storage2_after.accounts));
     assert!(storage2_after.capacity() > ideal_av_size);
     let after_store = db.get_storage_for_slot(slot2).unwrap();
     let GetUniqueAccountsResult {
@@ -7239,169 +7237,6 @@ fn test_shink_overflow_too_much() {
     assert!(created_accounts.capacity <= after_capacity);
     assert_eq!(created_accounts.stored_accounts.len(), 1);
     assert_eq!(after_stored_accounts.len(), 1);
-}
-
-#[test]
-fn test_shrink_ancient_overflow() {
-    solana_logger::setup();
-
-    let num_normal_slots = 2;
-    // build an ancient append vec at slot 'ancient_slot'
-    let (mut db, ancient_slot) = get_one_ancient_append_vec_and_others(num_normal_slots);
-
-    // This test is testing the squash-append code, which can only work with mmaps.
-    db.set_storage_access(StorageAccess::Mmap);
-
-    let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
-    let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
-
-    let ancient = db.storage.get_slot_storage_entry(ancient_slot).unwrap();
-    let initial_len = ancient.alive_bytes();
-    // set size of ancient to be 'full'
-    adjust_append_vec_len_for_tests(&ancient, ancient.accounts.capacity() as usize);
-
-    // combine 1 normal append vec into existing ancient append vec
-    // this will overflow the original ancient append vec because of the marking full above
-    db.combine_ancient_slots(
-        (ancient_slot..max_slot_inclusive).collect(),
-        CAN_RANDOMLY_SHRINK_FALSE,
-    );
-
-    // Restore size of ancient so we don't read garbage accounts when comparing. Now that we have created a second ancient append vec,
-    // This first one is happy to be quite empty.
-    adjust_append_vec_len_for_tests(&ancient, initial_len);
-
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..max_slot_inclusive),
-    );
-
-    // the append vec at max_slot_inclusive-1 should NOT have been removed since we created an ancient append vec there
-    assert!(is_ancient(
-        &db.storage
-            .get_slot_storage_entry(max_slot_inclusive - 1)
-            .unwrap()
-            .accounts
-    ));
-
-    // combine normal append vec(s) into existing ancient append vec
-    // this will overflow the original ancient append vec because of the marking full above
-    db.combine_ancient_slots(
-        (ancient_slot..=max_slot_inclusive).collect(),
-        CAN_RANDOMLY_SHRINK_FALSE,
-    );
-
-    // now, combine the next slot into the one that was just overflow
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-
-    // 2 ancients and then missing (because combined into 2nd ancient)
-    assert!(is_ancient(
-        &db.storage
-            .get_slot_storage_entry(ancient_slot)
-            .unwrap()
-            .accounts
-    ));
-    assert!(is_ancient(
-        &db.storage
-            .get_slot_storage_entry(max_slot_inclusive - 1)
-            .unwrap()
-            .accounts
-    ));
-    assert!(db
-        .storage
-        .get_slot_storage_entry(max_slot_inclusive)
-        .is_none());
-}
-
-#[test]
-fn test_shrink_ancient() {
-    solana_logger::setup();
-
-    let num_normal_slots = 1;
-    // build an ancient append vec at slot 'ancient_slot'
-    let (db, ancient_slot) = get_one_ancient_append_vec_and_others(num_normal_slots);
-
-    let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
-    let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-
-    // combine normal append vec(s) into existing ancient append vec
-    db.combine_ancient_slots(
-        (ancient_slot..=max_slot_inclusive).collect(),
-        CAN_RANDOMLY_SHRINK_FALSE,
-    );
-
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-
-    // create a 2nd ancient append vec at 'next_slot'
-    let next_slot = max_slot_inclusive + 1;
-    create_storages_and_update_index(&db, None, next_slot, num_normal_slots, true, None);
-    let max_slot_inclusive = next_slot + (num_normal_slots as Slot);
-
-    let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-
-    db.combine_ancient_slots(
-        (next_slot..=max_slot_inclusive).collect(),
-        CAN_RANDOMLY_SHRINK_FALSE,
-    );
-
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-
-    // now, shrink the second ancient append vec into the first one
-    let mut current_ancient = CurrentAncientAccountsFile::new(
-        ancient_slot,
-        db.get_storage_for_slot(ancient_slot).unwrap(),
-    );
-    let mut dropped_roots = Vec::default();
-    db.combine_one_store_into_ancient(
-        next_slot,
-        &db.get_storage_for_slot(next_slot).unwrap(),
-        &mut current_ancient,
-        &mut AncientSlotPubkeys::default(),
-        &mut dropped_roots,
-    );
-    assert!(db.storage.is_empty_entry(next_slot));
-    // this removes the storages entry completely from the hashmap for 'next_slot'.
-    // Otherwise, we have a zero length vec in that hashmap
-    db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
-    assert!(db.storage.get_slot_storage_entry(next_slot).is_none());
-
-    // include all the slots we put into the ancient append vec - they should contain nothing
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1)),
-    );
-    // look at just the ancient append vec
-    compare_all_accounts(
-        &initial_accounts,
-        &get_all_accounts(&db, ancient_slot..(ancient_slot + 1)),
-    );
-    // make sure there is only 1 ancient append vec at the ancient slot
-    assert!(db.storage.get_slot_storage_entry(ancient_slot).is_some());
-    assert!(is_ancient(
-        &db.storage
-            .get_slot_storage_entry(ancient_slot)
-            .unwrap()
-            .accounts
-    ));
-    ((ancient_slot + 1)..=max_slot_inclusive)
-        .for_each(|slot| assert!(db.storage.get_slot_storage_entry(slot).is_none()));
 }
 
 pub fn get_account_from_account_from_storage(
@@ -7718,10 +7553,7 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
     let storage = db.get_storage_for_slot(slot1).unwrap();
     let created_accounts = db.get_unique_accounts_from_storage(&storage);
 
-    db.combine_ancient_slots(vec![slot1], CAN_RANDOMLY_SHRINK_FALSE);
-    assert!(db.storage.get_slot_storage_entry(slot1).is_some());
-    let ancient = db.get_storage_for_slot(slot1).unwrap();
-    assert!(is_ancient(&ancient.accounts));
+    db.combine_ancient_slots_packed(vec![slot1], CAN_RANDOMLY_SHRINK_FALSE);
     let after_store = db.get_storage_for_slot(slot1).unwrap();
     let GetUniqueAccountsResult {
         stored_accounts: after_stored_accounts,
@@ -7913,13 +7745,6 @@ fn test_should_move_to_ancient_accounts_file() {
 
 fn adjust_alive_bytes(storage: &AccountStorageEntry, alive_bytes: usize) {
     storage.alive_bytes.store(alive_bytes, Ordering::Release);
-}
-
-/// cause 'ancient' to appear to contain 'len' bytes
-fn adjust_append_vec_len_for_tests(ancient: &AccountStorageEntry, len: usize) {
-    assert!(is_ancient(&ancient.accounts));
-    ancient.accounts.set_current_len_for_tests(len);
-    adjust_alive_bytes(ancient, len);
 }
 
 fn make_ancient_append_vec_full(ancient: &AccountStorageEntry, mark_alive: bool) {
