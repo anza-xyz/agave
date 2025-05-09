@@ -450,8 +450,7 @@ define_accounts_db_test!(test_maybe_unref_accounts_already_in_ancient, |db| {
     let account_from_storage = AccountFromStorage::new(&account);
     let map_from_storage = vec![&account_from_storage];
     let alive_total_bytes = account.stored_size();
-    let to_store =
-        AccountsToStore::new(available_bytes, &map_from_storage, alive_total_bytes, slot0);
+    let to_store = AccountsToStore::new(available_bytes, &map_from_storage, alive_total_bytes);
     // Done: setup 'to_store'
 
     // there has to be an existing append vec at this slot for a new current ancient at the slot to make sense
