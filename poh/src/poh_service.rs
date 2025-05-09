@@ -376,6 +376,7 @@ impl PohService {
 mod tests {
     use {
         super::*,
+        crate::poh_recorder::PohRecorderError::MaxHeightReached,
         crossbeam_channel::unbounded,
         rand::{thread_rng, Rng},
         solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT},
@@ -397,7 +398,11 @@ mod tests {
     #[ignore]
     fn test_poh_service() {
         solana_logger::setup();
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
+        genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -408,7 +413,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick,
             target_tick_duration,
             target_tick_count: None,
         };
@@ -417,11 +422,13 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let blockstore = Arc::new(blockstore);
+        // Just set something very far in the future that we won't reach.
+        let next_leader_slot = Some((1_000_000, 1_000_000));
         let (poh_recorder, entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             prev_hash,
             bank.clone(),
-            Some((4, 4)),
+            next_leader_slot,
             ticks_per_slot,
             blockstore,
             &leader_schedule_cache,
@@ -430,7 +437,6 @@ mod tests {
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let ticks_per_slot = bank.ticks_per_slot();
-        let bank_slot = bank.slot();
 
         // specify RUN_TIME to run in a benchmark-like mode
         // to calibrate batch size
@@ -442,6 +448,7 @@ mod tests {
         let entry_producer = {
             let poh_recorder = poh_recorder.clone();
             let exit = exit.clone();
+            let mut bank = bank.clone();
 
             Builder::new()
                 .name("solPohEntryProd".to_string())
@@ -454,11 +461,27 @@ mod tests {
                     loop {
                         // send some data
                         let mut time = Measure::start("record");
-                        let _ =
+                        let res =
                             poh_recorder
                                 .write()
                                 .unwrap()
-                                .record(bank_slot, h1, vec![tx.clone()]);
+                                .record(bank.slot(), h1, vec![tx.clone()]);
+                        if let Err(MaxHeightReached) = res {
+                            // Advance to the next slot.
+                            poh_recorder
+                                .write()
+                                .unwrap()
+                                .reset(bank.clone(), next_leader_slot);
+                            bank = Arc::new(Bank::new_from_parent(
+                                bank.clone(),
+                                &solana_pubkey::new_rand(),
+                                bank.slot() + 1,
+                            ));
+                            poh_recorder
+                                .write()
+                                .unwrap()
+                                .set_bank_for_test(bank.clone());
+                        }
                         time.stop();
                         total_us += time.as_us();
                         total_times += 1;
