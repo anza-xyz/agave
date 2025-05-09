@@ -152,6 +152,8 @@ impl FeatureSet {
             loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
             disable_rent_fees_collection: self.is_active(&disable_rent_fees_collection::id()),
+            formalize_loaded_transaction_data_size: self
+                .is_active(&formalize_loaded_transaction_data_size::id()),
         }
     }
 }
@@ -1090,6 +1092,10 @@ pub mod enshrine_slashing_program {
     solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
 }
 
+pub mod formalize_loaded_transaction_data_size {
+    solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1324,6 +1330,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
+        (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

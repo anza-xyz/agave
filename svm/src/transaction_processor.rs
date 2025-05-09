@@ -1099,7 +1099,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            account_loader::{LoadedTransactionAccount, ValidatedTransactionDetails},
+            account_loader::{
+                LoadedTransactionAccount, ValidatedTransactionDetails,
+                TRANSACTION_ACCOUNT_BASE_SIZE,
+            },
             nonce_info::NonceInfo,
             rollback_accounts::RollbackAccounts,
         },
@@ -1147,13 +1150,23 @@ mod tests {
         }
     }
 
-    #[derive(Default, Clone)]
+    #[derive(Clone)]
     struct MockBankCallback {
         account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
         feature_set: SVMFeatureSet,
+    }
+
+    impl Default for MockBankCallback {
+        fn default() -> Self {
+            Self {
+                account_shared_data: Arc::default(),
+                inspected_accounts: Arc::default(),
+                feature_set: SVMFeatureSet::all_enabled(),
+            }
+        }
     }
 
     impl InvokeContextCallback for MockBankCallback {}
@@ -2036,8 +2049,11 @@ mod tests {
         assert_eq!(entry, Arc::new(program));
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_exact_balance() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_validate_transaction_fee_payer_exact_balance(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
@@ -2075,10 +2091,12 @@ mod tests {
         );
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -2107,6 +2125,12 @@ mod tests {
             account
         };
 
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         assert_eq!(
             result,
             Ok(ValidatedTransactionDetails {
@@ -2122,7 +2146,7 @@ mod tests {
                     .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, priority_fee),
                 loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: fee_payer_account.data().len(),
+                    loaded_size: base_account_size + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
                     rent_collected: fee_payer_rent_debit,
                 },
@@ -2130,8 +2154,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_rent_paying() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_validate_transaction_fee_payer_rent_paying(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[],
@@ -2156,10 +2183,13 @@ mod tests {
 
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
+        mock_bank.feature_set.disable_rent_fees_collection = false;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -2183,6 +2213,12 @@ mod tests {
             account
         };
 
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         assert_eq!(
             result,
             Ok(ValidatedTransactionDetails {
@@ -2198,7 +2234,7 @@ mod tests {
                     .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, 0),
                 loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: fee_payer_account.data().len(),
+                    loaded_size: base_account_size + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
                     rent_collected: fee_payer_rent_debit,
                 }
@@ -2381,8 +2417,9 @@ mod tests {
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_is_nonce() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_validate_transaction_fee_payer_is_nonce(formalize_loaded_transaction_data_size: bool) {
         let lamports_per_signature = 5000;
         let rent_collector = RentCollector::default();
         let compute_unit_limit = 1000u64;
@@ -2421,10 +2458,12 @@ mod tests {
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-            let mock_bank = MockBankCallback {
+            let mut mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
+            mock_bank.feature_set.formalize_loaded_transaction_data_size =
+                formalize_loaded_transaction_data_size;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2457,6 +2496,12 @@ mod tests {
                 account
             };
 
+            let base_account_size = if formalize_loaded_transaction_data_size {
+                TRANSACTION_ACCOUNT_BASE_SIZE
+            } else {
+                0
+            };
+
             assert_eq!(
                 result,
                 Ok(ValidatedTransactionDetails {
@@ -2472,7 +2517,7 @@ mod tests {
                         .loaded_accounts_data_size_limit,
                     fee_details: FeeDetails::new(transaction_fee, priority_fee),
                     loaded_fee_payer_account: LoadedTransactionAccount {
-                        loaded_size: fee_payer_account.data().len(),
+                        loaded_size: base_account_size + fee_payer_account.data().len(),
                         account: post_validation_fee_payer_account,
                         rent_collected: 0,
                     }
