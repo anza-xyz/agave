@@ -21,7 +21,7 @@ serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-clock = { workspace = true }
 solana-pubkey = { workspace = true }
-solana-rpc-client-api = { workspace = true }
+solana-rpc-client-types = { workspace = true }
 solana-signature = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
