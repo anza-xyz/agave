@@ -61,7 +61,7 @@ $ ./cargo build
 
 ```bash
 $ # Install build dependencies
-$ brew install pkg-config libudev protobuf llvm coreutils
+$ brew install pkg-config libgudev protobuf llvm coreutils
 $ ./scripts/cargo-install-all.sh . # This takes a while ~45m
 
 # Include the installed bins in your PATH
