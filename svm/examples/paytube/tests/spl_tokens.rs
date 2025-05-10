@@ -5,7 +5,9 @@ use {
         get_token_account_balance, mint_account, system_account, token_account,
         TestValidatorContext,
     },
-    solana_sdk::{pubkey::Pubkey, signature::Keypair, signer::Signer},
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_svm_example_paytube::{transaction::PayTubeTransaction, PayTubeChannel},
     spl_associated_token_account::get_associated_token_address,
 };

@@ -1,6 +1,9 @@
 #![cfg(feature = "sbf_rust")]
 
 use {
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_message::Message,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
@@ -11,12 +14,8 @@ use {
         loader_utils::load_program_of_loader_v4,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
+    solana_transaction::Transaction,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::create_account_with_authorized,
     std::collections::HashMap,

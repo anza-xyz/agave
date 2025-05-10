@@ -1,6 +1,5 @@
 use {
-    solana_connection_cache::connection_cache::Protocol, solana_sdk::clock::Slot,
-    std::net::SocketAddr,
+    solana_clock::Slot, solana_connection_cache::connection_cache::Protocol, std::net::SocketAddr,
 };
 
 /// A trait to abstract out the leader estimation for the

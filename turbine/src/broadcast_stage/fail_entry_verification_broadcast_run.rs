@@ -1,8 +1,9 @@
 use {
     super::*,
     crate::cluster_nodes::ClusterNodesCache,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-    solana_sdk::{hash::Hash, signature::Keypair},
     std::{thread::sleep, time::Duration},
     tokio::sync::mpsc::Sender as AsyncSender,
 };

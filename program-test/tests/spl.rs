@@ -1,15 +1,13 @@
 use {
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
     solana_program_test::{programs::spl_programs, ProgramTest},
-    solana_sdk::{
-        bpf_loader, bpf_loader_upgradeable,
-        instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
-        signature::Signer,
-        signer::keypair::Keypair,
-        system_instruction,
-        sysvar::rent,
-        transaction::Transaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::rent,
+    solana_transaction::Transaction,
 };
 
 #[tokio::test]

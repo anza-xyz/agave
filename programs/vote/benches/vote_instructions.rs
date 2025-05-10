@@ -12,8 +12,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sdk::sysvar,
-    solana_sdk_ids::vote::id,
+    solana_sdk_ids::{sysvar, vote::id},
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
     solana_transaction_context::TransactionAccount,
     solana_vote_program::{

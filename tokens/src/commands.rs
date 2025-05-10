@@ -15,27 +15,26 @@ use {
     pickledb::PickleDb,
     serde::{Deserialize, Serialize},
     solana_account_decoder::parse_token::real_number_string,
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_message::Message,
+    solana_native_token::{lamports_to_sol, sol_to_lamports},
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
         client_error::{Error as ClientError, Result as ClientResult},
         config::RpcSendTransactionConfig,
         request::{MAX_GET_SIGNATURE_STATUSES_QUERY_ITEMS, MAX_MULTIPLE_ACCOUNTS},
     },
-    solana_sdk::{
-        clock::Slot,
-        commitment_config::CommitmentConfig,
-        hash::Hash,
-        instruction::Instruction,
-        message::Message,
-        native_token::{lamports_to_sol, sol_to_lamports},
-        signature::{unique_signers, Signature, Signer},
-        stake::{
-            instruction::{self as stake_instruction, LockupArgs},
-            state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
-        },
-        system_instruction,
-        transaction::Transaction,
+    solana_signature::Signature,
+    solana_signer::{unique_signers, Signer},
+    solana_stake_interface::{
+        instruction::{self as stake_instruction, LockupArgs},
+        state::{Authorized, Lockup, StakeAuthorize, StakeStateV2},
     },
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::Transaction,
     solana_transaction_status::TransactionStatus,
     spl_associated_token_account::get_associated_token_address,
     spl_token::solana_program::program_error::ProgramError,
@@ -955,10 +954,8 @@ pub fn process_transaction_log(args: &TransactionLogArgs) -> Result<(), Error> {
 
 use {
     crate::db::check_output_file,
-    solana_sdk::{
-        pubkey::{self, Pubkey},
-        signature::Keypair,
-    },
+    solana_keypair::Keypair,
+    solana_pubkey::{self as pubkey, Pubkey},
     tempfile::{tempdir, NamedTempFile},
 };
 
@@ -1307,11 +1304,10 @@ pub fn test_process_distribute_stake_with_client(client: &RpcClient, sender_keyp
 mod tests {
     use {
         super::*,
-        solana_sdk::{
-            instruction::AccountMeta,
-            signature::{read_keypair_file, write_keypair_file, Signer},
-            stake::instruction::StakeInstruction,
-        },
+        solana_instruction::AccountMeta,
+        solana_keypair::{read_keypair_file, write_keypair_file},
+        solana_signer::Signer,
+        solana_stake_interface::instruction::StakeInstruction,
         solana_streamer::socket::SocketAddrSpace,
         solana_test_validator::TestValidator,
         solana_transaction_status::TransactionConfirmationStatus,

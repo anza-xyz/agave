@@ -1,13 +1,11 @@
 use {
     agave_feature_set as feature_set,
+    solana_instruction::{AccountMeta, Instruction},
     solana_program_test::ProgramTest,
-    solana_sdk::{
-        bpf_loader,
-        instruction::{AccountMeta, Instruction},
-        pubkey::Pubkey,
-        signature::Signer,
-        transaction::Transaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
     test_case::test_case,
 };
 

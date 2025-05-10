@@ -1,13 +1,8 @@
 use {
-    assert_matches::assert_matches,
-    solana_program_test::*,
-    solana_sdk::{
-        ed25519_instruction::new_ed25519_instruction,
-        instruction::InstructionError,
-        precompiles::PrecompileError,
-        signature::Signer,
-        transaction::{Transaction, TransactionError},
-    },
+    assert_matches::assert_matches, solana_ed25519_program::new_ed25519_instruction,
+    solana_instruction::error::InstructionError, solana_precompile_error::PrecompileError,
+    solana_program_test::*, solana_signer::Signer, solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
 };
 
 // Since ed25519_dalek is still using the old version of rand, this test

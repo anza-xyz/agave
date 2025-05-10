@@ -13,15 +13,17 @@
 use {
     crate::transaction::PayTubeTransaction,
     solana_client::{rpc_client::RpcClient, rpc_config::RpcSendTransactionConfig},
-    solana_sdk::{
-        commitment_config::CommitmentConfig, instruction::Instruction as SolanaInstruction,
-        pubkey::Pubkey, signature::Keypair, signer::Signer, system_instruction,
-        transaction::Transaction as SolanaTransaction,
-    },
+    solana_commitment_config::CommitmentConfig,
+    solana_instruction::Instruction as SolanaInstruction,
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
     solana_svm::{
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::LoadAndExecuteSanitizedTransactionsOutput,
     },
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::Transaction as SolanaTransaction,
     spl_associated_token_account::get_associated_token_address,
     std::collections::HashMap,
 };

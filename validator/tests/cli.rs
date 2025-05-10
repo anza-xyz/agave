@@ -1,6 +1,6 @@
 use {
     assert_cmd::prelude::*,
-    solana_sdk::signer::keypair::{write_keypair_file, Keypair},
+    solana_keypair::{write_keypair_file, Keypair},
     std::process::Command,
     tempfile::TempDir,
 };

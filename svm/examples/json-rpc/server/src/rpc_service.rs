@@ -7,7 +7,7 @@ use {
     },
     log::*,
     solana_perf::thread::renice_this_thread,
-    solana_sdk::exit::Exit,
+    solana_validator_exit::Exit,
     std::{
         net::SocketAddr,
         sync::{atomic::AtomicBool, Arc, RwLock},

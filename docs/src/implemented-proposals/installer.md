@@ -70,7 +70,7 @@ An update manifest is used to advertise the deployment of new release tarballs o
 The update tarball itself is hosted elsewhere, off-chain and can be fetched from the specified `download_url`.
 
 ```text
-use solana_sdk::signature::Signature;
+use solana_signature::Signature;
 
 /// Information required to download and apply a given update
 pub struct UpdateManifest {

@@ -1,16 +1,15 @@
 use {
+    solana_keypair::Keypair,
     solana_program_test::ProgramTestContext,
-    solana_sdk::{
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        stake::{
-            instruction as stake_instruction,
-            state::{Authorized, Lockup},
-        },
-        system_instruction, system_program,
-        transaction::Transaction,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_signer::Signer,
+    solana_stake_interface::{
+        instruction as stake_instruction,
+        state::{Authorized, Lockup},
     },
+    solana_system_interface::{instruction as system_instruction, program as system_program},
+    solana_transaction::Transaction,
     solana_vote_program::{
         vote_instruction,
         vote_state::{self, VoteInit, VoteState},

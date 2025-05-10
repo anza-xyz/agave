@@ -4,9 +4,11 @@ extern crate test;
 
 use {
     rand::{seq::SliceRandom, Rng},
+    solana_clock::Slot,
+    solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
     solana_ledger::shred::{Shred, ShredFlags},
-    solana_sdk::{clock::Slot, genesis_config::ClusterType, pubkey::Pubkey},
+    solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::{
         cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},

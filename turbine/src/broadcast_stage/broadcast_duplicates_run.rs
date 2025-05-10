@@ -4,12 +4,12 @@ use {
     crossbeam_channel::Sender,
     itertools::Itertools,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-    solana_sdk::{
-        hash::Hash,
-        signature::{Keypair, Signature, Signer},
-        system_transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
+    solana_system_transaction as system_transaction,
     std::collections::HashSet,
 };
 

@@ -5,7 +5,7 @@ use {
     },
     clap::{value_t, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_pubkey},
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::path::Path,
 };
 

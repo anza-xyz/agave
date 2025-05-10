@@ -2,8 +2,9 @@ use {
     super::*,
     solana_entry::entry::Entry,
     solana_gossip::contact_info::ContactInfo,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{self, ProcessShredsStats, ReedSolomonCache, Shredder},
-    solana_sdk::{hash::Hash, signature::Keypair},
 };
 
 #[derive(Clone)]
@@ -186,7 +187,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
 mod tests {
     use {
         super::*,
-        solana_sdk::signature::Signer,
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };

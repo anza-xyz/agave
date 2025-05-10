@@ -1,10 +1,8 @@
 use {
+    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{
-        clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-        pubkey::Pubkey,
-    },
+    solana_pubkey::Pubkey,
     solana_send_transaction_service::tpu_info::TpuInfo,
     std::{
         collections::HashMap,
@@ -125,23 +123,22 @@ mod test {
     use {
         super::*,
         solana_gossip::contact_info::ContactInfo,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore, get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
+        solana_poh_config::PohConfig,
+        solana_quic_definitions::QUIC_PORT_OFFSET,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
         },
-        solana_sdk::{
-            poh_config::PohConfig,
-            quic::QUIC_PORT_OFFSET,
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
         std::{net::Ipv4Addr, sync::atomic::AtomicBool},
     };
 

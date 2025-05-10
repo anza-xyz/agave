@@ -5,7 +5,8 @@ use {
     },
     clap::{value_t, App, AppSettings, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::is_keypair,
-    solana_sdk::signature::{read_keypair, Signer},
+    solana_keypair::read_keypair,
+    solana_signer::Signer,
     std::{fs, path::Path},
 };
 
@@ -113,7 +114,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::signature::Keypair};
+    use {super::*, solana_keypair::Keypair};
 
     #[test]
     fn verify_args_struct_by_command_authorized_voter_add_default() {
@@ -131,7 +132,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
         let keypair = Keypair::new();
-        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let app = command();
         let matches = app.get_matches_from(vec![COMMAND, "add", file.to_str().unwrap()]);

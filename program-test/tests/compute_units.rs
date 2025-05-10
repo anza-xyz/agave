@@ -1,12 +1,11 @@
 use {
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
     solana_program_test::ProgramTest,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        signature::{Keypair, Signer},
-        system_instruction,
-        sysvar::rent,
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::rent,
+    solana_transaction::Transaction,
 };
 
 #[should_panic]

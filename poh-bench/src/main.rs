@@ -8,7 +8,7 @@ use {
     solana_measure::measure::Measure,
     solana_perf::perf_libs,
     solana_rayon_threadlimit::get_max_thread_count,
-    solana_sdk::hash::hash,
+    solana_sha256_hasher::hash,
 };
 
 fn main() {

@@ -5,7 +5,7 @@ use {
     crate::rpc_load_balancer::RpcLoadBalancer,
     log::{info, warn},
     solana_client::client_error,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     solana_streamer::streamer::StakedNodes,
     std::{
         collections::HashMap,

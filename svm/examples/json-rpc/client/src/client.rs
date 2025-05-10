@@ -1,14 +1,12 @@
 use {
     crate::utils,
     solana_client::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        signature::Signer,
-        signer::keypair::{read_keypair_file, Keypair},
-        transaction::Transaction,
-    },
+    solana_commitment_config::CommitmentConfig,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_message::Message,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
 };
 
 /// Establishes a RPC connection with the Simulation server.

@@ -62,7 +62,6 @@ solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.3.0" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.3.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.0" }
-solana-sdk = "=2.2.2"
 solana-sbpf = "=0.11.0"
 solana-secp256k1-recover = "=2.2.1"
 solana-svm = { path = "../../svm", version = "=2.3.0" }
@@ -117,21 +116,38 @@ itertools = { workspace = true }
 log = { workspace = true }
 miow = { workspace = true }
 net2 = { workspace = true }
+solana-account = "2.2.1"
 solana-account-decoder = { workspace = true }
+solana-account-info = "2.2.1"
 solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-client-traits = "2.2.1"
+solana-clock = "2.2.1"
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+solana-compute-budget-interface = "2.2.2"
 solana-fee = { workspace = true }
+solana-fee-calculator = "2.2.1"
+solana-fee-structure = "2.2.1"
+solana-genesis-config = "2.2.1"
+solana-hash = "2.2.1"
+solana-instruction = "2.2.1"
+solana-keypair = "2.2.1"
 solana-ledger = { workspace = true }
+solana-loader-v3-interface = "3.0.0"
+solana-loader-v4-interface = "2.2.1"
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = "2.3.0"
 solana-program = { workspace = true }
+solana-program-entrypoint = "2.2.1"
 solana-program-runtime = { workspace = true }
+solana-pubkey = "2.3.0"
+solana-rent = "2.2.1"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
@@ -140,13 +156,19 @@ solana-sbf-rust-invoke-dep = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-sbf-rust-realloc-invoke-dep = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sdk-ids = "2.2.1"
+solana-signer = "2.2.1"
+solana-stake-interface = "1.2.1"
 solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-system-interface = "1.0"
+solana-sysvar = "2.2.1"
 solana-timings = { workspace = true }
+solana-transaction = "2.2.2"
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-error = "2.2.1"
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
