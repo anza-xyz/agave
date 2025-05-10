@@ -1444,54 +1444,58 @@ impl ReplaySlotStats {
             self.batch_execute.slowest_thread.report_stats(slot);
         }
 
-        let mut per_pubkey_timings: Vec<_> = self
-            .batch_execute
-            .totals
-            .details
-            .per_program_timings
-            .iter()
-            .collect();
-        per_pubkey_timings.sort_by(|a, b| b.1.accumulated_us.cmp(&a.1.accumulated_us));
-        let (total_us, total_units, total_count, total_errored_units, total_errored_count) =
-            per_pubkey_timings.iter().fold(
-                (0, 0, 0, 0, 0),
-                |(sum_us, sum_units, sum_count, sum_errored_units, sum_errored_count), a| {
-                    (
-                        sum_us + a.1.accumulated_us.0,
-                        sum_units + a.1.accumulated_units.0,
-                        sum_count + a.1.count.0,
-                        sum_errored_units + a.1.total_errored_units.0,
-                        sum_errored_count + a.1.errored_txs_compute_consumed.len(),
-                    )
-                },
-            );
+        // per_program_timings datapoints are only reported at the trace level, and all preparations
+        // required to generate them can only occur when trace level is enabled.
+        if log::log_enabled!(log::Level::Trace) {
+            let mut per_pubkey_timings: Vec<_> = self
+                .batch_execute
+                .totals
+                .details
+                .per_program_timings
+                .iter()
+                .collect();
+            per_pubkey_timings.sort_by(|a, b| b.1.accumulated_us.cmp(&a.1.accumulated_us));
+            let (total_us, total_units, total_count, total_errored_units, total_errored_count) =
+                per_pubkey_timings.iter().fold(
+                    (0, 0, 0, 0, 0),
+                    |(sum_us, sum_units, sum_count, sum_errored_units, sum_errored_count), a| {
+                        (
+                            sum_us + a.1.accumulated_us.0,
+                            sum_units + a.1.accumulated_units.0,
+                            sum_count + a.1.count.0,
+                            sum_errored_units + a.1.total_errored_units.0,
+                            sum_errored_count + a.1.errored_txs_compute_consumed.len(),
+                        )
+                    },
+                );
 
-        for (pubkey, time) in per_pubkey_timings.iter().take(5) {
-            datapoint_trace!(
+            for (pubkey, time) in per_pubkey_timings.iter().take(5) {
+                datapoint_trace!(
+                    "per_program_timings",
+                    ("slot", slot as i64, i64),
+                    ("pubkey", pubkey.to_string(), String),
+                    ("execute_us", time.accumulated_us.0, i64),
+                    ("accumulated_units", time.accumulated_units.0, i64),
+                    ("errored_units", time.total_errored_units.0, i64),
+                    ("count", time.count.0, i64),
+                    (
+                        "errored_count",
+                        time.errored_txs_compute_consumed.len(),
+                        i64
+                    ),
+                );
+            }
+            datapoint_info!(
                 "per_program_timings",
                 ("slot", slot as i64, i64),
-                ("pubkey", pubkey.to_string(), String),
-                ("execute_us", time.accumulated_us.0, i64),
-                ("accumulated_units", time.accumulated_units.0, i64),
-                ("errored_units", time.total_errored_units.0, i64),
-                ("count", time.count.0, i64),
-                (
-                    "errored_count",
-                    time.errored_txs_compute_consumed.len(),
-                    i64
-                ),
+                ("pubkey", "all", String),
+                ("execute_us", total_us, i64),
+                ("accumulated_units", total_units, i64),
+                ("count", total_count, i64),
+                ("errored_units", total_errored_units, i64),
+                ("errored_count", total_errored_count, i64)
             );
         }
-        datapoint_info!(
-            "per_program_timings",
-            ("slot", slot as i64, i64),
-            ("pubkey", "all", String),
-            ("execute_us", total_us, i64),
-            ("accumulated_units", total_units, i64),
-            ("count", total_count, i64),
-            ("errored_units", total_errored_units, i64),
-            ("errored_count", total_errored_count, i64)
-        );
     }
 }
 

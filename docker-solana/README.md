@@ -6,12 +6,12 @@ https://hub.docker.com/r/anzaxyz/agave/
 ### Usage:
 Run the latest beta image:
 ```bash
-$ docker run --rm -p 8899:8899 --ulimit nofile=1000000 agavexyz/agave:beta
+$ docker run --rm -p 8899:8899 --ulimit nofile=1000000 anzaxyz/agave:beta
 ```
 
 Run the latest edge image:
 ```bash
-$ docker run --rm -p 8899:8899 --ulimit nofile=1000000 agavexyz/agave:edge
+$ docker run --rm -p 8899:8899 --ulimit nofile=1000000 anzaxyz/agave:edge
 ```
 
 Port *8899* is the JSON RPC port, which is used by clients to communicate with the network.

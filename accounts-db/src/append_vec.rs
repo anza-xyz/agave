@@ -165,8 +165,6 @@ impl IsZeroLamport for IndexInfo {
 struct AccountOffsets {
     /// offset to the end of the &[u8] data
     offset_to_end_of_data: usize,
-    /// # of bytes (aligned) to store this account, including variable sized data
-    stored_size_aligned: usize,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -300,13 +298,11 @@ impl AppendVec {
 
         //UNSAFE: Required to create a Mmap
         let mmap = unsafe { MmapMut::map_mut(&data) };
-        let mmap = mmap.unwrap_or_else(|e| {
-            error!(
-                "Failed to map the data file (size: {}): {}.\n
-                    Please increase sysctl vm.max_map_count or equivalent for your platform.",
-                size, e
+        let mmap = mmap.unwrap_or_else(|err| {
+            panic!(
+                "Failed to map the data file (size: {size}): {err}. \
+                 Please increase sysctl vm.max_map_count or equivalent for your platform.",
             );
-            std::process::exit(1);
         });
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
@@ -889,14 +885,18 @@ impl AppendVec {
         &self,
         offset: usize,
     ) -> Option<(StoredMeta, solana_account::AccountSharedData)> {
-        let sizes = self.get_account_sizes(&[offset]);
+        let data_len = self.get_account_data_lens(&[offset]);
+        let sizes: usize = data_len
+            .iter()
+            .map(|len| self.calculate_stored_size(*len))
+            .sum();
         let result = self.get_stored_account_meta_callback(offset, |r_callback| {
             let r2 = self.get_account_shared_data(offset);
             assert!(solana_account::accounts_equal(
                 &r_callback,
                 r2.as_ref().unwrap()
             ));
-            assert_eq!(sizes, vec![r_callback.stored_size()]);
+            assert_eq!(sizes, r_callback.stored_size());
             let meta = r_callback.meta().clone();
             Some((meta, r_callback.to_account_shared_data()))
         });
@@ -906,7 +906,7 @@ impl AppendVec {
                 .is_none());
             assert!(self.get_account_shared_data(offset).is_none());
             // it has different rules for checking len and returning None
-            assert!(sizes.is_empty());
+            assert_eq!(sizes, 0);
         }
         result.flatten()
     }
@@ -926,12 +926,10 @@ impl AppendVec {
         let stored_size_unaligned = STORE_META_OVERHEAD
             .checked_add(stored_meta.data_len as usize)
             .expect("stored size cannot overflow");
-        let stored_size_aligned = u64_align!(stored_size_unaligned);
         let offset_to_end_of_data = start_offset + stored_size_unaligned;
 
         AccountOffsets {
             offset_to_end_of_data,
-            stored_size_aligned,
         }
     }
 
@@ -1098,8 +1096,14 @@ impl AppendVec {
         }
     }
 
-    /// for each offset in `sorted_offsets`, get the size of the account. No other information is needed for the account.
-    pub(crate) fn get_account_sizes(&self, sorted_offsets: &[usize]) -> Vec<usize> {
+    /// Calculate the amount of storage required for an account with the passed
+    /// in data_len
+    pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
+        aligned_stored_size(data_len)
+    }
+
+    /// for each offset in `sorted_offsets`, get the the amount of data stored in the account.
+    pub(crate) fn get_account_data_lens(&self, sorted_offsets: &[usize]) -> Vec<usize> {
         // self.len() is an atomic load, so only do it once
         let self_len = self.len();
         let mut account_sizes = Vec::with_capacity(sorted_offsets.len());
@@ -1115,7 +1119,7 @@ impl AppendVec {
                         // data doesn't fit, so don't include
                         break;
                     }
-                    account_sizes.push(next.stored_size_aligned);
+                    account_sizes.push(stored_meta.data_len as usize);
                 }
             }
             AppendVecFileBacking::File(file) => {
@@ -1143,7 +1147,7 @@ impl AppendVec {
                         // data doesn't fit, so don't include
                         break;
                     }
-                    account_sizes.push(next.stored_size_aligned);
+                    account_sizes.push(stored_meta.data_len as usize);
                 }
             }
         }
@@ -1710,7 +1714,12 @@ pub mod tests {
             let pos = av.append_account_test(&account).unwrap();
             assert_eq!(av.get_account_test(pos).unwrap(), account);
             indexes.push(pos);
-            assert_eq!(sizes, av.get_account_sizes(&indexes));
+            let stored_size = av
+                .get_account_data_lens(indexes.as_slice())
+                .iter()
+                .map(|len| av.calculate_stored_size(*len))
+                .sum::<usize>();
+            assert_eq!(sizes.iter().sum::<usize>(), stored_size);
         }
         trace!("append time: {} ms", now.elapsed().as_millis());
 
@@ -2073,8 +2082,12 @@ pub mod tests {
         let (append_vec, _) =
             AppendVec::new_from_file(&temp_file.path, total_stored_size, storage_access).unwrap();
 
-        let account_sizes = append_vec.get_account_sizes(account_offsets.as_slice());
-        assert_eq!(account_sizes, stored_sizes);
+        let account_sizes = append_vec
+            .get_account_data_lens(account_offsets.as_slice())
+            .iter()
+            .map(|len| append_vec.calculate_stored_size(*len))
+            .sum::<usize>();
+        assert_eq!(account_sizes, total_stored_size);
     }
 
     /// A helper function for testing different scenario for scan_*.

@@ -70,12 +70,16 @@ pub(crate) fn process_message(
 
         *accumulated_consumed_units =
             accumulated_consumed_units.saturating_add(compute_units_consumed);
-        execute_timings.details.accumulate_program(
-            program_id,
-            process_instruction_us,
-            compute_units_consumed,
-            result.is_err(),
-        );
+        // The per_program_timings are only used for metrics reporting at the trace
+        // level, so they should only be accumulated when trace level is enabled.
+        if log::log_enabled!(log::Level::Trace) {
+            execute_timings.details.accumulate_program(
+                program_id,
+                process_instruction_us,
+                compute_units_consumed,
+                result.is_err(),
+            );
+        }
         invoke_context.timings = {
             execute_timings.details.accumulate(&invoke_context.timings);
             ExecuteDetailsTimings::default()

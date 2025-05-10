@@ -8,7 +8,6 @@ use {
         },
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         bucket_map_holder_stats::BucketMapHolderStats,
-        is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         waitable_condvar::WaitableCondvar,
     },
@@ -143,8 +142,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for InMemAccoun
 
 pub enum InsertNewEntryResults {
     DidNotExist,
-    ExistedNewEntryZeroLamports(Option<Slot>),
-    ExistedNewEntryNonZeroLamports(Option<Slot>),
+    Existed(Option<Slot>),
 }
 
 #[derive(Default, Debug)]
@@ -792,7 +790,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let mut map = self.map_internal.write().unwrap();
         let entry = map.entry(pubkey);
         m.stop();
-        let new_entry_zero_lamports = new_entry.is_zero_lamport();
         let mut other_slot = None;
         let (found_in_mem, already_existed) = match entry {
             Entry::Occupied(occupied) => {
@@ -868,17 +865,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         drop(map);
         self.update_entry_stats(m, found_in_mem);
         let stats = self.stats();
-        if !already_existed {
-            stats.inc_insert();
-        } else {
+        if already_existed {
             Self::update_stat(&stats.updates_in_mem, 1);
-        }
-        if !already_existed {
-            InsertNewEntryResults::DidNotExist
-        } else if new_entry_zero_lamports {
-            InsertNewEntryResults::ExistedNewEntryZeroLamports(other_slot)
+            InsertNewEntryResults::Existed(other_slot)
         } else {
-            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot)
+            stats.inc_insert();
+            InsertNewEntryResults::DidNotExist
         }
     }
 

@@ -2296,6 +2296,7 @@ impl ReplayStage {
             BlockstoreProcessorError::InvalidBlock(BlockError::TooFewTicks)
         );
         let slot = bank.slot();
+        let parent_slot = bank.parent_slot();
         if is_serious {
             datapoint_error!(
                 "replay-stage-mark_dead_slot",
@@ -2322,7 +2323,7 @@ impl ReplayStage {
             slot_status_notifier
                 .read()
                 .unwrap()
-                .notify_slot_dead(slot, err.clone());
+                .notify_slot_dead(slot, parent_slot, err.clone());
         }
 
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
@@ -5047,7 +5048,7 @@ pub(crate) mod tests {
 
         fn notify_created_bank(&self, _slot: Slot, _parent: Slot) {}
 
-        fn notify_slot_dead(&self, slot: Slot, _error: String) {
+        fn notify_slot_dead(&self, slot: Slot, _parent: Slot, _error: String) {
             self.dead_slots.lock().unwrap().insert(slot);
         }
     }
