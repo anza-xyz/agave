@@ -4,6 +4,8 @@
 //! 2. multiple 'slots' squashed into a single older (ie. ancient) slot for convenience and performance
 //!
 //! Otherwise, an ancient append vec is the same as any other append vec
+#[cfg(test)]
+use crate::accounts_file::AccountsFile;
 use {
     crate::{
         account_storage::ShrinkInProgress,
@@ -12,7 +14,6 @@ use {
             AccountFromStorage, AccountStorageEntry, AccountsDb, AliveAccounts,
             GetUniqueAccountsResult, ShrinkCollect, ShrinkCollectAliveSeparatedByRefs,
         },
-        accounts_file::AccountsFile,
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
     },
@@ -1073,6 +1074,9 @@ impl<'a> PackedAncientStorage<'a> {
 
 /// a set of accounts need to be stored.
 /// If there are too many to fit in 'Primary', the rest are put in 'Overflow'
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum StorageSelector {
     Primary,
@@ -1084,6 +1088,9 @@ pub enum StorageSelector {
 /// The 'store' functions need data stored in a slice of specific type.
 /// We need 1-2 of these slices constructed based on available bytes and individual account sizes.
 /// The slice arithmetic across both hashes and account data gets messy. So, this struct abstracts that.
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 pub struct AccountsToStore<'a> {
     accounts: &'a [&'a AccountFromStorage],
     /// if 'accounts' contains more items than can be contained in the primary storage, then we have to split these accounts.
@@ -1096,6 +1103,8 @@ pub struct AccountsToStore<'a> {
     bytes_overflow: usize,
 }
 
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 impl<'a> AccountsToStore<'a> {
     /// break 'stored_accounts' into primary and overflow
     /// available_bytes: how many bytes remain in the primary storage. Excess accounts will be directed to an overflow storage
@@ -1187,6 +1196,9 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
 }
 
 /// is this a max-size append vec designed to be used as an ancient append vec?
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 pub fn is_ancient(storage: &AccountsFile) -> bool {
     storage.capacity() >= get_ancient_append_vec_capacity()
 }
@@ -1197,7 +1209,6 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
             accounts_db::{
                 get_temp_accounts_paths,
                 tests::{
@@ -1211,7 +1222,9 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{
+                aligned_stored_size, AccountMeta, AppendVec, StoredAccountMeta, StoredMeta,
+            },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
@@ -2188,7 +2201,7 @@ pub mod tests {
             let account = shrink_in_progress
                 .new_storage()
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     assert_eq!(account.pubkey(), pk_with_2_refs);
                     account.to_account_shared_data()
                 })
@@ -2337,7 +2350,7 @@ pub mod tests {
             let storage = db.storage.get_slot_storage_entry(slot1).unwrap();
             let accounts_shrunk_same_slot = storage
                 .accounts
-                .get_stored_account_meta_callback(0, |account| {
+                .get_stored_account_callback(0, |account| {
                     (*account.pubkey(), account.to_account_shared_data())
                 })
                 .unwrap();
@@ -2439,7 +2452,7 @@ pub mod tests {
             pubkey,
             data_len: 43,
         };
-        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+        let account = StoredAccountMeta {
             meta: &stored_meta,
             // account data
             account_meta: &account_meta,
@@ -2447,7 +2460,7 @@ pub mod tests {
             offset,
             stored_size: account_size,
             hash: &hash,
-        });
+        };
         let map = [&account];
         let map_accounts_from_storage = build_accounts_from_storage(map.iter().copied());
         for (selector, available_bytes) in [
@@ -3300,7 +3313,7 @@ pub mod tests {
                             .iter()
                             .map(|storage| {
                                 let mut accounts = Vec::default();
-                                storage.accounts.scan_accounts(|account| {
+                                storage.accounts.scan_accounts_stored_meta(|account| {
                                     accounts.push(AccountFromStorage::new(&account));
                                 });
                                 (storage.slot(), accounts)

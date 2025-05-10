@@ -18,7 +18,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     end_bound: Bound<&'a Pubkey>,
     start_bin: usize,
     end_bin_inclusive: usize,
-    bin_range: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
+    items: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
     returns_items: AccountsIndexIteratorReturnsItems,
 }
 
@@ -40,7 +40,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                     end_bound: range.end_bound(),
                     start_bin,
                     end_bin_inclusive,
-                    bin_range: Vec::new(),
+                    items: Vec::new(),
                     returns_items,
                 }
             }
@@ -50,7 +50,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                 end_bound: Bound::Unbounded,
                 start_bin: 0,
                 end_bin_inclusive: index.account_maps.len().saturating_sub(1),
-                bin_range: Vec::new(),
+                items: Vec::new(),
                 returns_items,
             },
         }
@@ -63,22 +63,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 {
     type Item = Vec<(Pubkey, Arc<AccountMapEntry<T>>)>;
     fn next(&mut self) -> Option<Self::Item> {
-        while self.bin_range.len() < ITER_BATCH_SIZE {
+        while self.items.len() < ITER_BATCH_SIZE {
             if self.start_bin > self.end_bin_inclusive {
                 break;
             }
 
             let bin = self.start_bin;
             let map = &self.account_maps[bin];
-            let mut range = map.items(&(self.start_bound, self.end_bound));
+            let mut items = map.items(&(self.start_bound, self.end_bound));
             if self.returns_items == AccountsIndexIteratorReturnsItems::Sorted {
-                range.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                items.sort_unstable_by(|a, b| a.0.cmp(&b.0));
             }
-            self.bin_range.append(&mut range);
+            self.items.append(&mut items);
             self.start_bin += 1;
         }
 
-        (!self.bin_range.is_empty()).then(|| std::mem::take(&mut self.bin_range))
+        (!self.items.is_empty()).then(|| std::mem::take(&mut self.items))
     }
 }
 
@@ -144,7 +144,7 @@ mod tests {
                 x.is_sorted_by(|a, b| a.0 < b.0),
                 returns_items == AccountsIndexIteratorReturnsItems::Sorted
             );
-            assert_eq!(iter.bin_range.len(), 0); // should be empty.
+            assert_eq!(iter.items.len(), 0); // should be empty.
 
             // Then iter.next() should return None.
             assert!(iter.next().is_none());

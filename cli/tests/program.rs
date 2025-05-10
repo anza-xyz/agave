@@ -6,6 +6,8 @@ use {
     agave_feature_set::enable_alt_bn128_syscall,
     assert_matches::assert_matches,
     serde_json::Value,
+    solana_account::{state_traits::StateMut, ReadableAccount},
+    solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{process_command, CliCommand, CliConfig},
         program::{ProgramCliCommand, CLOSE_PROGRAM_WARNING},
@@ -15,28 +17,24 @@ use {
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
+    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_faucet::faucet::run_local_faucet,
-    solana_message::Message,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_keypair::Keypair,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::config::RpcTransactionConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
-    solana_sdk::{
-        account::ReadableAccount,
-        account_utils::StateMut,
-        borsh1::try_from_slice_unchecked,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        compute_budget::{self, ComputeBudgetInstruction},
-        fee_calculator::FeeRateGovernor,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, NullSigner, Signature, Signer},
-        system_instruction, system_program,
-        transaction::Transaction,
-    },
-    solana_sdk_ids::loader_v4,
+    solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
+    solana_signature::Signature,
+    solana_signer::{null_signer::NullSigner, Signer},
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::program as system_program,
     solana_test_validator::TestValidatorGenesis,
+    solana_transaction::Transaction,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -3117,6 +3115,11 @@ fn test_cli_program_v4() {
         lamports: 10000000,
     };
     process_command(&config).unwrap();
+    config.command = CliCommand::Airdrop {
+        pubkey: Some(program_keypair.pubkey()),
+        lamports: 1000,
+    };
+    process_command(&config).unwrap();
 
     // Initial deployment
     config.output_format = OutputFormat::JsonCompact;
@@ -3163,19 +3166,9 @@ fn test_cli_program_v4() {
     let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
-    let response = rpc_client.send_and_confirm_transaction(&Transaction::new(
-        &[&payer_keypair, &buffer_keypair],
-        Message::new(
-            &[system_instruction::transfer(
-                &buffer_keypair.pubkey(),
-                &payer_keypair.pubkey(),
-                program_account.lamports,
-            )],
-            Some(&payer_keypair.pubkey()),
-        ),
-        rpc_client.get_latest_blockhash().unwrap(),
-    ));
-    assert!(response.is_ok());
+    let _error = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .unwrap_err();
 
     // Two-step redeployment with buffer
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Deploy {
@@ -3204,6 +3197,9 @@ fn test_cli_program_v4() {
     let program_account = rpc_client.get_account(&program_keypair.pubkey()).unwrap();
     assert_eq!(program_account.owner, loader_v4::id());
     assert!(program_account.executable);
+    let _error = rpc_client
+        .get_account(&buffer_keypair.pubkey())
+        .unwrap_err();
 
     // Transfer authority over program
     config.command = CliCommand::ProgramV4(ProgramV4CliCommand::TransferAuthority {
@@ -3218,10 +3214,11 @@ fn test_cli_program_v4() {
     assert!(program_account.executable);
 
     // Close program
-    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Close {
+    config.command = CliCommand::ProgramV4(ProgramV4CliCommand::Retract {
         additional_cli_config: AdditionalCliConfig::default(),
         program_address: program_keypair.pubkey(),
         authority_signer_index: 2,
+        close_program_entirely: true,
     });
     assert!(process_command(&config).is_ok());
     let _error = rpc_client

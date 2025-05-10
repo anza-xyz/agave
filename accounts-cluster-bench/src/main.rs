@@ -12,25 +12,25 @@ use {
         rpc_client::SerializableTransaction, rpc_config::RpcBlockConfig,
         rpc_request::MAX_GET_CONFIRMED_BLOCKS_RANGE, transaction_executor::TransactionExecutor,
     },
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_gossip::gossip_service::discover,
-    solana_inline_spl::token,
+    solana_hash::Hash,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, Keypair},
     solana_measure::measure::Measure,
+    solana_message::Message,
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::TokenAccountsFilter,
-    solana_sdk::{
-        clock::Slot,
-        commitment_config::CommitmentConfig,
-        hash::Hash,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        program_pack::Pack,
-        pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair, Signature, Signer},
-        system_instruction, system_program,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
+    solana_transaction::Transaction,
     solana_transaction_status::UiTransactionEncoding,
+    spl_generic_token::token,
     spl_token::state::Account,
     std::{
         cmp::min,
@@ -1236,6 +1236,14 @@ fn main() {
                 .help("Just use entrypoint address directly"),
         )
         .arg(
+            Arg::with_name("shred_version")
+                .long("shred-version")
+                .takes_value(true)
+                .value_name("VERSION")
+                .requires("check_gossip")
+                .help("The shred version to use for gossip discovery"),
+        )
+        .arg(
             Arg::with_name("mint")
                 .long("mint")
                 .takes_value(true)
@@ -1270,7 +1278,6 @@ fn main() {
         .get_matches();
 
     let skip_gossip = !matches.is_present("check_gossip");
-
     let space = value_t!(matches, "space", u64).ok();
     let lamports = value_t!(matches, "lamports", u64).ok();
     let batch_size = value_t!(matches, "batch_size", usize).unwrap_or(4);
@@ -1315,6 +1322,22 @@ fn main() {
             eprintln!("failed to parse entrypoint address: {e}");
             exit(1)
         });
+        let shred_version: Option<u16> = if !skip_gossip {
+            if let Ok(version) = value_t!(matches, "shred_version", u16) {
+                Some(version)
+            } else {
+                Some(
+                    solana_net_utils::get_cluster_shred_version(&entrypoint_addr).unwrap_or_else(
+                        |err| {
+                            eprintln!("Failed to get shred version: {}", err);
+                            exit(1);
+                        },
+                    ),
+                )
+            }
+        } else {
+            None
+        };
 
         let rpc_addr = if !skip_gossip {
             info!("Finding cluster entry: {:?}", entrypoint_addr);
@@ -1326,7 +1349,7 @@ fn main() {
                 None,                    // find_nodes_by_pubkey
                 Some(&entrypoint_addr),  // find_node_by_gossip_addr
                 None,                    // my_gossip_addr
-                0,                       // my_shred_version
+                shred_version.unwrap(),  // my_shred_version
                 SocketAddrSpace::Unspecified,
             )
             .unwrap_or_else(|err| {
@@ -1393,7 +1416,8 @@ pub mod test {
             validator_configs::make_identical_validator_configs,
         },
         solana_measure::measure::Measure,
-        solana_sdk::{native_token::sol_to_lamports, poh_config::PohConfig},
+        solana_native_token::sol_to_lamports,
+        solana_poh_config::PohConfig,
         solana_test_validator::TestValidator,
         spl_token::{
             solana_program::program_pack::Pack,

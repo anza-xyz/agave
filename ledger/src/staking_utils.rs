@@ -2,20 +2,18 @@
 pub(crate) mod tests {
     use {
         rand::Rng,
+        solana_account::AccountSharedData,
+        solana_clock::Clock,
+        solana_instruction::Instruction,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            account::AccountSharedData,
-            clock::Clock,
-            instruction::Instruction,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            signers::Signers,
-            stake::{
-                instruction as stake_instruction,
-                state::{Authorized, Lockup},
-            },
-            transaction::Transaction,
+        solana_signer::{signers::Signers, Signer},
+        solana_stake_interface::{
+            instruction as stake_instruction,
+            state::{Authorized, Lockup},
         },
+        solana_transaction::Transaction,
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_program::{
             vote_instruction,

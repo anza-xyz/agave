@@ -5,7 +5,7 @@ use {
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{deserialize, serialized_size},
-    solana_program::bpf_loader_upgradeable::UpgradeableLoaderState,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_pubkey::Pubkey,
 };
 

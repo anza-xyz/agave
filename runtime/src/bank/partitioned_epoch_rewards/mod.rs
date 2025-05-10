@@ -9,15 +9,13 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
+    solana_account::AccountSharedData,
     solana_accounts_db::{
         partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
     },
-    solana_sdk::{
-        account::AccountSharedData,
-        pubkey::Pubkey,
-        reward_info::RewardInfo,
-        stake::state::{Delegation, Stake},
-    },
+    solana_pubkey::Pubkey,
+    solana_reward_info::RewardInfo,
+    solana_stake_interface::state::{Delegation, Stake},
     solana_vote::vote_account::VoteAccounts,
     std::sync::Arc,
 };
@@ -44,8 +42,22 @@ type PartitionedStakeRewards = Vec<PartitionedStakeReward>;
 pub(crate) struct StartBlockHeightAndRewards {
     /// the block height of the slot at which rewards distribution began
     pub(crate) distribution_starting_block_height: u64,
-    /// calculated epoch rewards pending distribution, outer Vec is by partition (one partition per block)
-    pub(crate) stake_rewards_by_partition: Arc<Vec<PartitionedStakeRewards>>,
+    /// calculated epoch rewards before partitioning
+    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct StartBlockHeightAndPartitionedRewards {
+    /// the block height of the slot at which rewards distribution began
+    pub(crate) distribution_starting_block_height: u64,
+
+    /// calculated epoch rewards pending distribution
+    pub(crate) all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+
+    /// indices of calculated epoch rewards per partition, outer Vec is by
+    /// partition (one partition per block), inner Vec is the indices for one
+    /// partition.
+    pub(crate) partition_indices: Vec<Vec<usize>>,
 }
 
 /// Represent whether bank is in the reward phase or not.
@@ -55,10 +67,16 @@ pub(crate) enum EpochRewardStatus {
     /// Contents are the start point for epoch reward calculation,
     /// i.e. parent_slot and parent_block height for the starting
     /// block of the current epoch.
-    Active(StartBlockHeightAndRewards),
+    Active(EpochRewardPhase),
     /// this bank is outside of the rewarding phase.
     #[default]
     Inactive,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum EpochRewardPhase {
+    Calculation(StartBlockHeightAndRewards),
+    Distribution(StartBlockHeightAndPartitionedRewards),
 }
 
 #[derive(Debug, Default)]
@@ -66,15 +84,15 @@ pub(super) struct VoteRewardsAccounts {
     /// reward info for each vote account pubkey.
     /// This type is used by `update_reward_history()`
     pub(super) rewards: Vec<(Pubkey, RewardInfo)>,
-    /// corresponds to pubkey in `rewards`
-    /// Some if account is to be stored.
-    /// None if to be skipped.
-    pub(super) accounts_to_store: Vec<Option<AccountSharedData>>,
+    /// account to be stored, corresponds to pubkey in `rewards`
+    pub(super) accounts_to_store: Vec<(Pubkey, AccountSharedData)>,
+    /// total lamports across all `vote_rewards`
+    pub(super) total_vote_rewards_lamports: u64,
 }
 
 #[derive(Debug, Default)]
 /// result of calculating the stake rewards at end of epoch
-struct StakeRewardCalculation {
+pub(super) struct StakeRewardCalculation {
     /// each individual stake account to reward
     stake_rewards: PartitionedStakeRewards,
     /// total lamports across all `stake_rewards`
@@ -113,21 +131,12 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// side effects.
 pub(super) struct PartitionedRewardsCalculation {
     pub(super) vote_account_rewards: VoteRewardsAccounts,
-    pub(super) stake_rewards_by_partition: StakeRewardCalculationPartitioned,
-    pub(super) old_vote_balance_and_staked: u64,
+    pub(super) stake_rewards: StakeRewardCalculation,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
     pub(super) prev_epoch_duration_in_years: f64,
     pub(super) capitalization: u64,
     point_value: PointValue,
-}
-
-/// result of calculating the stake rewards at beginning of new epoch
-pub(super) struct StakeRewardCalculationPartitioned {
-    /// each individual stake account to reward, grouped by partition
-    pub(super) stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
-    /// total lamports across all `stake_rewards`
-    pub(super) total_stake_rewards_lamports: u64,
 }
 
 pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
@@ -138,8 +147,8 @@ pub(super) struct CalculateRewardsAndDistributeVoteRewardsResult {
     /// delegations and rewards are the lamports to split across all stake and
     /// vote accounts
     pub(super) point_value: PointValue,
-    /// stake rewards that still need to be distributed, grouped by partition
-    pub(super) stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
+    /// stake rewards that still need to be distributed
+    pub(super) stake_rewards: Vec<PartitionedStakeReward>,
 }
 
 pub(crate) type StakeRewards = Vec<StakeReward>;
@@ -174,15 +183,31 @@ impl Bank {
         }
     }
 
-    pub(crate) fn set_epoch_reward_status_active(
+    pub(crate) fn set_epoch_reward_status_calculation(
         &mut self,
         distribution_starting_block_height: u64,
-        stake_rewards_by_partition: Vec<PartitionedStakeRewards>,
+        stake_rewards: Vec<PartitionedStakeReward>,
     ) {
-        self.epoch_reward_status = EpochRewardStatus::Active(StartBlockHeightAndRewards {
-            distribution_starting_block_height,
-            stake_rewards_by_partition: Arc::new(stake_rewards_by_partition),
-        });
+        self.epoch_reward_status =
+            EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
+                distribution_starting_block_height,
+                all_stake_rewards: Arc::new(stake_rewards),
+            }));
+    }
+
+    pub(crate) fn set_epoch_reward_status_distribution(
+        &mut self,
+        distribution_starting_block_height: u64,
+        all_stake_rewards: Arc<Vec<PartitionedStakeReward>>,
+        partition_indices: Vec<Vec<usize>>,
+    ) {
+        self.epoch_reward_status = EpochRewardStatus::Active(EpochRewardPhase::Distribution(
+            StartBlockHeightAndPartitionedRewards {
+                distribution_starting_block_height,
+                all_stake_rewards,
+                partition_indices,
+            },
+        ));
     }
 
     pub(super) fn partitioned_epoch_rewards_config(&self) -> &PartitionedEpochRewardsConfig {
@@ -240,21 +265,18 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
+        solana_account::{state_traits::StateMut, Account},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        solana_sdk::{
-            account::Account,
-            account_utils::StateMut,
-            epoch_schedule::EpochSchedule,
-            native_token::LAMPORTS_PER_SOL,
-            reward_type::RewardType,
-            signature::Signer,
-            signer::keypair::Keypair,
-            stake::{instruction::StakeError, state::StakeStateV2},
-            system_transaction,
-            transaction::Transaction,
-            vote::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
-        },
+        solana_epoch_schedule::EpochSchedule,
+        solana_keypair::Keypair,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_reward_info::RewardType,
+        solana_signer::Signer,
+        solana_stake_interface::{error::StakeError, state::StakeStateV2},
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
         solana_vote::vote_transaction,
+        solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
         solana_vote_program::vote_state::{self, TowerSync},
     };
 
@@ -277,6 +299,23 @@ mod tests {
         pub fn new_random() -> Self {
             Self::maybe_from(&StakeReward::new_random()).unwrap()
         }
+    }
+
+    pub fn build_partitioned_stake_rewards(
+        stake_rewards: &[PartitionedStakeReward],
+        partition_indices: &[Vec<usize>],
+    ) -> Vec<Vec<PartitionedStakeReward>> {
+        partition_indices
+            .iter()
+            .map(|partition_index| {
+                // partition_index is a Vec<usize> that contains the indices of the stake rewards
+                // that belong to this partition
+                partition_index
+                    .iter()
+                    .map(|&index| stake_rewards[index].clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     }
 
     pub fn convert_rewards(
@@ -304,6 +343,20 @@ mod tests {
             } else {
                 RewardInterval::OutsideInterval
             }
+        }
+
+        fn is_calculated(&self) -> bool {
+            matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Active(EpochRewardPhase::Calculation(_))
+            )
+        }
+
+        fn is_partitioned(&self) -> bool {
+            matches!(
+                self.epoch_reward_status,
+                EpochRewardStatus::Active(EpochRewardPhase::Distribution(_))
+            )
         }
     }
 
@@ -429,9 +482,12 @@ mod tests {
             .map(|_| PartitionedStakeReward::new_random())
             .collect::<Vec<_>>();
 
-        bank.set_epoch_reward_status_active(
+        let partition_indices = vec![(0..expected_num).collect()];
+
+        bank.set_epoch_reward_status_distribution(
             bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
-            vec![stake_rewards],
+            Arc::new(stake_rewards),
+            partition_indices,
         );
         assert!(bank.get_reward_interval() == RewardInterval::InsideInterval);
 
@@ -554,6 +610,8 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
+                assert!(curr_bank.is_calculated());
+
                 if slot == SLOTS_PER_EPOCH {
                     // cap should increase because of new epoch rewards
                     assert!(post_cap > pre_cap);
@@ -572,10 +630,10 @@ mod tests {
                 );
 
                 let account = curr_bank
-                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
-                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                    solana_sdk::account::from_account(&account).unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
                 assert_eq!(post_cap, pre_cap + epoch_rewards.distributed_rewards);
             } else {
                 // 2. when curr_slot == SLOTS_PER_EPOCH + 2, the 3rd block of
@@ -594,7 +652,7 @@ mod tests {
             // Ensure the sysvar persists thereafter.
             if slot >= SLOTS_PER_EPOCH {
                 let epoch_rewards_lamports =
-                    curr_bank.get_balance(&solana_sdk::sysvar::epoch_rewards::id());
+                    curr_bank.get_balance(&solana_sysvar::epoch_rewards::id());
                 assert!(epoch_rewards_lamports > 0);
             }
             previous_bank = Arc::new(curr_bank);
@@ -617,10 +675,10 @@ mod tests {
             let pre_cap = previous_bank.capitalization();
 
             let pre_sysvar_account = previous_bank
-                .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                .get_account(&solana_sysvar::epoch_rewards::id())
                 .unwrap_or_default();
-            let pre_epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                solana_sdk::account::from_account(&pre_sysvar_account).unwrap_or_default();
+            let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
 
             let curr_bank = Bank::new_from_parent(previous_bank, &Pubkey::default(), slot);
@@ -634,6 +692,9 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
+                // calculation block, state should be calculated.
+                assert!(curr_bank.is_calculated());
+
                 // cap should increase because of new epoch rewards
                 assert!(post_cap > pre_cap);
             } else if slot == SLOTS_PER_EPOCH + 1 {
@@ -645,11 +706,14 @@ mod tests {
                     RewardInterval::InsideInterval
                 );
 
+                // 1st reward distribution block, state should be partitioned.
+                assert!(curr_bank.is_partitioned());
+
                 let account = curr_bank
-                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
-                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                    solana_sdk::account::from_account(&account).unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -666,10 +730,10 @@ mod tests {
                 );
 
                 let account = curr_bank
-                    .get_account(&solana_sdk::sysvar::epoch_rewards::id())
+                    .get_account(&solana_sysvar::epoch_rewards::id())
                     .unwrap();
-                let epoch_rewards: solana_sdk::sysvar::epoch_rewards::EpochRewards =
-                    solana_sdk::account::from_account(&account).unwrap();
+                let epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
+                    solana_account::from_account(&account).unwrap();
                 assert_eq!(
                     post_cap,
                     pre_cap + epoch_rewards.distributed_rewards - pre_distributed_rewards
@@ -696,7 +760,7 @@ mod tests {
     /// but a withdrawal should fail.
     #[test]
     fn test_program_execution_restricted_for_stake_account_in_reward_period() {
-        use solana_sdk::transaction::TransactionError::InstructionError;
+        use solana_transaction_error::TransactionError::InstructionError;
 
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
@@ -773,7 +837,7 @@ mod tests {
             assert!(system_result.is_ok());
 
             // Attempt to withdraw from new stake account to the mint
-            let stake_ix = solana_sdk::stake::instruction::withdraw(
+            let stake_ix = solana_stake_interface::instruction::withdraw(
                 &new_stake_address,
                 &new_stake_address,
                 &mint_keypair.pubkey(),

@@ -3,10 +3,10 @@
 #[allow(deprecated)]
 use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    agave_feature_set::FeatureSet,
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
-        SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
+        SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
+        SyscallSetReturnData,
     },
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_program_runtime::{
@@ -29,10 +29,9 @@ use {
         slot_hashes::Slot,
         sysvar::SysvarId,
     },
-    solana_svm::{
-        transaction_processing_callback::{AccountState, TransactionProcessingCallback},
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::transaction_processor::TransactionBatchProcessor,
+    solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
+    solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
@@ -62,12 +61,14 @@ impl ForkGraph for MockForkGraph {
 
 #[derive(Default, Clone)]
 pub struct MockBankCallback {
-    pub feature_set: Arc<FeatureSet>,
+    pub feature_set: SVMFeatureSet,
     pub account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
     #[allow(clippy::type_complexity)]
     pub inspected_accounts:
         Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
 }
+
+impl InvokeContextCallback for MockBankCallback {}
 
 impl TransactionProcessingCallback for MockBankCallback {
     fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
@@ -128,8 +129,8 @@ impl MockBankCallback {
     }
 
     #[allow(unused)]
-    pub fn override_feature_set(&mut self, new_set: FeatureSet) {
-        self.feature_set = Arc::new(new_set)
+    pub fn override_feature_set(&mut self, new_set: SVMFeatureSet) {
+        self.feature_set = new_set
     }
 
     pub fn configure_sysvars(&self) {
@@ -377,6 +378,12 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         .expect("Registration failed");
     loader
         .register_function("sol_memset_", SyscallMemset::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memcmp_", SyscallMemcmp::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memmove_", SyscallMemmove::vm)
         .expect("Registration failed");
     loader
         .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)

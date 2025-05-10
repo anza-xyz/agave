@@ -1,8 +1,10 @@
 use {
     crate::cluster_info_vote_listener::VoteTracker,
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
     solana_runtime::bank::Bank,
-    solana_sdk::{clock::Slot, hash::Hash, timing::timestamp},
+    solana_time_utils::timestamp,
     std::{collections::BTreeSet, time::Instant},
 };
 

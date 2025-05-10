@@ -32,13 +32,11 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
         transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::{
-        address_lookup_table::state::estimate_last_valid_slot,
-        clock::{Epoch, Slot, MAX_PROCESSING_AGE},
-        fee::FeeBudgetLimits,
-        saturating_add_assign,
-        transaction::{MessageHash, SanitizedTransaction},
-    },
+    solana_sdk::saturating_add_assign,
+    solana_address_lookup_table_interface::state::estimate_last_valid_slot,
+    solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
+    solana_fee_structure::FeeBudgetLimits,
+    solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     std::{
@@ -682,16 +680,14 @@ mod tests {
         solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_perf::packet::{to_packet_batches, Packet, PacketBatch},
         solana_pubkey::Pubkey,
-        solana_sdk::{
-            hash::Hash,
-            message::{v0, AddressLookupTableAccount, VersionedMessage},
-            packet::{Meta, PACKET_DATA_SIZE},
-            signature::Keypair,
-            signer::Signer,
-            system_instruction,
-            system_transaction::transfer,
-            transaction::VersionedTransaction,
-        },
+        solana_hash::Hash,
+        solana_message::{v0, AddressLookupTableAccount, VersionedMessage},
+        solana_packet::{Meta, PACKET_DATA_SIZE},
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_system_transaction::transfer,
+        solana_transaction::versioned::VersionedTransaction,
         test_case::test_case,
     };
 
@@ -770,7 +766,7 @@ mod tests {
             MaxAge {
                 sanitized_epoch,
                 alt_invalidation_slot: current_slot - 1
-                    + solana_sdk::slot_hashes::get_entries() as u64,
+                    + solana_slot_hashes::get_entries() as u64,
             }
         );
 
@@ -779,7 +775,7 @@ mod tests {
             calculate_max_age(sanitized_epoch, u64::MAX, current_slot),
             MaxAge {
                 sanitized_epoch,
-                alt_invalidation_slot: current_slot + solana_sdk::slot_hashes::get_entries() as u64,
+                alt_invalidation_slot: current_slot + solana_slot_hashes::get_entries() as u64,
             }
         );
     }

@@ -23,6 +23,7 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signer},
     },
+    solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     static_assertions::const_assert_eq,
     std::{
         collections::HashMap,
@@ -65,7 +66,7 @@ pub fn spawn_shred_sigverify(
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     shred_fetch_receiver: Receiver<PacketBatch>,
-    retransmit_sender: Sender<Vec<shred::Payload>>,
+    retransmit_sender: EvictingSender<Vec<shred::Payload>>,
     verified_sender: Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     num_sigverify_threads: NonZeroUsize,
 ) -> JoinHandle<()> {
@@ -130,7 +131,7 @@ fn run_shred_sigverify<const K: usize>(
     recycler_cache: &RecyclerCache,
     deduper: &Deduper<K, [u8]>,
     shred_fetch_receiver: &Receiver<PacketBatch>,
-    retransmit_sender: &Sender<Vec<shred::Payload>>,
+    retransmit_sender: &EvictingSender<Vec<shred::Payload>>,
     verified_sender: &Sender<Vec<(shred::Payload, /*is_repaired:*/ bool)>>,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     cache: &RwLock<LruCache>,
@@ -265,7 +266,14 @@ fn run_shred_sigverify<const K: usize>(
         });
     // Repaired shreds are not retransmitted.
     stats.num_retransmit_shreds += shreds.len();
-    retransmit_sender.send(shreds.clone())?;
+    if let Err(send_err) = retransmit_sender.try_send(shreds.clone()) {
+        match send_err {
+            crossbeam_channel::TrySendError::Full(v) => {
+                stats.num_retransmit_stage_overflow_shreds += v.len();
+            }
+            _ => unreachable!("EvictingSender holds on to both ends of the channel"),
+        }
+    }
     // Send all shreds to window service to be inserted into blockstore.
     let shreds = shreds
         .into_iter()
@@ -313,7 +321,12 @@ fn verify_retransmitter_signature(
     let data_plane_fanout = cluster_nodes::get_data_plane_fanout(shred.slot(), root_bank);
     let parent = match cluster_nodes.get_retransmit_parent(&leader, &shred, data_plane_fanout) {
         Ok(Some(parent)) => parent,
-        Ok(None) => return true,
+        Ok(None) => {
+            stats
+                .num_retranmitter_signature_skipped
+                .fetch_add(1, Ordering::Relaxed);
+            return true;
+        }
         Err(err) => {
             error!("get_retransmit_parent: {err:?}");
             stats
@@ -322,7 +335,14 @@ fn verify_retransmitter_signature(
             return false;
         }
     };
-    signature.verify(parent.as_ref(), merkle_root.as_ref())
+    if signature.verify(parent.as_ref(), merkle_root.as_ref()) {
+        stats
+            .num_retranmitter_signature_verified
+            .fetch_add(1, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
 }
 
 fn verify_packets(
@@ -412,6 +432,9 @@ struct ShredSigVerifyStats {
     num_discards_pre: usize,
     num_duplicates: usize,
     num_invalid_retransmitter: AtomicUsize,
+    num_retranmitter_signature_skipped: AtomicUsize,
+    num_retranmitter_signature_verified: AtomicUsize,
+    num_retransmit_stage_overflow_shreds: usize,
     num_retransmit_shreds: usize,
     num_unknown_slot_leader: AtomicUsize,
     num_unknown_turbine_parent: AtomicUsize,
@@ -433,6 +456,9 @@ impl ShredSigVerifyStats {
             num_discards_post: 0usize,
             num_duplicates: 0usize,
             num_invalid_retransmitter: AtomicUsize::default(),
+            num_retranmitter_signature_skipped: AtomicUsize::default(),
+            num_retranmitter_signature_verified: AtomicUsize::default(),
+            num_retransmit_stage_overflow_shreds: 0usize,
             num_retransmit_shreds: 0usize,
             num_unknown_slot_leader: AtomicUsize::default(),
             num_unknown_turbine_parent: AtomicUsize::default(),
@@ -459,6 +485,23 @@ impl ShredSigVerifyStats {
                 self.num_invalid_retransmitter.load(Ordering::Relaxed),
                 i64
             ),
+            (
+                "num_retranmitter_signature_skipped",
+                self.num_retranmitter_signature_skipped
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retranmitter_signature_verified",
+                self.num_retranmitter_signature_verified
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
+                "num_retransmit_stage_overflow_shreds",
+                self.num_retransmit_stage_overflow_shreds,
+                i64
+            ),
             ("num_retransmit_shreds", self.num_retransmit_shreds, i64),
             (
                 "num_unknown_slot_leader",
@@ -481,18 +524,23 @@ impl ShredSigVerifyStats {
 mod tests {
     use {
         super::*,
+        solana_entry::entry::create_ticks,
         solana_ledger::{
             genesis_utils::create_genesis_config_with_leader,
-            shred::{Shred, ShredFlags},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
         },
         solana_perf::packet::Packet,
         solana_runtime::bank::Bank,
-        solana_sdk::signature::{Keypair, Signer},
+        solana_sdk::{
+            hash::Hash,
+            signature::{Keypair, Signer},
+        },
     };
 
     #[test]
     fn test_sigverify_shreds_verify_batches() {
         let leader_keypair = Arc::new(Keypair::new());
+        let wrong_keypair = Keypair::new();
         let leader_pubkey = leader_keypair.pubkey();
         let bank = Bank::new_for_tests(
             &create_genesis_config_with_leader(100, &leader_pubkey, 10).genesis_config,
@@ -504,32 +552,36 @@ mod tests {
         batch.resize(batch_size, Packet::default());
         let mut batches = vec![batch];
 
-        let mut shred = Shred::new_from_data(
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        let shredder = Shredder::new(1, 0, 1, 0).unwrap();
+        let (shreds_data, _shreds_code) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true,
+            Some(Hash::new_unique()),
             0,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
             0,
-            0,
-            0xc0de,
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
         );
-        shred.sign(&leader_keypair);
+        let (shreds_data_wrong, _shreds_code_wrong) = shredder.entries_to_shreds(
+            &wrong_keypair,
+            &entries,
+            true,
+            Some(Hash::new_unique()),
+            0,
+            0,
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+
+        let shred = shreds_data[0].clone();
         batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][0].meta_mut().size = shred.payload().len();
 
-        let mut shred = Shred::new_from_data(
-            0,
-            0xbeef,
-            0xc0de,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        let wrong_keypair = Keypair::new();
-        shred.sign(&wrong_keypair);
+        let shred = shreds_data_wrong[0].clone();
         batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][1].meta_mut().size = shred.payload().len();
 

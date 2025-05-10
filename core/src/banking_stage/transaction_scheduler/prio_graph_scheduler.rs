@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
@@ -23,7 +25,8 @@ use {
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{pubkey::Pubkey, saturating_add_assign},
+    solana_sdk::saturating_add_assign,
+    solana_pubkey::Pubkey,
     solana_svm_transaction::svm_message::SVMMessage,
 };
 
@@ -42,6 +45,7 @@ type SchedulerPrioGraph = PrioGraph<
     fn(&TransactionPriorityId, &GraphNode<TransactionPriorityId>) -> TransactionPriorityId,
 >;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct PrioGraphSchedulerConfig {
     pub max_scheduled_cus: u64,
     pub max_scanned_transactions_per_scheduling_pass: usize,
@@ -60,6 +64,7 @@ impl Default for PrioGraphSchedulerConfig {
     }
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct PrioGraphScheduler<Tx> {
     common: SchedulingCommon<Tx>,
     prio_graph: SchedulerPrioGraph,
@@ -67,6 +72,7 @@ pub(crate) struct PrioGraphScheduler<Tx> {
 }
 
 impl<Tx: TransactionWithMeta> PrioGraphScheduler<Tx> {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(
         consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
         finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
@@ -222,9 +228,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                     |thread_set| {
                         select_thread(
                             thread_set,
-                            &batches.total_cus,
+                            batches.total_cus(),
                             self.common.in_flight_tracker.cus_in_flight_per_thread(),
-                            &batches.transactions,
+                            batches.transactions(),
                             self.common.in_flight_tracker.num_in_flight_per_thread(),
                         )
                     },
@@ -246,13 +252,17 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                         cost,
                     }) => {
                         saturating_add_assign!(num_scheduled, 1);
-                        batches.transactions[thread_id].push(transaction);
-                        batches.ids[thread_id].push(id.id);
-                        batches.max_ages[thread_id].push(max_age);
-                        saturating_add_assign!(batches.total_cus[thread_id], cost);
+                        batches.add_transaction_to_batch(
+                            thread_id,
+                            id.id,
+                            transaction,
+                            max_age,
+                            cost,
+                        );
 
                         // If target batch size is reached, send only this batch.
-                        if batches.ids[thread_id].len() >= self.config.target_transactions_per_batch
+                        if batches.transactions()[thread_id].len()
+                            >= self.config.target_transactions_per_batch
                         {
                             saturating_add_assign!(
                                 num_sent,
@@ -267,7 +277,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                         // if the thread is at max_cu_per_thread, remove it from the schedulable threads
                         // if there are no more schedulable threads, stop scheduling.
                         if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                            + batches.total_cus[thread_id]
+                            + batches.total_cus()[thread_id]
                             >= max_cu_per_thread
                         {
                             schedulable_threads.remove(thread_id);
@@ -429,16 +439,14 @@ mod tests {
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            message::Message,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_pubkey::Pubkey,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         std::borrow::Borrow,
     };
 

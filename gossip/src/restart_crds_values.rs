@@ -165,7 +165,7 @@ impl RunLengthEncoding {
             .dedup_with_count()
             .map_while(|(count, _)| u16::try_from(count).ok())
             .scan(0, |current_bytes, count| {
-                *current_bytes += ((u16::BITS - count.leading_zeros() + 6) / 7).max(1) as usize;
+                *current_bytes += (u16::BITS - count.leading_zeros()).div_ceil(7).max(1) as usize;
                 (*current_bytes <= RestartLastVotedForkSlots::MAX_BYTES).then_some(U16(count))
             })
             .collect();
@@ -182,7 +182,7 @@ impl RunLengthEncoding {
             .iter()
             .map(|bit_count| usize::from(bit_count.0))
             .zip([1, 0].iter().cycle())
-            .flat_map(|(bit_count, bit)| std::iter::repeat(bit).take(bit_count))
+            .flat_map(|(bit_count, bit)| std::iter::repeat_n(bit, bit_count))
             .enumerate()
             .filter(|(_, bit)| **bit == 1)
             .map_while(|(offset, _)| {

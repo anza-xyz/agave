@@ -381,7 +381,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             5,
-            true,
             shredder,
             keypair,
             true,
@@ -394,7 +393,6 @@ pub(crate) mod tests {
         next_shred_index: u32,
         shredder: &Shredder,
         keypair: &Keypair,
-        merkle_variant: bool,
         is_last_in_slot: bool,
     ) -> Shred {
         let (mut data_shreds, _) = new_rand_shreds(
@@ -402,7 +400,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             5,
-            merkle_variant,
             shredder,
             keypair,
             is_last_in_slot,
@@ -416,14 +413,12 @@ pub(crate) mod tests {
         num_entries: usize,
         shredder: &Shredder,
         keypair: &Keypair,
-        merkle_variant: bool,
     ) -> Vec<Shred> {
         let (_, coding_shreds) = new_rand_shreds(
             rng,
             next_shred_index,
             next_shred_index,
             num_entries,
-            merkle_variant,
             shredder,
             keypair,
             true,
@@ -436,7 +431,6 @@ pub(crate) mod tests {
         next_shred_index: u32,
         next_code_index: u32,
         num_entries: usize,
-        merkle_variant: bool,
         shredder: &Shredder,
         keypair: &Keypair,
         is_last_in_slot: bool,
@@ -464,7 +458,7 @@ pub(crate) mod tests {
             Some(Hash::new_from_array(rng.gen())),
             next_shred_index,
             next_code_index, // next_code_index
-            merkle_variant,
+            true,
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
@@ -502,30 +496,15 @@ pub(crate) mod tests {
         Ok(chunks)
     }
 
-    #[test_case(true ; "merkle")]
-    #[test_case(false ; "legacy")]
-    fn test_duplicate_shred_round_trip(merkle_variant: bool) {
+    #[test]
+    fn test_duplicate_shred_round_trip() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
         let shredder = Shredder::new(slot, parent_slot, reference_tick, version).unwrap();
         let next_shred_index = rng.gen_range(0..32_000);
-        let shred1 = new_rand_data_shred(
-            &mut rng,
-            next_shred_index,
-            &shredder,
-            &leader,
-            merkle_variant,
-            true,
-        );
-        let shred2 = new_rand_data_shred(
-            &mut rng,
-            next_shred_index,
-            &shredder,
-            &leader,
-            merkle_variant,
-            true,
-        );
+        let shred1 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
+        let shred2 = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let leader_schedule = |s| {
             if s == slot {
                 Some(leader.pubkey())
@@ -550,9 +529,8 @@ pub(crate) mod tests {
         assert_eq!(shred2, shred4);
     }
 
-    #[test_case(true ; "merkle")]
-    #[test_case(false ; "legacy")]
-    fn test_duplicate_shred_invalid(merkle_variant: bool) {
+    #[test]
+    fn test_duplicate_shred_invalid() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
@@ -565,22 +543,9 @@ pub(crate) mod tests {
                 None
             }
         };
-        let data_shred = new_rand_data_shred(
-            &mut rng,
-            next_shred_index,
-            &shredder,
-            &leader,
-            merkle_variant,
-            true,
-        );
-        let coding_shreds = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
+        let data_shred = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
+        let coding_shreds =
+            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader);
         let test_cases = vec![
             // Same data_shred
             (data_shred.clone(), data_shred),
@@ -640,14 +605,7 @@ pub(crate) mod tests {
         };
         let test_cases = vec![
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
                 new_rand_data_shred(
                     &mut rng,
                     // With Merkle shreds, last erasure batch is padded with
@@ -655,27 +613,12 @@ pub(crate) mod tests {
                     next_shred_index + if merkle_variant { 30 } else { 1 },
                     &shredder,
                     &leader,
-                    merkle_variant,
                     false,
                 ),
             ),
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 100,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, true),
+                new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true),
             ),
         ];
         for (shred1, shred2) in test_cases.iter().flat_map(|(a, b)| [(a, b), (b, a)]) {
@@ -697,9 +640,8 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(true ; "merkle")]
-    #[test_case(false ; "legacy")]
-    fn test_latest_index_conflict_invalid(merkle_variant: bool) {
+    #[test]
+    fn test_latest_index_conflict_invalid() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
@@ -714,76 +656,20 @@ pub(crate) mod tests {
         };
         let test_cases = vec![
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 1,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
+                new_rand_data_shred(&mut rng, next_shred_index + 1, &shredder, &leader, true),
             ),
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 1,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    true,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index + 1, &shredder, &leader, true),
+                new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
             ),
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 100,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, false),
+                new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
             ),
             (
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
-                new_rand_data_shred(
-                    &mut rng,
-                    next_shred_index + 100,
-                    &shredder,
-                    &leader,
-                    merkle_variant,
-                    false,
-                ),
+                new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, false),
+                new_rand_data_shred(&mut rng, next_shred_index + 100, &shredder, &leader, false),
             ),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
@@ -822,9 +708,8 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(true ; "merkle")]
-    #[test_case(false ; "legacy")]
-    fn test_erasure_meta_conflict_round_trip(merkle_variant: bool) {
+    #[test]
+    fn test_erasure_meta_conflict_round_trip() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
@@ -837,30 +722,12 @@ pub(crate) mod tests {
                 None
             }
         };
-        let coding_shreds = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
-        let coding_shreds_bigger = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index,
-            13,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
-        let coding_shreds_smaller = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index,
-            7,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
+        let coding_shreds =
+            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader);
+        let coding_shreds_bigger =
+            new_rand_coding_shreds(&mut rng, next_shred_index, 13, &shredder, &leader);
+        let coding_shreds_smaller =
+            new_rand_coding_shreds(&mut rng, next_shred_index, 7, &shredder, &leader);
 
         // Same fec-set, different index, different erasure meta
         let test_cases = vec![
@@ -886,9 +753,8 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(true ; "merkle")]
-    #[test_case(false ; "legacy")]
-    fn test_erasure_meta_conflict_invalid(merkle_variant: bool) {
+    #[test]
+    fn test_erasure_meta_conflict_invalid() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
@@ -901,30 +767,12 @@ pub(crate) mod tests {
                 None
             }
         };
-        let coding_shreds = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index,
-            10,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
-        let coding_shreds_different_fec = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index + 1,
-            10,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
-        let coding_shreds_different_fec_and_size = new_rand_coding_shreds(
-            &mut rng,
-            next_shred_index + 1,
-            13,
-            &shredder,
-            &leader,
-            merkle_variant,
-        );
+        let coding_shreds =
+            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader);
+        let coding_shreds_different_fec =
+            new_rand_coding_shreds(&mut rng, next_shred_index + 1, 10, &shredder, &leader);
+        let coding_shreds_different_fec_and_size =
+            new_rand_coding_shreds(&mut rng, next_shred_index + 1, 13, &shredder, &leader);
 
         let test_cases = vec![
             // Different index, different fec set, same erasure meta
@@ -1004,21 +852,9 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             10,
-            true, /* merkle_variant */
             &shredder,
             &leader,
             false,
-        );
-
-        let (legacy_data_shreds, legacy_coding_shreds) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            false, /* merkle_variant */
-            &shredder,
-            &leader,
-            true,
         );
 
         let (diff_data_shreds, diff_coding_shreds) = new_rand_shreds(
@@ -1026,7 +862,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             10,
-            true, /* merkle_variant */
             &shredder,
             &leader,
             false,
@@ -1037,11 +872,6 @@ pub(crate) mod tests {
             (coding_shreds[0].clone(), diff_coding_shreds[1].clone()),
             (data_shreds[0].clone(), diff_coding_shreds[0].clone()),
             (coding_shreds[0].clone(), diff_data_shreds[0].clone()),
-            // Mix of legacy and merkle for same fec set
-            (legacy_coding_shreds[0].clone(), data_shreds[0].clone()),
-            (coding_shreds[0].clone(), legacy_data_shreds[0].clone()),
-            (legacy_data_shreds[0].clone(), coding_shreds[0].clone()),
-            (data_shreds[0].clone(), legacy_coding_shreds[0].clone()),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
             let chunks: Vec<_> = from_shred(
@@ -1082,7 +912,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             10,
-            true,
             &shredder,
             &leader,
             true,
@@ -1093,18 +922,6 @@ pub(crate) mod tests {
             next_shred_index + 1,
             next_shred_index + 1,
             10,
-            true,
-            &shredder,
-            &leader,
-            true,
-        );
-
-        let (legacy_data_shreds, legacy_coding_shreds) = new_rand_shreds(
-            &mut rng,
-            next_shred_index,
-            next_shred_index,
-            10,
-            false,
             &shredder,
             &leader,
             true,
@@ -1119,20 +936,6 @@ pub(crate) mod tests {
             (next_coding_shreds[0].clone(), data_shreds[0].clone()),
             (data_shreds[0].clone(), next_coding_shreds[0].clone()),
             (next_data_shreds[0].clone(), coding_shreds[0].clone()),
-            // Legacy shreds
-            (
-                legacy_coding_shreds[0].clone(),
-                legacy_data_shreds[0].clone(),
-            ),
-            (
-                legacy_data_shreds[0].clone(),
-                legacy_coding_shreds[0].clone(),
-            ),
-            // Mix of legacy and merkle with different fec index
-            (legacy_coding_shreds[0].clone(), next_data_shreds[0].clone()),
-            (next_coding_shreds[0].clone(), legacy_data_shreds[0].clone()),
-            (legacy_data_shreds[0].clone(), next_coding_shreds[0].clone()),
-            (next_data_shreds[0].clone(), legacy_coding_shreds[0].clone()),
         ];
         for (shred1, shred2) in test_cases.into_iter() {
             assert_matches!(
@@ -1190,7 +993,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             10,
-            true,
             &shredder,
             &leader,
             true,
@@ -1203,7 +1005,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             10,
-            true,
             &shredder,
             &leader,
             true,
@@ -1216,7 +1017,6 @@ pub(crate) mod tests {
             next_shred_index,
             next_shred_index,
             10,
-            true,
             &shredder,
             &leader,
             true,
@@ -1297,11 +1097,9 @@ pub(crate) mod tests {
                 None
             }
         };
-        let data_shred =
-            new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true, true);
+        let data_shred = new_rand_data_shred(&mut rng, next_shred_index, &shredder, &leader, true);
         let coding_shred =
-            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader, true)[0]
-                .clone();
+            new_rand_coding_shreds(&mut rng, next_shred_index, 10, &shredder, &leader)[0].clone();
         let mut data_shred_different_retransmitter_payload = data_shred.clone().into_payload();
         shred::layout::set_retransmitter_signature(
             &mut data_shred_different_retransmitter_payload,

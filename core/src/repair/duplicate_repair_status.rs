@@ -1,6 +1,9 @@
 use {
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, timing::timestamp},
+    solana_pubkey::Pubkey,
+    solana_time_utils::timestamp,
     std::{
         collections::HashMap,
         net::SocketAddr,
@@ -28,7 +31,7 @@ pub fn set_ancestor_hash_repair_sample_size_for_tests_only(sample_size: usize) {
 // another, the chance of >= 11 of the 21 sampled being from the 52% portion is
 // about 57%, so we should be able to find a correct sample in a reasonable amount of time.
 pub fn get_minimum_ancestor_agreement_size() -> usize {
-    (get_ancestor_hash_repair_sample_size() + 1) / 2
+    get_ancestor_hash_repair_sample_size().div_ceil(2)
 }
 const RETRY_INTERVAL_SECONDS: usize = 5;
 

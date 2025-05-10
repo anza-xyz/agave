@@ -5,9 +5,11 @@ use {
         consensus::{Stake, ThresholdDecision, VotedStakes},
         replay_stage::SUPERMINORITY_THRESHOLD,
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore_processor::{ConfirmationProgress, ReplaySlotStats},
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::{BTreeMap, HashMap, HashSet},

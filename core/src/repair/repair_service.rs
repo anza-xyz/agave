@@ -3,7 +3,7 @@
 #[cfg(test)]
 use {
     crate::repair::duplicate_repair_status::DuplicateSlotRepairStatus,
-    solana_sdk::{clock::DEFAULT_MS_PER_SLOT, signer::keypair::Keypair},
+    solana_clock::DEFAULT_MS_PER_SLOT, solana_keypair::Keypair,
 };
 use {
     crate::{
@@ -27,21 +27,19 @@ use {
     lru::LruCache,
     rand::seq::SliceRandom,
     solana_client::connection_cache::Protocol,
+    solana_clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_hash::Hash,
     solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
         shred,
     },
     solana_measure::measure::Measure,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
-    solana_sdk::{
-        clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
-        epoch_schedule::EpochSchedule,
-        hash::Hash,
-        pubkey::Pubkey,
-        timing::timestamp,
-    },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    solana_time_utils::timestamp,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         iter::Iterator,
@@ -947,12 +945,14 @@ impl RepairService {
             warn!("No repair peers have frozen slot: {slot}");
             return vec![];
         };
-        let peers_with_slot = peers_with_slot.read().unwrap();
 
         // Filter out any peers that don't have a valid repair socket.
         let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
+            .read()
+            .unwrap()
             .iter()
             .filter_map(|(pubkey, stake)| {
+                let stake = stake.load(Ordering::Relaxed);
                 let peer_repair_addr = cluster_info
                     .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
                 if let Some(Some(peer_repair_addr)) = peer_repair_addr {
@@ -960,7 +960,7 @@ impl RepairService {
                     Some((
                         *pubkey,
                         peer_repair_addr,
-                        (*stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
+                        (stake / solana_native_token::LAMPORTS_PER_SOL) as u32,
                     ))
                 } else {
                     None
@@ -1266,6 +1266,7 @@ mod test {
         super::*,
         crate::repair::quic_endpoint::RemoteRequest,
         solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{
                 make_chaining_slot_entries, make_many_slot_entries, make_slot_entries, Blockstore,
@@ -1276,11 +1277,9 @@ mod test {
         },
         solana_net_utils::{bind_to_localhost, bind_to_unspecified},
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
         std::collections::HashSet,
     };
 
@@ -1314,7 +1313,7 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_sdk::packet::Packet::default(); 1];
+        let mut packets = vec![solana_packet::Packet::default(); 1];
         let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
         let packet = &packets[0];
         let Some(bytes) = packet.data(..).map(Vec::from) else {
@@ -1755,7 +1754,7 @@ mod test {
         // a valid target for repair
         let dead_slot = 9;
         let cluster_slots = ClusterSlots::default();
-        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey());
+        cluster_slots.insert_node_id(dead_slot, *valid_repair_peer.pubkey(), Some(42));
         cluster_info.insert_info(valid_repair_peer);
 
         // Not enough time has passed, should not update the

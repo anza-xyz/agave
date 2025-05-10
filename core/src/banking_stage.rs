@@ -6,13 +6,8 @@
 use qualifier_attr::qualifiers;
 use {
     self::{
-        committer::Committer,
-        consumer::Consumer,
-        decision_maker::DecisionMaker,
-        latest_unprocessed_votes::{LatestUnprocessedVotes, VoteSource},
-        packet_receiver::PacketReceiver,
-        qos_service::QosService,
-        vote_storage::VoteStorage,
+        committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
+        packet_receiver::PacketReceiver, qos_service::QosService, vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -33,11 +28,12 @@ use {
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_perf::packet::PACKETS_PER_BATCH,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_time_utils::AtomicInterval,
     std::{
         cmp, env,
         ops::Deref,
@@ -70,7 +66,7 @@ mod consume_worker;
 mod vote_worker;
 conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
 mod immutable_deserialized_packet;
-mod latest_unprocessed_votes;
+mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
 mod packet_filter;
@@ -87,6 +83,7 @@ conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub,
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 
 const NUM_VOTE_PROCESSING_THREADS: u32 = 2;
@@ -98,13 +95,10 @@ const SLOT_BOUNDARY_CHECK_PERIOD: Duration = Duration::from_millis(10);
 #[derive(Debug, Default)]
 pub struct BankingStageStats {
     last_report: AtomicInterval,
-    id: String,
-    receive_and_buffer_packets_count: AtomicUsize,
-    dropped_packets_count: AtomicUsize,
+    tpu_counts: VoteSourceCounts,
+    gossip_counts: VoteSourceCounts,
     pub(crate) dropped_duplicated_packets_count: AtomicUsize,
     dropped_forward_packets_count: AtomicUsize,
-    newly_buffered_packets_count: AtomicUsize,
-    newly_buffered_forwarded_packets_count: AtomicUsize,
     current_buffered_packets_count: AtomicUsize,
     rebuffered_packets_count: AtomicUsize,
     consumed_buffered_packets_count: AtomicUsize,
@@ -118,10 +112,30 @@ pub struct BankingStageStats {
     transaction_processing_elapsed: AtomicU64,
 }
 
+#[derive(Debug, Default)]
+struct VoteSourceCounts {
+    receive_and_buffer_packets_count: AtomicUsize,
+    dropped_packets_count: AtomicUsize,
+    newly_buffered_packets_count: AtomicUsize,
+    newly_buffered_forwarded_packets_count: AtomicUsize,
+}
+
+impl VoteSourceCounts {
+    fn is_empty(&self) -> bool {
+        0 == self
+            .receive_and_buffer_packets_count
+            .load(Ordering::Relaxed)
+            + self.dropped_packets_count.load(Ordering::Relaxed)
+            + self.newly_buffered_packets_count.load(Ordering::Relaxed)
+            + self
+                .newly_buffered_forwarded_packets_count
+                .load(Ordering::Relaxed)
+    }
+}
+
 impl BankingStageStats {
-    pub fn new(id: u32) -> Self {
+    pub fn new() -> Self {
         BankingStageStats {
-            id: id.to_string(),
             batch_packet_indexes_len: Histogram::configure()
                 .max_value(PACKETS_PER_BATCH as u64)
                 .build()
@@ -131,28 +145,25 @@ impl BankingStageStats {
     }
 
     fn is_empty(&self) -> bool {
-        0 == self
-            .receive_and_buffer_packets_count
-            .load(Ordering::Relaxed) as u64
-            + self.dropped_packets_count.load(Ordering::Relaxed) as u64
-            + self
+        self.gossip_counts.is_empty()
+            && self.tpu_counts.is_empty()
+            && 0 == self
                 .dropped_duplicated_packets_count
                 .load(Ordering::Relaxed) as u64
-            + self.dropped_forward_packets_count.load(Ordering::Relaxed) as u64
-            + self.newly_buffered_packets_count.load(Ordering::Relaxed) as u64
-            + self.current_buffered_packets_count.load(Ordering::Relaxed) as u64
-            + self.rebuffered_packets_count.load(Ordering::Relaxed) as u64
-            + self.consumed_buffered_packets_count.load(Ordering::Relaxed) as u64
-            + self
-                .consume_buffered_packets_elapsed
-                .load(Ordering::Relaxed)
-            + self
-                .receive_and_buffer_packets_elapsed
-                .load(Ordering::Relaxed)
-            + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
-            + self.packet_conversion_elapsed.load(Ordering::Relaxed)
-            + self.transaction_processing_elapsed.load(Ordering::Relaxed)
-            + self.batch_packet_indexes_len.entries()
+                + self.dropped_forward_packets_count.load(Ordering::Relaxed) as u64
+                + self.current_buffered_packets_count.load(Ordering::Relaxed) as u64
+                + self.rebuffered_packets_count.load(Ordering::Relaxed) as u64
+                + self.consumed_buffered_packets_count.load(Ordering::Relaxed) as u64
+                + self
+                    .consume_buffered_packets_elapsed
+                    .load(Ordering::Relaxed)
+                + self
+                    .receive_and_buffer_packets_elapsed
+                    .load(Ordering::Relaxed)
+                + self.filter_pending_packets_elapsed.load(Ordering::Relaxed)
+                + self.packet_conversion_elapsed.load(Ordering::Relaxed)
+                + self.transaction_processing_elapsed.load(Ordering::Relaxed)
+                + self.batch_packet_indexes_len.entries()
     }
 
     fn report(&mut self, report_interval_ms: u64) {
@@ -162,17 +173,61 @@ impl BankingStageStats {
         }
         if self.last_report.should_update(report_interval_ms) {
             datapoint_info!(
-                "banking_stage-loop-stats",
-                "id" => self.id,
+                "banking_stage-vote_loop_stats",
                 (
-                    "receive_and_buffer_packets_count",
-                    self.receive_and_buffer_packets_count
+                    "tpu_receive_and_buffer_packets_count",
+                    self.tpu_counts
+                        .receive_and_buffer_packets_count
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
-                    "dropped_packets_count",
-                    self.dropped_packets_count.swap(0, Ordering::Relaxed),
+                    "tpu_dropped_packets_count",
+                    self.tpu_counts
+                        .dropped_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "tpu_newly_buffered_packets_count",
+                    self.tpu_counts
+                        .newly_buffered_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "tpu_newly_buffered_forwarded_packets_count",
+                    self.tpu_counts
+                        .newly_buffered_forwarded_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_receive_and_buffer_packets_count",
+                    self.gossip_counts
+                        .receive_and_buffer_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_dropped_packets_count",
+                    self.gossip_counts
+                        .dropped_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_newly_buffered_packets_count",
+                    self.gossip_counts
+                        .newly_buffered_packets_count
+                        .swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "gossip_newly_buffered_forwarded_packets_count",
+                    self.gossip_counts
+                        .newly_buffered_forwarded_packets_count
+                        .swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (
@@ -184,17 +239,6 @@ impl BankingStageStats {
                 (
                     "dropped_forward_packets_count",
                     self.dropped_forward_packets_count
-                        .swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "newly_buffered_packets_count",
-                    self.newly_buffered_packets_count.swap(0, Ordering::Relaxed),
-                    i64
-                ),
-                (
-                    "newly_buffered_forwarded_packets_count",
-                    self.newly_buffered_forwarded_packets_count
                         .swap(0, Ordering::Relaxed),
                     i64
                 ),
@@ -413,10 +457,9 @@ impl BankingStage {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
-        // Keeps track of extraneous vote transactions for the vote threads
-        let latest_unprocessed_votes = {
+        let vote_storage = {
             let bank = bank_forks.read().unwrap().working_bank();
-            Arc::new(LatestUnprocessedVotes::new(&bank))
+            VoteStorage::new(&bank)
         };
 
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
@@ -429,22 +472,17 @@ impl BankingStage {
         // + 1 for the central scheduler thread
         let mut bank_thread_hdls = Vec::with_capacity(num_threads as usize + 1);
 
-        // Spawn legacy voting threads first: 1 gossip, 1 tpu
-        for (id, packet_receiver, vote_source) in [
-            (0, gossip_vote_receiver, VoteSource::Gossip),
-            (1, tpu_vote_receiver, VoteSource::Tpu),
-        ] {
-            bank_thread_hdls.push(Self::spawn_vote_worker(
-                id,
-                packet_receiver,
-                decision_maker.clone(),
-                bank_forks.clone(),
-                committer.clone(),
-                transaction_recorder.clone(),
-                log_messages_bytes_limit,
-                VoteStorage::new(latest_unprocessed_votes.clone(), vote_source),
-            ));
-        }
+        // Spawn legacy voting thread
+        bank_thread_hdls.push(Self::spawn_vote_worker(
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            decision_maker.clone(),
+            bank_forks.clone(),
+            committer.clone(),
+            transaction_recorder.clone(),
+            log_messages_bytes_limit,
+            vote_storage,
+        ));
 
         match transaction_struct {
             TransactionStructure::Sdk => {
@@ -584,8 +622,8 @@ impl BankingStage {
     }
 
     fn spawn_vote_worker(
-        id: u32,
-        packet_receiver: BankingPacketReceiver,
+        tpu_receiver: BankingPacketReceiver,
+        gossip_receiver: BankingPacketReceiver,
         decision_maker: DecisionMaker,
         bank_forks: Arc<RwLock<BankForks>>,
         committer: Committer,
@@ -593,19 +631,27 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         vote_storage: VoteStorage,
     ) -> JoinHandle<()> {
-        let packet_receiver = PacketReceiver::new(id, packet_receiver);
+        let tpu_receiver = PacketReceiver::new(tpu_receiver);
+        let gossip_receiver = PacketReceiver::new(gossip_receiver);
         let consumer = Consumer::new(
             committer,
             transaction_recorder,
-            QosService::new(id),
+            QosService::new(0),
             log_messages_bytes_limit,
         );
 
         Builder::new()
-            .name(format!("solBanknStgTx{id:02}"))
+            .name("solBanknStgVote".to_string())
             .spawn(move || {
-                VoteWorker::new(decision_maker, packet_receiver, bank_forks, consumer, id)
-                    .run(vote_storage)
+                VoteWorker::new(
+                    decision_maker,
+                    tpu_receiver,
+                    gossip_receiver,
+                    vote_storage,
+                    bank_forks,
+                    consumer,
+                )
+                .run()
             })
             .unwrap()
     }
@@ -651,6 +697,8 @@ mod tests {
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
         solana_gossip::cluster_info::Node,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{
@@ -665,17 +713,14 @@ mod tests {
             poh_service::PohService,
             transaction_recorder::RecordTransactionsSummary,
         },
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::Hash,
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{

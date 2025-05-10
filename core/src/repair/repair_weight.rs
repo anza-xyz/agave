@@ -9,17 +9,15 @@ use {
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
+    solana_clock::{Epoch, Slot},
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_meta::SlotMeta,
     },
     solana_measure::measure::Measure,
+    solana_pubkey::Pubkey,
     solana_runtime::epoch_stakes::EpochStakes,
-    solana_sdk::{
-        clock::Slot,
-        epoch_schedule::{Epoch, EpochSchedule},
-        hash::Hash,
-        pubkey::Pubkey,
-    },
     std::{
         collections::{HashMap, HashSet, VecDeque},
         iter,
@@ -997,12 +995,12 @@ mod test {
         super::*,
         itertools::Itertools,
         solana_accounts_db::contains::Contains,
+        solana_hash::Hash,
         solana_ledger::{
             blockstore::{make_chaining_slot_entries, Blockstore},
             get_tmp_ledger_path,
         },
         solana_runtime::{bank::Bank, bank_utils},
-        solana_sdk::hash::Hash,
         trees::tr,
     };
 

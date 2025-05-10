@@ -146,11 +146,43 @@ done
 # Update cargo lock files
 scripts/cargo-for-all-lock-files.sh tree >/dev/null
 
-# Only apply related changes
+# Filter out unrelated changes
+# some other dependencies might change after the tree command (like hashbrown)
+# the workaround is to filter out unrelated changes then apply the patch
 (
   shopt -s globstar
   git diff --unified=0 ./**/Cargo.lock >cargo-lock-patch
-  grep -E '^(diff|index|---|\+\+\+|@@.*@@ name = .*|-version|\+version)' cargo-lock-patch >filtered-cargo-lock-patch
+  grep -E '^(diff|index|---|\+\+\+|@@.*@@ name = .*|-version|\+version|@@.*@@ dependencies.*|- "agave-|\+ "agave-|- "solana-|\+ "solana-)' cargo-lock-patch >filtered-cargo-lock-patch
+
+  # there might some orphaned dependency lines in the filtered file
+  # this is a workaround to filter them out
+  # 1. read the filtered file into an array
+  # 2. iterate over the array
+  # 3. if the line is a dependency line, check the next line to see if it's an orphaned dependency line
+  #     a. if it is, add the current line to the file
+  #     b. if it's not, don't add the current line to the file
+  tmp_file=$(mktemp)
+  mapfile -t lines <filtered-cargo-lock-patch
+  i=0
+  total=${#lines[@]}
+  while [ "$i" -lt "$total" ]; do
+    line="${lines[$i]}"
+    ((i++))
+
+    # filter out orphaned dependency lines
+    if [[ "$line" =~ ^@@.*dependencies ]]; then
+      if [ "$i" -lt "$total" ]; then
+        next_line="${lines[$i]}"
+        if [[ "$next_line" =~ ^[+-] ]]; then
+          echo "$line" >>"$tmp_file"
+        fi
+      fi
+    else
+      echo "$line" >>"$tmp_file"
+    fi
+  done
+  mv "$tmp_file" filtered-cargo-lock-patch
+
   git checkout ./**/Cargo.lock
   git apply --unidiff-zero filtered-cargo-lock-patch
   rm cargo-lock-patch filtered-cargo-lock-patch

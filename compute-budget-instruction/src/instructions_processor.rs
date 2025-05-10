@@ -136,7 +136,8 @@ mod tests {
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],
             Ok(ComputeBudgetLimits {
-                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
                 updated_heap_bytes: 40 * 1024,
                 ..ComputeBudgetLimits::default()
             }),
@@ -191,7 +192,8 @@ mod tests {
                 ComputeBudgetInstruction::request_heap_frame(MAX_HEAP_FRAME_BYTES),
             ],
             Ok(ComputeBudgetLimits {
-                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                    + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
                 updated_heap_bytes: MAX_HEAP_FRAME_BYTES,
                 ..ComputeBudgetLimits::default()
             }),
@@ -319,7 +321,8 @@ mod tests {
         // budget is set with data_size
         let data_size = 1;
         let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
             loaded_accounts_bytes: NonZeroU32::new(data_size).unwrap(),
             ..ComputeBudgetLimits::default()
         });
@@ -332,12 +335,6 @@ mod tests {
             &FeatureSet::default()
         );
 
-        let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
-            loaded_accounts_bytes: NonZeroU32::new(data_size).unwrap(),
-            ..ComputeBudgetLimits::default()
-        });
         test!(
             &[
                 ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(data_size),
@@ -351,7 +348,8 @@ mod tests {
         // budget is set to max data size
         let data_size = MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() + 1;
         let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
             loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             ..ComputeBudgetLimits::default()
         });
@@ -364,12 +362,6 @@ mod tests {
             &FeatureSet::default()
         );
 
-        let expected_result = Ok(ComputeBudgetLimits {
-            compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
-            loaded_accounts_bytes: MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
-            ..ComputeBudgetLimits::default()
-        });
         test!(
             &[
                 ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(data_size),
@@ -430,7 +422,8 @@ mod tests {
             (
                 FeatureSet::default(),
                 Ok(ComputeBudgetLimits {
-                    compute_unit_limit: 2 * DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
+                    compute_unit_limit: DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
+                        + MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
                     ..ComputeBudgetLimits::default()
                 }),
             ),

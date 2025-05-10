@@ -15,7 +15,7 @@ clap = { version = "3.1.5", features = ["cargo"] }
 itertools = { workspace = true }
 log = { workspace = true, features = ["std"] }
 regex = { workspace = true }
-solana-logger = { workspace = true }
+solana-logger = "=2.3.1"
 
 [[bin]]
 name = "cargo-test-sbf"

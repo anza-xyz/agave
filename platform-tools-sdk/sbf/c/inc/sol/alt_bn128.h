@@ -54,7 +54,7 @@ extern "C" {
  * @return 0 if executed successfully
  */
 /* DO NOT MODIFY THIS GENERATED FILE. INSTEAD CHANGE platform-tools-sdk/sbf/c/inc/sol/inc/alt_bn128.inc AND RUN `cargo run --bin gen-headers` */
-#ifndef SOL_SBFV2
+#ifndef SOL_SBPFV3
 uint64_t sol_alt_bn128_group_op(const uint64_t, const uint8_t *, const uint64_t, uint8_t *);
 #else
 typedef uint64_t(*sol_alt_bn128_group_op_pointer_type)(const uint64_t, const uint8_t *, const uint64_t, uint8_t *);

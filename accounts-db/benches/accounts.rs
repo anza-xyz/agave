@@ -137,14 +137,14 @@ where
     let pubkeys: Vec<_> = std::iter::repeat_with(solana_pubkey::new_rand)
         .take(num_keys)
         .collect();
-    let accounts_data: Vec<_> = std::iter::repeat(
+    let accounts_data: Vec<_> = std::iter::repeat_n(
         Account {
             lamports: 1,
             ..Default::default()
         }
         .to_account_shared_data(),
+        num_keys,
     )
-    .take(num_keys)
     .collect();
     let storable_accounts: Vec<_> = pubkeys.iter().zip(accounts_data.iter()).collect();
     accounts.store_accounts_cached((slot, storable_accounts.as_slice()));

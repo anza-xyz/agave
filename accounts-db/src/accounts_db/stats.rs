@@ -244,7 +244,7 @@ impl LatestAccountsIndexRootsStats {
             ),
             (
                 "append_vecs_dirty",
-                APPEND_VEC_STATS.mmap_files_dirty.load(Ordering::Relaxed),
+                APPEND_VEC_STATS.files_dirty.load(Ordering::Relaxed),
                 i64
             ),
             (

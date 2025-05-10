@@ -8,10 +8,6 @@ use {
         stable_log,
         sysvar_cache::SysvarCache,
     },
-    agave_feature_set::{
-        lift_cpi_caller_restriction, remove_accounts_executable_flag_checks, FeatureSet,
-    },
-    agave_precompiles::Precompile,
     solana_account::{create_account_shared_data_for_test, AccountSharedData},
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -31,6 +27,8 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
     },
     solana_stable_layout::stable_instruction::StableInstruction,
+    solana_svm_callback::InvokeContextCallback,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
@@ -146,25 +144,22 @@ impl BpfAllocator {
 pub struct EnvironmentConfig<'a> {
     pub blockhash: Hash,
     pub blockhash_lamports_per_signature: u64,
-    epoch_total_stake: u64,
-    get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
-    pub feature_set: Arc<FeatureSet>,
+    epoch_stake_callback: &'a dyn InvokeContextCallback,
+    feature_set: &'a SVMFeatureSet,
     sysvar_cache: &'a SysvarCache,
 }
 impl<'a> EnvironmentConfig<'a> {
     pub fn new(
         blockhash: Hash,
         blockhash_lamports_per_signature: u64,
-        epoch_total_stake: u64,
-        get_epoch_vote_account_stake_callback: &'a dyn Fn(&'a Pubkey) -> u64,
-        feature_set: Arc<FeatureSet>,
+        epoch_stake_callback: &'a dyn InvokeContextCallback,
+        feature_set: &'a SVMFeatureSet,
         sysvar_cache: &'a SysvarCache,
     ) -> Self {
         Self {
             blockhash,
             blockhash_lamports_per_signature,
-            epoch_total_stake,
-            get_epoch_vote_account_stake_callback,
+            epoch_stake_callback,
             feature_set,
             sysvar_cache,
         }
@@ -429,10 +424,7 @@ impl<'a> InvokeContext<'a> {
 
         // Find and validate executables / program accounts
         let callee_program_id = instruction.program_id;
-        let program_account_index = if self
-            .get_feature_set()
-            .is_active(&lift_cpi_caller_restriction::id())
-        {
+        let program_account_index = if self.get_feature_set().lift_cpi_caller_restriction {
             self.transaction_context
                 .find_index_of_program_account(&callee_program_id)
                 .ok_or_else(|| {
@@ -451,7 +443,7 @@ impl<'a> InvokeContext<'a> {
             #[allow(deprecated)]
             if !self
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
                 && !borrowed_program_account.is_executable()
             {
                 ic_msg!(self, "Account {} is not executable", callee_program_id);
@@ -486,7 +478,7 @@ impl<'a> InvokeContext<'a> {
     /// Processes a precompile instruction
     pub fn process_precompile<'ix_data>(
         &mut self,
-        precompile: &Precompile,
+        program_id: &Pubkey,
         instruction_data: &[u8],
         instruction_accounts: &[InstructionAccount],
         program_indices: &[IndexOfAccount],
@@ -497,10 +489,10 @@ impl<'a> InvokeContext<'a> {
             .configure(program_indices, instruction_accounts, instruction_data);
         self.push()?;
 
-        let feature_set = self.get_feature_set();
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
-        precompile
-            .verify(instruction_data, &instruction_datas, feature_set)
+        self.environment_config
+            .epoch_stake_callback
+            .process_precompile(program_id, instruction_data, instruction_datas)
             .map_err(InstructionError::from)
             .and(self.pop())
     }
@@ -524,7 +516,7 @@ impl<'a> InvokeContext<'a> {
                 *borrowed_root_account.get_key()
             } else if self
                 .get_feature_set()
-                .is_active(&remove_accounts_executable_flag_checks::id())
+                .remove_accounts_executable_flag_checks
             {
                 if bpf_loader_deprecated::check_id(owner_id)
                     || bpf_loader::check_id(owner_id)
@@ -649,15 +641,20 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get the current feature set.
-    pub fn get_feature_set(&self) -> &FeatureSet {
-        &self.environment_config.feature_set
+    pub fn get_feature_set(&self) -> &SVMFeatureSet {
+        self.environment_config.feature_set
     }
 
-    /// Set feature set.
-    ///
-    /// Only use for tests and benchmarks.
-    pub fn mock_set_feature_set(&mut self, feature_set: Arc<FeatureSet>) {
-        self.environment_config.feature_set = feature_set;
+    pub fn is_stake_raise_minimum_delegation_to_1_sol_active(&self) -> bool {
+        self.environment_config
+            .feature_set
+            .stake_raise_minimum_delegation_to_1_sol
+    }
+
+    pub fn is_deprecate_legacy_vote_ixs_active(&self) -> bool {
+        self.environment_config
+            .feature_set
+            .deprecate_legacy_vote_ixs
     }
 
     /// Get cached sysvars
@@ -666,15 +663,23 @@ impl<'a> InvokeContext<'a> {
     }
 
     /// Get cached epoch total stake.
-    pub fn get_epoch_total_stake(&self) -> u64 {
-        self.environment_config.epoch_total_stake
+    pub fn get_epoch_stake(&self) -> u64 {
+        self.environment_config
+            .epoch_stake_callback
+            .get_epoch_stake()
     }
 
     /// Get cached stake for the epoch vote account.
-    pub fn get_epoch_vote_account_stake(&self, pubkey: &'a Pubkey) -> u64 {
-        (self
-            .environment_config
-            .get_epoch_vote_account_stake_callback)(pubkey)
+    pub fn get_epoch_stake_for_vote_account(&self, pubkey: &'a Pubkey) -> u64 {
+        self.environment_config
+            .epoch_stake_callback
+            .get_epoch_stake_for_vote_account(pubkey)
+    }
+
+    pub fn is_precompile(&self, pubkey: &Pubkey) -> bool {
+        self.environment_config
+            .epoch_stake_callback
+            .is_precompile(pubkey)
     }
 
     // Should alignment be enforced during user pointer translation
@@ -726,16 +731,16 @@ impl<'a> InvokeContext<'a> {
 }
 
 #[macro_export]
-macro_rules! with_mock_invoke_context {
+macro_rules! with_mock_invoke_context_with_feature_set {
     (
         $invoke_context:ident,
         $transaction_context:ident,
+        $feature_set:ident,
         $transaction_accounts:expr $(,)?
     ) => {
         use {
-            agave_feature_set::FeatureSet,
             solana_log_collector::LogCollector,
-            solana_type_overrides::sync::Arc,
+            solana_svm_callback::InvokeContextCallback,
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
@@ -744,6 +749,10 @@ macro_rules! with_mock_invoke_context {
                 sysvar_cache::SysvarCache,
             },
         };
+
+        struct MockInvokeContextCallback {}
+        impl InvokeContextCallback for MockInvokeContextCallback {}
+
         let compute_budget = SVMTransactionExecutionBudget::default();
         let mut $transaction_context = TransactionContext::new(
             $transaction_accounts,
@@ -772,9 +781,8 @@ macro_rules! with_mock_invoke_context {
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0,
-            &|_| 0,
-            Arc::new(FeatureSet::all_enabled()),
+            &MockInvokeContextCallback {},
+            $feature_set,
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
@@ -789,7 +797,29 @@ macro_rules! with_mock_invoke_context {
     };
 }
 
-pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
+#[macro_export]
+macro_rules! with_mock_invoke_context {
+    (
+        $invoke_context:ident,
+        $transaction_context:ident,
+        $transaction_accounts:expr $(,)?
+    ) => {
+        use $crate::with_mock_invoke_context_with_feature_set;
+        let feature_set = &solana_svm_feature_set::SVMFeatureSet::default();
+        with_mock_invoke_context_with_feature_set!(
+            $invoke_context,
+            $transaction_context,
+            feature_set,
+            $transaction_accounts
+        )
+    };
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn mock_process_instruction_with_feature_set<
+    F: FnMut(&mut InvokeContext),
+    G: FnMut(&mut InvokeContext),
+>(
     loader_id: &Pubkey,
     mut program_indices: Vec<IndexOfAccount>,
     instruction_data: &[u8],
@@ -799,6 +829,7 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     builtin_function: BuiltinFunctionWithContext,
     mut pre_adjustments: F,
     mut post_adjustments: G,
+    feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
     let mut instruction_accounts: Vec<InstructionAccount> =
         Vec::with_capacity(instruction_account_metas.len());
@@ -841,7 +872,12 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     } else {
         false
     };
-    with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+    with_mock_invoke_context_with_feature_set!(
+        invoke_context,
+        transaction_context,
+        feature_set,
+        transaction_accounts
+    );
     let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
     program_cache_for_tx_batch.replenish(
         *loader_id,
@@ -864,6 +900,31 @@ pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut Invo
     }
     transaction_accounts.pop();
     transaction_accounts
+}
+
+pub fn mock_process_instruction<F: FnMut(&mut InvokeContext), G: FnMut(&mut InvokeContext)>(
+    loader_id: &Pubkey,
+    program_indices: Vec<IndexOfAccount>,
+    instruction_data: &[u8],
+    transaction_accounts: Vec<TransactionAccount>,
+    instruction_account_metas: Vec<AccountMeta>,
+    expected_result: Result<(), InstructionError>,
+    builtin_function: BuiltinFunctionWithContext,
+    pre_adjustments: F,
+    post_adjustments: G,
+) -> Vec<AccountSharedData> {
+    mock_process_instruction_with_feature_set(
+        loader_id,
+        program_indices,
+        instruction_data,
+        transaction_accounts,
+        instruction_account_metas,
+        expected_result,
+        builtin_function,
+        pre_adjustments,
+        post_adjustments,
+        &SVMFeatureSet::all_enabled(),
+    )
 }
 
 #[cfg(test)]

@@ -130,6 +130,7 @@ fn get_data_slice<'a>(
 pub mod tests {
     use {
         super::*,
+        crate::test_verify_with_alignment,
         rand0_7::{thread_rng, Rng},
         solana_keccak_hasher as keccak,
         solana_secp256k1_program::{new_secp256k1_instruction, DATA_START},
@@ -144,7 +145,7 @@ pub mod tests {
         let writer = std::io::Cursor::new(&mut instruction_data[1..]);
         bincode::serialize_into(writer, &offsets).unwrap();
         let feature_set = FeatureSet::all_enabled();
-        verify(&instruction_data, &[&[0u8; 100]], &feature_set)
+        test_verify_with_alignment(verify, &instruction_data, &[&[0u8; 100]], &feature_set)
     }
 
     #[test]
@@ -160,7 +161,7 @@ pub mod tests {
         let feature_set = FeatureSet::all_enabled();
 
         assert_eq!(
-            verify(&instruction_data, &[&[0u8; 100]], &feature_set),
+            test_verify_with_alignment(verify, &instruction_data, &[&[0u8; 100]], &feature_set),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
 
@@ -289,7 +290,7 @@ pub mod tests {
         let feature_set = FeatureSet::all_enabled();
 
         assert_eq!(
-            verify(&instruction_data, &[&[0u8; 100]], &feature_set),
+            test_verify_with_alignment(verify, &instruction_data, &[&[0u8; 100]], &feature_set),
             Err(PrecompileError::InvalidInstructionDataSize)
         );
     }
@@ -307,11 +308,23 @@ pub mod tests {
         let message_arr = b"hello";
         let mut instruction = new_secp256k1_instruction(&secp_privkey, message_arr);
         let feature_set = FeatureSet::all_enabled();
-        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_ok());
+        assert!(test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set
+        )
+        .is_ok());
 
         let index = thread_rng().gen_range(0, instruction.data.len());
         instruction.data[index] = instruction.data[index].wrapping_add(12);
-        assert!(verify(&instruction.data, &[&instruction.data], &feature_set).is_err());
+        assert!(test_verify_with_alignment(
+            verify,
+            &instruction.data,
+            &[&instruction.data],
+            &feature_set
+        )
+        .is_err());
     }
 
     // Signatures are malleable.
@@ -376,7 +389,8 @@ pub mod tests {
 
         instruction_data.extend(data);
 
-        verify(
+        test_verify_with_alignment(
+            verify,
             &instruction_data,
             &[&instruction_data],
             &FeatureSet::all_enabled(),

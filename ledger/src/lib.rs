@@ -10,6 +10,7 @@ pub mod block_error;
 #[macro_use]
 pub mod blockstore;
 pub mod ancestor_iterator;
+pub mod bit_vec;
 pub mod blockstore_cleanup_service;
 pub mod blockstore_db;
 pub mod blockstore_meta;
@@ -30,8 +31,8 @@ mod shredder;
 pub mod sigverify_shreds;
 pub mod slot_stats;
 mod staking_utils;
-pub mod token_balances;
 mod transaction_address_lookup_table_scanner;
+pub mod transaction_balances;
 pub mod use_snapshot_archives_at_startup;
 
 #[macro_use]

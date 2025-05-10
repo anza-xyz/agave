@@ -1699,10 +1699,22 @@ mod tests {
         let leader_d_pubkey = Pubkey::new_unique();
         let consecutive_leader_slots = NUM_CONSECUTIVE_LEADER_SLOTS as usize;
         let mut slot_leaders = Vec::with_capacity(consecutive_leader_slots * 3);
-        slot_leaders.extend(std::iter::repeat(leader_a_pubkey).take(consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat(leader_b_pubkey).take(consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat(leader_c_pubkey).take(consecutive_leader_slots));
-        slot_leaders.extend(std::iter::repeat(leader_d_pubkey).take(consecutive_leader_slots));
+        slot_leaders.extend(std::iter::repeat_n(
+            leader_a_pubkey,
+            consecutive_leader_slots,
+        ));
+        slot_leaders.extend(std::iter::repeat_n(
+            leader_b_pubkey,
+            consecutive_leader_slots,
+        ));
+        slot_leaders.extend(std::iter::repeat_n(
+            leader_c_pubkey,
+            consecutive_leader_slots,
+        ));
+        slot_leaders.extend(std::iter::repeat_n(
+            leader_d_pubkey,
+            consecutive_leader_slots,
+        ));
         let mut leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let fixed_schedule = solana_ledger::leader_schedule::FixedSchedule {
             leader_schedule: Arc::new(Box::new(

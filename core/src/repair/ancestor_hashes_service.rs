@@ -18,22 +18,19 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_genesis_config::ClusterType,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
+    solana_keypair::{signable::Signable, Keypair},
     solana_ledger::blockstore::Blockstore,
     solana_perf::{
         packet::{deserialize_from_with_limit, Packet, PacketBatch, PacketFlags},
         recycler::Recycler,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        genesis_config::ClusterType,
-        pubkey::Pubkey,
-        signature::Signable,
-        signer::keypair::Keypair,
-        timing::timestamp,
-    },
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
+    solana_time_utils::timestamp,
     std::{
         collections::HashSet,
         io::{Cursor, Read},
@@ -793,9 +790,9 @@ impl AncestorHashesService {
                         .read()
                         .unwrap()
                         .iter()
-                        .map(|(node_key, _)| {
+                        .map(|(key, _v)| {
                             node_id_to_vote_accounts
-                                .get(node_key)
+                                .get(key)
                                 .map(|v| v.total_stake)
                                 .unwrap_or(0)
                         })
@@ -919,16 +916,15 @@ mod test {
             cluster_info::{ClusterInfo, Node},
             contact_info::{ContactInfo, Protocol},
         },
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::make_many_slot_entries, get_tmp_ledger_path,
             get_tmp_ledger_path_auto_delete, shred::Nonce,
         },
         solana_net_utils::bind_to_unspecified,
         solana_runtime::bank_forks::BankForks,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         std::collections::HashMap,
         trees::tr,
@@ -1215,7 +1211,7 @@ mod test {
 
         // Slot hasn't reached the threshold
         for (i, key) in (0..2).zip(vote_simulator.node_pubkeys.iter()) {
-            cluster_slots.insert_node_id(dead_slot, *key);
+            cluster_slots.insert_node_id(dead_slot, *key, Some(42));
             AncestorHashesService::find_epoch_slots_frozen_dead_slots(
                 &cluster_slots,
                 &mut dead_slot_pool,
@@ -1359,6 +1355,7 @@ mod test {
                 .root_bank()
                 .epoch_schedule()
                 .clone();
+
             let keypair = Keypair::new();
             let requester_cluster_info = Arc::new(ClusterInfo::new(
                 Node::new_localhost_with_pubkey(&keypair.pubkey()).info,
@@ -1537,7 +1534,7 @@ mod test {
         );
         // Should have received valid response
         let mut response_packet = response_receiver
-            .recv_timeout(Duration::from_millis(10_000))
+            .recv_timeout(Duration::from_millis(1_000))
             .unwrap();
         let packet = &mut response_packet[0];
         packet
@@ -1557,7 +1554,7 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id);
+        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
         requester_cluster_info.insert_info(responder_info.clone());
         // Now the request should actually be made
         AncestorHashesService::initiate_ancestor_hashes_requests_for_duplicate_slot(
@@ -2012,7 +2009,7 @@ mod test {
 
         // Add the responder to the eligible list for requests
         let responder_id = *responder_info.pubkey();
-        cluster_slots.insert_node_id(dead_slot, responder_id);
+        cluster_slots.insert_node_id(dead_slot, responder_id, Some(42));
         requester_cluster_info.insert_info(responder_info.clone());
 
         // Send a request to generate a ping

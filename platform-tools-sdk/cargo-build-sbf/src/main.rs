@@ -21,7 +21,7 @@ use {
     tar::Archive,
 };
 
-const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.45";
+const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.47";
 
 #[derive(Debug)]
 struct Config<'a> {
@@ -605,6 +605,21 @@ fn build_solana_package(
             .iter()
             .filter_map(|target| {
                 if target.crate_types.contains(&"cdylib".to_string()) {
+                    let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
+                        Some("rlib")
+                    } else if target.crate_types.contains(&"lib".to_string()) {
+                        Some("lib")
+                    } else {
+                        None
+                    };
+
+                    if let Some(other_crate) = other_crate_type {
+                        warn!("Package '{}' has two crate types defined: cdylib and {}. \
+                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
+                        to be deployed and rlib for packages to be imported by other programs as libraries.",
+                        package.name, other_crate);
+                    }
+
                     Some(&target.name)
                 } else {
                     None
@@ -613,13 +628,7 @@ fn build_solana_package(
             .collect::<Vec<_>>();
 
         match cdylib_targets.len() {
-            0 => {
-                warn!(
-                    "Note: {} crate does not contain a cdylib target",
-                    package.name
-                );
-                None
-            }
+            0 => None,
             1 => Some(cdylib_targets[0].replace('-', "_")),
             _ => {
                 error!(
@@ -631,7 +640,6 @@ fn build_solana_package(
         }
     };
 
-    let legacy_program_feature_present = package.name == "solana-sdk";
     let root_package_dir = &package.manifest_path.parent().unwrap_or_else(|| {
         error!("Unable to get directory of {}", package.manifest_path);
         exit(1);
@@ -681,9 +689,6 @@ fn build_solana_package(
     }
     if !config.features.is_empty() {
         info!("Features: {}", config.features.join(" "));
-    }
-    if legacy_program_feature_present {
-        info!("Legacy program feature detected");
     }
     let arch = if cfg!(target_arch = "aarch64") {
         "aarch64"
@@ -815,12 +820,6 @@ fn build_solana_package(
     for feature in &config.features {
         cargo_build_args.push("--features");
         cargo_build_args.push(feature);
-    }
-    if legacy_program_feature_present {
-        if !config.no_default_features {
-            cargo_build_args.push("--no-default-features");
-        }
-        cargo_build_args.push("--features=program");
     }
     if config.verbose {
         cargo_build_args.push("--verbose");

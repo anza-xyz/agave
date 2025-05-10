@@ -4,7 +4,8 @@ use {
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
-    solana_sdk::{hash::Hash, slot_history::Slot},
+    solana_clock::Slot,
+    solana_hash::Hash,
     std::{
         fs::{create_dir_all, remove_dir_all},
         io::{self, Write},

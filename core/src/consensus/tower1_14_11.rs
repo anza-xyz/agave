@@ -1,6 +1,7 @@
 use {
     crate::consensus::{BlockhashStatus, SwitchForkDecision},
-    solana_sdk::{clock::Slot, pubkey::Pubkey},
+    solana_clock::Slot,
+    solana_pubkey::Pubkey,
     solana_vote::vote_transaction::VoteTransaction,
     solana_vote_program::vote_state::{vote_state_1_14_11::VoteState1_14_11, BlockTimestamp},
 };

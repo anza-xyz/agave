@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{
         scheduler::{PreLockFilterAction, Scheduler, SchedulingSummary},
@@ -22,6 +24,7 @@ use {
     solana_sdk::saturating_add_assign,
 };
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct GreedySchedulerConfig {
     pub target_scheduled_cus: u64,
     pub max_scanned_transactions_per_scheduling_pass: usize,
@@ -49,6 +52,7 @@ pub struct GreedyScheduler<Tx: TransactionWithMeta> {
 }
 
 impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(
         consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
         finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
@@ -137,9 +141,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 |thread_set| {
                     select_thread(
                         thread_set,
-                        &batches.total_cus,
+                        batches.total_cus(),
                         self.common.in_flight_tracker.cus_in_flight_per_thread(),
-                        &batches.transactions,
+                        batches.transactions(),
                         self.common.in_flight_tracker.num_in_flight_per_thread(),
                     )
                 },
@@ -163,13 +167,12 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         "locks must be available"
                     );
                     saturating_add_assign!(num_scheduled, 1);
-                    batches.transactions[thread_id].push(transaction);
-                    batches.ids[thread_id].push(id.id);
-                    batches.max_ages[thread_id].push(max_age);
-                    saturating_add_assign!(batches.total_cus[thread_id], cost);
+                    batches.add_transaction_to_batch(thread_id, id.id, transaction, max_age, cost);
 
                     // If target batch size is reached, send all the batches
-                    if batches.ids[thread_id].len() >= self.config.target_transactions_per_batch {
+                    if batches.transactions()[thread_id].len()
+                        >= self.config.target_transactions_per_batch
+                    {
                         self.working_account_set.clear();
                         num_sent += self.common.send_batches(
                             &mut batches,
@@ -180,7 +183,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
                     // if there are no more schedulable threads, stop scheduling.
                     if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                        + batches.total_cus[thread_id]
+                        + batches.total_cus()[thread_id]
                         >= target_cu_per_thread
                     {
                         schedulable_threads.remove(thread_id);
@@ -280,15 +283,13 @@ mod test {
         itertools::Itertools,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            message::Message,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         std::borrow::Borrow,
     };
 

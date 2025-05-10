@@ -25,10 +25,8 @@ use {
         signature::Signature,
         sysvar::{last_restart_slot, SysvarId},
     },
-    solana_svm::{
-        program_loader, transaction_processing_callback::TransactionProcessingCallback,
-        transaction_processor::TransactionBatchProcessor,
-    },
+    solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
@@ -220,10 +218,15 @@ fn run_fixture(fixture: InstrFixture, filename: OsString) {
         ..SVMTransactionExecutionBudget::default()
     };
 
-    let v1_environment =
-        create_program_runtime_environment_v1(&feature_set, &compute_budget, false, false).unwrap();
+    let v1_environment = create_program_runtime_environment_v1(
+        &feature_set.runtime_features(),
+        &compute_budget,
+        false,
+        false,
+    )
+    .unwrap();
 
-    mock_bank.override_feature_set(feature_set);
+    mock_bank.override_feature_set(feature_set.runtime_features());
 
     let fork_graph = Arc::new(RwLock::new(MockForkGraph {}));
     let batch_processor = TransactionBatchProcessor::new(
@@ -353,9 +356,8 @@ fn execute_fixture_as_instr(
     let env_config = EnvironmentConfig::new(
         blockhash,
         lamports_per_signature,
-        0,
-        &|_| 0,
-        mock_bank.feature_set.clone(),
+        mock_bank,
+        &mock_bank.feature_set,
         sysvar_cache,
     );
 

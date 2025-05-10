@@ -23,20 +23,19 @@ use {
     log::*,
     regex::Regex,
     solana_accounts_db::{
-        account_storage::{meta::StoredMetaWriteVersion, AccountStorageMap},
+        account_storage::AccountStorageMap,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
+        append_vec::StoredMetaWriteVersion,
         epoch_accounts_hash::EpochAccountsHash,
         hardened_unpack::{self, ParallelSelector, UnpackError},
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
+    solana_clock::{Epoch, Slot},
+    solana_hash::Hash,
     solana_measure::{measure::Measure, measure_time, measure_us},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        hash::Hash,
-    },
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},
@@ -68,6 +67,7 @@ pub use archive_format::*;
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
 pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete";
+pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
 pub const SNAPSHOT_ACCOUNTS_HARDLINKS: &str = "accounts_hardlinks";
 pub const SNAPSHOT_ARCHIVE_DOWNLOAD_DIR: &str = "remote";
 pub const SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME: &str = "full_snapshot_slot";
@@ -81,9 +81,9 @@ pub const BANK_SNAPSHOT_PRE_FILENAME_EXTENSION: &str = "pre";
 // - Necessary in order to have a plain NonZeroUsize as the constant, NonZeroUsize
 //   returns an Option<NonZeroUsize> and we can't .unwrap() at compile time
 pub const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
-    unsafe { NonZeroUsize::new_unchecked(2) };
+    NonZeroUsize::new(2).unwrap();
 pub const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
-    unsafe { NonZeroUsize::new_unchecked(4) };
+    NonZeroUsize::new(4).unwrap();
 pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz|tar\.lz4)$";
 pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz|tar\.lz4)$";
 
@@ -449,6 +449,9 @@ pub enum AddBankSnapshotError {
     #[error("failed to flush storage '{1}': {0}")]
     FlushStorage(#[source] AccountsFileError, PathBuf),
 
+    #[error("failed to mark snapshot storages as 'flushed': {0}")]
+    MarkStoragesFlushed(#[source] IoError),
+
     #[error("failed to hard link storages: {0}")]
     HardLinkStorages(#[source] HardLinkStoragesToSnapshotError),
 
@@ -461,8 +464,8 @@ pub enum AddBankSnapshotError {
     #[error("failed to write snapshot version file '{1}': {0}")]
     WriteSnapshotVersionFile(#[source] IoError, PathBuf),
 
-    #[error("failed to mark snapshot as 'complete': failed to create file '{1}': {0}")]
-    CreateStateCompleteFile(#[source] IoError, PathBuf),
+    #[error("failed to mark snapshot as 'complete': {0}")]
+    MarkSnapshotComplete(#[source] IoError),
 }
 
 /// Errors that can happen in `archive_snapshot_package()`
@@ -643,6 +646,20 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
     state_complete_path.is_file()
 }
 
+/// Marks the bank snapshot as complete
+fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+    let state_complete_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
+    fs::File::create(&state_complete_path).map_err(|err| {
+        IoError::other(format!(
+            "failed to create file '{}': {err}",
+            state_complete_path.display(),
+        ))
+    })?;
+    Ok(())
+}
+
 /// Writes the full snapshot slot file into the bank snapshot dir
 pub fn write_full_snapshot_slot_file(
     bank_snapshot_dir: impl AsRef<Path>,
@@ -686,12 +703,35 @@ pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> IoRe
     Ok(slot)
 }
 
+/// Writes the 'snapshot storages have been flushed' file to the bank snapshot dir
+pub fn write_storages_flushed_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+    let flushed_storages_path = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
+    fs::File::create(&flushed_storages_path).map_err(|err| {
+        IoError::other(format!(
+            "failed to create file '{}': {err}",
+            flushed_storages_path.display(),
+        ))
+    })?;
+    Ok(())
+}
+
+/// Were the snapshot storages flushed in this bank snapshot?
+fn are_bank_snapshot_storages_flushed(bank_snapshot_dir: impl AsRef<Path>) -> bool {
+    let flushed_storages = bank_snapshot_dir
+        .as_ref()
+        .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
+    flushed_storages.is_file()
+}
+
 /// Gets the highest, loadable, bank snapshot
 ///
 /// The highest bank snapshot is the one with the highest slot.
 /// To be loadable, the bank snapshot must be a BankSnapshotKind::Post.
 /// And if we're generating snapshots (e.g. running a normal validator), then
 /// the full snapshot file's slot must match the highest full snapshot archive's.
+/// Lastly, the account storages must have been flushed to be loadable.
 pub fn get_highest_loadable_bank_snapshot(
     snapshot_config: &SnapshotConfig,
 ) -> Option<BankSnapshotInfo> {
@@ -710,7 +750,10 @@ pub fn get_highest_loadable_bank_snapshot(
         get_highest_full_snapshot_archive_slot(&snapshot_config.full_snapshot_archives_dir)?;
     let full_snapshot_file_slot =
         read_full_snapshot_slot_file(&highest_bank_snapshot.snapshot_dir).ok()?;
-    (full_snapshot_file_slot == highest_full_snapshot_archive_slot).then_some(highest_bank_snapshot)
+    let are_storages_flushed =
+        are_bank_snapshot_storages_flushed(&highest_bank_snapshot.snapshot_dir);
+    (are_storages_flushed && (full_snapshot_file_slot == highest_full_snapshot_archive_slot))
+        .then_some(highest_bank_snapshot)
 }
 
 /// If the validator halts in the middle of `archive_snapshot_package()`, the temporary staging
@@ -745,6 +788,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
 pub fn serialize_and_archive_snapshot_package(
     snapshot_package: SnapshotPackage,
     snapshot_config: &SnapshotConfig,
+    should_flush_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
     let SnapshotPackage {
         snapshot_kind,
@@ -775,6 +819,7 @@ pub fn serialize_and_archive_snapshot_package(
         epoch_accounts_hash,
         bank_incremental_snapshot_persistence.as_ref(),
         write_version,
+        should_flush_storages,
     )?;
 
     // now write the full snapshot slot file after serializing so this bank snapshot is loadable
@@ -837,6 +882,7 @@ fn serialize_snapshot(
     epoch_accounts_hash: Option<EpochAccountsHash>,
     bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     write_version: StoredMetaWriteVersion,
+    should_flush_storages: bool,
 ) -> Result<BankSnapshotInfo> {
     let slot = bank_fields.slot;
 
@@ -861,13 +907,20 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let (_, flush_storages_us) = measure_us!({
+        let flush_storages_us = if should_flush_storages {
+            let measure = Measure::start("");
             for storage in snapshot_storages {
                 storage.flush().map_err(|err| {
                     AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
                 })?;
             }
-        });
+            let measure_us = measure.end_as_us();
+            write_storages_flushed_file(&bank_snapshot_dir)
+                .map_err(AddBankSnapshotError::MarkStoragesFlushed)?;
+            Some(measure_us)
+        } else {
+            None
+        };
 
         // We are constructing the snapshot directory to contain the full snapshot state information to allow
         // constructing a bank from this directory.  It acts like an archive to include the full state.
@@ -921,11 +974,10 @@ fn serialize_snapshot(
         .map_err(|err| AddBankSnapshotError::WriteSnapshotVersionFile(err, version_path))?);
 
         // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-        let state_complete_path = bank_snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-        let (_, write_state_complete_file_us) = measure_us!(fs::File::create(&state_complete_path)
-            .map_err(|err| {
-                AddBankSnapshotError::CreateStateCompleteFile(err, state_complete_path)
-            })?);
+        let (_, write_state_complete_file_us) = measure_us!({
+            write_snapshot_state_complete_file(&bank_snapshot_dir)
+                .map_err(AddBankSnapshotError::MarkSnapshotComplete)?
+        });
 
         measure_everything.stop();
 
@@ -935,7 +987,7 @@ fn serialize_snapshot(
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),
-            ("flush_storages_us", flush_storages_us, i64),
+            ("flush_storages_us", flush_storages_us, Option<i64>),
             ("hard_link_storages_us", hard_link_storages_us, i64),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
             ("status_cache_serialize_us", status_cache_serialize_us, i64),
@@ -1671,8 +1723,7 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
         slot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
 
-    let state_complete_file = slot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-    fs::File::create(state_complete_file)?;
+    write_snapshot_state_complete_file(slot_dir)?;
 
     Ok(())
 }
@@ -2961,8 +3012,7 @@ mod tests {
             fs::write(version_path, SnapshotVersion::default().as_str().as_bytes()).unwrap();
 
             // Mark this directory complete so it can be used.  Check this flag first before selecting for deserialization.
-            let state_complete_path = snapshot_dir.join(SNAPSHOT_STATE_COMPLETE_FILENAME);
-            fs::File::create(state_complete_path).unwrap();
+            write_snapshot_state_complete_file(snapshot_dir).unwrap();
         }
     }
 

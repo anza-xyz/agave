@@ -16,16 +16,15 @@ use {
         sigverify::TransactionSigVerifier,
         sigverify_stage::{SigVerifier, SigVerifyStage},
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_perf::{
         packet::{to_packet_batches, PacketBatch},
         test_tx::test_tx,
     },
-    solana_sdk::{
-        hash::Hash,
-        signature::{Keypair, Signer},
-        system_transaction,
-    },
+    solana_signer::Signer,
+    solana_system_transaction as system_transaction,
     std::time::{Duration, Instant},
     test::Bencher,
 };

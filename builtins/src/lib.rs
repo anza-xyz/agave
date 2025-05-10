@@ -69,6 +69,7 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
             source_buffer_address: buffer_accounts::stake_program::id(),
             upgrade_authority_address: None,
             feature_id: agave_feature_set::migrate_stake_program_to_core_bpf::id(),
+            verified_build_hash: None,
             migration_target: CoreBpfMigrationTargetType::Builtin,
             datapoint_name: "migrate_builtin_to_core_bpf_stake_program",
         }),
@@ -76,19 +77,6 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         enable_feature_id: None,
         program_id: solana_stake_program::id(),
         entrypoint: solana_stake_program::stake_instruction::Entrypoint::vm,
-    },
-    BuiltinPrototype {
-        core_bpf_migration_config: Some(CoreBpfMigrationConfig {
-            source_buffer_address: buffer_accounts::config_program::id(),
-            upgrade_authority_address: None,
-            feature_id: agave_feature_set::migrate_config_program_to_core_bpf::id(),
-            migration_target: CoreBpfMigrationTargetType::Builtin,
-            datapoint_name: "migrate_builtin_to_core_bpf_config_program",
-        }),
-        name: "config_program",
-        enable_feature_id: None,
-        program_id: solana_config_program::id(),
-        entrypoint: solana_config_program::config_processor::Entrypoint::vm,
     },
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
@@ -118,19 +106,6 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
         program_id: solana_sdk_ids::compute_budget::id(),
         entrypoint: solana_compute_budget_program::Entrypoint::vm,
     }),
-    BuiltinPrototype {
-        core_bpf_migration_config: Some(CoreBpfMigrationConfig {
-            source_buffer_address: buffer_accounts::address_lookup_table_program::id(),
-            upgrade_authority_address: None,
-            feature_id: agave_feature_set::migrate_address_lookup_table_program_to_core_bpf::id(),
-            migration_target: CoreBpfMigrationTargetType::Builtin,
-            datapoint_name: "migrate_builtin_to_core_bpf_address_lookup_table_program",
-        }),
-        name: "address_lookup_table_program",
-        enable_feature_id: None,
-        program_id: solana_sdk_ids::address_lookup_table::id(),
-        entrypoint: solana_address_lookup_table_program::processor::Entrypoint::vm,
-    },
     testable_prototype!(BuiltinPrototype {
         core_bpf_migration_config: None,
         name: zk_token_proof_program,
@@ -154,18 +129,38 @@ pub static BUILTINS: &[BuiltinPrototype] = &[
     }),
 ];
 
-pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[];
+pub static STATELESS_BUILTINS: &[StatelessBuiltinPrototype] = &[StatelessBuiltinPrototype {
+    core_bpf_migration_config: Some(CoreBpfMigrationConfig {
+        source_buffer_address: buffer_accounts::slashing_program::id(),
+        upgrade_authority_address: None,
+        feature_id: feature_set::enshrine_slashing_program::id(),
+        verified_build_hash: Some(buffer_accounts::slashing_program::VERIFIED_BUILD_HASH),
+        migration_target: CoreBpfMigrationTargetType::Stateless,
+        datapoint_name: "enshrine_slashing_program",
+    }),
+    program_id: buffer_accounts::slashing_program::PROGRAM_ID,
+    name: "solana_slashing_program",
+}];
 
 /// Live source buffer accounts for builtin migrations.
 mod buffer_accounts {
-    pub mod address_lookup_table_program {
-        solana_pubkey::declare_id!("AhXWrD9BBUYcKjtpA3zuiiZG4ysbo6C6wjHo1QhERk6A");
-    }
-    pub mod config_program {
-        solana_pubkey::declare_id!("BuafH9fBv62u6XjzrzS4ZjAE8963ejqF5rt1f8Uga4Q3");
-    }
     pub mod stake_program {
         solana_pubkey::declare_id!("8t3vv6v99tQA6Gp7fVdsBH66hQMaswH5qsJVqJqo8xvG");
+    }
+    pub mod slashing_program {
+        use {solana_hash::Hash, solana_pubkey::Pubkey};
+
+        solana_pubkey::declare_id!("S1asHs4je6wPb2kWiHqNNdpNRiDaBEDQyfyCThhsrgv");
+
+        pub(crate) const PROGRAM_ID: Pubkey =
+            Pubkey::from_str_const("S1ashing11111111111111111111111111111111111");
+        // 192ed727334abe822d5accba8b886e25f88b03c76973c2e7290cfb55b9e1115f
+        const HASH_BYTES: [u8; 32] = [
+            0x19, 0x2e, 0xd7, 0x27, 0x33, 0x4a, 0xbe, 0x82, 0x2d, 0x5a, 0xcc, 0xba, 0x8b, 0x88,
+            0x6e, 0x25, 0xf8, 0x8b, 0x03, 0xc7, 0x69, 0x73, 0xc2, 0xe7, 0x29, 0x0c, 0xfb, 0x55,
+            0xb9, 0xe1, 0x11, 0x5f,
+        ];
+        pub(crate) const VERIFIED_BUILD_HASH: Hash = Hash::new_from_array(HASH_BYTES);
     }
 }
 
@@ -194,6 +189,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_system_program",
         };
     }
@@ -213,6 +209,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_vote_program",
         };
     }
@@ -232,6 +229,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_deprecated_program",
         };
     }
@@ -251,6 +249,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_program",
         };
     }
@@ -270,6 +269,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_bpf_loader_upgradeable_program",
         };
     }
@@ -289,6 +289,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_compute_budget_program",
         };
     }
@@ -308,6 +309,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_zk_token_proof_program",
         };
     }
@@ -327,6 +329,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_loader_v4_program",
         };
     }
@@ -346,6 +349,7 @@ pub mod test_only {
             upgrade_authority_address: Some(upgrade_authority::id()),
             feature_id: feature::id(),
             migration_target: super::CoreBpfMigrationTargetType::Builtin,
+            verified_build_hash: None,
             datapoint_name: "migrate_builtin_to_core_bpf_zk_elgamal_proof_program",
         };
     }
@@ -368,36 +372,32 @@ mod tests {
         );
         // Stake has a live migration config, so it has no test-only configs
         // to test here.
-        // Config has a live migration config, so it has no test-only configs
-        // to test here.
         assert_eq!(
-            &super::BUILTINS[4].core_bpf_migration_config,
+            &super::BUILTINS[3].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_deprecated_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[5].core_bpf_migration_config,
+            &super::BUILTINS[4].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[6].core_bpf_migration_config,
+            &super::BUILTINS[5].core_bpf_migration_config,
             &Some(super::test_only::solana_bpf_loader_upgradeable_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[7].core_bpf_migration_config,
+            &super::BUILTINS[6].core_bpf_migration_config,
             &Some(super::test_only::compute_budget_program::CONFIG)
         );
-        // Address Lookup Table has a live migration config, so it has no
-        // test-only configs to test here.
         assert_eq!(
-            &super::BUILTINS[9].core_bpf_migration_config,
+            &super::BUILTINS[7].core_bpf_migration_config,
             &Some(super::test_only::zk_token_proof_program::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[10].core_bpf_migration_config,
+            &super::BUILTINS[8].core_bpf_migration_config,
             &Some(super::test_only::loader_v4::CONFIG)
         );
         assert_eq!(
-            &super::BUILTINS[11].core_bpf_migration_config,
+            &super::BUILTINS[9].core_bpf_migration_config,
             &Some(super::test_only::zk_elgamal_proof_program::CONFIG)
         );
     }

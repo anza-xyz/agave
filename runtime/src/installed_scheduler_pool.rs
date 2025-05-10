@@ -22,14 +22,14 @@
 
 use {
     crate::bank::Bank,
+    assert_matches::assert_matches,
     log::*,
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        transaction::{Result, SanitizedTransaction, TransactionError},
-    },
     solana_timings::ExecuteTimings,
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         fmt::{self, Debug},
@@ -212,6 +212,17 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// `ResultWithTimings` internally until it's `wait_for_termination()`-ed to collect the result
     /// later.
     fn pause_for_recent_blockhash(&mut self);
+
+    /// Unpause a block production scheduler, immediately after it's taken from the scheduler pool.
+    ///
+    /// This is rather a special-purposed method. Such a scheduler is initially paused due to a
+    /// race condition between the poh thread and handler threads. So, it needs to be unpaused in
+    /// order to start processing transactions by calling this.
+    ///
+    /// # Panics
+    ///
+    /// Panics if called on a block verification scheduler.
+    fn unpause_after_taken(&self);
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", automock)]
@@ -252,7 +263,8 @@ impl SchedulingContext {
         }
     }
 
-    pub fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+    pub(crate) fn new_with_mode(mode: SchedulingMode, bank: Arc<Bank>) -> Self {
         Self {
             mode,
             bank: Some(bank),
@@ -540,6 +552,13 @@ impl BankWithScheduler {
         self.inner.drop_scheduler();
     }
 
+    pub fn unpause_new_block_production_scheduler(&self) {
+        if let SchedulerStatus::Active(scheduler) = &*self.inner.scheduler.read().unwrap() {
+            assert_matches!(scheduler.context().mode(), SchedulingMode::BlockProduction);
+            scheduler.unpause_after_taken();
+        }
+    }
+
     pub(crate) fn wait_for_paused_scheduler(bank: &Bank, scheduler: &InstalledSchedulerRwLock) {
         let maybe_result_with_timings = BankWithSchedulerInner::wait_for_scheduler_termination(
             bank,
@@ -777,9 +796,8 @@ mod tests {
             bank::test_utils::goto_end_of_slot_with_scheduler,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
         },
-        assert_matches::assert_matches,
         mockall::Sequence,
-        solana_sdk::system_transaction,
+        solana_system_transaction as system_transaction,
         std::sync::Mutex,
     };
 

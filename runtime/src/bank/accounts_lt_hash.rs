@@ -2,14 +2,12 @@ use {
     super::Bank,
     agave_feature_set as feature_set,
     rayon::prelude::*,
+    solana_account::{accounts_equal, AccountSharedData},
     solana_accounts_db::accounts_db::AccountsDb,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure},
-    solana_sdk::{
-        account::{accounts_equal, AccountSharedData},
-        pubkey::Pubkey,
-    },
-    solana_svm::transaction_processing_callback::AccountState,
+    solana_pubkey::Pubkey,
+    solana_svm_callback::AccountState,
     std::{
         ops::AddAssign,
         sync::atomic::{AtomicU64, Ordering},
@@ -406,26 +404,26 @@ mod tests {
         super::*,
         crate::{
             bank::tests::{new_bank_from_parent_with_bank_forks, new_from_parent_next_epoch},
-            genesis_utils,
             runtime_config::RuntimeConfig,
             snapshot_bank_utils,
             snapshot_config::SnapshotConfig,
             snapshot_utils,
         },
-        solana_accounts_db::accounts_db::{
-            AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+        solana_account::{ReadableAccount as _, WritableAccount as _},
+        solana_accounts_db::{
+            accounts_db::{AccountsDbConfig, DuplicatesLtHash, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+            accounts_index::{
+                AccountsIndexConfig, IndexLimitMb, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
+            },
         },
-        solana_sdk::{
-            account::{ReadableAccount as _, WritableAccount as _},
-            feature::{self, Feature},
-            fee_calculator::FeeRateGovernor,
-            genesis_config::{self, GenesisConfig},
-            native_token::LAMPORTS_PER_SOL,
-            pubkey::{self, Pubkey},
-            signature::Signer as _,
-            signer::keypair::Keypair,
-        },
-        std::{cmp, collections::HashMap, ops::RangeFull, str::FromStr as _, sync::Arc},
+        solana_feature_gate_interface::{self as feature, Feature},
+        solana_fee_calculator::FeeRateGovernor,
+        solana_genesis_config::{self, GenesisConfig},
+        solana_keypair::Keypair,
+        solana_native_token::LAMPORTS_PER_SOL,
+        solana_pubkey::{self as pubkey, Pubkey},
+        solana_signer::Signer as _,
+        std::{cmp, collections::HashMap, iter, ops::RangeFull, str::FromStr as _, sync::Arc},
         tempfile::TempDir,
         test_case::{test_case, test_matrix},
     };
@@ -452,9 +450,9 @@ mod tests {
     fn genesis_config_with(features: Features) -> (GenesisConfig, Keypair) {
         let mint_lamports = 123_456_789 * LAMPORTS_PER_SOL;
         match features {
-            Features::None => genesis_config::create_genesis_config(mint_lamports),
+            Features::None => solana_genesis_config::create_genesis_config(mint_lamports),
             Features::All => {
-                let info = genesis_utils::create_genesis_config(mint_lamports);
+                let info = crate::genesis_utils::create_genesis_config(mint_lamports);
                 (info.genesis_config, info.mint_keypair)
             }
         }
@@ -479,7 +477,7 @@ mod tests {
         let keypair5 = Keypair::new();
 
         let (mut genesis_config, mint_keypair) =
-            genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
+            solana_genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.rc
@@ -886,9 +884,9 @@ mod tests {
         // get all the lt hashes for each version of all accounts
         let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
         for storage in &storages {
-            storage.accounts.scan_accounts(|stored_account_meta| {
-                let pubkey = stored_account_meta.pubkey();
-                let account_lt_hash = AccountsDb::lt_hash_account(&stored_account_meta, pubkey);
+            storage.accounts.scan_accounts(|account| {
+                let pubkey = account.pubkey();
+                let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
                 stored_accounts_map
                     .entry(*pubkey)
                     .or_default()
@@ -926,10 +924,17 @@ mod tests {
 
     #[test_matrix(
         [Features::None, Features::All],
-        [Cli::Off, Cli::On]
+        [Cli::Off, Cli::On],
+        [IndexLimitMb::Minimal, IndexLimitMb::InMemOnly]
     )]
-    fn test_verify_accounts_lt_hash_at_startup(features: Features, verify_cli: Cli) {
-        let (genesis_config, mint_keypair) = genesis_config_with(features);
+    fn test_verify_accounts_lt_hash_at_startup(
+        features: Features,
+        verify_cli: Cli,
+        accounts_index_limit: IndexLimitMb,
+    ) {
+        let (mut genesis_config, mint_keypair) = genesis_config_with(features);
+        // This test requires zero fees so that we can easily transfer an account's entire balance.
+        genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         bank.rc
             .accounts
@@ -968,6 +973,41 @@ mod tests {
             bank.force_flush_accounts_cache();
         }
 
+        // Create a few more storages to exercise the zero lamport duplicates handling during
+        // generate_index(), which is used for the lattice-based accounts verification.
+        // There needs to be accounts that only have a single duplicate (i.e. there are only two
+        // versions of the accounts), and toggle between non-zero and zero lamports.
+        // One account will go zero -> non-zero, and the other will go non-zero -> zero.
+        let num_accounts = 2;
+        let accounts: Vec<_> = iter::repeat_with(Keypair::new).take(num_accounts).collect();
+        for i in 0..num_accounts {
+            let slot = bank.slot() + 1;
+            bank =
+                new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
+            bank.register_unique_recent_blockhash_for_test();
+
+            // transfer into the accounts so they start with a non-zero balance
+            for account in &accounts {
+                bank.transfer(amount, &mint_keypair, &account.pubkey())
+                    .unwrap();
+                assert_ne!(bank.get_balance(&account.pubkey()), 0);
+            }
+
+            // then transfer *out* all the lamports from one of 'em
+            bank.transfer(
+                bank.get_balance(&accounts[i].pubkey()),
+                &accounts[i],
+                &pubkey::new_rand(),
+            )
+            .unwrap();
+            assert_eq!(bank.get_balance(&accounts[i].pubkey()), 0);
+
+            // flush the write cache to disk to ensure the storages match the accounts written here
+            bank.fill_bank_with_ticks_for_tests();
+            bank.squash();
+            bank.force_flush_accounts_cache();
+        }
+
         // verification happens at startup, so mimic the behavior by loading from a snapshot
         let snapshot_config = SnapshotConfig::default();
         let bank_snapshots_dir = TempDir::new().unwrap();
@@ -982,11 +1022,16 @@ mod tests {
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let accounts_index_config = AccountsIndexConfig {
+            index_limit_mb: accounts_index_limit,
+            ..ACCOUNTS_INDEX_CONFIG_FOR_TESTING
+        };
         let accounts_db_config = AccountsDbConfig {
             enable_experimental_accumulator_hash: match verify_cli {
                 Cli::Off => false,
                 Cli::On => true,
             },
+            index: Some(accounts_index_config),
             ..ACCOUNTS_DB_CONFIG_FOR_TESTING
         };
         let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(

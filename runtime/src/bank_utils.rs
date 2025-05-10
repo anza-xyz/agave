@@ -12,7 +12,8 @@ use {
         bank::Bank,
         genesis_utils::{self, GenesisConfigInfo, ValidatorVoteKeypairs},
     },
-    solana_sdk::{pubkey::Pubkey, signature::Signer},
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
 };
 
 #[cfg(feature = "dev-context-only-utils")]

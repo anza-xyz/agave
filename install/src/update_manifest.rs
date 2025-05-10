@@ -1,6 +1,6 @@
 use {
     serde_derive::{Deserialize, Serialize},
-    solana_config_program::ConfigState,
+    solana_config_program_client::instructions_bincode::ConfigState,
     solana_hash::Hash,
     solana_keypair::signable::Signable,
     solana_pubkey::Pubkey,
@@ -49,7 +49,7 @@ impl SignedUpdateManifest {
         let mut manifest: SignedUpdateManifest = bincode::deserialize(input)?;
         manifest.account_pubkey = *account_pubkey;
         if !manifest.verify() {
-            Err(io::Error::new(io::ErrorKind::Other, "Manifest failed to verify").into())
+            Err(io::Error::other("Manifest failed to verify").into())
         } else {
             Ok(manifest)
         }

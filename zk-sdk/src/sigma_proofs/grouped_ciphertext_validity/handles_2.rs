@@ -147,6 +147,9 @@ impl GroupedCiphertext2HandlesValidityProof {
         transcript.append_point(b"Y_2", &self.Y_2);
 
         let c = transcript.challenge_scalar(b"c");
+
+        transcript.append_scalar(b"z_r", &self.z_r);
+        transcript.append_scalar(b"z_x", &self.z_x);
         let w = transcript.challenge_scalar(b"w");
         let ww = &w * &w;
 

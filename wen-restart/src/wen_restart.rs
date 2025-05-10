@@ -41,7 +41,6 @@ use {
         snapshot_bank_utils::{
             bank_to_full_snapshot_archive, bank_to_incremental_snapshot_archive,
         },
-        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         snapshot_utils::{
             get_highest_full_snapshot_archive_slot, get_highest_incremental_snapshot_archive_slot,
@@ -89,6 +88,7 @@ pub enum WenRestartError {
     Exiting,
     FutureSnapshotExists(Slot, Slot, String),
     GenerateSnapshotWhenOneExists(Slot, String),
+    GenerateSnapshotWhenDisabled,
     HeaviestForkOnLeaderOnDifferentFork(Slot, Slot),
     MalformedLastVotedForkSlotsProtobuf(Option<LastVotedForkSlotsRecord>),
     MalformedProgress(RestartState, String),
@@ -148,6 +148,9 @@ impl std::fmt::Display for WenRestartError {
                     f,
                     "Generate snapshot when one exists for slot: {slot} in directory: {directory}",
                 )
+            }
+            WenRestartError::GenerateSnapshotWhenDisabled => {
+                write!(f, "Generate snapshot when snapshots are disabled")
             }
             WenRestartError::HeaviestForkOnLeaderOnDifferentFork(
                 coordinator_heaviest_slot,
@@ -473,8 +476,7 @@ fn check_slot_smaller_than_intended_snapshot_slot(
 // when we restart from the snapshot bank on my_heaviest_fork_slot will become root.
 pub(crate) fn generate_snapshot(
     bank_forks: Arc<RwLock<BankForks>>,
-    snapshot_config: &SnapshotConfig,
-    snapshot_controller: Option<&SnapshotController>,
+    snapshot_controller: &SnapshotController,
     abs_status: &AbsStatus,
     genesis_config_hash: Hash,
     my_heaviest_fork_slot: Slot,
@@ -502,9 +504,7 @@ pub(crate) fn generate_snapshot(
         let parents = new_root_bank.parents();
         banks.extend(parents.iter());
 
-        if let Some(snapshot_controller) = snapshot_controller {
-            snapshot_controller.send_eah_request_if_needed(my_heaviest_fork_slot, &banks)?;
-        }
+        snapshot_controller.send_eah_request_if_needed(my_heaviest_fork_slot, &banks)?;
     }
 
     // There can't be more than one EAH calculation in progress. If new_root is generated
@@ -534,6 +534,7 @@ pub(crate) fn generate_snapshot(
         .verify_accounts_hash_in_bg
         .join_background_thread();
 
+    let snapshot_config = snapshot_controller.snapshot_config();
     let mut directory = &snapshot_config.full_snapshot_archives_dir;
     // Calculate the full_snapshot_slot an incremental snapshot should depend on. If the
     // validator is configured not the generate snapshot, it will only have the initial
@@ -994,7 +995,6 @@ pub struct WenRestartConfig {
     pub bank_forks: Arc<RwLock<BankForks>>,
     pub wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
     pub wait_for_supermajority_threshold_percent: u64,
-    pub snapshot_config: SnapshotConfig,
     pub snapshot_controller: Option<Arc<SnapshotController>>,
     pub abs_status: AbsStatus,
     pub genesis_config_hash: Hash,
@@ -1104,14 +1104,19 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
             } => {
                 let snapshot_record = match my_snapshot {
                     Some(record) => record,
-                    None => generate_snapshot(
-                        config.bank_forks.clone(),
-                        &config.snapshot_config,
-                        config.snapshot_controller.as_deref(),
-                        &config.abs_status,
-                        config.genesis_config_hash,
-                        my_heaviest_fork_slot,
-                    )?,
+                    None => match &config.snapshot_controller {
+                        Some(snapshot_controller) => generate_snapshot(
+                            config.bank_forks.clone(),
+                            snapshot_controller,
+                            &config.abs_status,
+                            config.genesis_config_hash,
+                            my_heaviest_fork_slot,
+                        ),
+                        None => {
+                            // Only tests don't have a snapshot controller
+                            Err(WenRestartError::GenerateSnapshotWhenDisabled.into())
+                        }
+                    }?,
                 };
                 WenRestartProgressInternalState::GenerateSnapshot {
                     my_heaviest_fork_slot,
@@ -1427,6 +1432,7 @@ pub(crate) fn write_wen_restart_records(
 mod tests {
     use {
         crate::wen_restart::{tests::wen_restart_proto::LastVotedForkSlotsAggregateFinal, *},
+        crossbeam_channel::unbounded,
         solana_accounts_db::hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         solana_entry::entry::create_ticks,
         solana_gossip::{
@@ -1455,7 +1461,7 @@ mod tests {
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
             snapshot_bank_utils::bank_to_full_snapshot_archive,
-            snapshot_config::SnapshotUsage,
+            snapshot_config::{SnapshotConfig, SnapshotUsage},
             snapshot_hash::SnapshotHash,
             snapshot_utils::build_incremental_snapshot_archive_path,
         },
@@ -1709,7 +1715,6 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config: SnapshotConfig::default(),
             snapshot_controller: None,
             abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
@@ -1767,6 +1772,9 @@ mod tests {
         .is_ok());
 
         let exit = Arc::new(AtomicBool::new(false));
+        let (abs_request_sender, _abs_request_receiver) = unbounded();
+        let snapshot_controller =
+            SnapshotController::new(abs_request_sender, snapshot_config, last_vote_slot);
         let wen_restart_config = WenRestartConfig {
             wen_restart_path: test_state.wen_restart_proto_path.clone(),
             wen_restart_coordinator: test_state.wen_restart_coordinator,
@@ -1776,8 +1784,7 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: wen_restart_repair_slots.clone(),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config,
-            snapshot_controller: None,
+            snapshot_controller: Some(Arc::new(snapshot_controller)),
             abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
             exit: exit.clone(),
@@ -2127,7 +2134,6 @@ mod tests {
                 bank_forks: test_state.bank_forks,
                 wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
                 wait_for_supermajority_threshold_percent: 80,
-                snapshot_config: SnapshotConfig::default(),
                 snapshot_controller: None,
                 abs_status: AbsStatus::new_for_tests(),
                 genesis_config_hash: test_state.genesis_config_hash,
@@ -3248,10 +3254,13 @@ mod tests {
         .unwrap();
         // We don't have any full snapshot, so if we call generate_snapshot() on the old
         // root bank now, it should generate a full snapshot.
+        let (abs_request_sender, _abs_request_receiver) = unbounded();
+        let snapshot_controller =
+            SnapshotController::new(abs_request_sender.clone(), snapshot_config, new_root_slot);
+        let snapshot_config = snapshot_controller.snapshot_config();
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
-            &snapshot_config,
-            None, // snapshot_controller
+            &snapshot_controller,
             &AbsStatus::new_for_tests(),
             test_state.genesis_config_hash,
             old_root_slot,
@@ -3266,8 +3275,7 @@ mod tests {
         ));
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
-            &snapshot_config,
-            None, // snapshot_controller
+            &snapshot_controller,
             &AbsStatus::new_for_tests(),
             test_state.genesis_config_hash,
             new_root_slot,
@@ -3287,7 +3295,7 @@ mod tests {
             generated_record
                 .path
                 .split('-')
-                .last()
+                .next_back()
                 .unwrap()
                 .split('.')
                 .next()
@@ -3316,8 +3324,7 @@ mod tests {
         assert_eq!(
             generate_snapshot(
                 test_state.bank_forks.clone(),
-                &snapshot_config,
-                None, // snapshot_controller
+                &snapshot_controller,
                 &AbsStatus::new_for_tests(),
                 test_state.genesis_config_hash,
                 old_root_slot,
@@ -3338,8 +3345,7 @@ mod tests {
         assert_eq!(
             generate_snapshot(
                 test_state.bank_forks.clone(),
-                &snapshot_config,
-                None, // snapshot_controller
+                &snapshot_controller,
                 &AbsStatus::new_for_tests(),
                 test_state.genesis_config_hash,
                 older_slot,
@@ -3361,8 +3367,7 @@ mod tests {
         assert_eq!(
             generate_snapshot(
                 test_state.bank_forks.clone(),
-                &snapshot_config,
-                None, // snapshot_controller
+                &snapshot_controller,
                 &AbsStatus::new_for_tests(),
                 test_state.genesis_config_hash,
                 empty_slot,
@@ -3382,10 +3387,12 @@ mod tests {
             usage: SnapshotUsage::LoadOnly,
             ..Default::default()
         };
+        let snapshot_controller =
+            SnapshotController::new(abs_request_sender.clone(), snapshot_config, new_root_slot);
+        let snapshot_config = snapshot_controller.snapshot_config();
         let generated_record = generate_snapshot(
             test_state.bank_forks.clone(),
-            &snapshot_config,
-            None, // snapshot_controller
+            &snapshot_controller,
             &AbsStatus::new_for_tests(),
             test_state.genesis_config_hash,
             test_state.last_voted_fork_slots[0],
@@ -3415,7 +3422,6 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config: SnapshotConfig::default(),
             snapshot_controller: None,
             abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,
@@ -3662,7 +3668,6 @@ mod tests {
             bank_forks: test_state.bank_forks.clone(),
             wen_restart_repair_slots: Some(Arc::new(RwLock::new(Vec::new()))),
             wait_for_supermajority_threshold_percent: 80,
-            snapshot_config: SnapshotConfig::default(),
             snapshot_controller: None,
             abs_status: AbsStatus::new_for_tests(),
             genesis_config_hash: test_state.genesis_config_hash,

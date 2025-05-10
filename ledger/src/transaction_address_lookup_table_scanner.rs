@@ -2,11 +2,11 @@ use {
     agave_reserved_account_keys::ReservedAccountKeys,
     bincode::deserialize,
     lazy_static::lazy_static,
-    solana_sdk::{
-        address_lookup_table::{self, instruction::ProgramInstruction},
-        pubkey::Pubkey,
-        transaction::SanitizedVersionedTransaction,
+    solana_address_lookup_table_interface::{
+        self as address_lookup_table, instruction::ProgramInstruction,
     },
+    solana_pubkey::Pubkey,
+    solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::collections::HashSet,
 };
 

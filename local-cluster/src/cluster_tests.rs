@@ -8,8 +8,10 @@ use {
     rand::{thread_rng, Rng},
     rayon::{prelude::*, ThreadPool},
     solana_client::connection_cache::ConnectionCache,
-    solana_core::consensus::VOTE_THRESHOLD_DEPTH,
+    solana_clock::{self as clock, Slot},
+    solana_commitment_config::CommitmentConfig,
     solana_entry::entry::{self, Entry, EntrySlice},
+    solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
         cluster_info::{self, ClusterInfo},
         contact_info::ContactInfo,
@@ -17,26 +19,22 @@ use {
         crds_data::{self, CrdsData},
         crds_value::{CrdsValue, CrdsValueLabel},
         gossip_error::GossipError,
-        gossip_service::{self, discover_cluster, GossipService},
+        gossip_service::{self, discover_validators, GossipService},
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::blockstore::Blockstore,
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        clock::{self, Slot},
-        commitment_config::CommitmentConfig,
-        epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
-        exit::Exit,
-        hash::Hash,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        system_transaction,
-        timing::timestamp,
-        transaction::Transaction,
-        transport::TransportError,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_transaction as system_transaction,
+    solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig, TpuSenderError},
+    solana_transaction::Transaction,
+    solana_transaction_error::TransportError,
+    solana_validator_exit::Exit,
     solana_vote::vote_transaction::{self, VoteTransaction},
     solana_vote_program::vote_state::TowerSync,
     std::{
@@ -68,9 +66,10 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
     socket_addr_space: SocketAddrSpace,
     connection_cache: &Arc<ConnectionCache>,
 ) {
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &entry_point_info.gossip().unwrap(),
         nodes,
+        entry_point_info.shred_version(),
         socket_addr_space,
     )
     .unwrap();
@@ -96,13 +95,11 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
             .unwrap();
         let mut transaction =
             system_transaction::transfer(funding_keypair, &random_keypair.pubkey(), 1, blockhash);
-        let confs = VOTE_THRESHOLD_DEPTH + 1;
         LocalCluster::send_transaction_with_retries(
             &client,
             &[funding_keypair],
             &mut transaction,
             10,
-            confs,
         )
         .unwrap();
         for validator in &cluster_nodes {
@@ -110,9 +107,8 @@ pub fn spend_and_verify_all_nodes<S: ::std::hash::BuildHasher + Sync + Send>(
                 continue;
             }
             let client = new_tpu_quic_client(ingress_node, connection_cache.clone()).unwrap();
-            client
-                .rpc_client()
-                .poll_for_signature_confirmation(&transaction.signatures[0], confs)
+            LocalCluster::poll_for_processed_transaction(&client, &transaction)
+                .unwrap()
                 .unwrap();
         }
     });
@@ -170,7 +166,6 @@ pub fn send_many_transactions(
             &[funding_keypair],
             &mut transaction,
             5,
-            0,
         )
         .unwrap();
 
@@ -239,9 +234,10 @@ pub fn kill_entry_and_spend_and_verify_rest(
     info!("kill_entry_and_spend_and_verify_rest...");
 
     // Ensure all nodes have spun up and are funded.
-    let cluster_nodes = discover_cluster(
+    let cluster_nodes = discover_validators(
         &entry_point_info.gossip().unwrap(),
         nodes,
+        entry_point_info.shred_version(),
         socket_addr_space,
     )
     .unwrap();
@@ -303,24 +299,16 @@ pub fn kill_entry_and_spend_and_verify_rest(
                 1,
                 blockhash,
             );
-            let confs = VOTE_THRESHOLD_DEPTH + 1;
-            let sig = {
-                let sig = LocalCluster::send_transaction_with_retries(
-                    &client,
-                    &[funding_keypair],
-                    &mut transaction,
-                    5,
-                    confs,
-                );
-                match sig {
-                    Err(e) => {
-                        result = Err(e);
-                        continue;
-                    }
 
-                    Ok(sig) => sig,
-                }
-            };
+            if let Err(err) = LocalCluster::send_transaction_with_retries(
+                &client,
+                &[funding_keypair],
+                &mut transaction,
+                5,
+            ) {
+                result = Err(err);
+                continue;
+            }
 
             // Ensure all non-entry point nodes are able to confirm the
             // transaction.
@@ -329,8 +317,7 @@ pub fn kill_entry_and_spend_and_verify_rest(
                 entry_point_info,
                 &cluster_nodes,
                 connection_cache,
-                &sig,
-                confs,
+                &transaction,
             ) {
                 Err(e) => {
                     info!("poll_all_nodes_for_signature() failed {:?}", e);
@@ -501,17 +488,14 @@ fn poll_all_nodes_for_signature(
     entry_point_info: &ContactInfo,
     cluster_nodes: &[ContactInfo],
     connection_cache: &Arc<ConnectionCache>,
-    sig: &Signature,
-    confs: usize,
+    transaction: &Transaction,
 ) -> Result<(), TransportError> {
     for validator in cluster_nodes {
         if validator.pubkey() == entry_point_info.pubkey() {
             continue;
         }
         let client = new_tpu_quic_client(validator, connection_cache.clone()).unwrap();
-        client
-            .rpc_client()
-            .poll_for_signature_confirmation(sig, confs)?;
+        LocalCluster::poll_for_processed_transaction(&client, transaction)?.unwrap();
     }
 
     Ok(())
@@ -549,6 +533,7 @@ pub fn start_gossip_voter(
     num_expected_peers: usize,
     refresh_ms: u64,
     max_votes_to_refresh: usize,
+    shred_version: u16,
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
     let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_gossip_node(
@@ -558,7 +543,7 @@ pub fn start_gossip_voter(
         Some(gossip_addr),
         exit.clone(),
         None,
-        0,
+        shred_version,
         false,
         SocketAddrSpace::Unspecified,
     );

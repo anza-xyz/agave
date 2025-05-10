@@ -172,11 +172,14 @@ fn main() {
             exit(1);
         })
     });
-    let bind_address = matches.value_of("bind_address").map(|bind_address| {
-        solana_net_utils::parse_host(bind_address).unwrap_or_else(|err| {
-            eprintln!("Failed to parse --bind-address: {err}");
-            exit(1);
-        })
+    let bind_address = solana_net_utils::parse_host(
+        matches
+            .value_of("bind_address")
+            .expect("Bind address has default value"),
+    )
+    .unwrap_or_else(|err| {
+        eprintln!("Failed to parse --bind-address: {err}");
+        exit(1);
     });
     let compute_unit_limit = value_t!(matches, "compute_unit_limit", u64).ok();
 
@@ -552,9 +555,7 @@ fn main() {
         genesis.port_range(dynamic_port_range);
     }
 
-    if let Some(bind_address) = bind_address {
-        genesis.bind_ip_addr(bind_address);
-    }
+    genesis.bind_ip_addr(bind_address);
 
     if matches.is_present("geyser_plugin_config") {
         genesis.geyser_plugin_config_files = Some(

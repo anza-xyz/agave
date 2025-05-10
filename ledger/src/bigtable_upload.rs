@@ -2,8 +2,8 @@ use {
     crate::blockstore::Blockstore,
     crossbeam_channel::{bounded, unbounded},
     log::*,
+    solana_clock::Slot,
     solana_measure::measure::Measure,
-    solana_sdk::clock::Slot,
     std::{
         cmp::{max, min},
         collections::HashSet,

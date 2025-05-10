@@ -15,7 +15,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
-solana-logger = { workspace = true }
+solana-logger = "=2.3.1"
 
 [[bin]]
 name = "solana-net-shaper"

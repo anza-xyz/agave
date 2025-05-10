@@ -12,5 +12,6 @@
 /svm-transaction/ @anza-xyz/svm
 /svm/ @anza-xyz/svm
 /svm/examples/Cargo.lock
+/svm-callback/ @anza-xyz/svm
 /transaction-context/ @anza-xyz/svm
 /transaction-view/ @anza-xyz/tx-metadata

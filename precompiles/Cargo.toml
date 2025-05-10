@@ -12,7 +12,6 @@ edition = { workspace = true }
 [dependencies]
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
-bytemuck = { workspace = true }
 digest = { workspace = true }
 ed25519-dalek = { workspace = true }
 lazy_static = { workspace = true }
@@ -28,6 +27,7 @@ solana-secp256k1-program = { workspace = true, features = ["serde"] }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 
 [dev-dependencies]
+bytemuck = { workspace = true }
 hex = { workspace = true }
 rand0-7 = { workspace = true }
 solana-instruction = { workspace = true }

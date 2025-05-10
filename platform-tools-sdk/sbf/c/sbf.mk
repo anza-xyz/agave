@@ -101,6 +101,7 @@ SBF_LLD_FLAGS := \
   $(LOCAL_PATH)sbf.ld \
   --entry entrypoint \
   -L $(STD_LIB_DIRS) \
+  -z max-page-size=4096 \
   -lc \
 
 OBJ_DUMP_FLAGS := \

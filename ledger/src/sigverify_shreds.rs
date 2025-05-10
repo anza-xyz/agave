@@ -3,7 +3,8 @@ use {
     crate::shred::{self, SignedData, SIZE_OF_MERKLE_ROOT},
     itertools::{izip, Itertools},
     rayon::{prelude::*, ThreadPool},
-    sha2::{Digest, Sha512},
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
         cuda_runtime::PinnedVec,
@@ -12,21 +13,25 @@ use {
         recycler_cache::RecyclerCache,
         sigverify::{self, count_packets_in_batches, TxOffset},
     },
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-    },
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     std::{
         collections::HashMap,
-        iter::repeat,
+        iter::{self, repeat},
         mem::size_of,
         ops::Range,
-        sync::{Arc, RwLock},
+        sync::RwLock,
     },
 };
+#[cfg(test)]
+use {
+    sha2::{Digest, Sha512},
+    solana_keypair::Keypair,
+    solana_signer::Signer,
+    std::sync::Arc,
+};
 
+#[cfg(test)]
 const SIGN_SHRED_GPU_MIN: usize = 256;
 
 pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
@@ -325,7 +330,9 @@ pub fn verify_shreds_gpu(
     trace!("out buf {:?}", out);
 
     // Each shred has exactly one signature.
-    let v_sig_lens = batches.iter().map(|batch| repeat(1u32).take(batch.len()));
+    let v_sig_lens = batches
+        .iter()
+        .map(|batch| iter::repeat_n(1u32, batch.len()));
     let mut rvs: Vec<_> = batches.iter().map(|batch| vec![0u8; batch.len()]).collect();
     sigverify::copy_return_values(v_sig_lens, &out, &mut rvs);
 
@@ -333,6 +340,7 @@ pub fn verify_shreds_gpu(
     rvs
 }
 
+#[cfg(test)]
 fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     let sig = shred::layout::get_signature_range();
     let msg = shred::layout::get_shred(packet)
@@ -347,7 +355,8 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut Packet) {
     packet.buffer_mut()[sig].copy_from_slice(signature.as_ref());
 }
 
-pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
+#[cfg(test)]
+fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
     debug!("CPU SHRED ECDSA for {}", packet_count);
     thread_pool.install(|| {
@@ -360,7 +369,8 @@ pub fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mu
     inc_new_counter_debug!("ed25519_shred_sign_cpu", packet_count);
 }
 
-pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> PinnedVec<u8> {
+#[cfg(test)]
+fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> PinnedVec<u8> {
     let mut vec = cache.buffer().allocate("pinned_keypair");
     let pubkey = keypair.pubkey().to_bytes();
     let secret = keypair.secret().to_bytes();
@@ -377,7 +387,8 @@ pub fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) 
     vec
 }
 
-pub fn sign_shreds_gpu(
+#[cfg(test)]
+fn sign_shreds_gpu(
     thread_pool: &ThreadPool,
     keypair: &Keypair,
     pinned_keypair: &Option<Arc<PinnedVec<u8>>>,
@@ -493,13 +504,11 @@ mod tests {
         rand::{seq::SliceRandom, Rng},
         rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
-        solana_sdk::{
-            hash,
-            hash::Hash,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::Transaction,
-        },
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
         std::iter::{once, repeat_with},
         test_case::test_case,
     };
@@ -750,7 +759,7 @@ mod tests {
 
     fn make_transaction<R: Rng>(rng: &mut R) -> Transaction {
         let block = rng.gen::<[u8; 32]>();
-        let recent_blockhash = hash::hashv(&[&block]);
+        let recent_blockhash = solana_sha256_hasher::hashv(&[&block]);
         system_transaction::transfer(
             &Keypair::new(),       // from
             &Pubkey::new_unique(), // to
@@ -770,7 +779,7 @@ mod tests {
     }
 
     fn make_entries<R: Rng>(rng: &mut R, num_entries: usize) -> Vec<Entry> {
-        let prev_hash = hash::hashv(&[&rng.gen::<[u8; 32]>()]);
+        let prev_hash = solana_sha256_hasher::hashv(&[&rng.gen::<[u8; 32]>()]);
         let entry = make_entry(rng, &prev_hash);
         std::iter::successors(Some(entry), |entry| Some(make_entry(rng, &entry.hash)))
             .take(num_entries)

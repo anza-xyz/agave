@@ -13,18 +13,6 @@ pub use self::{
 #[allow(deprecated)]
 use {
     crate::syscalls::mem_ops::is_nonoverlapping,
-    agave_feature_set::{
-        self as feature_set, abort_on_invalid_curve, blake3_syscall_enabled,
-        bpf_account_data_direct_mapping, curve25519_syscall_enabled,
-        disable_deploy_of_alloc_free_syscall, disable_fees_sysvar, disable_sbpf_v0_execution,
-        enable_alt_bn128_compression_syscall, enable_alt_bn128_syscall, enable_big_mod_exp_syscall,
-        enable_get_epoch_stake_syscall, enable_poseidon_syscall,
-        enable_sbpf_v1_deployment_and_execution, enable_sbpf_v2_deployment_and_execution,
-        enable_sbpf_v3_deployment_and_execution, get_sysvar_syscall_enabled,
-        last_restart_slot_sysvar, reenable_sbpf_v0_execution,
-        remaining_compute_units_syscall_enabled, FeatureSet,
-    },
-    agave_precompiles::is_precompile,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -58,6 +46,7 @@ use {
         Secp256k1RecoverError, SECP256K1_PUBLIC_KEY_LENGTH, SECP256K1_SIGNATURE_LENGTH,
     },
     solana_sha256_hasher::Hasher,
+    solana_svm_feature_set::SVMFeatureSet,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
@@ -333,40 +322,36 @@ pub(crate) fn morph_into_deployment_environment_v1(
 }
 
 pub fn create_program_runtime_environment_v1<'a>(
-    feature_set: &FeatureSet,
+    feature_set: &SVMFeatureSet,
     compute_budget: &SVMTransactionExecutionBudget,
     reject_deployment_of_broken_elfs: bool,
     debugging_features: bool,
 ) -> Result<BuiltinProgram<InvokeContext<'a>>, Error> {
-    let enable_alt_bn128_syscall = feature_set.is_active(&enable_alt_bn128_syscall::id());
-    let enable_alt_bn128_compression_syscall =
-        feature_set.is_active(&enable_alt_bn128_compression_syscall::id());
-    let enable_big_mod_exp_syscall = feature_set.is_active(&enable_big_mod_exp_syscall::id());
-    let blake3_syscall_enabled = feature_set.is_active(&blake3_syscall_enabled::id());
-    let curve25519_syscall_enabled = feature_set.is_active(&curve25519_syscall_enabled::id());
-    let disable_fees_sysvar = feature_set.is_active(&disable_fees_sysvar::id());
-    let disable_deploy_of_alloc_free_syscall = reject_deployment_of_broken_elfs
-        && feature_set.is_active(&disable_deploy_of_alloc_free_syscall::id());
-    let last_restart_slot_syscall_enabled = feature_set.is_active(&last_restart_slot_sysvar::id());
-    let enable_poseidon_syscall = feature_set.is_active(&enable_poseidon_syscall::id());
+    let enable_alt_bn128_syscall = feature_set.enable_alt_bn128_syscall;
+    let enable_alt_bn128_compression_syscall = feature_set.enable_alt_bn128_compression_syscall;
+    let enable_big_mod_exp_syscall = feature_set.enable_big_mod_exp_syscall;
+    let blake3_syscall_enabled = feature_set.blake3_syscall_enabled;
+    let curve25519_syscall_enabled = feature_set.curve25519_syscall_enabled;
+    let disable_fees_sysvar = feature_set.disable_fees_sysvar;
+    let disable_deploy_of_alloc_free_syscall =
+        reject_deployment_of_broken_elfs && feature_set.disable_deploy_of_alloc_free_syscall;
+    let last_restart_slot_syscall_enabled = feature_set.last_restart_slot_sysvar;
+    let enable_poseidon_syscall = feature_set.enable_poseidon_syscall;
     let remaining_compute_units_syscall_enabled =
-        feature_set.is_active(&remaining_compute_units_syscall_enabled::id());
-    let get_sysvar_syscall_enabled = feature_set.is_active(&get_sysvar_syscall_enabled::id());
-    let enable_get_epoch_stake_syscall =
-        feature_set.is_active(&enable_get_epoch_stake_syscall::id());
-    let min_sbpf_version = if !feature_set.is_active(&disable_sbpf_v0_execution::id())
-        || feature_set.is_active(&reenable_sbpf_v0_execution::id())
-    {
-        SBPFVersion::V0
-    } else {
+        feature_set.remaining_compute_units_syscall_enabled;
+    let get_sysvar_syscall_enabled = feature_set.get_sysvar_syscall_enabled;
+    let enable_get_epoch_stake_syscall = feature_set.enable_get_epoch_stake_syscall;
+    let min_sbpf_version =
+        if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
+            SBPFVersion::V0
+        } else {
+            SBPFVersion::V3
+        };
+    let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
         SBPFVersion::V3
-    };
-    let max_sbpf_version = if feature_set.is_active(&enable_sbpf_v3_deployment_and_execution::id())
-    {
-        SBPFVersion::V3
-    } else if feature_set.is_active(&enable_sbpf_v2_deployment_and_execution::id()) {
+    } else if feature_set.enable_sbpf_v2_deployment_and_execution {
         SBPFVersion::V2
-    } else if feature_set.is_active(&enable_sbpf_v1_deployment_and_execution::id()) {
+    } else if feature_set.enable_sbpf_v1_deployment_and_execution {
         SBPFVersion::V1
     } else {
         SBPFVersion::V0
@@ -377,7 +362,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
+        enable_stack_frame_gaps: !feature_set.bpf_account_data_direct_mapping,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -387,7 +372,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: min_sbpf_version..=max_sbpf_version,
         optimize_rodata: false,
-        aligned_memory_mapping: !feature_set.is_active(&bpf_account_data_direct_mapping::id()),
+        aligned_memory_mapping: !feature_set.bpf_account_data_direct_mapping,
         // Warning, do not use `Config::default()` so that configuration here is explicit.
     };
     let mut result = BuiltinProgram::new_loader(config);
@@ -1092,10 +1077,7 @@ declare_builtin_function!(
                 }
             }
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1207,10 +1189,7 @@ declare_builtin_function!(
                     }
                 }
                 _ => {
-                    if invoke_context
-                        .get_feature_set()
-                        .is_active(&abort_on_invalid_curve::id())
-                    {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
                         Ok(1)
@@ -1306,10 +1285,7 @@ declare_builtin_function!(
                     }
                 }
                 _ => {
-                    if invoke_context
-                        .get_feature_set()
-                        .is_active(&abort_on_invalid_curve::id())
-                    {
+                    if invoke_context.get_feature_set().abort_on_invalid_curve {
                         Err(SyscallError::InvalidAttribute.into())
                     } else {
                         Ok(1)
@@ -1318,10 +1294,7 @@ declare_builtin_function!(
             },
 
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1431,10 +1404,7 @@ declare_builtin_function!(
             }
 
             _ => {
-                if invoke_context
-                    .get_feature_set()
-                    .is_active(&abort_on_invalid_curve::id())
-                {
+                if invoke_context.get_feature_set().abort_on_invalid_curve {
                     Err(SyscallError::InvalidAttribute.into())
                 } else {
                     Ok(1)
@@ -1779,7 +1749,7 @@ declare_builtin_function!(
             ALT_BN128_MUL => {
                 let fix_alt_bn128_multiplication_input_length = invoke_context
                     .get_feature_set()
-                    .is_active(&feature_set::fix_alt_bn128_multiplication_input_length::id());
+                    .fix_alt_bn128_multiplication_input_length;
                 if fix_alt_bn128_multiplication_input_length {
                     alt_bn128_multiplication
                 } else {
@@ -1794,7 +1764,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes;
 
         let result_point = match calculation(input) {
             Ok(result_point) => result_point,
@@ -1947,7 +1917,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes;
 
         let hash = match poseidon::hashv(parameters, endianness, inputs.as_slice()) {
             Ok(hash) => hash,
@@ -2042,7 +2012,7 @@ declare_builtin_function!(
 
         let simplify_alt_bn128_syscall_error_codes = invoke_context
             .get_feature_set()
-            .is_active(&feature_set::simplify_alt_bn128_syscall_error_codes::id());
+            .simplify_alt_bn128_syscall_error_codes;
 
         match op {
             ALT_BN128_G1_COMPRESS => {
@@ -2200,7 +2170,7 @@ declare_builtin_function!(
             //     - Compute budget is exceeded.
             // - Otherwise, the syscall returns a `u64` integer representing the total active
             //   stake on the cluster for the current epoch.
-            Ok(invoke_context.get_epoch_total_stake())
+            Ok(invoke_context.get_epoch_stake())
         } else {
             // As specified by SIMD-0133: If `var_addr` is _not_ a null pointer:
             //
@@ -2232,7 +2202,7 @@ declare_builtin_function!(
             let check_aligned = invoke_context.get_check_aligned();
             let vote_address = translate_type::<Pubkey>(memory_mapping, var_addr, check_aligned)?;
 
-            Ok(invoke_context.get_epoch_vote_account_stake(vote_address))
+            Ok(invoke_context.get_epoch_stake_for_vote_account(vote_address))
         }
     }
 );
@@ -2727,7 +2697,6 @@ mod tests {
         // many small unaligned allocs
         {
             prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            invoke_context.mock_set_feature_set(Arc::new(FeatureSet::default()));
             mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
             let mut vm = vm.unwrap();
             let invoke_context = &mut vm.context_object_pointer;
@@ -4912,7 +4881,16 @@ mod tests {
         let mut compute_budget = SVMTransactionExecutionBudget::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
-        let expected_total_stake = 200_000_000_000_000u64;
+        const EXPECTED_TOTAL_STAKE: u64 = 200_000_000_000_000;
+
+        struct MockCallback {}
+        impl InvokeContextCallback for MockCallback {
+            fn get_epoch_stake(&self) -> u64 {
+                EXPECTED_TOTAL_STAKE
+            }
+            // Vote accounts are not needed for this test.
+        }
+
         // Compute units, as specified by SIMD-0133.
         // cu = syscall_base_cost
         let expected_cus = compute_cost.syscall_base_cost;
@@ -4922,12 +4900,12 @@ mod tests {
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let feature_set = SVMFeatureSet::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            expected_total_stake,
-            &|_| 0, // Vote accounts are not needed for this test.
-            Arc::<FeatureSet>::default(),
+            &MockCallback {},
+            &feature_set,
             &sysvar_cache,
         );
 
@@ -4946,7 +4924,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result, expected_total_stake);
+        assert_eq!(result, EXPECTED_TOTAL_STAKE);
     }
 
     #[test]
@@ -4956,7 +4934,21 @@ mod tests {
         let compute_cost = SVMTransactionExecutionCost::default();
         let sysvar_cache = Arc::<SysvarCache>::default();
 
-        let expected_epoch_stake = 55_000_000_000u64;
+        const TARGET_VOTE_ADDRESS: Pubkey = Pubkey::new_from_array([2; 32]);
+        const EXPECTED_EPOCH_STAKE: u64 = 55_000_000_000;
+
+        struct MockCallback {}
+        impl InvokeContextCallback for MockCallback {
+            // Total stake is not needed for this test.
+            fn get_epoch_stake_for_vote_account(&self, vote_address: &Pubkey) -> u64 {
+                if *vote_address == TARGET_VOTE_ADDRESS {
+                    EXPECTED_EPOCH_STAKE
+                } else {
+                    0
+                }
+            }
+        }
+
         // Compute units, as specified by SIMD-0133.
         // cu = syscall_base_cost
         //     + floor(32/cpi_bytes_per_unit)
@@ -4969,21 +4961,13 @@ mod tests {
         // doesn't exceed the expected usage.
         compute_budget.compute_unit_limit = expected_cus;
 
-        let vote_address = Pubkey::new_unique();
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
-        let callback = |pubkey: &Pubkey| {
-            if *pubkey == vote_address {
-                expected_epoch_stake
-            } else {
-                0
-            }
-        };
+        let feature_set = SVMFeatureSet::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
-            0, // Total stake is not needed for this test.
-            &callback,
-            Arc::<FeatureSet>::default(),
+            &MockCallback {},
+            &feature_set,
             &sysvar_cache,
         );
 
@@ -5024,7 +5008,7 @@ mod tests {
 
             let mut memory_mapping = MemoryMapping::new(
                 vec![MemoryRegion::new_readonly(
-                    bytes_of(&vote_address),
+                    bytes_of(&TARGET_VOTE_ADDRESS),
                     vote_address_var,
                 )],
                 &config,
@@ -5043,7 +5027,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(result, expected_epoch_stake);
+            assert_eq!(result, EXPECTED_EPOCH_STAKE);
         }
 
         invoke_context.mock_set_remaining(compute_budget.compute_unit_limit);

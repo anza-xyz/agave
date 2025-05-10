@@ -1,5 +1,4 @@
 use {
-    crate::transaction_processing_callback::TransactionProcessingCallback,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_instruction::error::InstructionError,
@@ -11,6 +10,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
+    solana_svm_callback::TransactionProcessingCallback,
     solana_timings::ExecuteTimings,
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::Arc,
@@ -257,6 +257,7 @@ mod tests {
             solana_sbpf::program::BuiltinProgram,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+        solana_svm_callback::InvokeContextCallback,
         std::{
             cell::RefCell,
             collections::HashMap,
@@ -278,6 +279,8 @@ mod tests {
     pub(crate) struct MockBankCallback {
         pub(crate) account_shared_data: RefCell<HashMap<Pubkey, AccountSharedData>>,
     }
+
+    impl InvokeContextCallback for MockBankCallback {}
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {

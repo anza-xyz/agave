@@ -5,7 +5,7 @@ use {
     itertools::Itertools,
     log::*,
     solana_core::{
-        banking_stage::unified_scheduler::ensure_banking_stage_setup,
+        banking_stage::{unified_scheduler::ensure_banking_stage_setup, BankingStage},
         banking_trace::BankingTracer,
         consensus::{
             heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
@@ -20,24 +20,26 @@ use {
     },
     solana_entry::entry::Entry,
     solana_gossip::cluster_info::{ClusterInfo, Node},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
         genesis_utils::create_genesis_config, leader_schedule_cache::LeaderScheduleCache,
     },
     solana_perf::packet::to_packet_batches,
     solana_poh::poh_recorder::create_test_recorder,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, genesis_utils::GenesisConfigInfo,
         installed_scheduler_pool::SchedulingContext,
         prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        hash::Hash, pubkey::Pubkey, signature::Signer, signer::keypair::Keypair,
-        system_transaction, transaction::Result,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_transaction as system_transaction,
     solana_timings::ExecuteTimings,
+    solana_transaction_error::TransactionResult as Result,
     solana_unified_scheduler_logic::{SchedulingMode, Task},
     solana_unified_scheduler_pool::{
         DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
@@ -251,6 +253,7 @@ fn test_scheduler_producing_blocks() {
         &cluster_info,
         &poh_recorder,
         transaction_recorder,
+        BankingStage::num_threads(),
     );
     bank_forks.write().unwrap().install_scheduler_pool(pool);
 
@@ -279,6 +282,7 @@ fn test_scheduler_producing_blocks() {
         .write()
         .unwrap()
         .set_bank(tpu_bank.clone_with_scheduler(), false);
+    tpu_bank.unpause_new_block_production_scheduler();
     let tpu_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     assert_eq!(tpu_bank.transaction_count(), 0);
 

@@ -8,7 +8,7 @@ use {
     solana_sbpf::{
         aligned_memory::{AlignedMemory, Pod},
         ebpf::{HOST_ALIGN, MM_INPUT_START},
-        memory_region::{MemoryRegion, MemoryState},
+        memory_region::MemoryRegion,
     },
     solana_sdk_ids::bpf_loader_deprecated,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -99,7 +99,20 @@ impl Serializer {
         } else {
             self.push_region(true);
             let vaddr = self.vaddr;
-            self.push_account_data_region(account)?;
+            if !account.get_data().is_empty() {
+                let writable = account.can_data_be_changed().is_ok();
+                let shared = account.is_shared();
+                let mut new_region = if writable && !shared {
+                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
+                } else {
+                    MemoryRegion::new_readonly(account.get_data(), self.vaddr)
+                };
+                if writable && shared {
+                    new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
+                }
+                self.vaddr += new_region.len;
+                self.regions.push(new_region);
+            }
             vaddr
         };
 
@@ -124,27 +137,6 @@ impl Serializer {
         }
 
         Ok(vm_data_addr)
-    }
-
-    fn push_account_data_region(
-        &mut self,
-        account: &mut BorrowedAccount<'_>,
-    ) -> Result<(), InstructionError> {
-        if !account.get_data().is_empty() {
-            let region = match account_data_region_memory_state(account) {
-                MemoryState::Readable => MemoryRegion::new_readonly(account.get_data(), self.vaddr),
-                MemoryState::Writable => {
-                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
-                }
-                MemoryState::Cow(index_in_transaction) => {
-                    MemoryRegion::new_cow(account.get_data(), self.vaddr, index_in_transaction)
-                }
-            };
-            self.vaddr += region.len;
-            self.regions.push(region);
-        }
-
-        Ok(())
     }
 
     fn push_region(&mut self, writable: bool) {
@@ -189,6 +181,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     copy_account_data: bool,
+    mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -237,6 +230,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
+            mask_out_rent_epoch_in_vm_serialization,
         )
     } else {
         serialize_parameters_aligned(
@@ -244,6 +238,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             copy_account_data,
+            mask_out_rent_epoch_in_vm_serialization,
         )
     }
 }
@@ -284,6 +279,7 @@ fn serialize_parameters_unaligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
+    mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -338,7 +334,12 @@ fn serialize_parameters_unaligned(
                 let vm_owner_addr = s.write_all(account.get_owner().as_ref());
                 #[allow(deprecated)]
                 s.write::<u8>(account.is_executable() as u8);
-                s.write::<u64>((account.get_rent_epoch()).to_le());
+                let rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
+                    u64::MAX
+                } else {
+                    account.get_rent_epoch()
+                };
+                s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
                     original_data_len: account.get_data().len(),
                     vm_key_addr,
@@ -394,10 +395,7 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
                     .get(start..start + pre_len)
                     .ok_or(InstructionError::InvalidArgument)?;
                 // The redundant check helps to avoid the expensive data comparison if we can
-                match borrowed_account
-                    .can_data_be_resized(data.len())
-                    .and_then(|_| borrowed_account.can_data_be_changed())
-                {
+                match borrowed_account.can_data_be_resized(data.len()) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
@@ -417,6 +415,7 @@ fn serialize_parameters_aligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     copy_account_data: bool,
+    mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
         AlignedMemory<HOST_ALIGN>,
@@ -474,7 +473,12 @@ fn serialize_parameters_aligned(
                 let vm_lamports_addr = s.write::<u64>(borrowed_account.get_lamports().to_le());
                 s.write::<u64>((borrowed_account.get_data().len() as u64).to_le());
                 let vm_data_addr = s.write_account(&mut borrowed_account)?;
-                s.write::<u64>((borrowed_account.get_rent_epoch()).to_le());
+                let rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
+                    u64::MAX
+                } else {
+                    borrowed_account.get_rent_epoch()
+                };
+                s.write::<u64>(rent_epoch.to_le());
                 accounts_metadata.push(SerializedAccountMetadata {
                     original_data_len: borrowed_account.get_data().len(),
                     vm_key_addr,
@@ -555,10 +559,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                 let data = buffer
                     .get(start..start + post_len)
                     .ok_or(InstructionError::InvalidArgument)?;
-                match borrowed_account
-                    .can_data_be_resized(post_len)
-                    .and_then(|_| borrowed_account.can_data_be_changed())
-                {
+                match borrowed_account.can_data_be_resized(post_len) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
@@ -571,10 +572,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                 let data = buffer
                     .get(start..start + MAX_PERMITTED_DATA_INCREASE)
                     .ok_or(InstructionError::InvalidArgument)?;
-                match borrowed_account
-                    .can_data_be_resized(post_len)
-                    .and_then(|_| borrowed_account.can_data_be_changed())
-                {
+                match borrowed_account.can_data_be_resized(post_len) {
                     Ok(()) => {
                         borrowed_account.set_data_length(post_len)?;
                         let allocated_bytes = post_len.saturating_sub(pre_len);
@@ -603,18 +601,6 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
         }
     }
     Ok(())
-}
-
-pub fn account_data_region_memory_state(account: &BorrowedAccount<'_>) -> MemoryState {
-    if account.can_data_be_changed().is_ok() {
-        if account.is_shared() {
-            MemoryState::Cow(account.get_index_in_transaction() as u64)
-        } else {
-            MemoryState::Writable
-        }
-    } else {
-        MemoryState::Readable
-    }
 }
 
 #[cfg(test)]
@@ -750,6 +736,7 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     copy_account_data,
+                    true, // mask_out_rent_epoch_in_vm_serialization
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -789,7 +776,7 @@ mod tests {
                     assert_eq!(account.data(), &account_info.data.borrow()[..]);
                     assert_eq!(account.owner(), account_info.owner);
                     assert_eq!(account.executable(), account_info.executable);
-                    assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+                    assert_eq!(u64::MAX, account_info.rent_epoch);
                 }
             }
         }
@@ -893,6 +880,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
 
@@ -932,7 +920,7 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+                assert_eq!(u64::MAX, account_info.rent_epoch);
 
                 assert_eq!(
                     (*account_info.lamports.borrow() as *const u64).align_offset(BPF_ALIGN_OF_U128),
@@ -975,8 +963,9 @@ mod tests {
                 .set_owner(bpf_loader_deprecated::id());
             invoke_context
                 .transaction_context
-                .accounts()
-                .try_borrow_mut(0)
+                .get_account_at_index(0)
+                .unwrap()
+                .try_borrow_mut()
                 .unwrap()
                 .set_owner(bpf_loader_deprecated::id());
 
@@ -984,6 +973,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 copy_account_data,
+                true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
@@ -1015,7 +1005,7 @@ mod tests {
                 assert_eq!(account.data(), &account_info.data.borrow()[..]);
                 assert_eq!(account.owner(), account_info.owner);
                 assert_eq!(account.executable(), account_info.executable);
-                assert_eq!(account.rent_epoch(), account_info.rent_epoch);
+                assert_eq!(u64::MAX, account_info.rent_epoch);
             }
 
             deserialize_parameters(
@@ -1035,6 +1025,178 @@ mod tests {
                     .try_borrow(index_in_transaction as IndexOfAccount)
                     .unwrap();
                 assert_eq!(&*account, original_account);
+            }
+        }
+    }
+
+    #[test]
+    fn test_serialize_parameters_mask_out_rent_epoch_in_vm_serialization() {
+        for mask_out_rent_epoch_in_vm_serialization in [false, true] {
+            let transaction_accounts = vec![
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 0,
+                        data: vec![],
+                        owner: bpf_loader::id(),
+                        executable: true,
+                        rent_epoch: 0,
+                    }),
+                ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 1,
+                        data: vec![1u8, 2, 3, 4, 5],
+                        owner: bpf_loader::id(),
+                        executable: false,
+                        rent_epoch: 100,
+                    }),
+                ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 2,
+                        data: vec![11u8, 12, 13, 14, 15, 16, 17, 18, 19],
+                        owner: bpf_loader::id(),
+                        executable: true,
+                        rent_epoch: 200,
+                    }),
+                ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 3,
+                        data: vec![],
+                        owner: bpf_loader::id(),
+                        executable: false,
+                        rent_epoch: 300,
+                    }),
+                ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 4,
+                        data: vec![1u8, 2, 3, 4, 5],
+                        owner: bpf_loader::id(),
+                        executable: false,
+                        rent_epoch: 100,
+                    }),
+                ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 5,
+                        data: vec![11u8, 12, 13, 14, 15, 16, 17, 18, 19],
+                        owner: bpf_loader::id(),
+                        executable: true,
+                        rent_epoch: 200,
+                    }),
+                ),
+                (
+                    solana_pubkey::new_rand(),
+                    AccountSharedData::from(Account {
+                        lamports: 6,
+                        data: vec![],
+                        owner: bpf_loader::id(),
+                        executable: false,
+                        rent_epoch: 3100,
+                    }),
+                ),
+            ];
+            let instruction_accounts =
+                deduplicated_instruction_accounts(&[1, 1, 2, 3, 4, 4, 5, 6], |index| index >= 4);
+            let instruction_data = vec![];
+            let program_indices = [0];
+            let mut original_accounts = transaction_accounts.clone();
+            with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+            invoke_context
+                .transaction_context
+                .get_next_instruction_context()
+                .unwrap()
+                .configure(&program_indices, &instruction_accounts, &instruction_data);
+            invoke_context.push().unwrap();
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_current_instruction_context()
+                .unwrap();
+
+            // check serialize_parameters_aligned
+            let (_serialized, regions, _accounts_metadata) = serialize_parameters(
+                invoke_context.transaction_context,
+                instruction_context,
+                true,
+                mask_out_rent_epoch_in_vm_serialization,
+            )
+            .unwrap();
+
+            let mut serialized_regions = concat_regions(&regions);
+            let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
+                deserialize(serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8)
+            };
+
+            for account_info in de_accounts {
+                let index_in_transaction = invoke_context
+                    .transaction_context
+                    .find_index_of_account(account_info.key)
+                    .unwrap();
+                let account = invoke_context
+                    .transaction_context
+                    .accounts()
+                    .try_borrow(index_in_transaction)
+                    .unwrap();
+                let expected_rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
+                    u64::MAX
+                } else {
+                    account.rent_epoch()
+                };
+                assert_eq!(expected_rent_epoch, account_info.rent_epoch);
+            }
+
+            // check serialize_parameters_unaligned
+            original_accounts
+                .first_mut()
+                .unwrap()
+                .1
+                .set_owner(bpf_loader_deprecated::id());
+            invoke_context
+                .transaction_context
+                .get_account_at_index(0)
+                .unwrap()
+                .try_borrow_mut()
+                .unwrap()
+                .set_owner(bpf_loader_deprecated::id());
+
+            let (_serialized, regions, _account_lengths) = serialize_parameters(
+                invoke_context.transaction_context,
+                instruction_context,
+                true,
+                mask_out_rent_epoch_in_vm_serialization,
+            )
+            .unwrap();
+            let mut serialized_regions = concat_regions(&regions);
+
+            let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
+                deserialize_unaligned(
+                    serialized_regions.as_slice_mut().first_mut().unwrap() as *mut u8
+                )
+            };
+            for account_info in de_accounts {
+                let index_in_transaction = invoke_context
+                    .transaction_context
+                    .find_index_of_account(account_info.key)
+                    .unwrap();
+                let account = invoke_context
+                    .transaction_context
+                    .accounts()
+                    .try_borrow(index_in_transaction)
+                    .unwrap();
+                let expected_rent_epoch = if mask_out_rent_epoch_in_vm_serialization {
+                    u64::MAX
+                } else {
+                    account.rent_epoch()
+                };
+                assert_eq!(expected_rent_epoch, account_info.rent_epoch);
             }
         }
     }

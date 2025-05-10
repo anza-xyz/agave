@@ -23,17 +23,20 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_client::connection_cache::ConnectionCache,
+    solana_clock::Slot,
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::{
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
         duplicate_shred_listener::DuplicateShredListener,
     },
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore, blockstore_cleanup_service::BlockstoreCleanupService,
         blockstore_processor::TransactionStatusSender, entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_poh::poh_recorder::PohRecorder,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         block_meta_service::BlockMetaSender, max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
@@ -44,8 +47,8 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache, snapshot_controller::SnapshotController,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair},
-    solana_turbine::retransmit_stage::RetransmitStage,
+    solana_streamer::evicting_sender::EvictingSender,
+    solana_turbine::{retransmit_stage::RetransmitStage, xdp::XdpConfig},
     std::{
         collections::HashSet,
         net::{SocketAddr, UdpSocket},
@@ -55,6 +58,13 @@ use {
     },
     tokio::sync::mpsc::Sender as AsyncSender,
 };
+
+/// Sets the upper bound on the number of batches stored in the retransmit
+/// stage ingress channel.
+/// Allows for a max of 16k batches of up to 64 packets each (NUM_RCVMMSGS).
+/// This translates to about 1 GB of RAM for packet storage in the worst case.
+/// In reality this means about 200K shreds since most batches are not full.
+const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
 
 pub struct Tvu {
     fetch_stage: ShredFetchStage,
@@ -89,6 +99,7 @@ pub struct TvuConfig {
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
+    pub retransmit_xdp: Option<XdpConfig>,
 }
 
 impl Default for TvuConfig {
@@ -102,6 +113,7 @@ impl Default for TvuConfig {
             replay_forks_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
+            retransmit_xdp: None,
         }
     }
 }
@@ -191,7 +203,10 @@ impl Tvu {
         );
 
         let (verified_sender, verified_receiver) = unbounded();
-        let (retransmit_sender, retransmit_receiver) = unbounded();
+
+        let (retransmit_sender, retransmit_receiver) =
+            EvictingSender::new_bounded(CHANNEL_SIZE_RETRANSMIT_INGRESS);
+
         let shred_sigverify = solana_turbine::sigverify_shreds::spawn_shred_sigverify(
             cluster_info.clone(),
             bank_forks.clone(),
@@ -212,6 +227,7 @@ impl Tvu {
             max_slots.clone(),
             Some(rpc_subscriptions.clone()),
             slot_status_notifier.clone(),
+            tvu_config.retransmit_xdp.clone(),
         );
 
         let (ancestor_duplicate_slots_sender, ancestor_duplicate_slots_receiver) = unbounded();
@@ -446,6 +462,7 @@ pub mod tests {
         },
         serial_test::serial,
         solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::BlockstoreSignals,
             blockstore_options::BlockstoreOptions,
@@ -455,7 +472,7 @@ pub mod tests {
         solana_poh::poh_recorder::create_test_recorder,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::bank::Bank,
-        solana_sdk::signature::{Keypair, Signer},
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
         std::sync::atomic::{AtomicU64, Ordering},

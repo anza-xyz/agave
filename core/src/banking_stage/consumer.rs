@@ -1,13 +1,14 @@
 use {
     super::{
-        committer::{CommitTransactionDetails, Committer, PreBalanceInfo},
+        committer::{CommitTransactionDetails, Committer},
         leader_slot_timing_metrics::LeaderExecuteAndCommitTimings,
         qos_service::QosService,
         scheduler_messages::MaxAge,
     },
     itertools::Itertools,
+    solana_clock::MAX_PROCESSING_AGE,
     solana_fee::FeeFeatures,
-    solana_ledger::token_balances::collect_token_balances,
+    solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
     solana_poh::{
         poh_recorder::PohRecorderError,
@@ -20,14 +21,13 @@ use {
         transaction_batch::TransactionBatch,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{clock::MAX_PROCESSING_AGE, fee::FeeBudgetLimits, transaction::TransactionError},
     solana_svm::{
         account_loader::validate_fee_payer,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
     },
-    solana_timings::ExecuteTimings,
+    solana_transaction_error::TransactionError,
     std::{num::Saturating, sync::Arc},
 };
 
@@ -96,7 +96,6 @@ impl Consumer {
         &self,
         bank: &Arc<Bank>,
         txs: &[impl TransactionWithMeta],
-        chunk_offset: usize,
     ) -> ProcessTransactionBatchOutput {
         let mut error_counters = TransactionErrorMetrics::default();
         let pre_results = vec![Ok(()); txs.len()];
@@ -112,7 +111,6 @@ impl Consumer {
         let mut output = self.process_and_record_transactions_with_pre_results(
             bank,
             txs,
-            chunk_offset,
             check_results.into_iter(),
         );
 
@@ -156,14 +154,13 @@ impl Consumer {
 
             Ok(())
         });
-        self.process_and_record_transactions_with_pre_results(bank, txs, 0, pre_results)
+        self.process_and_record_transactions_with_pre_results(bank, txs, pre_results)
     }
 
     fn process_and_record_transactions_with_pre_results(
         &self,
         bank: &Arc<Bank>,
         txs: &[impl TransactionWithMeta],
-        chunk_offset: usize,
         pre_results: impl Iterator<Item = Result<(), TransactionError>>,
     ) -> ProcessTransactionBatchOutput {
         let (
@@ -189,15 +186,13 @@ impl Consumer {
         // retryable_txs includes AccountInUse, WouldExceedMaxBlockCostLimit
         // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
         // and WouldExceedMaxAccountDataCostLimit
-        let mut execute_and_commit_transactions_output =
+        let execute_and_commit_transactions_output =
             self.execute_and_commit_transactions_locked(bank, &batch);
 
         // Once the accounts are new transactions can enter the pipeline to process them
         let (_, unlock_us) = measure_us!(drop(batch));
 
         let ExecuteAndCommitTransactionsOutput {
-            ref mut retryable_transaction_indexes,
-            ref execute_and_commit_timings,
             ref commit_transactions_result,
             ..
         } = execute_and_commit_transactions_output;
@@ -211,15 +206,6 @@ impl Consumer {
             commit_transactions_result.as_ref().ok(),
             bank,
         );
-
-        retryable_transaction_indexes
-            .iter_mut()
-            .for_each(|x| *x += chunk_offset);
-
-        let (cu, us) =
-            Self::accumulate_execute_units_and_time(&execute_and_commit_timings.execute_timings);
-        self.qos_service.accumulate_actual_execute_cu(cu);
-        self.qos_service.accumulate_actual_execute_time(us);
 
         // reports qos service stats for this batch
         self.qos_service.report_metrics(bank.slot());
@@ -246,18 +232,6 @@ impl Consumer {
     ) -> ExecuteAndCommitTransactionsOutput {
         let transaction_status_sender_enabled = self.committer.transaction_status_sender_enabled();
         let mut execute_and_commit_timings = LeaderExecuteAndCommitTimings::default();
-
-        let mut pre_balance_info = PreBalanceInfo::default();
-        let (_, collect_balances_us) = measure_us!({
-            // If the extra meta-data services are enabled for RPC, collect the
-            // pre-balances for native and token programs.
-            if transaction_status_sender_enabled {
-                pre_balance_info.native = bank.collect_balances(batch);
-                pre_balance_info.token =
-                    collect_token_balances(bank, batch, &mut pre_balance_info.mint_decimals)
-            }
-        });
-        execute_and_commit_timings.collect_balances_us = collect_balances_us;
 
         let min_max = batch
             .sanitized_transactions()
@@ -331,7 +305,27 @@ impl Consumer {
         let LoadAndExecuteTransactionsOutput {
             processing_results,
             processed_counts,
+            balance_collector,
         } = load_and_execute_transactions_output;
+
+        let actual_execute_time = execute_and_commit_timings
+            .execute_timings
+            .execute_accessories
+            .process_instructions
+            .total_us
+            .0;
+        let actual_executed_cu = processing_results
+            .iter()
+            .map(|processing_result| {
+                processing_result
+                    .as_ref()
+                    .map_or(0, |pr| pr.executed_units())
+            })
+            .sum();
+        self.qos_service
+            .accumulate_actual_execute_cu(actual_executed_cu);
+        self.qos_service
+            .accumulate_actual_execute_time(actual_execute_time);
 
         let transaction_counts = LeaderProcessedTransactionCounts {
             processed_count: processed_counts.processed_transactions_count,
@@ -378,6 +372,10 @@ impl Consumer {
                 |(index, processing_result)| processing_result.was_processed().then_some(index),
             ));
 
+            // retryable indexes are expected to be sorted - in this case the
+            // `extend` can cause that assumption to be violated.
+            retryable_transaction_indexes.sort_unstable();
+
             return ExecuteAndCommitTransactionsOutput {
                 transaction_counts,
                 retryable_transaction_indexes,
@@ -396,7 +394,7 @@ impl Consumer {
                     processing_results,
                     starting_transaction_index,
                     bank,
-                    &mut pre_balance_info,
+                    balance_collector,
                     &mut execute_and_commit_timings,
                     &processed_counts,
                 )
@@ -473,21 +471,6 @@ impl Consumer {
             fee,
         )
     }
-
-    fn accumulate_execute_units_and_time(execute_timings: &ExecuteTimings) -> (u64, u64) {
-        execute_timings.details.per_program_timings.values().fold(
-            (0, 0),
-            |(units, times), program_timings| {
-                (
-                    (Saturating(units)
-                        + program_timings.accumulated_units
-                        + program_timings.total_errored_units)
-                        .0,
-                    (Saturating(times) + program_timings.accumulated_us).0,
-                )
-            },
-        )
-    }
 }
 
 #[cfg(test)]
@@ -499,8 +482,17 @@ mod tests {
         },
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::{unbounded, Receiver},
+        solana_account::{state_traits::StateMut, AccountSharedData},
+        solana_address_lookup_table_interface::{
+            self as address_lookup_table,
+            state::{AddressLookupTable, LookupTableMeta},
+        },
         solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
         solana_entry::entry::{next_entry, next_versioned_entry},
+        solana_fee_calculator::FeeCalculator,
+        solana_hash::Hash,
+        solana_instruction::error::InstructionError,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{entries_to_test_shreds, Blockstore},
             blockstore_processor::TransactionStatusSender,
@@ -511,34 +503,24 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             leader_schedule_cache::LeaderScheduleCache,
         },
+        solana_message::{
+            v0::{self, MessageAddressTableLookup},
+            MessageHeader, VersionedMessage,
+        },
+        solana_nonce::{self as nonce, state::DurableNonce},
+        solana_nonce_account::verify_nonce_account,
         solana_poh::poh_recorder::{PohRecorder, Record},
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::prioritization_fee_cache::PrioritizationFeeCache,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            account::AccountSharedData,
-            account_utils::StateMut,
-            address_lookup_table::{
-                self,
-                state::{AddressLookupTable, LookupTableMeta},
-            },
-            fee_calculator::FeeCalculator,
-            hash::Hash,
-            instruction::InstructionError,
-            message::{
-                v0::{self, MessageAddressTableLookup},
-                MessageHeader, VersionedMessage,
-            },
-            nonce::{self, state::DurableNonce},
-            nonce_account::verify_nonce_account,
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::Keypair,
-            signer::Signer,
-            system_program, system_transaction,
-            transaction::{MessageHash, Transaction, VersionedTransaction},
+        solana_signer::Signer,
+        solana_system_interface::program as system_program,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{
+            sanitized::MessageHash, versioned::VersionedTransaction, Transaction,
         },
-        solana_timings::ProgramTiming,
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         std::{
             borrow::Cow,
@@ -589,7 +571,7 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
         let process_transactions_summary =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         poh_recorder
             .read()
@@ -619,11 +601,12 @@ mod tests {
     fn store_nonce_account(
         bank: &Bank,
         account_address: Pubkey,
-        nonce_state: nonce::State,
+        nonce_state: nonce::state::State,
     ) -> AccountSharedData {
-        let mut account = AccountSharedData::new(1, nonce::State::size(), &system_program::id());
+        let mut account =
+            AccountSharedData::new(1, nonce::state::State::size(), &system_program::id());
         account
-            .set_state(&nonce::state::Versions::new(nonce_state))
+            .set_state(&nonce::versions::Versions::new(nonce_state))
             .unwrap();
         bank.store_account(&account_address, &account);
 
@@ -699,7 +682,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -747,7 +730,7 @@ mod tests {
         )]);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -800,7 +783,7 @@ mod tests {
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_unique());
         let nonce_hash = *durable_nonce.as_hash();
         let nonce_pubkey = Pubkey::new_unique();
-        let nonce_state = nonce::State::Initialized(nonce::state::Data {
+        let nonce_state = nonce::state::State::Initialized(nonce::state::Data {
             authority: mint_keypair.pubkey(),
             durable_nonce,
             fee_calculator: FeeCalculator::new(5000),
@@ -891,7 +874,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
             commit_transactions_result,
@@ -993,7 +976,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1086,7 +1069,7 @@ mod tests {
         )]);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1116,7 +1099,7 @@ mod tests {
         ]);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ExecuteAndCommitTransactionsOutput {
             transaction_counts,
@@ -1230,7 +1213,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         let process_transactions_batch_output =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         poh_recorder
             .read()
@@ -1422,7 +1405,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder.clone(), QosService::new(1), None);
 
         let process_transactions_summary =
-            consumer.process_and_record_transactions(&bank, &transactions, 0);
+            consumer.process_and_record_transactions(&bank, &transactions);
 
         let ProcessTransactionBatchOutput {
             mut execute_and_commit_transactions_output,
@@ -1472,7 +1455,7 @@ mod tests {
             mut genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(solana_sdk::native_token::sol_to_lamports(1000.0));
+        } = create_slow_genesis_config(solana_native_token::sol_to_lamports(1000.0));
         genesis_config.rent.lamports_per_byte_year = 50;
         genesis_config.rent.exemption_threshold = 2.0;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
@@ -1563,7 +1546,7 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-        let _ = consumer.process_and_record_transactions(&bank, &transactions, 0);
+        let _ = consumer.process_and_record_transactions(&bank, &transactions);
 
         drop(consumer); // drop/disconnect transaction_status_sender
 
@@ -1708,7 +1691,26 @@ mod tests {
         );
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
-        let _ = consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()], 0);
+        let consumer_output =
+            consumer.process_and_record_transactions(&bank, &[sanitized_tx.clone()]);
+        let CommitTransactionDetails::Committed {
+            compute_units,
+            loaded_accounts_data_size,
+        } = consumer_output
+            .execute_and_commit_transactions_output
+            .commit_transactions_result
+            .unwrap()
+            .pop()
+            .unwrap()
+        else {
+            panic!("The transaction was not commited");
+        };
+        let tx_cost = CostModel::calculate_cost_for_executed_transaction(
+            &sanitized_tx,
+            compute_units,
+            loaded_accounts_data_size,
+            &bank.feature_set,
+        );
 
         drop(consumer); // drop/disconnect transaction_status_sender
 
@@ -1729,6 +1731,7 @@ mod tests {
                 rewards: Some(vec![]),
                 loaded_addresses: sanitized_tx.get_loaded_addresses(),
                 compute_units_consumed: Some(0),
+                cost_units: Some(tx_cost.sum()),
                 ..TransactionStatusMeta::default()
             }
         );
@@ -1738,32 +1741,5 @@ mod tests {
             .is_exited
             .store(true, Ordering::Relaxed);
         let _ = poh_simulator.join();
-    }
-
-    #[test]
-    fn test_accumulate_execute_units_and_time() {
-        let mut execute_timings = ExecuteTimings::default();
-        let mut expected_units = 0;
-        let mut expected_us = 0;
-
-        for n in 0..10 {
-            execute_timings.details.per_program_timings.insert(
-                Pubkey::new_unique(),
-                ProgramTiming {
-                    accumulated_us: Saturating(n * 100),
-                    accumulated_units: Saturating(n * 1000),
-                    count: Saturating(n as u32),
-                    errored_txs_compute_consumed: vec![],
-                    total_errored_units: Saturating(0),
-                },
-            );
-            expected_us += n * 100;
-            expected_units += n * 1000;
-        }
-
-        let (units, us) = Consumer::accumulate_execute_units_and_time(&execute_timings);
-
-        assert_eq!(expected_units, units);
-        assert_eq!(expected_us, us);
     }
 }

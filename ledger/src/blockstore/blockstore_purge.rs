@@ -1,6 +1,6 @@
 use {
     super::*,
-    solana_sdk::message::AccountKeys,
+    solana_message::AccountKeys,
     std::{cmp::max, time::Instant},
 };
 
@@ -528,11 +528,10 @@ pub mod tests {
         },
         bincode::serialize,
         solana_entry::entry::next_entry_mut,
-        solana_sdk::{
-            hash::{hash, Hash},
-            message::Message,
-            transaction::Transaction,
-        },
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_sha256_hasher::hash,
+        solana_transaction::Transaction,
         test_case::test_case,
     };
 

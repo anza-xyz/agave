@@ -21,8 +21,8 @@ use {
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource, accounts_hash::CalcAccountsHashConfig,
     },
+    solana_clock::{BankId, Slot},
     solana_measure::{measure::Measure, measure_us},
-    solana_sdk::clock::{BankId, Slot},
     stats::StatsManager,
     std::{
         boxed::Box,
@@ -38,6 +38,7 @@ use {
 
 const INTERVAL_MS: u64 = 100;
 const CLEAN_INTERVAL_BLOCKS: u64 = 100;
+const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
 pub type SnapshotRequestReceiver = Receiver<SnapshotRequest>;
@@ -56,7 +57,7 @@ struct PrunedBankQueueLenReporter {
 
 impl PrunedBankQueueLenReporter {
     fn report(&self, q_len: usize) {
-        let now = solana_sdk::timing::timestamp();
+        let now = solana_time_utils::timestamp();
         let last_report_time = self.last_report_time.load(Ordering::Acquire);
         if q_len > MAX_DROP_BANK_SIGNAL_QUEUE_SIZE
             && now.saturating_sub(last_report_time) > BANK_DROP_SIGNAL_CHANNEL_REPORT_INTERVAL
@@ -301,11 +302,8 @@ impl SnapshotRequestHandler {
             // We have to use the index version here.
             // We cannot calculate the non-index way because cache
             // has not been flushed and stores don't match reality.
-            snapshot_root_bank.update_accounts_hash(
-                CalcAccountsHashDataSource::IndexForTests,
-                false,
-                false,
-            )
+            snapshot_root_bank
+                .update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false)
         });
 
         let mut flush_accounts_cache_time = Measure::start("flush_accounts_cache_time");
@@ -536,6 +534,7 @@ impl AccountsBackgroundService {
                     info!("AccountsBackgroundService has started");
                     let mut stats = StatsManager::new();
                     let mut last_snapshot_end_time = None;
+                    let mut previous_shrink_time = Instant::now();
 
                     loop {
                         if exit.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
@@ -595,19 +594,11 @@ impl AccountsBackgroundService {
                                 )
                             })
                             .flatten();
-                        if snapshot_handle_result.is_some() {
-                            last_snapshot_end_time = Some(Instant::now());
-                        }
-
-                        // Note that the flush will do an internal clean of the
-                        // cache up to bank.slot(), so should be safe as long
-                        // as any later snapshots that are taken are of
-                        // slots >= bank.slot()
-                        bank.flush_accounts_cache_if_needed();
 
                         if let Some(snapshot_handle_result) = snapshot_handle_result {
                             // Safe, see proof above
 
+                            last_snapshot_end_time = Some(Instant::now());
                             match snapshot_handle_result {
                                 Ok(snapshot_block_height) => {
                                     assert!(last_cleaned_block_height <= snapshot_block_height);
@@ -622,22 +613,16 @@ impl AccountsBackgroundService {
                                     break;
                                 }
                             }
-                        } else {
-                            if bank.block_height() - last_cleaned_block_height
-                                > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10))
-                            {
-                                // Note that the flush will do an internal clean of the
-                                // cache up to bank.slot(), so should be safe as long
-                                // as any later snapshots that are taken are of
-                                // slots >= bank.slot()
-                                bank.force_flush_accounts_cache();
-                                bank.clean_accounts();
-                                last_cleaned_block_height = bank.block_height();
-                                // See justification below for why we skip 'shrink' here.
-                                if bank.is_startup_verification_complete() {
-                                    bank.shrink_ancient_slots();
-                                }
-                            }
+                        } else if bank.block_height() - last_cleaned_block_height
+                            > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10))
+                        {
+                            // Note that the flush will do an internal clean of the
+                            // cache up to bank.slot(), so should be safe as long
+                            // as any later snapshots that are taken are of
+                            // slots >= bank.slot()
+                            bank.force_flush_accounts_cache();
+                            bank.clean_accounts();
+                            last_cleaned_block_height = bank.block_height();
                             // Do not 'shrink' until *after* the startup verification is complete.
                             // This is because startup verification needs to get the snapshot
                             // storages *as they existed at startup* (to calculate the accounts
@@ -646,7 +631,23 @@ impl AccountsBackgroundService {
                             // shrinking is not in progress, or (2) could get snapshot storages
                             // that were newer than what was in the snapshot itself.
                             if bank.is_startup_verification_complete() {
+                                bank.shrink_ancient_slots();
                                 bank.shrink_candidate_slots();
+                            }
+                        } else {
+                            // Note that the flush will do an internal clean of the
+                            // cache up to bank.slot(), so should be safe as long
+                            // as any later snapshots that are taken are of
+                            // slots >= bank.slot()
+                            bank.flush_accounts_cache_if_needed();
+
+                            // See justification above for why we skip 'shrink' here.
+                            if bank.is_startup_verification_complete() {
+                                let duration_since_previous_shrink = previous_shrink_time.elapsed();
+                                if duration_since_previous_shrink > SHRINK_INTERVAL {
+                                    previous_shrink_time = Instant::now();
+                                    bank.shrink_candidate_slots();
+                                }
                             }
                         }
                         stats.record_and_maybe_submit(start_time.elapsed());
@@ -811,10 +812,11 @@ mod test {
             snapshot_config::SnapshotConfig,
         },
         crossbeam_channel::unbounded,
+        solana_account::AccountSharedData,
         solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
-        solana_sdk::{
-            account::AccountSharedData, epoch_schedule::EpochSchedule, hash::Hash, pubkey::Pubkey,
-        },
+        solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
+        solana_pubkey::Pubkey,
     };
 
     #[test]

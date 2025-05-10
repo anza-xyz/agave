@@ -3,16 +3,15 @@
 #![deny(clippy::indexing_slicing)]
 use {
     crate::shred::{
-        self, merkle::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
+        self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
         ShredType, ShredVariant, SignedData, SIZE_OF_COMMON_SHRED_HEADER,
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_perf::packet::Packet,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        signature::{Signature, Signer, SIGNATURE_BYTES},
-        signer::keypair::Keypair,
-    },
+    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signer::Signer,
     std::ops::Range,
 };
 #[cfg(test)]

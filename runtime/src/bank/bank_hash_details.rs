@@ -9,18 +9,16 @@ use {
         de::{self, Deserialize, Deserializer},
         ser::{Serialize, SerializeSeq, Serializer},
     },
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_accounts_db::{accounts_db::PubkeyHashAccount, accounts_hash::AccountHash},
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount},
-        clock::{Epoch, Slot},
-        fee::FeeDetails,
-        hash::Hash,
-        inner_instruction::InnerInstructionsList,
-        pubkey::Pubkey,
-        transaction::Result as TransactionResult,
-    },
+    solana_clock::{Epoch, Slot},
+    solana_fee_structure::FeeDetails,
+    solana_hash::Hash,
+    solana_message::inner_instruction::InnerInstructionsList,
+    solana_pubkey::Pubkey,
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_context::TransactionReturnData,
+    solana_transaction_error::TransactionResult,
     solana_transaction_status_client_types::UiInstruction,
     std::str::FromStr,
 };
@@ -334,7 +332,7 @@ pub mod tests {
                     rent_epoch: 123,
                 });
                 let account_pubkey = Pubkey::new_unique();
-                let account_hash = AccountHash(solana_sdk::hash::hash("account".as_bytes()));
+                let account_hash = AccountHash(solana_sha256_hasher::hash("account".as_bytes()));
                 let accounts = AccountsDetails {
                     accounts: vec![PubkeyHashAccount {
                         pubkey: account_pubkey,

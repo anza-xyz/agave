@@ -6,8 +6,8 @@ use {
     bincode::deserialize,
     serde_json::json,
     solana_loader_v2_interface::LoaderInstruction,
+    solana_loader_v3_interface::instruction::UpgradeableLoaderInstruction,
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
-    solana_program::loader_upgradeable_instruction::UpgradeableLoaderInstruction,
 };
 
 pub fn parse_bpf_loader(
@@ -217,8 +217,8 @@ mod test {
     use {
         super::*,
         serde_json::Value,
+        solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
         solana_message::Message,
-        solana_program::bpf_loader_upgradeable,
         solana_pubkey::{self as pubkey, Pubkey},
         solana_sdk_ids::{system_program, sysvar},
     };
@@ -414,7 +414,7 @@ mod test {
         let upgrade_authority_address = Pubkey::new_unique();
         let programdata_address = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         )
         .0;
         #[allow(deprecated)]
@@ -471,7 +471,7 @@ mod test {
         let spill_address = Pubkey::new_unique();
         let programdata_address = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         )
         .0;
         let instruction = bpf_loader_upgradeable::upgrade(
@@ -595,7 +595,7 @@ mod test {
         let new_authority_address = Pubkey::new_unique();
         let (programdata_address, _) = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         );
         let instruction = bpf_loader_upgradeable::set_upgrade_authority(
             &program_address,
@@ -674,7 +674,7 @@ mod test {
         let new_authority_address = Pubkey::new_unique();
         let (programdata_address, _) = Pubkey::find_program_address(
             &[program_address.as_ref()],
-            &bpf_loader_upgradeable::id(),
+            &solana_sdk_ids::bpf_loader_upgradeable::id(),
         );
         let instruction = bpf_loader_upgradeable::set_upgrade_authority_checked(
             &program_address,
