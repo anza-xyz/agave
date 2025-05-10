@@ -27,11 +27,11 @@ impl SerializableStorage for SerializableAccountStorageEntry {
     }
 }
 
-impl From<&AccountStorageEntry> for SerializableAccountStorageEntry {
-    fn from(rhs: &AccountStorageEntry) -> Self {
+impl From<(&AccountStorageEntry, Option<u64>)> for SerializableAccountStorageEntry {
+    fn from(rhs: (&AccountStorageEntry, Option<u64>)) -> Self {
         Self {
-            id: rhs.id() as SerializedAccountsFileId,
-            accounts_current_len: rhs.accounts.len(),
+            id: rhs.0.id() as SerializedAccountsFileId,
+            accounts_current_len: rhs.0.accounts.len() - rhs.0.get_dead_account_bytes(rhs.1),
         }
     }
 }

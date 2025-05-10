@@ -7,6 +7,7 @@ extern crate lazy_static;
 pub mod account_info;
 pub mod account_locks;
 pub mod account_storage;
+pub mod account_storage_reader;
 pub mod accounts;
 mod accounts_cache;
 pub mod accounts_db;

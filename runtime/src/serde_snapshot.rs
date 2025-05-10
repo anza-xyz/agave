@@ -793,16 +793,16 @@ impl Serialize for SerializableAccountsDb<'_> {
     {
         // (1st of 3 elements) write the list of account storage entry lists out as a map
         let entry_count = RefCell::<usize>::new(0);
-        let entries = utils::serialize_iter_as_map(self.account_storage_entries.iter().map(|x| {
-            *entry_count.borrow_mut() += x.len();
-            (
-                x.first().unwrap().slot(),
-                utils::serialize_iter_as_seq(
-                    x.iter()
-                        .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
-                ),
-            )
-        }));
+        let entries =
+            utils::serialize_iter_as_map(self.account_storage_entries.iter().map(|x| {
+                *entry_count.borrow_mut() += x.len();
+                (
+                    x.first().unwrap().slot(),
+                    utils::serialize_iter_as_seq(x.iter().map(|x| {
+                        SerializableAccountStorageEntry::from((x.as_ref(), Some(self.slot)))
+                    })),
+                )
+            }));
         let bank_hash_info = BankHashInfo {
             accounts_delta_hash: self.accounts_delta_hash.into(),
             accounts_hash: self.accounts_hash.into(),
