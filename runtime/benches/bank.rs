@@ -5,22 +5,21 @@ extern crate test;
 
 use {
     log::*,
+    solana_client_traits::{AsyncClient, SyncClient},
+    solana_clock::MAX_RECENT_BLOCKHASHES,
+    solana_genesis_config::create_genesis_config,
+    solana_keypair::Keypair,
+    solana_message::Message,
     solana_program_runtime::declare_process_instruction,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{test_utils::goto_end_of_slot, *},
         bank_client::BankClient,
         loader_utils::create_invoke_instruction,
     },
-    solana_sdk::{
-        client::{AsyncClient, SyncClient},
-        clock::MAX_RECENT_BLOCKHASHES,
-        genesis_config::create_genesis_config,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
     solana_svm::transaction_processing_callback::TransactionProcessingCallback,
+    solana_transaction::Transaction,
     std::{sync::Arc, thread::sleep, time::Duration},
     test::Bencher,
 };

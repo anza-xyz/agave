@@ -7,10 +7,12 @@ use {
         hardened_unpack::open_genesis_config,
         utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
     },
+    solana_clock::Slot,
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
         snapshot_packager_service::PendingSnapshotPackages, validator::BlockVerificationMethod,
     },
+    solana_genesis_config::GenesisConfig,
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
     },
@@ -24,6 +26,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         block_meta_service::BlockMetaService, transaction_status_service::TransactionStatusService,
     },
@@ -39,10 +42,7 @@ use {
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
-    solana_sdk::{
-        clock::Slot, genesis_config::GenesisConfig, pubkey::Pubkey,
-        transaction::VersionedTransaction,
-    },
+    solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         path::{Path, PathBuf},

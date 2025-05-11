@@ -5361,13 +5361,9 @@ impl AccountsDb {
     }
 
     fn purge_slot_cache(&self, purged_slot: Slot, slot_cache: &SlotCache) {
-        let mut purged_slot_pubkeys: HashSet<(Slot, Pubkey)> = HashSet::new();
         let pubkey_to_slot_set: Vec<(Pubkey, Slot)> = slot_cache
             .iter()
-            .map(|account| {
-                purged_slot_pubkeys.insert((purged_slot, *account.key()));
-                (*account.key(), purged_slot)
-            })
+            .map(|account| (*account.key(), purged_slot))
             .collect();
         self.purge_slot_cache_pubkeys(purged_slot, pubkey_to_slot_set, true);
     }
@@ -7307,7 +7303,7 @@ impl AccountsDb {
                 if offsets.len() == store.count() {
                     // all remaining alive accounts in the storage are being removed, so the entire storage/slot is dead
                     store.remove_accounts(store.alive_bytes(), reset_accounts, offsets.len());
-                    self.dirty_stores.insert(*slot, store.clone());
+                    self.dirty_stores.insert(*slot, store);
                     dead_slots.insert(*slot);
                 } else {
                     // not all accounts are being removed, so figure out sizes of accounts we are removing and update the alive bytes and alive account count
@@ -7315,7 +7311,11 @@ impl AccountsDb {
                         let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
                         // sort so offsets are in order. This improves efficiency of loading the accounts.
                         offsets.sort_unstable();
-                        let dead_bytes = store.accounts.get_account_sizes(&offsets).iter().sum();
+                        let data_lens = store.accounts.get_account_data_lens(&offsets);
+                        let dead_bytes = data_lens
+                            .iter()
+                            .map(|len| store.accounts.calculate_stored_size(*len))
+                            .sum();
                         store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
                         if Self::is_shrinking_productive(&store)
                             && self.is_candidate_for_shrink(&store)
@@ -7988,7 +7988,7 @@ impl AccountsDb {
         rent_collector: &RentCollector,
         storage_info: &StorageSizeAndCountMap,
     ) -> SlotIndexGenerationInfo {
-        if storage.accounts.get_account_sizes(&[0]).is_empty() {
+        if storage.accounts.get_account_data_lens(&[0]).is_empty() {
             return SlotIndexGenerationInfo::default();
         }
         let secondary = !self.account_indexes.is_empty();

@@ -745,27 +745,20 @@ pub fn update_commission<S: std::hash::BuildHasher>(
     epoch_schedule: &EpochSchedule,
     clock: &Clock,
 ) -> Result<(), InstructionError> {
-    // Decode vote state only once, and only if needed
-    let mut vote_state = None;
-
-    let enforce_commission_update_rule =
-        if let Ok(decoded_vote_state) = vote_account.get_state::<VoteStateVersions>() {
-            vote_state = Some(decoded_vote_state.convert_to_current());
-            is_commission_increase(vote_state.as_ref().unwrap(), commission)
-        } else {
-            true
-        };
+    let vote_state_result = vote_account
+        .get_state::<VoteStateVersions>()
+        .map(|vote_state| vote_state.convert_to_current());
+    let enforce_commission_update_rule = if let Ok(decoded_vote_state) = &vote_state_result {
+        is_commission_increase(decoded_vote_state, commission)
+    } else {
+        true
+    };
 
     if enforce_commission_update_rule && !is_commission_update_allowed(clock.slot, epoch_schedule) {
         return Err(VoteError::CommissionUpdateTooLate.into());
     }
 
-    let mut vote_state = match vote_state {
-        Some(vote_state) => vote_state,
-        None => vote_account
-            .get_state::<VoteStateVersions>()?
-            .convert_to_current(),
-    };
+    let mut vote_state = vote_state_result?;
 
     // current authorized withdrawer must say "yay"
     verify_authorized_signer(&vote_state.authorized_withdrawer, signers)?;

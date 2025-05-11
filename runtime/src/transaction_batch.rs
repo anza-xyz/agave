@@ -1,6 +1,6 @@
 use {
-    crate::bank::Bank, core::ops::Deref, solana_sdk::transaction::Result,
-    solana_svm_transaction::svm_message::SVMMessage,
+    crate::bank::Bank, core::ops::Deref, solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_error::TransactionResult as Result,
 };
 
 pub enum OwnedOrBorrowed<'a, T> {
@@ -115,12 +115,11 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+        solana_keypair::Keypair,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            signature::Keypair,
-            system_transaction,
-            transaction::{SanitizedTransaction, TransactionError},
-        },
+        solana_system_transaction as system_transaction,
+        solana_transaction::sanitized::SanitizedTransaction,
+        solana_transaction_error::TransactionError,
     };
 
     #[test]

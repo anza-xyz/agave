@@ -1,12 +1,10 @@
 use {
     solana_poh::poh_recorder::{BankStart, PohRecorder},
-    solana_sdk::{
-        clock::{
-            DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
-            HOLD_TRANSACTIONS_SLOT_OFFSET,
-        },
-        pubkey::Pubkey,
+    solana_clock::{
+        DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
+        HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
+    solana_pubkey::Pubkey,
     std::{
         sync::{Arc, RwLock},
         time::{Duration, Instant},
@@ -144,7 +142,7 @@ mod tests {
         solana_ledger::{blockstore::Blockstore, genesis_utils::create_genesis_config},
         solana_poh::poh_recorder::create_test_recorder,
         solana_runtime::bank::Bank,
-        solana_sdk::clock::NUM_CONSECUTIVE_LEADER_SLOTS,
+        solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         std::{
             env::temp_dir,
             sync::{atomic::Ordering, Arc},

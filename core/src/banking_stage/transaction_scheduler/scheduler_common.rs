@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     super::{
         in_flight_tracker::InFlightTracker,
@@ -129,6 +131,7 @@ pub fn select_thread<Tx>(
 }
 
 /// Common scheduler communication structure.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct SchedulingCommon<Tx> {
     pub(crate) consume_work_senders: Vec<Sender<ConsumeWork<Tx>>>,
     pub(crate) finished_consume_work_receiver: Receiver<FinishedConsumeWork<Tx>>,
@@ -283,7 +286,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{hash::Hash, system_transaction, transaction::SanitizedTransaction},
+        solana_hash::Hash, solana_system_transaction as system_transaction, solana_transaction::sanitized::SanitizedTransaction,
         test_case::test_case,
     };
 

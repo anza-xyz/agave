@@ -383,7 +383,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
 
         // Create the account loader, which wraps all external account fetching.
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let mut account_loader = AccountLoader::new_with_loaded_accounts_capacity(
             config.account_overrides,
             callbacks,
             &environment.feature_set,
@@ -571,7 +571,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_address = message.fee_payer();
 
-        let Some(mut loaded_fee_payer) = account_loader.load_account(fee_payer_address, true)
+        // We *must* use load_transaction_account() here because *this* is when the fee-payer
+        // is loaded for the transaction. Transaction loading skips the first account and
+        // loads (and thus inspects) all others normally.
+        let Some(mut loaded_fee_payer) =
+            account_loader.load_transaction_account(fee_payer_address, true)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
@@ -628,11 +632,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // We must validate the account in case it was reopened, either as a normal system account,
         // or a fake nonce account. We must also check the signer in case the authority was changed.
         //
+        // We do not need to inspect the nonce account here, because by definition it is either the
+        // first account, inspected in `validate_transaction_fee_payer()`, or the second through nth
+        // account, inspected in `load_transaction()`.
+        //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address(), true)
-            .and_then(|loaded_nonce| {
-                let current_nonce_account = &loaded_nonce.account;
+            .load_account(nonce_info.address())
+            .and_then(|ref current_nonce_account| {
                 system_program::check_id(current_nonce_account.owner()).then_some(())?;
                 StateMut::<NonceVersions>::state(current_nonce_account).ok()
             })
@@ -1221,7 +1228,7 @@ mod tests {
 
     impl<'a> From<&'a MockBankCallback> for AccountLoader<'a, MockBankCallback> {
         fn from(callbacks: &'a MockBankCallback) -> AccountLoader<'a, MockBankCallback> {
-            AccountLoader::new_with_account_cache_capacity(
+            AccountLoader::new_with_loaded_accounts_capacity(
                 None,
                 callbacks,
                 &callbacks.feature_set,

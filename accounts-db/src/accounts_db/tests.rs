@@ -2937,19 +2937,24 @@ fn test_shrink_candidate_slots() {
 fn test_shrink_candidate_slots_with_dead_ancient_account() {
     solana_logger::setup();
     let epoch_schedule = EpochSchedule::default();
-    let num_ancient_slots = 3;
-    // Prepare 3 append vecs to combine [medium, big, small]
-    let account_data_sizes = vec![1000, 2000, 150];
-    let (db, starting_ancient_slot) =
-        create_db_with_storages_and_index_with_customized_account_size_per_slot(
-            true,
-            num_ancient_slots,
-            account_data_sizes,
-        );
-    db.add_root(starting_ancient_slot);
-    let slots_to_combine: Vec<Slot> =
-        (starting_ancient_slot..starting_ancient_slot + num_ancient_slots as Slot).collect();
-    db.combine_ancient_slots(slots_to_combine, CAN_RANDOMLY_SHRINK_FALSE);
+    let db = AccountsDb::new_single_for_tests();
+    const ACCOUNT_DATA_SIZES: &[usize] = &[1000, 2000, 150];
+    let accounts: Vec<_> = ACCOUNT_DATA_SIZES
+        .iter()
+        .map(|data_size| {
+            (
+                Pubkey::new_unique(),
+                AccountSharedData::new(1, *data_size, &Pubkey::default()),
+            )
+        })
+        .collect();
+    let accounts: Vec<_> = accounts
+        .iter()
+        .map(|(pubkey, account)| (pubkey, account))
+        .collect();
+    let starting_ancient_slot = 1;
+    db.store_for_tests(starting_ancient_slot, &accounts);
+    db.add_root_and_flush_write_cache(starting_ancient_slot);
     let storage = db.get_storage_for_slot(starting_ancient_slot).unwrap();
     let ancient_accounts = db.get_unique_accounts_from_storage(&storage);
     // Check that three accounts are indeed present in the combined storage.
@@ -7006,18 +7011,12 @@ pub(crate) const CAN_RANDOMLY_SHRINK_FALSE: bool = false;
 
 define_accounts_db_test!(test_combine_ancient_slots_empty, |db| {
     // empty slots
-    db.combine_ancient_slots(Vec::default(), CAN_RANDOMLY_SHRINK_FALSE);
+    db.combine_ancient_slots_packed(Vec::default(), CAN_RANDOMLY_SHRINK_FALSE);
 });
 
 #[test]
 fn test_combine_ancient_slots_simple() {
-    // We used to test 'alive = false' with the old shrinking algorithm, but
-    // not any more with the new shrinking algorithm. 'alive = false' means
-    // that we will have account entries that's in the storages but not in
-    // accounts-db index. This violate the assumption in accounts-db, which
-    // the new shrinking algorithm now depends on. Therefore, we don't test
-    // 'alive = false'.
-    _ = get_one_ancient_append_vec_and_others(true, 0);
+    _ = get_one_ancient_append_vec_and_others(0);
 }
 
 fn get_all_accounts_from_storages<'a>(
@@ -7107,7 +7106,6 @@ fn test_shrink_ancient_overflow_with_min_size() {
     // simulate the *oversized* append vec for shrinking.
     let account_size = (1.5 * ideal_av_size as f64) as u64;
     let (db, ancient_slot) = get_one_ancient_append_vec_and_others_with_account_size(
-        true,
         num_normal_slots,
         Some(account_size),
     );
@@ -7249,7 +7247,7 @@ fn test_shrink_ancient_overflow() {
 
     let num_normal_slots = 2;
     // build an ancient append vec at slot 'ancient_slot'
-    let (mut db, ancient_slot) = get_one_ancient_append_vec_and_others(true, num_normal_slots);
+    let (mut db, ancient_slot) = get_one_ancient_append_vec_and_others(num_normal_slots);
 
     // This test is testing the squash-append code, which can only work with mmaps.
     db.set_storage_access(StorageAccess::Mmap);
@@ -7324,7 +7322,7 @@ fn test_shrink_ancient() {
 
     let num_normal_slots = 1;
     // build an ancient append vec at slot 'ancient_slot'
-    let (db, ancient_slot) = get_one_ancient_append_vec_and_others(true, num_normal_slots);
+    let (db, ancient_slot) = get_one_ancient_append_vec_and_others(num_normal_slots);
 
     let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
     let initial_accounts = get_all_accounts(&db, ancient_slot..(max_slot_inclusive + 1));
@@ -7438,7 +7436,7 @@ fn test_combine_ancient_slots_append() {
             let mut originals = Vec::default();
             // ancient_slot: contains ancient append vec
             // ancient_slot + 1: contains normal append vec with 1 alive account
-            let (db, ancient_slot) = get_one_ancient_append_vec_and_others(true, num_normal_slots);
+            let (db, ancient_slot) = get_one_ancient_append_vec_and_others(num_normal_slots);
 
             let max_slot_inclusive = ancient_slot + (num_normal_slots as Slot);
 
@@ -7705,10 +7703,16 @@ pub(crate) fn create_db_with_storages_and_index_with_customized_account_size_per
 }
 
 fn get_one_ancient_append_vec_and_others_with_account_size(
-    alive: bool,
     num_normal_slots: usize,
     account_data_size: Option<u64>,
 ) -> (AccountsDb, Slot) {
+    // We used to test 'alive = false' with the old shrinking algorithm, but
+    // not any more with the new shrinking algorithm. 'alive = false' means
+    // that we will have account entries that's in the storages but not in
+    // accounts-db index. This violate the assumption in accounts-db, which
+    // the new shrinking algorithm now depends on. Therefore, we don't test
+    // 'alive = false'.
+    let alive = true;
     let (db, slot1) =
         create_db_with_storages_and_index(alive, num_normal_slots + 1, account_data_size);
     let storage = db.get_storage_for_slot(slot1).unwrap();
@@ -7717,18 +7721,14 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
     db.combine_ancient_slots(vec![slot1], CAN_RANDOMLY_SHRINK_FALSE);
     assert!(db.storage.get_slot_storage_entry(slot1).is_some());
     let ancient = db.get_storage_for_slot(slot1).unwrap();
-    assert_eq!(alive, is_ancient(&ancient.accounts));
+    assert!(is_ancient(&ancient.accounts));
     let after_store = db.get_storage_for_slot(slot1).unwrap();
     let GetUniqueAccountsResult {
         stored_accounts: after_stored_accounts,
         capacity: after_capacity,
         ..
     } = db.get_unique_accounts_from_storage(&after_store);
-    if alive {
-        assert!(created_accounts.capacity <= after_capacity);
-    } else {
-        assert_eq!(created_accounts.capacity, after_capacity);
-    }
+    assert!(created_accounts.capacity <= after_capacity);
     assert_eq!(created_accounts.stored_accounts.len(), 1);
     // always 1 account: either we leave the append vec alone if it is all dead
     // or we create a new one and copy into it if account is alive
@@ -7736,11 +7736,8 @@ fn get_one_ancient_append_vec_and_others_with_account_size(
     (db, slot1)
 }
 
-fn get_one_ancient_append_vec_and_others(
-    alive: bool,
-    num_normal_slots: usize,
-) -> (AccountsDb, Slot) {
-    get_one_ancient_append_vec_and_others_with_account_size(alive, num_normal_slots, None)
+fn get_one_ancient_append_vec_and_others(num_normal_slots: usize) -> (AccountsDb, Slot) {
+    get_one_ancient_append_vec_and_others_with_account_size(num_normal_slots, None)
 }
 
 #[test]

@@ -12,12 +12,12 @@ use {
         input_parsers::pubkeys_of,
         input_validators::{is_parsable, is_pow2, is_within_range},
     },
+    solana_clock::Slot,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_runtime::runtime_config::RuntimeConfig,
-    solana_sdk::clock::Slot,
     std::{
         collections::HashSet,
         num::NonZeroUsize,

@@ -31,11 +31,12 @@ mod tests {
             accounts_hash::{AccountsDeltaHash, AccountsHash},
             epoch_accounts_hash::EpochAccountsHash,
         },
+        solana_epoch_schedule::EpochSchedule,
+        solana_genesis_config::create_genesis_config,
+        solana_hash::Hash,
         solana_nohash_hasher::BuildNoHashHasher,
-        solana_sdk::{
-            epoch_schedule::EpochSchedule, genesis_config::create_genesis_config, hash::Hash,
-            pubkey::Pubkey, stake::state::Stake,
-        },
+        solana_pubkey::Pubkey,
+        solana_stake_interface::state::Stake,
         std::{
             io::{BufReader, BufWriter, Cursor},
             mem,
@@ -520,9 +521,9 @@ mod tests {
             solana_accounts_db::{
                 accounts_hash::AccountsLtHash, append_vec::StoredMetaWriteVersion,
             },
+            solana_clock::Slot,
             solana_frozen_abi::abi_example::AbiExample,
             solana_lattice_hash::lt_hash::LtHash,
-            solana_sdk::clock::Slot,
             std::marker::PhantomData,
         };
 

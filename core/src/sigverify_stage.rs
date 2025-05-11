@@ -18,8 +18,8 @@ use {
             count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
         },
     },
-    solana_sdk::timing,
     solana_streamer::streamer::{self, StreamerError},
+    solana_time_utils as timing,
     std::{
         thread::{self, Builder, JoinHandle},
         time::Instant,

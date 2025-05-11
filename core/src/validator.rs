@@ -26,7 +26,7 @@ use {
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
         },
-        tpu::{Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
+        tpu::{ForwardingClientOption, Tpu, TpuSockets, DEFAULT_TPU_COALESCE},
         tvu::{Tvu, TvuConfig, TvuSockets},
     },
     anyhow::{anyhow, Context, Result},
@@ -41,7 +41,10 @@ use {
         utils::{move_and_async_delete_path, move_and_async_delete_path_contents},
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_clock::Slot,
     solana_entry::poh::compute_hash_time,
+    solana_epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
+    solana_genesis_config::{ClusterType, GenesisConfig},
     solana_geyser_plugin_manager::{
         geyser_plugin_service::GeyserPluginService, GeyserPluginManagerRequest,
     },
@@ -54,6 +57,9 @@ use {
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         gossip_service::GossipService,
     },
+    solana_hard_forks::HardForks,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -76,6 +82,7 @@ use {
         poh_service::{self, PohService},
         transaction_recorder::TransactionRecorder,
     },
+    solana_pubkey::Pubkey,
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
     solana_rpc::{
         block_meta_service::{BlockMetaSender, BlockMetaService},
@@ -109,25 +116,17 @@ use {
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
-    solana_sdk::{
-        clock::Slot,
-        epoch_schedule::MAX_LEADER_SCHEDULE_EPOCH_OFFSET,
-        exit::Exit,
-        genesis_config::{ClusterType, GenesisConfig},
-        hard_forks::HardForks,
-        hash::Hash,
-        pubkey::Pubkey,
-        shred_version::compute_shred_version,
-        signature::{Keypair, Signer},
-        timing::timestamp,
-    },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
+    solana_shred_version::compute_shred_version,
+    solana_signer::Signer,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
     solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
+    solana_validator_exit::Exit,
     solana_vote_program::vote_state,
     solana_wen_restart::wen_restart::{wait_for_wen_restart, WenRestartConfig},
     std::{
@@ -1070,14 +1069,18 @@ impl Validator {
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
 
-        // ConnectionCache might be used for JsonRpc and for Forwarding. Since
-        // the latter is not migrated yet to the tpu-client-next, create
-        // ConnectionCache regardless of config.use_tpu_client_next for now.
-        let connection_cache = if use_quic {
-            let connection_cache = ConnectionCache::new_with_client_options(
+        let mut tpu_transactions_forwards_client =
+            Some(node.sockets.tpu_transaction_forwarding_client);
+
+        let connection_cache = match (config.use_tpu_client_next, use_quic) {
+            (false, true) => Some(Arc::new(ConnectionCache::new_with_client_options(
                 "connection_cache_tpu_quic",
                 tpu_connection_pool_size,
-                Some(node.sockets.tpu_transaction_forwarding_client),
+                Some(
+                    tpu_transactions_forwards_client
+                        .take()
+                        .expect("Socket should exist."),
+                ),
                 Some((
                     &identity_keypair,
                     node.info
@@ -1088,13 +1091,12 @@ impl Validator {
                         .ip(),
                 )),
                 Some((&staked_nodes, &identity_keypair.pubkey())),
-            );
-            Arc::new(connection_cache)
-        } else {
-            Arc::new(ConnectionCache::with_udp(
+            ))),
+            (false, false) => Some(Arc::new(ConnectionCache::with_udp(
                 "connection_cache_tpu_udp",
                 tpu_connection_pool_size,
-            ))
+            ))),
+            (true, _) => None,
         };
 
         let vote_connection_cache = if vote_use_quic {
@@ -1172,6 +1174,9 @@ impl Validator {
                     runtime_handle.clone(),
                 )
             } else {
+                let Some(connection_cache) = &connection_cache else {
+                    panic!("ConnectionCache should exist by construction.");
+                };
                 ClientOption::ConnectionCache(connection_cache.clone())
             };
             let rpc_svc_config = JsonRpcServiceConfig {
@@ -1479,9 +1484,12 @@ impl Validator {
             Arc::new(crate::cluster_slots_service::cluster_slots::ClusterSlots::default());
 
         // If RPC is supported and ConnectionCache is used, pass ConnectionCache for being warmup inside Tvu.
-        let connection_cache_for_warmup = (json_rpc_service.is_some()
-            && !config.use_tpu_client_next)
-            .then_some(&connection_cache);
+        let connection_cache_for_warmup =
+            if json_rpc_service.is_some() && connection_cache.is_some() {
+                connection_cache.as_ref()
+            } else {
+                None
+            };
 
         let tvu = Tvu::new(
             vote_account,
@@ -1568,7 +1576,22 @@ impl Validator {
             return Err(ValidatorError::WenRestartFinished.into());
         }
 
-        let (tpu, mut key_notifies) = Tpu::new(
+        let forwarding_tpu_client = if let Some(connection_cache) = connection_cache {
+            ForwardingClientOption::ConnectionCache(connection_cache.clone())
+        } else {
+            let runtime_handle = tpu_client_next_runtime
+                .as_ref()
+                .map(TokioRuntime::handle)
+                .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap());
+            ForwardingClientOption::TpuClientNext((
+                Arc::as_ref(&identity_keypair),
+                tpu_transactions_forwards_client
+                    .take()
+                    .expect("Socket should exist."),
+                runtime_handle.clone(),
+            ))
+        };
+        let (tpu, mut key_notifies) = Tpu::new_with_client(
             &cluster_info,
             &poh_recorder,
             transaction_recorder,
@@ -1601,7 +1624,7 @@ impl Validator {
             bank_notification_sender.map(|sender| sender.sender),
             config.tpu_coalesce,
             duplicate_confirmed_slot_sender,
-            &connection_cache,
+            forwarding_tpu_client,
             turbine_quic_endpoint_sender,
             &identity_keypair,
             config.runtime_config.log_messages_bytes_limit,
@@ -1635,9 +1658,9 @@ impl Validator {
             if let Some(json_rpc_service) = &json_rpc_service {
                 key_notifies.push(json_rpc_service.get_client_key_updater())
             }
+            // note, that we don't need to add ConnectionClient to key_notifiers
+            // because it is added inside Tpu.
         }
-        // add connection_cache because it is still used in Forwarder.
-        key_notifies.push(connection_cache);
 
         *admin_rpc_service_post_init.write().unwrap() = Some(AdminRpcRequestMetadataPostInit {
             bank_forks: bank_forks.clone(),
@@ -2786,12 +2809,14 @@ mod tests {
         super::*,
         crossbeam_channel::{bounded, RecvTimeoutError},
         solana_entry::entry,
+        solana_genesis_config::create_genesis_config,
         solana_gossip::contact_info::ContactInfo,
         solana_ledger::{
             blockstore, create_new_tmp_ledger, genesis_utils::create_genesis_config_with_leader,
             get_tmp_ledger_path_auto_delete,
         },
-        solana_sdk::{genesis_config::create_genesis_config, poh_config::PohConfig},
+        solana_poh_config::PohConfig,
+        solana_sha256_hasher::hash,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
         std::{fs::remove_dir_all, thread, time::Duration},
     };
@@ -3078,7 +3103,6 @@ mod tests {
     #[test]
     fn test_wait_for_supermajority() {
         solana_logger::setup();
-        use solana_sdk::hash::hash;
         let node_keypair = Arc::new(Keypair::new());
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
@@ -3216,8 +3240,8 @@ mod tests {
         // But, DEFAULT_MS_PER_SLOT / DEFAULT_TICKS_PER_SLOT = 6.25
         //
         // So, convert to microseconds first to avoid the integer rounding error
-        let target_tick_duration_us = solana_sdk::clock::DEFAULT_MS_PER_SLOT * 1000
-            / solana_sdk::clock::DEFAULT_TICKS_PER_SLOT;
+        let target_tick_duration_us =
+            solana_clock::DEFAULT_MS_PER_SLOT * 1000 / solana_clock::DEFAULT_TICKS_PER_SLOT;
         assert_eq!(target_tick_duration_us, 6250);
         Duration::from_micros(target_tick_duration_us)
     }
@@ -3228,7 +3252,7 @@ mod tests {
         let poh_config = PohConfig {
             target_tick_duration: target_tick_duration(),
             // make PoH rate really fast to cause the panic condition
-            hashes_per_tick: Some(100 * solana_sdk::clock::DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick: Some(100 * solana_clock::DEFAULT_HASHES_PER_TICK),
             ..PohConfig::default()
         };
         let genesis_config = GenesisConfig {

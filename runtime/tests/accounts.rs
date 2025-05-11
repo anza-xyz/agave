@@ -2,16 +2,14 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
+    solana_account::{AccountSharedData, WritableAccount},
     solana_accounts_db::{
         accounts_db::{AccountsDb, LoadHint},
         accounts_hash::AccountHash,
         ancestors::Ancestors,
     },
-    solana_sdk::{
-        account::{AccountSharedData, WritableAccount},
-        clock::Slot,
-        hash::Hash,
-    },
+    solana_clock::Slot,
+    solana_hash::Hash,
     std::{collections::HashSet, time::Instant},
 };
 

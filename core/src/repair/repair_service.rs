@@ -3,7 +3,7 @@
 #[cfg(test)]
 use {
     crate::repair::duplicate_repair_status::DuplicateSlotRepairStatus,
-    solana_sdk::{clock::DEFAULT_MS_PER_SLOT, signer::keypair::Keypair},
+    solana_clock::DEFAULT_MS_PER_SLOT, solana_keypair::Keypair,
 };
 use {
     crate::{
@@ -27,21 +27,19 @@ use {
     lru::LruCache,
     rand::seq::SliceRandom,
     solana_client::connection_cache::Protocol,
+    solana_clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_hash::Hash,
     solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
         shred,
     },
     solana_measure::measure::Measure,
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
-    solana_sdk::{
-        clock::{Slot, DEFAULT_TICKS_PER_SECOND, MS_PER_TICK},
-        epoch_schedule::EpochSchedule,
-        hash::Hash,
-        pubkey::Pubkey,
-        timing::timestamp,
-    },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
+    solana_time_utils::timestamp,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         iter::Iterator,
@@ -962,7 +960,7 @@ impl RepairService {
                     Some((
                         *pubkey,
                         peer_repair_addr,
-                        (stake / solana_sdk::native_token::LAMPORTS_PER_SOL) as u32,
+                        (stake / solana_native_token::LAMPORTS_PER_SOL) as u32,
                     ))
                 } else {
                     None
@@ -1268,6 +1266,7 @@ mod test {
         super::*,
         crate::repair::quic_endpoint::RemoteRequest,
         solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{
                 make_chaining_slot_entries, make_many_slot_entries, make_slot_entries, Blockstore,
@@ -1278,11 +1277,9 @@ mod test {
         },
         solana_net_utils::{bind_to_localhost, bind_to_unspecified},
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
         std::collections::HashSet,
     };
 
@@ -1316,7 +1313,7 @@ mod test {
         );
 
         // Receive and translate repair packet
-        let mut packets = vec![solana_sdk::packet::Packet::default(); 1];
+        let mut packets = vec![solana_packet::Packet::default(); 1];
         let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
         let packet = &packets[0];
         let Some(bytes) = packet.data(..).map(Vec::from) else {

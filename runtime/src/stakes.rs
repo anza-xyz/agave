@@ -6,15 +6,13 @@ use {
     log::error,
     num_derive::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Epoch,
-        pubkey::Pubkey,
-        stake::state::{Delegation, StakeActivationStatus},
-        vote::state::VoteStateVersions,
-    },
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+    solana_stake_interface::state::{Delegation, StakeActivationStatus},
     solana_stake_program::stake_state::Stake,
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
         ops::Add,
@@ -595,9 +593,13 @@ pub(crate) mod tests {
     use {
         super::*,
         rayon::ThreadPoolBuilder,
-        solana_sdk::{account::WritableAccount, pubkey::Pubkey, rent::Rent, stake},
+        solana_account::WritableAccount,
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_stake_interface as stake,
         solana_stake_program::stake_state,
-        solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+        solana_vote_interface::state::{VoteState, VoteStateVersions},
+        solana_vote_program::vote_state,
     };
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))

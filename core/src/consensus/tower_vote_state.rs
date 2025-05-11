@@ -1,5 +1,5 @@
 use {
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::vote_state::{Lockout, VoteState, VoteState1_14_11, MAX_LOCKOUT_HISTORY},
     std::collections::VecDeque,

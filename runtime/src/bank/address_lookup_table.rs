@@ -1,13 +1,10 @@
 use {
     super::Bank,
-    solana_sdk::{
-        address_lookup_table::error::AddressLookupError,
-        clock::Slot,
-        message::{
-            v0::{LoadedAddresses, MessageAddressTableLookup},
-            AddressLoaderError,
-        },
-        transaction::AddressLoader,
+    solana_address_lookup_table_interface::error::AddressLookupError,
+    solana_clock::Slot,
+    solana_message::{
+        v0::{LoadedAddresses, MessageAddressTableLookup},
+        AddressLoader, AddressLoaderError,
     },
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
 };

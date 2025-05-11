@@ -8,6 +8,7 @@ use {
     pretty_hex::PrettyHex,
     serde::ser::{Impossible, SerializeSeq, SerializeStruct, Serializer},
     serde_derive::{Deserialize, Serialize},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_account_decoder::{encode_ui_account, UiAccountData, UiAccountEncoding},
     solana_accounts_db::{
         accounts_index::{ScanConfig, ScanOrder},
@@ -17,20 +18,17 @@ use {
         display::writeln_transaction, CliAccount, CliAccountNewConfig, OutputFormat, QuietDisplay,
         VerboseDisplay,
     },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
         blockstore_meta::{DuplicateSlotProof, ErasureMeta},
         shred::{self, Shred, ShredType},
     },
+    solana_native_token::lamports_to_sol,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::{Bank, TotalAccountsStats},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-        native_token::lamports_to_sol,
-        pubkey::Pubkey,
-        transaction::VersionedTransaction,
-    },
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
         EncodedTransactionWithStatusMeta, EntrySummary, Rewards, TransactionDetails,
@@ -835,7 +833,7 @@ impl AccountsScanner {
     /// Returns true if this account should be included in the output
     fn should_process_account(&self, account: &AccountSharedData) -> bool {
         account.is_loadable()
-            && (self.config.include_sysvars || !solana_sdk::sysvar::check_id(account.owner()))
+            && (self.config.include_sysvars || !solana_sdk_ids::sysvar::check_id(account.owner()))
     }
 
     fn maybe_output_account<S>(

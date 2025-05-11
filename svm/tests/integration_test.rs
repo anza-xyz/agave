@@ -2446,12 +2446,6 @@ impl InspectedAccounts {
     fn inspect(&mut self, pubkey: Pubkey, inspect: Inspect) {
         self.0.entry(pubkey).or_default().push(inspect.into())
     }
-
-    fn inspect_n(&mut self, pubkey: Pubkey, inspect: Inspect, times: usize) {
-        for _ in 0..times {
-            self.inspect(pubkey, inspect.clone());
-        }
-    }
 }
 
 #[test]
@@ -2493,11 +2487,7 @@ fn svm_inspect_account() {
         true,
         0,
     );
-    expected_inspected_accounts.inspect_n(
-        system_program::id(),
-        Inspect::LiveRead(&system_account),
-        2,
-    );
+    expected_inspected_accounts.inspect(system_program::id(), Inspect::LiveRead(&system_account));
 
     let transfer_amount = 1_000_000;
     let transaction = Transaction::new_signed_with_payer(
@@ -2559,11 +2549,7 @@ fn svm_inspect_account() {
     );
 
     // system program
-    expected_inspected_accounts.inspect_n(
-        system_program::id(),
-        Inspect::LiveRead(&system_account),
-        2,
-    );
+    expected_inspected_accounts.inspect(system_program::id(), Inspect::LiveRead(&system_account));
 
     let mut final_test_entry = SvmTestEntry {
         initial_accounts: initial_test_entry.final_accounts.clone(),

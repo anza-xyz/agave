@@ -1,8 +1,12 @@
 use {
     futures_util::StreamExt,
-    rand::Rng,
     serde_json::{json, Value},
+    solana_clock::Slot,
+    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
+    solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
+    solana_native_token::sol_to_lamports,
+    solana_pubkey::Pubkey,
     solana_pubsub_client::{nonblocking, pubsub_client::PubsubClient},
     solana_rpc::{
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
@@ -24,15 +28,10 @@ use {
         commitment::{BlockCommitmentCache, CommitmentSlots},
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     },
-    solana_sdk::{
-        clock::Slot,
-        commitment_config::{CommitmentConfig, CommitmentLevel},
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_program, system_transaction,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::program as system_program,
+    solana_system_transaction as system_transaction,
     solana_test_validator::TestValidator,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, TransactionDetails, UiTransactionEncoding,
@@ -52,10 +51,8 @@ use {
 };
 
 fn pubsub_addr() -> SocketAddr {
-    SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        rand::thread_rng().gen_range(1024..65535),
-    )
+    let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
 }
 
 #[test]
@@ -66,7 +63,7 @@ fn test_rpc_client() {
     let test_validator =
         TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
-    let bob_pubkey = solana_sdk::pubkey::new_rand();
+    let bob_pubkey = solana_pubkey::new_rand();
 
     let client = RpcClient::new(test_validator.rpc_url());
 

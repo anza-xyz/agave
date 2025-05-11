@@ -9,7 +9,8 @@
 
 use {
     crate::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
-    solana_sdk::{clock::Slot, hash::Hash},
+    solana_clock::Slot,
+    solana_hash::Hash,
     std::{
         collections::BTreeMap,
         sync::{Arc, Mutex, MutexGuard, RwLock},

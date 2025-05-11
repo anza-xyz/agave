@@ -2,17 +2,14 @@ use {
     super::Bank,
     crate::bank::CollectorFeeDetails,
     log::{debug, warn},
+    solana_account::{ReadableAccount, WritableAccount},
     solana_fee::FeeFeatures,
+    solana_fee_structure::FeeBudgetLimits,
+    solana_pubkey::Pubkey,
+    solana_reward_info::{RewardInfo, RewardType},
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::{
-        account::{ReadableAccount, WritableAccount},
-        fee::FeeBudgetLimits,
-        pubkey::Pubkey,
-        reward_info::RewardInfo,
-        reward_type::RewardType,
-        system_program,
-    },
     solana_svm_rent_collector::svm_rent_collector::SVMRentCollector,
+    solana_system_interface::program as system_program,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{result::Result, sync::atomic::Ordering::Relaxed},
     thiserror::Error,
@@ -109,9 +106,9 @@ impl Bank {
         // NOTE: burn percent is statically 50%, in case it needs to change in the future,
         // burn_percent can be bank property that being passed down from bank to bank, without
         // needing fee-rate-governor
-        static_assertions::const_assert!(solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT <= 100);
+        static_assertions::const_assert!(solana_fee_calculator::DEFAULT_BURN_PERCENT <= 100);
 
-        solana_sdk::fee_calculator::DEFAULT_BURN_PERCENT as u64
+        solana_fee_calculator::DEFAULT_BURN_PERCENT as u64
     }
 
     /// Attempts to deposit the given `deposit` amount into the fee collector account.
@@ -343,10 +340,11 @@ pub mod tests {
             create_genesis_config, create_genesis_config_with_leader,
             create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
         },
-        solana_sdk::{
-            account::AccountSharedData, native_token::sol_to_lamports, pubkey, rent::Rent,
-            signature::Signer,
-        },
+        solana_account::AccountSharedData,
+        solana_native_token::sol_to_lamports,
+        solana_pubkey as pubkey,
+        solana_rent::Rent,
+        solana_signer::Signer,
         solana_svm_rent_collector::rent_state::RentState,
         std::sync::RwLock,
     };

@@ -9,11 +9,16 @@ use {
         accounts_db::CalcAccountsHashDataSource, accounts_hash::CalcAccountsHashConfig,
         epoch_accounts_hash::EpochAccountsHash,
     },
+    solana_clock::Slot,
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
         snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
     },
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
+    solana_keypair::Keypair,
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
@@ -29,16 +34,10 @@ use {
         snapshot_controller::SnapshotController,
         snapshot_utils,
     },
-    solana_sdk::{
-        clock::Slot,
-        epoch_schedule::EpochSchedule,
-        native_token::LAMPORTS_PER_SOL,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_transaction,
-        timing::timestamp,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_transaction as system_transaction,
+    solana_time_utils::timestamp,
     std::{
         mem::ManuallyDrop,
         sync::{

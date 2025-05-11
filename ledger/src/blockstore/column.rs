@@ -6,11 +6,9 @@ use {
     },
     bincode::Options as BincodeOptions,
     serde::{de::DeserializeOwned, Serialize},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        pubkey::{Pubkey, PUBKEY_BYTES},
-        signature::{Signature, SIGNATURE_BYTES},
-    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_signature::{Signature, SIGNATURE_BYTES},
     solana_storage_proto::convert::generated,
 };
 

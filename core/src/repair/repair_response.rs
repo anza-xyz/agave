@@ -1,9 +1,10 @@
 use {
+    solana_clock::Slot,
     solana_ledger::{
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_sdk::{clock::Slot, packet::Packet},
+    solana_packet::Packet,
     std::{io, net::SocketAddr},
 };
 
@@ -45,14 +46,13 @@ pub fn repair_response_packet_from_bytes(
 mod test {
     use {
         super::*,
+        solana_keypair::Keypair,
         solana_ledger::{
             shred::{Shred, ShredFlags},
             sigverify_shreds::{verify_shred_cpu, LruCache},
         },
-        solana_sdk::{
-            packet::PacketFlags,
-            signature::{Keypair, Signer},
-        },
+        solana_packet::PacketFlags,
+        solana_signer::Signer,
         std::{
             collections::HashMap,
             net::{IpAddr, Ipv4Addr},

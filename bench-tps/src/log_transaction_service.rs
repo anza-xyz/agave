@@ -7,14 +7,11 @@ use {
     crossbeam_channel::{select, tick, unbounded, Receiver, Sender},
     log::*,
     serde::Serialize,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
+    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_measure::measure::Measure,
     solana_rpc_client_api::config::RpcBlockConfig,
-    solana_sdk::{
-        clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE},
-        commitment_config::{CommitmentConfig, CommitmentLevel},
-        signature::Signature,
-        slot_history::Slot,
-    },
+    solana_signature::Signature,
     solana_tps_client::TpsClient,
     solana_transaction_status::{
         option_serializer::OptionSerializer, EncodedTransactionWithStatusMeta, RewardType,

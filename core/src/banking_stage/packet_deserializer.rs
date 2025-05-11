@@ -192,10 +192,11 @@ mod tests {
     use {
         super::*,
         solana_perf::packet::to_packet_batches,
-        solana_sdk::{
-            hash::Hash, pubkey::Pubkey, signature::Keypair, system_transaction,
-            transaction::Transaction,
-        },
+        solana_hash::Hash,
+        solana_pubkey::Pubkey,
+        solana_keypair::Keypair,
+        solana_system_transaction as system_transaction,
+        solana_transaction::Transaction,
     };
 
     fn random_transfer() -> Transaction {

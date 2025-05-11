@@ -1,16 +1,15 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
+    solana_clock::Slot,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{
         max_entries_per_n_shred, verify_test_data_shred, ProcessShredsStats, ReedSolomonCache,
         Shred, Shredder, DATA_SHREDS_PER_FEC_BLOCK, LEGACY_SHRED_DATA_CAPACITY,
     },
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        signature::{Keypair, Signer},
-        system_transaction,
-    },
+    solana_signer::Signer,
+    solana_system_transaction as system_transaction,
     std::{
         collections::{BTreeMap, HashSet},
         convert::TryInto,

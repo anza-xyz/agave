@@ -15,10 +15,10 @@ use {
         append_vec::StoredMetaWriteVersion,
         epoch_accounts_hash::EpochAccountsHash,
     },
-    solana_sdk::{
-        clock::Slot, hash::Hash, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_clock::Slot,
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
+    solana_rent_collector::RentCollector,
     std::{
         sync::{atomic::Ordering, Arc},
         time::Instant,

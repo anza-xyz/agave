@@ -10,10 +10,12 @@ use {
         galois_8::ReedSolomon,
         Error::{InvalidIndex, TooFewDataShards, TooFewShardsPresent},
     },
+    solana_clock::Slot,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sdk::{clock::Slot, hash::Hash, signature::Keypair},
     std::{
         borrow::Borrow,
         fmt::Debug,
@@ -545,13 +547,13 @@ mod tests {
         },
         assert_matches::assert_matches,
         rand::{seq::SliceRandom, Rng},
-        solana_sdk::{
-            hash::{hash, Hash},
-            pubkey::Pubkey,
-            shred_version,
-            signature::{Signature, Signer},
-            system_transaction,
-        },
+        solana_hash::Hash,
+        solana_pubkey::Pubkey,
+        solana_sha256_hasher::hash,
+        solana_shred_version as shred_version,
+        solana_signature::Signature,
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
         std::{collections::HashSet, convert::TryInto, iter::repeat_with, sync::Arc},
         test_case::test_case,
     };
@@ -1088,13 +1090,13 @@ mod tests {
         let mut rng = rand::thread_rng();
         let txs = repeat_with(|| {
             let from_pubkey = Pubkey::new_unique();
-            let instruction = solana_sdk::system_instruction::transfer(
+            let instruction = solana_system_interface::instruction::transfer(
                 &from_pubkey,
                 &Pubkey::new_unique(), // to
                 rng.gen(),             // lamports
             );
-            let message = solana_sdk::message::Message::new(&[instruction], Some(&from_pubkey));
-            let mut tx = solana_sdk::transaction::Transaction::new_unsigned(message);
+            let message = solana_message::Message::new(&[instruction], Some(&from_pubkey));
+            let mut tx = solana_transaction::Transaction::new_unsigned(message);
             // Also randomize the signatre bytes.
             let mut signature = [0u8; 64];
             rng.fill(&mut signature[..]);

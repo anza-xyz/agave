@@ -1,14 +1,12 @@
 use {
     crate::banking_stage::LikeClusterInfo,
     itertools::Itertools,
+    solana_clock::{FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_gossip::{
         cluster_info::ClusterInfo,
         contact_info::{ContactInfoQuery, Protocol},
     },
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::clock::{
-        FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET, NUM_CONSECUTIVE_LEADER_SLOTS,
-    },
     std::{net::SocketAddr, sync::RwLock},
 };
 

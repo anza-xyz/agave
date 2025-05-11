@@ -1,22 +1,22 @@
 use {
     crate::bank::Bank,
     crossbeam_channel::{unbounded, Receiver, Sender},
-    solana_sdk::{
-        account::Account,
-        client::{AsyncClient, Client, SyncClient},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        instruction::Instruction,
-        message::{Message, SanitizedMessage},
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        signers::Signers,
-        system_instruction,
-        sysvar::{Sysvar, SysvarId},
-        transaction::{self, Transaction, VersionedTransaction},
-        transport::{Result, TransportError},
-    },
+    solana_account::Account,
+    solana_client_traits::{AsyncClient, Client, SyncClient},
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::{Message, SanitizedMessage},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_signer::{signers::Signers, Signer},
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::Sysvar,
+    solana_sysvar_id::SysvarId,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
         io,
         sync::{Arc, Mutex},
@@ -24,8 +24,11 @@ use {
         time::{Duration, Instant},
     },
 };
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 #[cfg(feature = "dev-context-only-utils")]
-use {crate::bank_forks::BankForks, solana_sdk::clock, std::sync::RwLock};
+use {crate::bank_forks::BankForks, solana_clock as clock, std::sync::RwLock};
 
 pub struct BankClient {
     bank: Arc<Bank>,
@@ -299,11 +302,8 @@ impl BankClient {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{
-            genesis_config::create_genesis_config, instruction::AccountMeta,
-            native_token::sol_to_lamports,
-        },
+        super::*, solana_genesis_config::create_genesis_config, solana_instruction::AccountMeta,
+        solana_native_token::sol_to_lamports,
     };
 
     #[test]

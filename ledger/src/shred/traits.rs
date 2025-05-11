@@ -2,7 +2,8 @@ use {
     crate::shred::{
         payload::Payload, CodingShredHeader, DataShredHeader, Error, ShredCommonHeader,
     },
-    solana_sdk::{clock::Slot, signature::Signature},
+    solana_clock::Slot,
+    solana_signature::Signature,
 };
 
 pub(super) trait Shred<'a>: Sized {

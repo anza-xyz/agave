@@ -4,15 +4,13 @@
 extern crate test;
 
 use {
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
+    solana_genesis_config::create_genesis_config,
+    solana_hash::Hash,
+    solana_instruction::error::LamportsError,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::*,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        genesis_config::create_genesis_config,
-        hash::Hash,
-        lamports::LamportsError,
-        pubkey::Pubkey,
-    },
     std::{path::PathBuf, sync::Arc},
     test::Bencher,
 };

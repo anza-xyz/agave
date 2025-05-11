@@ -819,7 +819,7 @@ pub mod remaining_compute_units_syscall_enabled {
 }
 
 pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("G8yMNsNUd4p3VB22ycrPEB1qRgepCFeFpAqD2Lr66s36");
+    solana_pubkey::declare_id!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
 }
 
 pub mod require_rent_exempt_split_destination {

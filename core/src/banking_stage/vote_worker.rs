@@ -17,25 +17,28 @@ use {
     arrayvec::ArrayVec,
     crossbeam_channel::RecvTimeoutError,
     solana_accounts_db::account_locks::validate_account_locks,
+    solana_clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
     solana_measure::{measure::Measure, measure_us},
     solana_poh::poh_recorder::{BankStart, PohRecorderError},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::{
-        clock::FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
-        timing::timestamp,
-        transaction::{self, SanitizedTransaction, TransactionError},
-    },
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
     },
+    solana_time_utils::timestamp,
+    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction_error::TransactionError,
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
         time::Instant,
     },
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 // This vote batch size was selected to balance the following two things:
 // 1. Amortize execution overhead (Larger is better)

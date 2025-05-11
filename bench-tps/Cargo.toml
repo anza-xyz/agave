@@ -19,28 +19,46 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+
+solana-account = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true }
+solana-fee-calculator = { workspace = true }
 solana-genesis = { workspace = true }
+solana-genesis-config = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
+solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-nonce = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = "=2.2.2"
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-instruction-padding = { version = "=0.3.0", features = ["no-entrypoint"] }
@@ -50,7 +68,9 @@ thiserror = { workspace = true }
 agave-feature-set = { workspace = true }
 serial_test = { workspace = true }
 solana-local-cluster = { workspace = true }
+solana-rent = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sdk-ids = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["bank-client"] }
 tempfile = { workspace = true }

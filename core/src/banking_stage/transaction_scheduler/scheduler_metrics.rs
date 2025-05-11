@@ -2,7 +2,8 @@ use {
     super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
     solana_poh::poh_recorder::BankStart,
-    solana_sdk::{clock::Slot, timing::AtomicInterval},
+    solana_clock::Slot,
+    solana_time_utils::AtomicInterval,
     std::time::{Duration, Instant},
 };
 

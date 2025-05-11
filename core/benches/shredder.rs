@@ -6,13 +6,14 @@ extern crate test;
 use {
     rand::Rng,
     solana_entry::entry::{create_ticks, Entry},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{
         get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred, max_ticks_per_n_shreds,
         ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder,
         DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::test_tx,
-    solana_sdk::{hash::Hash, signature::Keypair},
     test::{black_box, Bencher},
 };
 

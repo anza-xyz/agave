@@ -1,6 +1,6 @@
 use {
     crate::shred::{Shred, ShredType},
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{
         ops::AddAssign,
         time::{Duration, Instant},

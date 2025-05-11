@@ -103,8 +103,11 @@ use {
 
 const DEFAULT_EPOCH_DURATION: Duration =
     Duration::from_millis(DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT);
-/// milliseconds we sleep for between gossip requests
+/// milliseconds we sleep for between gossip rounds
 pub const GOSSIP_SLEEP_MILLIS: u64 = 100;
+/// Interval between pull requests (in gossip rounds)
+const PULL_REQUEST_PERIOD: usize = 5;
+
 /// Capacity for the [`ClusterInfo::run_socket_consume`] and [`ClusterInfo::run_listen`]
 /// intermediate packet batch buffers.
 ///
@@ -1468,8 +1471,11 @@ impl ClusterInfo {
                 let mut last_contact_info_save = timestamp();
                 let mut entrypoints_processed = false;
                 let recycler = PacketBatchRecycler::default();
-                let mut generate_pull_requests = true;
-                while !exit.load(Ordering::Relaxed) {
+
+                for gossip_round in 0usize.. {
+                    if exit.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let start = timestamp();
                     if self.contact_debug_interval != 0
                         && start - last_contact_info_trace > self.contact_debug_interval
@@ -1494,13 +1500,15 @@ impl ClusterInfo {
                         .map(EpochSpecs::current_epoch_staked_nodes)
                         .cloned()
                         .unwrap_or_default();
+
                     let _ = self.run_gossip(
                         &thread_pool,
                         gossip_validators.as_ref(),
                         &recycler,
                         &stakes,
                         &sender,
-                        generate_pull_requests,
+                        // Make pull requests every PULL_REQUEST_PERIOD rounds
+                        gossip_round % PULL_REQUEST_PERIOD == 0,
                     );
                     let epoch_duration = epoch_specs
                         .as_mut()
@@ -1525,7 +1533,6 @@ impl ClusterInfo {
                         let time_left = GOSSIP_SLEEP_MILLIS - elapsed;
                         sleep(Duration::from_millis(time_left));
                     }
-                    generate_pull_requests = !generate_pull_requests;
                 }
             })
             .unwrap()

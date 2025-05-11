@@ -4,6 +4,7 @@ pub use pending_snapshot_packages::PendingSnapshotPackages;
 use {
     snapshot_gossip_manager::SnapshotGossipManager,
     solana_accounts_db::accounts_db::AccountStorageEntry,
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_perf::thread::renice_this_thread,
@@ -11,7 +12,6 @@ use {
         snapshot_config::SnapshotConfig, snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes, snapshot_package::SnapshotPackage, snapshot_utils,
     },
-    solana_sdk::clock::Slot,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},

@@ -1,12 +1,10 @@
 use {
     clap::ArgMatches,
     solana_clap_utils::keypair::{pubkey_from_path, signer_from_path},
+    solana_clock::{Epoch, UnixTimestamp},
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_sdk::{
-        clock::{Epoch, UnixTimestamp},
-        pubkey::Pubkey,
-        signature::Signer,
-    },
+    solana_signer::Signer,
     std::{error::Error, rc::Rc},
 };
 

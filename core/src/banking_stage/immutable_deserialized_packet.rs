@@ -1,25 +1,24 @@
 use {
     super::packet_filter::PacketFilterFailure,
     agave_feature_set::FeatureSet,
+    solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
+    solana_hash::Hash,
+    solana_message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
     solana_perf::packet::Packet,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sanitize::SanitizeError,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
-        pubkey::Pubkey,
-        signature::Signature,
-        transaction::{
-            MessageHash, SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction,
-        },
-    },
     solana_short_vec::decode_shortu16_len,
+    solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+    },
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
     std::{cmp::Ordering, collections::HashSet, mem::size_of},
     thiserror::Error,
@@ -209,11 +208,10 @@ fn packet_message(packet: &Packet) -> Result<&[u8], DeserializedPacketError> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{
-            compute_budget, instruction::Instruction, pubkey::Pubkey, signature::Keypair,
-            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
-        },
+        super::*, solana_compute_budget_interface as compute_budget,
+        solana_instruction::Instruction, solana_keypair::Keypair, solana_pubkey::Pubkey,
+        solana_signer::Signer, solana_system_interface::instruction as system_instruction,
+        solana_system_transaction as system_transaction, solana_transaction::Transaction,
     };
 
     #[test]

@@ -21,6 +21,7 @@ use {
     dashmap::DashMap,
     log::*,
     serde_derive::Serialize,
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
@@ -35,12 +36,16 @@ use {
         },
     },
     solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
+    solana_clock::{Epoch, Slot},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
+    solana_feature_gate_interface::{self as feature, Feature},
+    solana_genesis_config::ClusterType,
+    solana_inflation::Inflation,
     solana_ledger::{
         blockstore::{banking_trace_path, create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
@@ -49,6 +54,10 @@ use {
         },
     },
     solana_measure::{measure::Measure, measure_time},
+    solana_message::SimpleAddressLoader,
+    solana_native_token::{lamports_to_sol, sol_to_lamports, Sol},
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_runtime::{
         bank::{
             bank_hash_details::{self, SlotDetails, TransactionDetails},
@@ -65,22 +74,11 @@ use {
         },
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        account_utils::StateMut,
-        clock::{Epoch, Slot},
-        feature::{self, Feature},
-        genesis_config::ClusterType,
-        inflation::Inflation,
-        native_token::{lamports_to_sol, sol_to_lamports, Sol},
-        pubkey::Pubkey,
-        rent::Rent,
-        shred_version::compute_shred_version,
-        stake::{self, state::StakeStateV2},
-        system_program,
-        transaction::{MessageHash, SimpleAddressLoader},
-    },
+    solana_shred_version::compute_shred_version,
+    solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_stake_program::stake_state,
+    solana_system_interface::program as system_program,
+    solana_transaction::sanitized::MessageHash,
     solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote::vote_state_view::VoteStateView,
@@ -2971,7 +2969,7 @@ fn main() {
                         for (pubkey, warped_account) in all_accounts {
                             // Don't output sysvars; it's always updated but not related to
                             // inflation.
-                            if solana_sdk::sysvar::check_id(warped_account.owner()) {
+                            if solana_sdk_ids::sysvar::check_id(warped_account.owner()) {
                                 continue;
                             }
 

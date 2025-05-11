@@ -10,8 +10,8 @@ use {
         column::{columns, ColumnName},
         Blockstore, PurgeType,
     },
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_measure::measure::Measure,
-    solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
     std::{
         string::ToString,
         sync::{

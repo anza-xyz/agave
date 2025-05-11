@@ -33,11 +33,9 @@ use {
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
+    solana_clock::{Epoch, Slot},
+    solana_hash::Hash,
     solana_measure::{measure::Measure, measure_time, measure_us},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        hash::Hash,
-    },
     std::{
         cmp::Ordering,
         collections::{HashMap, HashSet},

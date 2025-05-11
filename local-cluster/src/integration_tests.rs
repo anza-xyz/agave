@@ -17,12 +17,16 @@ use {
         validator_configs::*,
     },
     log::*,
+    solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
+    solana_clock::{self as clock, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
     solana_core::{
         consensus::{tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD},
         validator::{is_snapshot_config_valid, ValidatorConfig},
     },
     solana_gossip::gossip_service::discover_validators,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
@@ -30,18 +34,13 @@ use {
         blockstore_options::{AccessType, BlockstoreOptions},
         leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule, LeaderSchedule},
     },
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
         snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
     },
-    solana_sdk::{
-        account::AccountSharedData,
-        clock::{self, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
-        hash::Hash,
-        native_token::LAMPORTS_PER_SOL,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
@@ -464,7 +463,7 @@ pub fn test_faulty_node(
         // Use a fixed leader schedule so that only the faulty node gets leader slots.
         let validator_to_slots = vec![(
             validator_keys[0].0.as_ref().pubkey(),
-            solana_sdk::clock::DEFAULT_DEV_SLOTS_PER_EPOCH as usize,
+            solana_clock::DEFAULT_DEV_SLOTS_PER_EPOCH as usize,
         )];
         let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
         FixedSchedule {

@@ -3,10 +3,8 @@ use {
     rand::{thread_rng, Rng},
     serde::Serialize,
     solana_accounts_db::ancestors::Ancestors,
-    solana_sdk::{
-        clock::{Slot, MAX_RECENT_BLOCKHASHES},
-        hash::Hash,
-    },
+    solana_clock::{Slot, MAX_RECENT_BLOCKHASHES},
+    solana_hash::Hash,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         sync::{Arc, Mutex},
@@ -307,10 +305,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        solana_sdk::{hash::hash, signature::Signature},
-    };
+    use {super::*, solana_sha256_hasher::hash, solana_signature::Signature};
 
     type BankStatusCache = StatusCache<()>;
 
