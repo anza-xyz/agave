@@ -24,6 +24,7 @@ use {
 
 fn bench_record_transactions(c: &mut Criterion) {
     const NUM_TRANSACTIONS: u64 = 16;
+    const NUM_BATCHES: u64 = 32;
 
     // Setup the PohService.
     let mut genesis_config_info = create_genesis_config(2);
@@ -78,13 +79,13 @@ fn bench_record_transactions(c: &mut Criterion) {
     );
 
     let mut group = c.benchmark_group("record_transactions");
-    group.throughput(criterion::Throughput::Elements(NUM_TRANSACTIONS));
+    group.throughput(criterion::Throughput::Elements(NUM_TRANSACTIONS * NUM_BATCHES));
     group.bench_function("record_transactions", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
 
             for _ in 0..iters {
-                let txs = txs.clone();
+                let txs: Vec<_> = (0..NUM_BATCHES).into_iter().map(|_| txs.clone()).collect();
                 poh_recorder.write().unwrap().clear_bank_for_test();
                 poh_recorder
                     .write()
@@ -92,8 +93,10 @@ fn bench_record_transactions(c: &mut Criterion) {
                     .set_bank(BankWithScheduler::new_without_scheduler(bank.clone()), false);
 
                 let start = Instant::now();
+                for txs in txs {
                 let summary = transaction_recorder.record_transactions(bank.slot(), txs);
                 assert!(summary.result.is_ok());
+                }
                 let elapsed = start.elapsed();
                 total += elapsed;
             }
