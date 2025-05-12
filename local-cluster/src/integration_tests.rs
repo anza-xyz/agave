@@ -22,6 +22,7 @@ use {
     solana_clock::{self as clock, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
     solana_core::{
         consensus::{tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD},
+        snapshot_packager_service::SnapshotPackagerService,
         validator::{is_snapshot_config_valid, ValidatorConfig},
     },
     solana_gossip::gossip_service::discover_validators,
@@ -572,6 +573,11 @@ impl SnapshotValidatorConfig {
         let validator_config = ValidatorConfig {
             snapshot_config,
             account_paths: account_storage_paths,
+            validator_exit_backpressure: [(
+                SnapshotPackagerService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            )]
+            .into(),
             ..ValidatorConfig::default_for_test()
         };
 
