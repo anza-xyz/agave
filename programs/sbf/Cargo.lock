@@ -7984,6 +7984,8 @@ name = "solana-sbf-rust-deprecated-loader"
 version = "2.3.0"
 dependencies = [
  "solana-program",
+ "solana-sbf-rust-invoke-dep",
+ "solana-sbf-rust-realloc-dep",
 ]
 
 [[package]]
