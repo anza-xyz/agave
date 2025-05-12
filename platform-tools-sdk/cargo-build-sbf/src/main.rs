@@ -1,22 +1,24 @@
 mod post_processing;
+mod utils;
 
 use {
-    crate::post_processing::post_process,
+    crate::{
+        post_processing::post_process,
+        utils::{rust_target_triple, spawn},
+    },
     bzip2::bufread::BzDecoder,
     cargo_metadata::camino::Utf8PathBuf,
     clap::{crate_description, crate_name, crate_version, Arg},
-    itertools::Itertools,
     log::*,
     regex::Regex,
     solana_file_download::download_file,
     std::{
         borrow::Cow,
         env,
-        ffi::OsStr,
         fs::{self, File},
-        io::{prelude::*, BufReader, BufWriter},
+        io::BufReader,
         path::{Path, PathBuf},
-        process::{exit, Command, Stdio},
+        process::exit,
     },
     tar::Archive,
 };
@@ -78,59 +80,6 @@ impl Default for Config<'_> {
             optimize_size: false,
         }
     }
-}
-
-fn spawn<I, S>(program: &Path, args: I, generate_child_script_on_failure: bool) -> String
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let args = Vec::from_iter(args);
-    let msg = args
-        .iter()
-        .map(|arg| arg.as_ref().to_str().unwrap_or("?"))
-        .join(" ");
-    info!("spawn: {:?} {}", program, msg);
-
-    let child = Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|err| {
-            error!("Failed to execute {}: {}", program.display(), err);
-            exit(1);
-        });
-
-    let output = child.wait_with_output().expect("failed to wait on child");
-    if !output.status.success() {
-        if !generate_child_script_on_failure {
-            exit(1);
-        }
-        error!("cargo-build-sbf exited on command execution failure");
-        let script_name = format!(
-            "cargo-build-sbf-child-script-{}.sh",
-            program.file_name().unwrap().to_str().unwrap(),
-        );
-        let file = File::create(&script_name).unwrap();
-        let mut out = BufWriter::new(file);
-        for (key, value) in env::vars() {
-            writeln!(out, "{key}=\"{value}\" \\").unwrap();
-        }
-        write!(out, "{}", program.display()).unwrap();
-        writeln!(out, "{}", msg).unwrap();
-        out.flush().unwrap();
-        error!(
-            "To rerun the failed command for debugging use {}",
-            script_name,
-        );
-        exit(1);
-    }
-    output
-        .stdout
-        .as_slice()
-        .iter()
-        .map(|&c| c as char)
-        .collect::<String>()
 }
 
 pub fn is_version_string(arg: &str) -> Result<(), String> {
@@ -443,14 +392,6 @@ fn link_solana_toolchain(config: &Config) {
         if config.verbose {
             debug!("{}", output);
         }
-    }
-}
-
-fn rust_target_triple(config: &Config) -> String {
-    if config.arch == "v0" {
-        "sbpf-solana-solana".to_string()
-    } else {
-        format!("sbpf{}-solana-solana", config.arch)
     }
 }
 
