@@ -3872,7 +3872,7 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_callee && !(deprecated_caller && direct_mapping) {
+        if deprecated_callee {
             assert!(result.is_ok(), "{result:?}");
             let account = bank.get_account(&account_keypair.pubkey()).unwrap();
             // deprecated_callee is incapable of resizing accounts
@@ -3913,12 +3913,12 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        if deprecated_callee && !(deprecated_caller && direct_mapping) {
+        if deprecated_callee {
             assert!(result.is_ok(), "{result:?}");
             let account = bank.get_account(&account_keypair.pubkey()).unwrap();
             // deprecated_callee is incapable of resizing accounts
             assert_eq!(account.data(), b"foobar");
-        } else if deprecated_caller {
+        } else if deprecated_caller && (deprecated_callee || !direct_mapping) {
             assert_eq!(
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(

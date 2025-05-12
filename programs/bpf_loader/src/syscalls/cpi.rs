@@ -1193,7 +1193,7 @@ fn update_callee_account(
             Ok(()) => {
                 let realloc_bytes_used = post_len.saturating_sub(caller_account.original_data_len);
                 // bpf_loader_deprecated programs don't have a realloc region
-                if is_loader_deprecated {
+                if is_loader_deprecated && realloc_bytes_used > 0 {
                     return Err(InstructionError::InvalidRealloc.into());
                 }
                 if prev_len != post_len {
@@ -1379,7 +1379,7 @@ fn update_caller_account(
     let post_len = callee_account.get_data().len();
     if prev_len != post_len {
         let max_increase = if direct_mapping && !invoke_context.get_check_aligned() {
-            return Err(Box::new(InstructionError::InvalidRealloc));
+            0
         } else {
             MAX_PERMITTED_DATA_INCREASE
         };
