@@ -32,7 +32,6 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
         transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::saturating_add_assign,
     solana_address_lookup_table_interface::state::estimate_last_valid_slot,
     solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
     solana_fee_structure::FeeBudgetLimits,
@@ -40,6 +39,7 @@ use {
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
     std::{
+        num::Saturating,
         sync::{Arc, RwLock},
         time::Instant,
     },
@@ -107,7 +107,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
             }));
 
         timing_metrics.update(|timing_metrics| {
-            saturating_add_assign!(timing_metrics.receive_time_us, receive_time_us);
+            timing_metrics.receive_time_us += receive_time_us;
         });
 
         let num_received = match received_packet_results {
@@ -115,7 +115,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                 let num_received_packets = receive_packet_results.deserialized_packets.len();
 
                 count_metrics.update(|count_metrics| {
-                    saturating_add_assign!(count_metrics.num_received, num_received_packets);
+                    count_metrics.num_received += num_received_packets;
                 });
 
                 if should_buffer {
@@ -126,14 +126,11 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
                         receive_packet_results.deserialized_packets
                     ));
                     timing_metrics.update(|timing_metrics| {
-                        saturating_add_assign!(timing_metrics.buffer_time_us, buffer_time_us);
+                        timing_metrics.buffer_time_us += buffer_time_us;
                     });
                 } else {
                     count_metrics.update(|count_metrics| {
-                        saturating_add_assign!(
-                            count_metrics.num_dropped_on_receive,
-                            num_received_packets
-                        );
+                        count_metrics.num_dropped_on_receive += num_received_packets;
                     });
                 }
                 num_received_packets
@@ -184,7 +181,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 
         let mut error_counts = TransactionErrorMetrics::default();
         for chunk in packets.chunks(CHUNK_SIZE) {
-            let mut post_sanitization_count: usize = 0;
+            let mut post_sanitization_count = Saturating::<usize>(0);
             chunk
                 .iter()
                 .filter_map(|packet| {
@@ -194,7 +191,7 @@ impl SanitizedTransactionReceiveAndBuffer {
                         root_bank.get_reserved_account_keys(),
                     )
                 })
-                .inspect(|_| saturating_add_assign!(post_sanitization_count, 1))
+                .inspect(|_| post_sanitization_count += 1)
                 .filter(|(tx, _deactivation_slot)| {
                     validate_account_locks(
                         tx.message().account_keys(),
@@ -226,9 +223,9 @@ impl SanitizedTransactionReceiveAndBuffer {
             );
             let post_lock_validation_count = transactions.len();
 
-            let mut post_transaction_check_count: usize = 0;
-            let mut num_dropped_on_capacity: usize = 0;
-            let mut num_buffered: usize = 0;
+            let mut post_transaction_check_count = Saturating::<usize>(0);
+            let mut num_dropped_on_capacity = Saturating::<usize>(0);
+            let mut num_buffered = Saturating::<usize>(0);
             for (((transaction, max_age), fee_budget_limits), _check_result) in transactions
                 .drain(..)
                 .zip(max_ages.drain(..))
@@ -239,16 +236,21 @@ impl SanitizedTransactionReceiveAndBuffer {
                     Consumer::check_fee_payer_unlocked(&working_bank, tx, &mut error_counts).is_ok()
                 })
             {
-                saturating_add_assign!(post_transaction_check_count, 1);
+                post_transaction_check_count += 1;
 
                 let (priority, cost) =
                     calculate_priority_and_cost(&transaction, &fee_budget_limits, &working_bank);
 
                 if container.insert_new_transaction(transaction, max_age, priority, cost) {
-                    saturating_add_assign!(num_dropped_on_capacity, 1);
+                    num_dropped_on_capacity += 1;
                 }
-                saturating_add_assign!(num_buffered, 1);
+                num_buffered += 1;
             }
+
+            let Saturating(post_sanitization_count) = post_sanitization_count;
+            let Saturating(post_transaction_check_count) = post_transaction_check_count;
+            let Saturating(num_dropped_on_capacity) = num_dropped_on_capacity;
+            let Saturating(num_buffered) = num_buffered;
 
             // Update metrics for transactions that were dropped.
             let num_dropped_on_sanitization = chunk.len().saturating_sub(post_sanitization_count);
@@ -258,23 +260,11 @@ impl SanitizedTransactionReceiveAndBuffer {
                 post_lock_validation_count.saturating_sub(post_transaction_check_count);
 
             count_metrics.update(|count_metrics| {
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_capacity,
-                    num_dropped_on_capacity
-                );
-                saturating_add_assign!(count_metrics.num_buffered, num_buffered);
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_sanitization,
-                    num_dropped_on_sanitization
-                );
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_validate_locks,
-                    num_dropped_on_lock_validation
-                );
-                saturating_add_assign!(
-                    count_metrics.num_dropped_on_receive_transaction_checks,
-                    num_dropped_on_transaction_checks
-                );
+                count_metrics.num_dropped_on_capacity += num_dropped_on_capacity;
+                count_metrics.num_buffered += num_buffered;
+                count_metrics.num_dropped_on_sanitization += num_dropped_on_sanitization;
+                count_metrics.num_dropped_on_validate_locks += num_dropped_on_lock_validation;
+                count_metrics.num_dropped_on_receive_transaction_checks += num_dropped_on_transaction_checks;
             });
         }
     }
@@ -510,20 +500,14 @@ impl TransactionViewReceiveAndBuffer {
 
         let buffer_time_us = start.elapsed().as_micros() as u64;
         timing_metrics.update(|timing_metrics| {
-            saturating_add_assign!(timing_metrics.buffer_time_us, buffer_time_us);
+            timing_metrics.buffer_time_us += buffer_time_us;
         });
         count_metrics.update(|count_metrics| {
-            saturating_add_assign!(count_metrics.num_received, num_received);
-            saturating_add_assign!(count_metrics.num_buffered, num_buffered);
-            saturating_add_assign!(
-                count_metrics.num_dropped_on_age_and_status,
-                num_dropped_on_status_age_checks
-            );
-            saturating_add_assign!(
-                count_metrics.num_dropped_on_capacity,
-                num_dropped_on_capacity
-            );
-            saturating_add_assign!(count_metrics.num_dropped_on_receive, num_dropped_on_receive);
+            count_metrics.num_received += num_received;
+            count_metrics.num_buffered += num_buffered;
+            count_metrics.num_dropped_on_age_and_status += num_dropped_on_status_age_checks;
+            count_metrics.num_dropped_on_capacity += num_dropped_on_capacity;
+            count_metrics.num_dropped_on_receive += num_dropped_on_receive;
         });
 
         num_received

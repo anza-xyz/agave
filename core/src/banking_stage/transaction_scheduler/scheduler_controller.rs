@@ -21,9 +21,8 @@ use {
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_clock::MAX_PROCESSING_AGE,
-    solana_sdk::saturating_add_assign,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    std::sync::{Arc, RwLock},
+    std::{num::Saturating, sync::{Arc, RwLock}},
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
@@ -96,7 +95,7 @@ where
             let (decision, decision_time_us) =
                 measure_us!(self.decision_maker.make_consume_or_forward_decision());
             self.timing_metrics.update(|timing_metrics| {
-                saturating_add_assign!(timing_metrics.decision_time_us, decision_time_us);
+                timing_metrics.decision_time_us += decision_time_us;
             });
             let new_leader_slot = decision.bank_start().map(|b| b.working_bank.slot());
             self.leader_detection_metrics
@@ -152,43 +151,29 @@ where
                 )?);
 
                 self.count_metrics.update(|count_metrics| {
-                    saturating_add_assign!(
-                        count_metrics.num_scheduled,
-                        scheduling_summary.num_scheduled
-                    );
-                    saturating_add_assign!(
-                        count_metrics.num_unschedulable_conflicts,
-                        scheduling_summary.num_unschedulable_conflicts
-                    );
-                    saturating_add_assign!(
-                        count_metrics.num_unschedulable_threads,
-                        scheduling_summary.num_unschedulable_threads
-                    );
-                    saturating_add_assign!(
-                        count_metrics.num_schedule_filtered_out,
-                        scheduling_summary.num_filtered_out
-                    );
+                    count_metrics.num_scheduled += scheduling_summary.num_scheduled;
+                    count_metrics.num_unschedulable_conflicts += scheduling_summary.num_unschedulable_conflicts;
+                    count_metrics.num_unschedulable_threads += scheduling_summary.num_unschedulable_threads;
+                    count_metrics.num_schedule_filtered_out += scheduling_summary.num_filtered_out;
                 });
 
                 self.timing_metrics.update(|timing_metrics| {
-                    saturating_add_assign!(
-                        timing_metrics.schedule_filter_time_us,
-                        scheduling_summary.filter_time_us
-                    );
-                    saturating_add_assign!(timing_metrics.schedule_time_us, schedule_time_us);
+                    timing_metrics.schedule_filter_time_us +=
+                        scheduling_summary.filter_time_us;
+                    timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
             }
             BufferedPacketsDecision::Forward => {
                 let (_, clear_time_us) = measure_us!(self.clear_container());
                 self.timing_metrics.update(|timing_metrics| {
-                    saturating_add_assign!(timing_metrics.clear_time_us, clear_time_us);
+                    timing_metrics.clear_time_us += clear_time_us;
                 });
             }
             BufferedPacketsDecision::ForwardAndHold => {
                 let (_, clean_time_us) = measure_us!(self.clean_queue());
                 self.timing_metrics.update(|timing_metrics| {
-                    saturating_add_assign!(timing_metrics.clean_time_us, clean_time_us);
+                    timing_metrics.clean_time_us += clean_time_us;
                 });
             }
             BufferedPacketsDecision::Hold => {}
@@ -226,14 +211,14 @@ where
     /// Clears the transaction state container.
     /// This only clears pending transactions, and does **not** clear in-flight transactions.
     fn clear_container(&mut self) {
-        let mut num_dropped_on_clear: usize = 0;
+        let mut num_dropped_on_clear = Saturating::<usize>(0);
         while let Some(id) = self.container.pop() {
             self.container.remove_by_id(id.id);
-            saturating_add_assign!(num_dropped_on_clear, 1);
+            num_dropped_on_clear += 1;
         }
 
         self.count_metrics.update(|count_metrics| {
-            saturating_add_assign!(count_metrics.num_dropped_on_clear, num_dropped_on_clear);
+            count_metrics.num_dropped_on_clear += num_dropped_on_clear;
         });
     }
 
@@ -257,7 +242,7 @@ where
 
         const CHUNK_SIZE: usize = 128;
         let mut error_counters = TransactionErrorMetrics::default();
-        let mut num_dropped_on_age_and_status: usize = 0;
+        let mut num_dropped_on_age_and_status = Saturating::<usize>(0);
         for chunk in transaction_ids.chunks(CHUNK_SIZE) {
             let lock_results = vec![Ok(()); chunk.len()];
             let sanitized_txs: Vec<_> = chunk
@@ -279,7 +264,7 @@ where
             // Remove errored transactions
             for (result, id) in check_results.iter().zip(chunk.iter()) {
                 if result.is_err() {
-                    saturating_add_assign!(num_dropped_on_age_and_status, 1);
+                    num_dropped_on_age_and_status += 1;
                     self.container.remove_by_id(id.id);
                 }
             }
@@ -295,10 +280,7 @@ where
         }
 
         self.count_metrics.update(|count_metrics| {
-            saturating_add_assign!(
-                count_metrics.num_dropped_on_age_and_status,
-                num_dropped_on_age_and_status
-            );
+            count_metrics.num_dropped_on_age_and_status += num_dropped_on_age_and_status;
         });
     }
 
@@ -308,14 +290,11 @@ where
             measure_us!(self.scheduler.receive_completed(&mut self.container)?);
 
         self.count_metrics.update(|count_metrics| {
-            saturating_add_assign!(count_metrics.num_finished, num_transactions);
-            saturating_add_assign!(count_metrics.num_retryable, num_retryable);
+            count_metrics.num_finished += num_transactions;
+            count_metrics.num_retryable += num_retryable;
         });
         self.timing_metrics.update(|timing_metrics| {
-            saturating_add_assign!(
-                timing_metrics.receive_completed_time_us,
-                receive_completed_time_us
-            );
+            timing_metrics.receive_completed_time_us += receive_completed_time_us;
         });
 
         Ok(())
