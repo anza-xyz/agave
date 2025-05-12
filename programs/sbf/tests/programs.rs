@@ -3802,13 +3802,13 @@ fn test_cpi_account_data_updates() {
         // This tests the case where a caller extends an account beyond the original
         // data length. The callee should see the extended data (asserted in the
         // callee program, not here).
-        let mut account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS];
         instruction_data.extend_from_slice(b"bar");
         let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
+            account_metas[3].pubkey,
             &instruction_data,
             account_metas.clone(),
         );
@@ -3822,13 +3822,13 @@ fn test_cpi_account_data_updates() {
         // data length. The caller should see the extended data where the realloc
         // region contains the new data. In this test the callee owns the account,
         // the caller can't write but the CPI glue still updates correctly.
-        let mut account = AccountSharedData::new(42, 0, &realloc_program_id);
+        let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_GROWS];
         instruction_data.extend_from_slice(b"bar");
         let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
+            account_metas[3].pubkey,
             &instruction_data,
             account_metas.clone(),
         );
@@ -3843,14 +3843,14 @@ fn test_cpi_account_data_updates() {
         // be zeroed (zeroing is checked in the invoked program not here). Same as
         // above, the callee owns the account but the changes are still reflected in
         // the caller even if things are readonly from the caller's POV.
-        let mut account = AccountSharedData::new(42, 0, &realloc_program_id);
+        let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
         account.set_data(b"foobar".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data =
             vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN];
         instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
         let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
+            account_metas[3].pubkey,
             &instruction_data,
             account_metas.clone(),
         );
@@ -3864,7 +3864,7 @@ fn test_cpi_account_data_updates() {
         // still larger than the original size. The account data must be set to the
         // correct value in the caller frame, and the realloc region must be zeroed
         // (again tested in the invoked program).
-        let mut account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
@@ -3872,7 +3872,7 @@ fn test_cpi_account_data_updates() {
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
         let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
+            account_metas[3].pubkey,
             &instruction_data,
             account_metas.clone(),
         );
@@ -3884,7 +3884,7 @@ fn test_cpi_account_data_updates() {
         // Similar to the test above, but this time the nested invocation shrinks to
         // _below_ the original data length. Both the spare capacity in the account
         // data _end_ the realloc region must be zeroed.
-        let mut account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
@@ -3892,7 +3892,7 @@ fn test_cpi_account_data_updates() {
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
         let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
+            account_metas[3].pubkey,
             &instruction_data,
             account_metas.clone(),
         );
