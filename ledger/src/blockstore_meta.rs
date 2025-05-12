@@ -51,14 +51,13 @@ impl Default for ConnectedFlags {
     }
 }
 
-/// Now deprecated format for completed data indexes.
+/// Legacy completed data indexes type; de/serialization is inefficient for a BTreeSet.
 ///
 /// Replaced by [`CompletedDataIndexesV2`].
 pub type CompletedDataIndexesV1 = BTreeSet<u32>;
-/// New format for completed data indexes.
+/// A fixed size BitVec offers fast lookup and fast de/serialization.
 ///
-/// `BTreeSet` is inefficient for de/serialization. We
-/// are migrating to a bitvec to improve that.
+/// Supersedes [`CompletedDataIndexesV1`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(transparent)]
 pub struct CompletedDataIndexesV2 {
