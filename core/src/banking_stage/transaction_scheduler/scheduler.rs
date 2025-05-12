@@ -6,7 +6,7 @@ use {
         transaction_state::TransactionState, transaction_state_container::StateContainer,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::saturating_add_assign,
+    std::num::Saturating,
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -27,8 +27,8 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
         &mut self,
         container: &mut impl StateContainer<Tx>,
     ) -> Result<(usize, usize), SchedulerError> {
-        let mut total_num_transactions: usize = 0;
-        let mut total_num_retryable: usize = 0;
+        let mut total_num_transactions = Saturating::<usize>(0);
+        let mut total_num_retryable = Saturating::<usize>(0);
         loop {
             let (num_transactions, num_retryable) = self
                 .scheduling_common_mut()
@@ -36,9 +36,11 @@ pub(crate) trait Scheduler<Tx: TransactionWithMeta> {
             if num_transactions == 0 {
                 break;
             }
-            saturating_add_assign!(total_num_transactions, num_transactions);
-            saturating_add_assign!(total_num_retryable, num_retryable);
+            total_num_transactions += num_transactions;
+            total_num_retryable += num_retryable;
         }
+        let Saturating(total_num_transactions) = total_num_transactions;
+        let Saturating(total_num_retryable) = total_num_retryable;
         Ok((total_num_transactions, total_num_retryable))
     }
 
