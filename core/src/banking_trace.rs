@@ -485,7 +485,7 @@ pub mod for_test {
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
         std::env::var("BANKING_TRACE_LEAVE_FILES").is_ok().then(|| {
             warn!("prevented to remove {:?}", temp_dir.path());
-            drop(temp_dir.into_path());
+            drop(temp_dir.keep());
         });
     }
 

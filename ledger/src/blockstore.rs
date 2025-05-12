@@ -5079,7 +5079,7 @@ pub fn create_new_ledger_from_name(
         max_genesis_archive_unpacked_size,
         column_options,
     );
-    (ledger_path.into_path(), blockhash)
+    (ledger_path.keep(), blockhash)
 }
 
 // Same as `create_new_ledger()` but use a temporary ledger name based on the provided `name`

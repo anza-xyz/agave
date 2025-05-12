@@ -9087,7 +9087,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_load_missing() {
-        let tower_file = tempdir().unwrap().into_path();
+        let tower_file = tempdir().unwrap().keep();
         let tower_storage = FileTowerStorage::new(tower_file);
         let node_pubkey = Pubkey::new_unique();
         let vote_account = Pubkey::new_unique();
@@ -9112,7 +9112,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_tower_load() {
-        let tower_file = tempdir().unwrap().into_path();
+        let tower_file = tempdir().unwrap().keep();
         let tower_storage = FileTowerStorage::new(tower_file);
         let node_keypair = Keypair::new();
         let node_pubkey = node_keypair.pubkey();
