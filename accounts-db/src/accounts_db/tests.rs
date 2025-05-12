@@ -7498,28 +7498,6 @@ fn test_handle_dropped_roots_for_ancient_assert() {
     db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
 }
 
-fn adjust_alive_bytes(storage: &AccountStorageEntry, alive_bytes: usize) {
-    storage.alive_bytes.store(alive_bytes, Ordering::Release);
-}
-
-fn make_ancient_append_vec_full(ancient: &AccountStorageEntry, mark_alive: bool) {
-    for _ in 0..100 {
-        append_sample_data_to_storage(ancient, &Pubkey::default(), mark_alive, None);
-    }
-    // since we're not adding to the index, this is how we specify that all these accounts are alive
-    adjust_alive_bytes(ancient, ancient.capacity() as usize);
-}
-
-fn make_full_ancient_accounts_file(
-    db: &AccountsDb,
-    slot: Slot,
-    mark_alive: bool,
-) -> ShrinkInProgress<'_> {
-    let full = db.get_store_for_shrink(slot, get_ancient_append_vec_capacity());
-    make_ancient_append_vec_full(full.new_storage(), mark_alive);
-    full
-}
-
 define_accounts_db_test!(test_calculate_incremental_accounts_hash, |accounts_db| {
     let owner = Pubkey::new_unique();
     let mut accounts: Vec<_> = (0..10)
