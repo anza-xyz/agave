@@ -8615,7 +8615,6 @@ dependencies = [
  "solana-pubkey",
  "solana-quic-definitions",
  "solana-runtime",
- "solana-sdk",
  "solana-signature",
  "solana-time-utils",
  "solana-tpu-client-next",

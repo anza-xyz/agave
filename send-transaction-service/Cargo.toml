@@ -26,7 +26,6 @@ solana-nonce-account = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-quic-definitions = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
 solana-signature = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-tpu-client-next = { workspace = true, features = ["metrics"] }

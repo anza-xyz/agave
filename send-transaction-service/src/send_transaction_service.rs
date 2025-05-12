@@ -20,11 +20,11 @@ use {
     solana_nonce_account as nonce_account,
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::saturating_add_assign,
     solana_signature::Signature,
     std::{
         collections::hash_map::{Entry, HashMap},
         net::SocketAddr,
+        num::Saturating,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
@@ -314,7 +314,7 @@ impl SendTransactionService {
                         // take a lock of retry_transactions and move the batch to the retry set.
                         let mut retry_transactions = retry_transactions.lock().unwrap();
                         let mut transactions_to_retry: usize = 0;
-                        let mut transactions_added_to_retry: usize = 0;
+                        let mut transactions_added_to_retry = Saturating::<usize>(0);
                         for (signature, mut transaction_info) in transactions.drain() {
                             // drop transactions with 0 max retries
                             let max_retries = transaction_info
@@ -331,16 +331,16 @@ impl SendTransactionService {
                                     break;
                                 } else {
                                     transaction_info.last_sent_time = Some(last_sent_time);
-                                    saturating_add_assign!(transactions_added_to_retry, 1);
+                                    transactions_added_to_retry += 1;
                                     entry.or_insert(transaction_info);
                                 }
                             }
                         }
-                        stats.retry_queue_overflow.fetch_add(
-                            transactions_to_retry.saturating_sub(transactions_added_to_retry)
-                                as u64,
-                            Ordering::Relaxed,
-                        );
+                        let Saturating(retry_queue_overflow) =
+                            Saturating(transactions_to_retry) - transactions_added_to_retry;
+                        stats
+                            .retry_queue_overflow
+                            .fetch_add(retry_queue_overflow as u64, Ordering::Relaxed);
                         stats
                             .retry_queue_size
                             .store(retry_transactions.len() as u64, Ordering::Relaxed);
