@@ -193,12 +193,12 @@ pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
             let sol = if sol.is_empty() {
                 0
             } else {
-                sol.parse().unwrap()
+                sol.parse::<u64>().ok()?
             };
             let lamports = if lamports.is_empty() {
                 0
             } else {
-                format!("{:0<9}", lamports)[..9].parse().unwrap()
+                format!("{:0<9}", lamports)[..9].parse().ok()?
             };
             Some(
                 LAMPORTS_PER_SOL
@@ -446,5 +446,11 @@ mod tests {
         assert_eq!(lamports_of_sol(&matches, "single"), Some(123_456_789));
         let matches = app().get_matches_from(vec!["test", "--single", "0.1234567899"]);
         assert_eq!(lamports_of_sol(&matches, "single"), Some(123_456_789));
+        let matches = app().get_matches_from(vec!["test", "--single", "1.000.4567899"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
+        let matches = app().get_matches_from(vec!["test", "--single", "6,998"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
+        let matches = app().get_matches_from(vec!["test", "--single", "6,998.00"]);
+        assert_eq!(lamports_of_sol(&matches, "single"), None);
     }
 }
