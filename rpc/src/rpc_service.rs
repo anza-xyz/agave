@@ -308,6 +308,10 @@ impl RpcRequestMiddleware {
                         let body = if let Some(timeout) = snapshot_timeout {
                             hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
                         } else {
+                            #[cfg(not(test))]
+                            panic!("snapshot_config should not be None outside of tests");
+
+                            #[cfg(test)]
                             hyper::Body::wrap_stream(stream)
                         };
                         Ok(hyper::Response::builder()
