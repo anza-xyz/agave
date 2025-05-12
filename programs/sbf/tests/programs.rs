@@ -3758,7 +3758,13 @@ fn test_cpi_account_ownership_writability() {
 fn test_cpi_account_data_updates() {
     solana_logger::setup();
 
-    for direct_mapping in [false, true] {
+    for (deprecated_callee, deprecated_caller, direct_mapping) in
+        [false, true].into_iter().flat_map(move |z| {
+            [false, true]
+                .into_iter()
+                .flat_map(move |y| [false, true].into_iter().map(move |x| (x, y, z)))
+        })
+    {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -3789,14 +3795,33 @@ fn test_cpi_account_data_updates() {
             &authority_keypair,
             "solana_sbf_rust_realloc",
         );
+        let deprecated_program_id = create_program(
+            &bank,
+            &bpf_loader_deprecated::id(),
+            "solana_sbf_rust_deprecated_loader",
+        );
 
         let account_keypair = Keypair::new();
         let mint_pubkey = mint_keypair.pubkey();
         let account_metas = vec![
             AccountMeta::new(mint_pubkey, true),
             AccountMeta::new(account_keypair.pubkey(), false),
-            AccountMeta::new_readonly(realloc_program_id, false),
-            AccountMeta::new_readonly(invoke_program_id, false),
+            AccountMeta::new_readonly(
+                if deprecated_callee {
+                    deprecated_program_id
+                } else {
+                    realloc_program_id
+                },
+                false,
+            ),
+            AccountMeta::new_readonly(
+                if deprecated_caller {
+                    deprecated_program_id
+                } else {
+                    invoke_program_id
+                },
+                false,
+            ),
         ];
 
         // This tests the case where a caller extends an account beyond the original
@@ -3813,10 +3838,24 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok(), "{result:?}");
-        let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-        // "bar" here was copied from the realloc region
-        assert_eq!(account.data(), b"foobar");
+        if deprecated_caller {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    if direct_mapping {
+                        InstructionError::ProgramFailedToComplete
+                    } else {
+                        InstructionError::ModifiedProgramId
+                    }
+                )
+            );
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            // "bar" here was copied from the realloc region
+            assert_eq!(account.data(), b"foobar");
+        }
 
         // This tests the case where a callee extends an account beyond the original
         // data length. The caller should see the extended data where the realloc
@@ -3833,10 +3872,29 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        result.unwrap();
-        let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-        // "bar" here was copied from the realloc region
-        assert_eq!(account.data(), b"foobar");
+        if deprecated_callee && !(deprecated_caller && direct_mapping) {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            // deprecated_callee is incapable of resizing accounts
+            assert_eq!(account.data(), b"foo");
+        } else if deprecated_caller {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    if direct_mapping {
+                        InstructionError::InvalidRealloc
+                    } else {
+                        InstructionError::AccountDataSizeChanged
+                    }
+                )
+            );
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            // "bar" here was copied from the realloc region
+            assert_eq!(account.data(), b"foobar");
+        }
 
         // This tests the case where a callee shrinks an account, the caller data
         // slice must be truncated accordingly and post_len..original_data_len must
@@ -3855,9 +3913,28 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok(), "{result:?}");
-        let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-        assert_eq!(account.data(), b"foob");
+        if deprecated_callee && !(deprecated_caller && direct_mapping) {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            // deprecated_callee is incapable of resizing accounts
+            assert_eq!(account.data(), b"foobar");
+        } else if deprecated_caller {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    if direct_mapping {
+                        InstructionError::InvalidRealloc
+                    } else {
+                        InstructionError::AccountDataSizeChanged
+                    }
+                )
+            );
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            assert_eq!(account.data(), b"foob");
+        }
 
         // This tests the case where the program extends an account, then calls
         // itself and in the inner call it shrinks the account to a size that is
@@ -3877,9 +3954,23 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok(), "{result:?}");
-        let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-        assert_eq!(account.data(), b"foobazb");
+        if deprecated_caller {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    if direct_mapping {
+                        InstructionError::ProgramFailedToComplete
+                    } else {
+                        InstructionError::ModifiedProgramId
+                    }
+                )
+            );
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            assert_eq!(account.data(), b"foobazb");
+        }
 
         // Similar to the test above, but this time the nested invocation shrinks to
         // _below_ the original data length. Both the spare capacity in the account
@@ -3897,9 +3988,23 @@ fn test_cpi_account_data_updates() {
             account_metas.clone(),
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-        assert!(result.is_ok(), "{result:?}");
-        let account = bank.get_account(&account_keypair.pubkey()).unwrap();
-        assert_eq!(account.data(), b"f");
+        if deprecated_caller {
+            assert_eq!(
+                result.unwrap_err().unwrap(),
+                TransactionError::InstructionError(
+                    0,
+                    if direct_mapping {
+                        InstructionError::ProgramFailedToComplete
+                    } else {
+                        InstructionError::ModifiedProgramId
+                    }
+                )
+            );
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+            let account = bank.get_account(&account_keypair.pubkey()).unwrap();
+            assert_eq!(account.data(), b"f");
+        }
     }
 }
 
