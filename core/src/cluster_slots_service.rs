@@ -1,4 +1,5 @@
 pub mod cluster_slots;
+pub mod slot_supporters;
 use {
     cluster_slots::ClusterSlots,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
@@ -119,12 +120,7 @@ impl ClusterSlotsService {
                 }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
-            cluster_slots.update(
-                root_bank.slot(),
-                epoch_specs.current_epoch_staked_nodes(),
-                &cluster_info,
-                root_bank.epoch(),
-            );
+            cluster_slots.update(&root_bank, &cluster_info);
             process_cluster_slots_updates_elapsed.stop();
 
             cluster_slots_service_timing.update(
