@@ -132,7 +132,7 @@ impl PacketReceiver {
         vote_storage: &mut VoteStorage,
         vote_source: VoteSource,
         deserialized_packets: Vec<ImmutableDeserializedPacket>,
-        dropped_packets_count: &mut usize,
+        dropped_packets_count: &mut Saturating<usize>,
         newly_buffered_packets_count: &mut usize,
         newly_buffered_forwarded_packets_count: &mut usize,
         banking_stage_stats: &mut BankingStageStats,

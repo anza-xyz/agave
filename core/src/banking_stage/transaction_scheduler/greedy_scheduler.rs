@@ -21,7 +21,7 @@ use {
     crossbeam_channel::{Receiver, Sender},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::saturating_add_assign,
+    std::num::Saturating,
 };
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -98,7 +98,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
         // Track metrics on filter.
         let mut num_scanned: usize = 0;
-        let mut num_scheduled: usize = 0;
+        let mut num_scheduled = Saturating::<usize>(0);
         let mut num_sent: usize = 0;
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
@@ -166,7 +166,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         self.working_account_set.take_locks(&transaction),
                         "locks must be available"
                     );
-                    saturating_add_assign!(num_scheduled, 1);
+                    num_scheduled += 1;
                     batches.add_transaction_to_batch(thread_id, id.id, transaction, max_age, cost);
 
                     // If target batch size is reached, send all the batches
@@ -198,6 +198,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         self.working_account_set.clear();
         // Use zero here to avoid allocating since we are done with `Batches`.
         num_sent += self.common.send_batches(&mut batches, 0)?;
+        let Saturating(num_scheduled) = num_scheduled;
         assert_eq!(
             num_scheduled, num_sent,
             "number of scheduled and sent transactions must match"
