@@ -25,6 +25,7 @@ Release channels have their own copy of this changelog:
 * Add `--no-snapshots` to disable generating snapshots.
 * `--block-production-method central-scheduler-greedy` is now the default.
 * The default full snapshot interval is now 50,000 slots.
+* Graceful exit (via `agave-validtor exit`) is required in order to boot from local state. Refer to the help of `--use-snapshot-archives-at-startup` for more information about booting from local state.
 
 #### Deprecations
 * Using `--snapshot-interval-slots 0` to disable generating snapshots is now deprecated.
