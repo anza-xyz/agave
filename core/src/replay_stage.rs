@@ -71,7 +71,6 @@ use {
         snapshot_controller::SnapshotController,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::saturating_add_assign,
     solana_signature::Signature,
     solana_signer::Signer,
     solana_time_utils::timestamp,
@@ -80,7 +79,7 @@ use {
     solana_vote::vote_transaction::VoteTransaction,
     std::{
         collections::{HashMap, HashSet},
-        num::NonZeroUsize,
+        num::{NonZeroUsize, Saturating},
         result,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -332,10 +331,10 @@ struct ReplayLoopTiming {
     process_popular_pruned_forks_elapsed_us: u64,
     repair_correct_slots_elapsed_us: u64,
     retransmit_not_propagated_elapsed_us: u64,
-    generate_new_bank_forks_read_lock_us: u64,
-    generate_new_bank_forks_get_slots_since_us: u64,
-    generate_new_bank_forks_loop_us: u64,
-    generate_new_bank_forks_write_lock_us: u64,
+    generate_new_bank_forks_read_lock_us: Saturating<u64>,
+    generate_new_bank_forks_get_slots_since_us: Saturating<u64>,
+    generate_new_bank_forks_loop_us: Saturating<u64>,
+    generate_new_bank_forks_write_lock_us: Saturating<u64>,
     // When processing multiple forks concurrently, only captures the longest fork
     replay_blockstore_us: u64,
 }
@@ -406,6 +405,16 @@ impl ReplayLoopTiming {
                     i64
                 ),
             );
+            let &mut ReplayLoopTiming {
+                generate_new_bank_forks_read_lock_us:
+                    Saturating(generate_new_bank_forks_read_lock_us),
+                generate_new_bank_forks_get_slots_since_us:
+                    Saturating(generate_new_bank_forks_get_slots_since_us),
+                generate_new_bank_forks_loop_us: Saturating(generate_new_bank_forks_loop_us),
+                generate_new_bank_forks_write_lock_us:
+                    Saturating(generate_new_bank_forks_write_lock_us),
+                ..
+            } = self;
             datapoint_info!(
                 "replay-loop-timing-stats",
                 ("loop_count", self.loop_count as i64, i64),
@@ -504,22 +513,22 @@ impl ReplayLoopTiming {
                 ),
                 (
                     "generate_new_bank_forks_read_lock_us",
-                    self.generate_new_bank_forks_read_lock_us as i64,
+                    generate_new_bank_forks_read_lock_us as i64,
                     i64
                 ),
                 (
                     "generate_new_bank_forks_get_slots_since_us",
-                    self.generate_new_bank_forks_get_slots_since_us as i64,
+                    generate_new_bank_forks_get_slots_since_us as i64,
                     i64
                 ),
                 (
                     "generate_new_bank_forks_loop_us",
-                    self.generate_new_bank_forks_loop_us as i64,
+                    generate_new_bank_forks_loop_us as i64,
                     i64
                 ),
                 (
                     "generate_new_bank_forks_write_lock_us",
-                    self.generate_new_bank_forks_write_lock_us as i64,
+                    generate_new_bank_forks_write_lock_us as i64,
                     i64
                 ),
                 (
@@ -4221,22 +4230,13 @@ impl ReplayStage {
             forks.insert(bank);
         }
         generate_new_bank_forks_write_lock.stop();
-        saturating_add_assign!(
-            replay_timing.generate_new_bank_forks_read_lock_us,
-            generate_new_bank_forks_read_lock.as_us()
-        );
-        saturating_add_assign!(
-            replay_timing.generate_new_bank_forks_get_slots_since_us,
-            generate_new_bank_forks_get_slots_since.as_us()
-        );
-        saturating_add_assign!(
-            replay_timing.generate_new_bank_forks_loop_us,
-            generate_new_bank_forks_loop.as_us()
-        );
-        saturating_add_assign!(
-            replay_timing.generate_new_bank_forks_write_lock_us,
-            generate_new_bank_forks_write_lock.as_us()
-        );
+        replay_timing.generate_new_bank_forks_read_lock_us +=
+            generate_new_bank_forks_read_lock.as_us();
+        replay_timing.generate_new_bank_forks_get_slots_since_us +=
+            generate_new_bank_forks_get_slots_since.as_us();
+        replay_timing.generate_new_bank_forks_loop_us += generate_new_bank_forks_loop.as_us();
+        replay_timing.generate_new_bank_forks_write_lock_us +=
+            generate_new_bank_forks_write_lock.as_us();
     }
 
     fn new_bank_from_parent_with_notify(
