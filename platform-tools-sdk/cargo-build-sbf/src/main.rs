@@ -468,59 +468,6 @@ fn postprocess_dump(program_dump: &Path) {
     fs::rename(postprocessed_dump, program_dump).unwrap();
 }
 
-// Check whether the built .so file contains undefined symbols that are
-// not known to the runtime and warn about them if any.
-fn check_undefined_symbols(config: &Config, program: &Path) {
-    let syscalls_txt = config.sbf_sdk.join("syscalls.txt");
-    let Ok(file) = File::open(syscalls_txt) else {
-        return;
-    };
-    let mut syscalls = HashSet::new();
-    for line_result in BufReader::new(file).lines() {
-        let line = line_result.unwrap();
-        let line = line.trim_end();
-        syscalls.insert(line.to_string());
-    }
-    let entry =
-        Regex::new(r"^ *[0-9]+: [0-9a-f]{16} +[0-9a-f]+ +NOTYPE +GLOBAL +DEFAULT +UND +(.+)")
-            .unwrap();
-    let readelf = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("llvm")
-        .join("bin")
-        .join("llvm-readelf");
-    let mut readelf_args = vec!["--dyn-symbols"];
-    readelf_args.push(program.to_str().unwrap());
-    let output = spawn(
-        &readelf,
-        &readelf_args,
-        config.generate_child_script_on_failure,
-    );
-    if config.verbose {
-        debug!("{}", output);
-    }
-    let mut unresolved_symbols: Vec<String> = Vec::new();
-    for line in output.lines() {
-        let line = line.trim_end();
-        if entry.is_match(line) {
-            let captures = entry.captures(line).unwrap();
-            let symbol = captures[1].to_string();
-            if !syscalls.contains(&symbol) {
-                unresolved_symbols.push(symbol);
-            }
-        }
-    }
-    if !unresolved_symbols.is_empty() {
-        warn!(
-            "The following functions are undefined and not known syscalls {:?}.",
-            unresolved_symbols
-        );
-        warn!("         Calling them will trigger a run-time error.");
-    }
-}
-
 // Check if we have all binaries in place to execute the build command.
 // If the download failed or the binaries were somehow deleted, inform the user how to fix it.
 fn corrupted_toolchain(config: &Config) -> bool {
