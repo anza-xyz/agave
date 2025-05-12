@@ -9,7 +9,7 @@ use {
     solana_poh::poh_recorder::BankStart,
     solana_sdk::saturating_add_assign,
     solana_svm::transaction_error_metrics::*,
-    std::time::Instant,
+    std::{num::Saturating, time::Instant},
 };
 
 /// A summary of what happened to transactions passed to the processing pipeline.
@@ -665,13 +665,13 @@ impl LeaderSlotMetricsTracker {
         if let Some(leader_slot_metrics) = &mut self.leader_slot_metrics {
             let metrics = &mut leader_slot_metrics.packet_count_metrics;
             let PacketReceiverStats {
-                passed_sigverify_count,
-                failed_sigverify_count,
-                invalid_vote_count,
-                failed_prioritization_count,
-                failed_sanitization_count,
-                excessive_precompile_count,
-                insufficient_compute_limit_count,
+                passed_sigverify_count: Saturating(passed_sigverify_count),
+                failed_sigverify_count: Saturating(failed_sigverify_count),
+                invalid_vote_count: Saturating(invalid_vote_count),
+                failed_prioritization_count: Saturating(failed_prioritization_count),
+                failed_sanitization_count: Saturating(failed_sanitization_count),
+                excessive_precompile_count: Saturating(excessive_precompile_count),
+                insufficient_compute_limit_count: Saturating(insufficient_compute_limit_count),
             } = stats;
 
             saturating_add_assign!(metrics.total_new_valid_packets, passed_sigverify_count);

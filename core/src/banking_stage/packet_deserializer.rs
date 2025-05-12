@@ -8,8 +8,7 @@ use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
     solana_perf::packet::PacketBatch,
-    solana_sdk::saturating_add_assign,
-    std::time::{Duration, Instant},
+    std::{num::Saturating, time::{Duration, Instant}},
 };
 
 /// Results from deserializing packet batches.
@@ -29,19 +28,19 @@ pub struct PacketDeserializer {
 #[derive(Default, Debug, PartialEq)]
 pub struct PacketReceiverStats {
     /// Number of packets passing sigverify
-    pub passed_sigverify_count: u64,
+    pub passed_sigverify_count: Saturating<u64>,
     /// Number of packets failing sigverify
-    pub failed_sigverify_count: u64,
+    pub failed_sigverify_count: Saturating<u64>,
     /// Number of packets dropped due to sanitization error
-    pub failed_sanitization_count: u64,
+    pub failed_sanitization_count: Saturating<u64>,
     /// Number of packets dropped due to prioritization error
-    pub failed_prioritization_count: u64,
+    pub failed_prioritization_count: Saturating<u64>,
     /// Number of vote packets dropped
-    pub invalid_vote_count: u64,
+    pub invalid_vote_count: Saturating<u64>,
     /// Number of packets dropped due to excessive precompiles
-    pub excessive_precompile_count: u64,
+    pub excessive_precompile_count: Saturating<u64>,
     /// Number of packets dropped due to insufficient compute limit
-    pub insufficient_compute_limit_count: u64,
+    pub insufficient_compute_limit_count: Saturating<u64>,
 }
 
 impl PacketReceiverStats {
@@ -51,21 +50,21 @@ impl PacketReceiverStats {
             | DeserializedPacketError::DeserializationError(..)
             | DeserializedPacketError::SignatureOverflowed(..)
             | DeserializedPacketError::SanitizeError(..) => {
-                saturating_add_assign!(self.failed_sanitization_count, 1);
+                self.failed_sanitization_count += 1;
             }
             DeserializedPacketError::PrioritizationFailure => {
-                saturating_add_assign!(self.failed_prioritization_count, 1);
+                self.failed_prioritization_count += 1;
             }
             DeserializedPacketError::VoteTransactionError => {
-                saturating_add_assign!(self.invalid_vote_count, 1);
+                self.invalid_vote_count += 1;
             }
             DeserializedPacketError::FailedFilter(PacketFilterFailure::ExcessivePrecompiles) => {
-                saturating_add_assign!(self.excessive_precompile_count, 1);
+                self.excessive_precompile_count += 1;
             }
             DeserializedPacketError::FailedFilter(
                 PacketFilterFailure::InsufficientComputeLimit,
             ) => {
-                saturating_add_assign!(self.insufficient_compute_limit_count, 1);
+                self.insufficient_compute_limit_count += 1;
             }
         }
     }
@@ -106,7 +105,7 @@ impl PacketDeserializer {
         ) -> Result<ImmutableDeserializedPacket, PacketFilterFailure>,
     ) -> ReceivePacketResults {
         let mut packet_stats = PacketReceiverStats::default();
-        let mut errors = 0_usize;
+        let mut errors = Saturating::<usize>(0);
         let deserialized_packets: Vec<_> = banking_batches
             .iter()
             .flat_map(|banking_batch| banking_batch.iter())
@@ -118,23 +117,18 @@ impl PacketDeserializer {
                 {
                     Ok(pkt) => Some(pkt),
                     Err(err) => {
-                        saturating_add_assign!(errors, 1);
+                        errors += 1;
                         packet_stats.increment_error_count(&err);
                         None
                     }
                 }
             })
             .collect();
-        saturating_add_assign!(
-            packet_stats.passed_sigverify_count,
-            deserialized_packets.len().saturating_add(errors) as u64
-        );
-        saturating_add_assign!(
-            packet_stats.failed_sigverify_count,
-            packet_count
-                .saturating_sub(deserialized_packets.len())
-                .saturating_sub(errors) as u64
-        );
+        let Saturating(errors) = errors;
+        packet_stats.passed_sigverify_count += errors.saturating_add(deserialized_packets.len()) as u64;
+        packet_stats.failed_sigverify_count += packet_count
+            .saturating_sub(deserialized_packets.len())
+            .saturating_sub(errors) as u64;
 
         ReceivePacketResults {
             deserialized_packets,
@@ -207,8 +201,8 @@ mod tests {
     fn test_deserialize_and_collect_packets_empty() {
         let results = PacketDeserializer::deserialize_and_collect_packets(0, &[], Ok);
         assert_eq!(results.deserialized_packets.len(), 0);
-        assert_eq!(results.packet_stats.passed_sigverify_count, 0);
-        assert_eq!(results.packet_stats.failed_sigverify_count, 0);
+        assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(0));
+        assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(0));
     }
 
     #[test]
@@ -224,8 +218,8 @@ mod tests {
             Ok,
         );
         assert_eq!(results.deserialized_packets.len(), 2);
-        assert_eq!(results.packet_stats.passed_sigverify_count, 2);
-        assert_eq!(results.packet_stats.failed_sigverify_count, 0);
+        assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(2));
+        assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(0));
     }
 
     #[test]
@@ -246,7 +240,7 @@ mod tests {
             Ok,
         );
         assert_eq!(results.deserialized_packets.len(), 1);
-        assert_eq!(results.packet_stats.passed_sigverify_count, 1);
-        assert_eq!(results.packet_stats.failed_sigverify_count, 1);
+        assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(1));
+        assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(1));
     }
 }
