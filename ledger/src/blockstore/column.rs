@@ -2,7 +2,7 @@
 use {
     crate::{
         blockstore::error::Result,
-        blockstore_meta::{self},
+        blockstore_meta::{self, PerfSample},
     },
     bincode::Options as BincodeOptions,
     serde::{Serialize, de::DeserializeOwned},
@@ -592,6 +592,10 @@ impl TypedColumn for columns::Blocktime {
 impl SlotColumn for columns::PerfSamples {}
 impl ColumnName for columns::PerfSamples {
     const NAME: &'static str = "perf_samples";
+}
+
+impl TypedColumn for columns::PerfSamples {
+    type Type = PerfSample;
 }
 
 impl SlotColumn for columns::BlockHeight {}
