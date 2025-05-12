@@ -5,7 +5,7 @@
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
-        blockstore::column::{columns as cf, Column, ColumnIndexDeprecation},
+        blockstore::column::{columns as cf, Column, ColumnIndexDeprecation, TypedColumn},
         blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
@@ -662,7 +662,7 @@ impl Blockstore {
         Ok(meta_iter.map(|(slot, slot_meta_bytes)| {
             (
                 slot,
-                deserialize(&slot_meta_bytes).unwrap_or_else(|e| {
+                cf::SlotMeta::deserialize(&slot_meta_bytes).unwrap_or_else(|e| {
                     panic!("Could not deserialize SlotMeta for slot {slot}: {e:?}")
                 }),
             )
@@ -2462,7 +2462,7 @@ impl Blockstore {
     /// Can interfere with automatic meta update and potentially break chaining.
     /// Dangerous. Use with care.
     pub fn put_meta(&self, slot: Slot, meta: &SlotMeta) -> Result<()> {
-        self.put_meta_bytes(slot, &bincode::serialize(meta)?)
+        self.put_meta_bytes(slot, &cf::SlotMeta::serialize(meta)?)
     }
 
     /// Find missing shred indices for a given `slot` within the range
@@ -8081,9 +8081,7 @@ pub mod tests {
             .unwrap();
 
         let parent_meta = SlotMeta::default();
-        blockstore
-            .put_meta_bytes(slot - 1, &serialize(&parent_meta).unwrap())
-            .unwrap();
+        blockstore.put_meta(slot - 1, &parent_meta).unwrap();
 
         let expected_transactions: Vec<VersionedTransactionWithStatusMeta> = entries
             .iter()
