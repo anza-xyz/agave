@@ -36,6 +36,7 @@ use {
     solana_time_utils::AtomicInterval,
     std::{
         cmp, env,
+        num::Saturating,
         ops::Deref,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -322,20 +323,20 @@ pub struct BatchedTransactionDetails {
 
 #[derive(Debug, Default)]
 pub struct BatchedTransactionCostDetails {
-    pub batched_signature_cost: u64,
-    pub batched_write_lock_cost: u64,
-    pub batched_data_bytes_cost: u64,
-    pub batched_loaded_accounts_data_size_cost: u64,
-    pub batched_programs_execute_cost: u64,
+    pub batched_signature_cost: Saturating<u64>,
+    pub batched_write_lock_cost: Saturating<u64>,
+    pub batched_data_bytes_cost: Saturating<u64>,
+    pub batched_loaded_accounts_data_size_cost: Saturating<u64>,
+    pub batched_programs_execute_cost: Saturating<u64>,
 }
 
 #[derive(Debug, Default)]
 pub struct BatchedTransactionErrorDetails {
-    pub batched_retried_txs_per_block_limit_count: u64,
-    pub batched_retried_txs_per_vote_limit_count: u64,
-    pub batched_retried_txs_per_account_limit_count: u64,
-    pub batched_retried_txs_per_account_data_block_limit_count: u64,
-    pub batched_dropped_txs_per_account_data_total_limit_count: u64,
+    pub batched_retried_txs_per_block_limit_count: Saturating<u64>,
+    pub batched_retried_txs_per_vote_limit_count: Saturating<u64>,
+    pub batched_retried_txs_per_account_limit_count: Saturating<u64>,
+    pub batched_retried_txs_per_account_data_block_limit_count: Saturating<u64>,
+    pub batched_dropped_txs_per_account_data_total_limit_count: Saturating<u64>,
 }
 
 /// Stores the stage's thread handle and output receiver.
