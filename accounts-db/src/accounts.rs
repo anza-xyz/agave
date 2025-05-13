@@ -611,17 +611,25 @@ impl Accounts {
     ) -> Vec<Result<()>> {
         let account_locks = &mut self.account_locks.lock().unwrap();
         if relax_intrabatch_account_locks {
-            let validated_batch_keys = tx_account_locks_results.map(|tx_account_locks_result| {
-                tx_account_locks_result
-                    .map(|tx_account_locks| tx_account_locks.accounts_with_is_writable())
-            });
+            let validated_batch_keys = tx_account_locks_results
+                .map(|tx_account_locks_result| {
+                    tx_account_locks_result.map(|tx_account_locks| {
+                        tx_account_locks
+                            .accounts_with_is_writable()
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>();
 
-            account_locks.try_lock_transaction_batch(validated_batch_keys)
+            account_locks.try_lock_transaction_batch(validated_batch_keys.into_iter())
         } else {
             tx_account_locks_results
                 .map(|tx_account_locks_result| match tx_account_locks_result {
-                    Ok(tx_account_locks) => account_locks
-                        .try_lock_accounts(tx_account_locks.accounts_with_is_writable()),
+                    Ok(tx_account_locks) => account_locks.try_lock_accounts(
+                        &tx_account_locks
+                            .accounts_with_is_writable()
+                            .collect::<Vec<_>>(),
+                    ),
                     Err(err) => Err(err),
                 })
                 .collect()
