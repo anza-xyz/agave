@@ -779,22 +779,6 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
             }
 
             if !validated_loaders.contains(owner_id) {
-                // NOTE there are several feature gate activations that affect this code:
-                // * `remove_accounts_executable_flag_checks`: this implicitly makes system, vote, stake, et al valid loaders
-                //   it is impossible to mark an account executable and also have it be owned by one of them
-                //   so, with the feature disabled, we always fail the executable check if they are a program id owner
-                //   however, with the feature enabled, any account owned by an account owned by native loader is a "program"
-                //   this is benign (any such transaction will fail at execution) but it affects which transactions pay fees
-                // * `enable_transaction_loading_failure_fees`: loading failures behave the same as execution failures
-                //   at this point we can restrict valid loaders to those contained in `PROGRAM_OWNERS`
-                //   since any other pseudo-loader owner is destined to fail at execution
-                // * SIMD-186: explicitly defines a sensible transaction data size algorithm
-                //   at this point we stop counting loaders toward transaction data size entirely
-                //
-                // when _all three_ of `remove_accounts_executable_flag_checks`, `enable_transaction_loading_failure_fees`,
-                // and SIMD-186 are active, we do not need to load loaders at all to comply with consensus rules
-                // we may verify program ids are owned by `PROGRAM_OWNERS` purely as an optimization
-                // this could even be done before loading the rest of the accounts for a transaction
                 if let Some(owner_account) = account_loader.load_account(owner_id) {
                     if !native_loader::check_id(owner_account.owner())
                         || (!account_loader
@@ -938,6 +922,7 @@ mod tests {
         super::*,
         crate::transaction_account_state_info::TransactionAccountStateInfo,
         agave_reserved_account_keys::ReservedAccountKeys,
+        rand0_7::prelude::*,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -2978,5 +2963,188 @@ mod tests {
         );
         assert_eq!(account_loader.load_account(&fee_payer), None);
         assert_eq!(account_loader.get_account_shared_data(&fee_payer), None);
+    }
+
+    // note all magic numbers (how many accounts, how many instructions, how big to size buffers) are arbitrary
+    // other than trying not to swamp programs with blank accounts and keep transaction size below the 64mb limit
+    #[test_case(false; "executable_mandatory")]
+    #[test_case(true; "executable_optional")]
+    fn test_load_transaction_accounts_data_sizes_simd186(
+        remove_accounts_executable_flag_checks: bool,
+    ) {
+        let mut rng = rand0_7::thread_rng();
+        let mut mock_bank = TestCallbacks::default();
+        mock_bank.feature_set.remove_accounts_executable_flag_checks =
+            remove_accounts_executable_flag_checks;
+
+        // arbitrary accounts
+        for _ in 0..128 {
+            let account = AccountSharedData::create(
+                1,
+                vec![0; rng.gen_range(0, 128)],
+                Pubkey::new_unique(),
+                rng.gen(),
+                u64::MAX,
+            );
+            mock_bank.accounts_map.insert(Pubkey::new_unique(), account);
+        }
+
+        // fee-payers
+        let mut fee_payers = vec![];
+        for _ in 0..8 {
+            let fee_payer = Pubkey::new_unique();
+            let account = AccountSharedData::create(
+                LAMPORTS_PER_SOL,
+                vec![0; rng.gen_range(0, 32)],
+                system_program::id(),
+                rng.gen(),
+                u64::MAX,
+            );
+            mock_bank.accounts_map.insert(fee_payer, account);
+            fee_payers.push(fee_payer);
+        }
+
+        // programs
+        let mut loader_owned_accounts = vec![];
+        let mut programdata_tracker = AHashMap::new();
+        for loader in PROGRAM_OWNERS {
+            for _ in 0..16 {
+                let program_id = Pubkey::new_unique();
+                let mut account = AccountSharedData::create(
+                    1,
+                    vec![0; rng.gen_range(0, 512)],
+                    *loader,
+                    !remove_accounts_executable_flag_checks || rng.gen(),
+                    u64::MAX,
+                );
+
+                // give half loaderv3 accounts (if theyre long enough) a valid programdata
+                // a quarter a dead pointer and a quarter nothing
+                // we set executable like a program because after the flag is disabled...
+                // ...programdata and buffer accounts can be used as program ids without aborting loading
+                // this will always fail at execution but we are merely testing the data size accounting here
+                if *loader == bpf_loader_upgradeable::id() && account.data().len() >= 64 {
+                    let programdata_address = Pubkey::new_unique();
+                    let has_programdata = rng.gen();
+
+                    if has_programdata {
+                        let programdata_account = AccountSharedData::create(
+                            1,
+                            vec![0; rng.gen_range(0, 512)],
+                            *loader,
+                            !remove_accounts_executable_flag_checks || rng.gen(),
+                            u64::MAX,
+                        );
+                        programdata_tracker.insert(
+                            program_id,
+                            (programdata_address, programdata_account.data().len()),
+                        );
+                        mock_bank
+                            .accounts_map
+                            .insert(programdata_address, programdata_account);
+                        loader_owned_accounts.push(programdata_address);
+                    }
+
+                    if has_programdata || rng.gen() {
+                        account
+                            .set_state(&UpgradeableLoaderState::Program {
+                                programdata_address,
+                            })
+                            .unwrap();
+                    }
+                }
+
+                mock_bank.accounts_map.insert(program_id, account);
+                loader_owned_accounts.push(program_id);
+            }
+        }
+
+        let mut all_accounts = mock_bank.accounts_map.keys().copied().collect::<Vec<_>>();
+        let mut account_loader = (&mock_bank).into();
+
+        // now generate arbitrary transactions using this accounts
+        // we ensure valid fee-payers and that all program ids are loader-owned
+        // otherwise any account can appear anywhere
+        // some edge cases we hope to hit (not necessarily all in every run):
+        // * programs used multiple times as program ids and/or normal accounts are counted once
+        // * loaderv3 programdata used explicitly zero one or multiple times is counted once
+        // * loaderv3 programs with missing programdata are allowed through
+        // * loaderv3 programdata used as program id does nothing weird
+        // * loaderv3 programdata used as a regular account does nothing weird
+        // * the programdata conditions hold regardless of ordering
+        for _ in 0..1024 {
+            let mut instructions = vec![];
+            for _ in 0..rng.gen_range(1, 8) {
+                let mut accounts = vec![];
+                for _ in 0..rng.gen_range(1, 16) {
+                    all_accounts.shuffle(&mut rng);
+                    let pubkey = all_accounts[0];
+
+                    accounts.push(AccountMeta {
+                        pubkey,
+                        is_writable: rng.gen(),
+                        is_signer: rng.gen() && rng.gen(),
+                    });
+                }
+
+                loader_owned_accounts.shuffle(&mut rng);
+                let program_id = loader_owned_accounts[0];
+                instructions.push(Instruction {
+                    accounts,
+                    program_id,
+                    data: vec![],
+                });
+            }
+
+            fee_payers.shuffle(&mut rng);
+            let fee_payer = fee_payers[0];
+            let fee_payer_account = mock_bank.accounts_map.get(&fee_payer).cloned().unwrap();
+
+            let transaction = SanitizedTransaction::from_transaction_for_tests(
+                Transaction::new_with_payer(&instructions, Some(&fee_payer)),
+            );
+
+            let mut expected_size = 0;
+            let mut counted_programdatas = transaction
+                .account_keys()
+                .iter()
+                .copied()
+                .collect::<AHashSet<_>>();
+
+            for pubkey in transaction.account_keys().iter() {
+                let account = mock_bank.accounts_map.get(pubkey).unwrap();
+                expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + account.data().len();
+
+                if let Some((programdata_address, programdata_size)) =
+                    programdata_tracker.get(pubkey)
+                {
+                    if counted_programdatas.get(programdata_address).is_none() {
+                        expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + programdata_size;
+                        counted_programdatas.insert(*programdata_address);
+                    }
+                }
+            }
+
+            assert!(expected_size <= MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES.get() as usize);
+
+            let loaded_transaction_accounts = load_transaction_accounts(
+                &mut account_loader,
+                &transaction,
+                LoadedTransactionAccount {
+                    loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
+                    account: fee_payer_account,
+                    rent_collected: 0,
+                },
+                MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
+                &mut TransactionErrorMetrics::default(),
+                &RentCollector::default(),
+            )
+            .unwrap();
+
+            assert_eq!(
+                loaded_transaction_accounts.loaded_accounts_data_size,
+                expected_size as u32,
+            );
+        }
     }
 }
