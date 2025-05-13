@@ -30,7 +30,6 @@ use {
         consensus::tower_storage,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
-        tpu::DEFAULT_TPU_COALESCE,
         validator::{
             is_snapshot_config_valid, BlockProductionMethod, BlockVerificationMethod,
             TransactionStructure, Validator, ValidatorConfig, ValidatorError,
@@ -67,7 +66,10 @@ use {
     },
     solana_send_transaction_service::send_transaction_service,
     solana_signer::Signer,
-    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
+    solana_streamer::{
+        quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
+        socket::SocketAddrSpace,
+    },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::xdp::{set_cpu_affinity, XdpConfig},
     std::{

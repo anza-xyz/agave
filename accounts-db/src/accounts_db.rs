@@ -9026,32 +9026,6 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
     }
 }
 
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-impl AccountsDb {
-    /// 'accounts' that exist in the current slot we are combining into a different ancient slot
-    /// 'existing_ancient_pubkeys': pubkeys that exist currently in the ancient append vec slot
-    /// returns the pubkeys that are in 'accounts' that are already in 'existing_ancient_pubkeys'
-    /// Also updated 'existing_ancient_pubkeys' to include all pubkeys in 'accounts' since they will soon be written into the ancient slot.
-    fn get_keys_to_unref_ancient<'a>(
-        accounts: &'a [&AccountFromStorage],
-        existing_ancient_pubkeys: &mut HashSet<Pubkey>,
-    ) -> HashSet<&'a Pubkey> {
-        let mut unref = HashSet::<&Pubkey>::default();
-        // for each key that we're about to add that already exists in this storage, we need to unref. The account was in a different storage.
-        // Now it is being put into an ancient storage again, but it is already there, so maintain max of 1 ref per storage in the accounts index.
-        // The slot that currently references the account is going away, so unref to maintain # slots that reference the pubkey = refcount.
-        accounts.iter().for_each(|account| {
-            let key = account.pubkey();
-            if !existing_ancient_pubkeys.insert(*key) {
-                // this key exists BOTH in 'accounts' and already in the ancient append vec, so we need to unref it
-                unref.insert(key);
-            }
-        });
-        unref
-    }
-}
-
 /// while combining into ancient append vecs, we need to keep track of the current one that is receiving new data
 /// The pattern for callers is:
 /// 1. this is a mut local

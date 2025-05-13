@@ -58,8 +58,8 @@ pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 
 // This will be adjusted and parameterized in follow-on PRs.
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
-// inlined to avoid solana-sdk dep
-pub(crate) const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
+
+pub const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
 
 pub struct SpawnServerResult {
     pub endpoints: Vec<Endpoint>,
@@ -820,10 +820,5 @@ mod test {
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
-    }
-
-    #[test]
-    fn test_inline_tpu_coalesce() {
-        assert_eq!(DEFAULT_TPU_COALESCE, solana_sdk::net::DEFAULT_TPU_COALESCE);
     }
 }

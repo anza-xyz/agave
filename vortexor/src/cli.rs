@@ -2,10 +2,9 @@ use {
     clap::{builder::ValueParser, crate_description, crate_name, ArgAction, ColorChoice, Parser},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
-    solana_sdk::net::DEFAULT_TPU_COALESCE,
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
-        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
     },
     std::{
         net::{IpAddr, SocketAddr},

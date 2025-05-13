@@ -7,7 +7,9 @@
     note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
 )]
 pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
-pub use {crate::forwarding_stage::ForwardingClientOption, solana_sdk::net::DEFAULT_TPU_COALESCE};
+pub use {
+    crate::forwarding_stage::ForwardingClientOption, solana_streamer::quic::DEFAULT_TPU_COALESCE,
+};
 use {
     crate::{
         banking_stage::BankingStage,
