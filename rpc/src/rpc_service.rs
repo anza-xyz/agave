@@ -286,9 +286,7 @@ impl RpcRequestMiddleware {
                 let computed = if slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
                     Duration::ZERO
                 } else {
-                    Duration::from_millis(
-                        slots.saturating_mul(solana_sdk::clock::DEFAULT_MS_PER_SLOT),
-                    )
+                    Duration::from_millis(slots.saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT))
                 };
                 let fallback = match st {
                     SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
