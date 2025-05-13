@@ -1,10 +1,11 @@
-use solana_pubkey::Pubkey;
-use solana_sdk::account::AccountSharedData;
-
 use {
-    solana_clock::Slot, solana_signature::Signature,
-    solana_transaction::sanitized::SanitizedTransaction,
-    solana_transaction_status::TransactionStatusMeta, std::sync::Arc,
+    solana_pubkey::Pubkey,
+    solana_sdk::{
+        account::AccountSharedData, clock::Slot, signature::Signature,
+        transaction::SanitizedTransaction,
+    },
+    solana_transaction_status::TransactionStatusMeta,
+    std::sync::Arc,
 };
 
 pub trait TransactionNotifier {

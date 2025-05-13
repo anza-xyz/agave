@@ -2973,7 +2973,10 @@ mod tests {
         fee_payer_account.set_lamports(0);
         account_loader.update_accounts_for_failed_tx(
             &sanitized_message,
-            &RollbackAccounts::FeePayerOnly { fee_payer_account },
+            &RollbackAccounts::FeePayerOnly {
+                fee_payer_account,
+                fee_payer_address: fee_payer,
+            },
         );
 
         assert_eq!(
