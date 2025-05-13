@@ -5,7 +5,7 @@
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
-        blockstore::column::{columns as cf, Column, ColumnIndexDeprecation},
+        blockstore::column::{columns as cf, Column, ColumnIndexDeprecation, TypedColumn},
         blockstore_db::{IteratorDirection, IteratorMode, LedgerColumn, Rocks, WriteBatch},
         blockstore_meta::*,
         blockstore_metrics::BlockstoreRpcApiMetrics,
@@ -63,8 +63,8 @@ use {
         cell::RefCell,
         cmp,
         collections::{
-            btree_map::Entry as BTreeMapEntry, hash_map::Entry as HashMapEntry, BTreeMap, BTreeSet,
-            HashMap, HashSet, VecDeque,
+            btree_map::Entry as BTreeMapEntry, hash_map::Entry as HashMapEntry, BTreeMap, HashMap,
+            HashSet, VecDeque,
         },
         convert::TryInto,
         fmt::Write,
@@ -662,7 +662,7 @@ impl Blockstore {
         Ok(meta_iter.map(|(slot, slot_meta_bytes)| {
             (
                 slot,
-                deserialize(&slot_meta_bytes).unwrap_or_else(|e| {
+                cf::SlotMeta::deserialize(&slot_meta_bytes).unwrap_or_else(|e| {
                     panic!("Could not deserialize SlotMeta for slot {slot}: {e:?}")
                 }),
             )
@@ -2462,7 +2462,7 @@ impl Blockstore {
     /// Can interfere with automatic meta update and potentially break chaining.
     /// Dangerous. Use with care.
     pub fn put_meta(&self, slot: Slot, meta: &SlotMeta) -> Result<()> {
-        self.put_meta_bytes(slot, &bincode::serialize(meta)?)
+        self.put_meta_bytes(slot, &cf::SlotMeta::serialize(meta)?)
     }
 
     /// Find missing shred indices for a given `slot` within the range
@@ -3678,7 +3678,7 @@ impl Blockstore {
     // Get the range of indexes [start_index, end_index] of every completed data block
     fn get_completed_data_ranges(
         start_index: u32,
-        completed_data_indexes: &BTreeSet<u32>,
+        completed_data_indexes: &CompletedDataIndexes,
         consumed: u32,
     ) -> CompletedRanges {
         // `consumed` is the next missing shred index, but shred `i` existing in
@@ -3686,7 +3686,7 @@ impl Blockstore {
         assert!(!completed_data_indexes.contains(&consumed));
         completed_data_indexes
             .range(start_index..consumed)
-            .scan(start_index, |start, &index| {
+            .scan(start_index, |start, index| {
                 let out = *start..index + 1;
                 *start = index + 1;
                 Some(out)
@@ -4691,8 +4691,13 @@ fn update_completed_data_indexes<'a>(
     new_shred_index: u32,
     received_data_shreds: &'a ShredIndex,
     // Shreds indices which are marked data complete.
-    completed_data_indexes: &mut BTreeSet<u32>,
+    completed_data_indexes: &mut CompletedDataIndexes,
 ) -> impl Iterator<Item = Range<u32>> + 'a {
+    // new_shred_index is data complete, so need to insert here into
+    // the completed_data_indexes.
+    if is_last_in_data {
+        completed_data_indexes.insert(new_shred_index);
+    }
     // Consecutive entries i, j, k in this array represent potential ranges
     // [i, j), [j, k) that could be completed data ranges
     [
@@ -4701,12 +4706,7 @@ fn update_completed_data_indexes<'a>(
             .next_back()
             .map(|index| index + 1)
             .or(Some(0u32)),
-        is_last_in_data.then(|| {
-            // new_shred_index is data complete, so need to insert here into
-            // the completed_data_indexes.
-            completed_data_indexes.insert(new_shred_index);
-            new_shred_index + 1
-        }),
+        is_last_in_data.then(|| new_shred_index + 1),
         completed_data_indexes
             .range(new_shred_index + 1..)
             .next()
@@ -5079,7 +5079,7 @@ pub fn create_new_ledger_from_name(
         max_genesis_archive_unpacked_size,
         column_options,
     );
-    (ledger_path.into_path(), blockhash)
+    (ledger_path.keep(), blockhash)
 }
 
 // Same as `create_new_ledger()` but use a temporary ledger name based on the provided `name`
@@ -8081,9 +8081,7 @@ pub mod tests {
             .unwrap();
 
         let parent_meta = SlotMeta::default();
-        blockstore
-            .put_meta_bytes(slot - 1, &serialize(&parent_meta).unwrap())
-            .unwrap();
+        blockstore.put_meta(slot - 1, &parent_meta).unwrap();
 
         let expected_transactions: Vec<VersionedTransactionWithStatusMeta> = entries
             .iter()
@@ -10472,7 +10470,7 @@ pub mod tests {
 
     #[test]
     fn test_update_completed_data_indexes() {
-        let mut completed_data_indexes = BTreeSet::default();
+        let mut completed_data_indexes = CompletedDataIndexes::default();
         let mut shred_index = ShredIndex::default();
 
         for i in 0..10 {
@@ -10484,13 +10482,13 @@ pub mod tests {
                 &mut completed_data_indexes
             )
             .eq(std::iter::once(i..i + 1)));
-            assert!(completed_data_indexes.iter().copied().eq(0..=i));
+            assert!(completed_data_indexes.clone().into_iter().eq(0..=i));
         }
     }
 
     #[test]
     fn test_update_completed_data_indexes_out_of_order() {
-        let mut completed_data_indexes = BTreeSet::default();
+        let mut completed_data_indexes = CompletedDataIndexes::default();
         let mut shred_index = ShredIndex::default();
 
         shred_index.insert(4);
@@ -10512,7 +10510,7 @@ pub mod tests {
             update_completed_data_indexes(true, 3, &shred_index, &mut completed_data_indexes)
                 .eq([])
         );
-        assert!(completed_data_indexes.iter().eq([3].iter()));
+        assert!(completed_data_indexes.clone().into_iter().eq([3]));
 
         // Inserting data complete shred 1 now confirms the range of shreds [2, 3]
         // is part of the same data set
@@ -10521,7 +10519,7 @@ pub mod tests {
             update_completed_data_indexes(true, 1, &shred_index, &mut completed_data_indexes)
                 .eq(std::iter::once(2..4))
         );
-        assert!(completed_data_indexes.iter().eq([1, 3].iter()));
+        assert!(completed_data_indexes.clone().into_iter().eq([1, 3]));
 
         // Inserting data complete shred 0 now confirms the range of shreds [0]
         // is part of the same data set
@@ -10530,7 +10528,7 @@ pub mod tests {
             update_completed_data_indexes(true, 0, &shred_index, &mut completed_data_indexes)
                 .eq([0..1, 1..2])
         );
-        assert!(completed_data_indexes.iter().eq([0, 1, 3].iter()));
+        assert!(completed_data_indexes.clone().into_iter().eq([0, 1, 3]));
     }
 
     #[test]

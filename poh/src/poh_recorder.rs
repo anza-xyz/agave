@@ -951,7 +951,6 @@ pub fn create_test_recorder_with_index_tracking(
 mod tests {
     use {
         super::*,
-        bincode::serialize,
         crossbeam_channel::bounded,
         solana_clock::DEFAULT_TICKS_PER_SLOT,
         solana_ledger::{
@@ -1916,10 +1915,7 @@ mod tests {
             received: 1,
             ..SlotMeta::default()
         };
-        poh_recorder
-            .blockstore
-            .put_meta_bytes(0, &serialize(&parent_meta).unwrap())
-            .unwrap();
+        poh_recorder.blockstore.put_meta(0, &parent_meta).unwrap();
 
         // Use a key that's different from the previous leader so that grace
         // ticks are enforced.

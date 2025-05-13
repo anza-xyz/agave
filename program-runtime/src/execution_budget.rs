@@ -50,7 +50,7 @@ pub struct SVMTransactionExecutionBudget {
     pub stack_frame_size: usize,
     /// Maximum cross-program invocation instruction size
     pub max_cpi_instruction_size: usize,
-    /// program heap region size, default: solana_sdk::entrypoint::HEAP_LENGTH
+    /// program heap region size, default: solana_program_entrypoint::HEAP_LENGTH
     pub heap_size: u32,
 }
 

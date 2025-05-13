@@ -11,18 +11,16 @@ use {
         sync::{Arc, RwLock},
         thread, Runner,
     },
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+    solana_hash::Hash,
+    solana_instruction::AccountMeta,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::ProgramCacheEntryType,
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable,
-        hash::Hash,
-        instruction::AccountMeta,
-        pubkey::Pubkey,
-        signature::Signature,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
+    solana_signature::Signature,
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         transaction_processing_result::{

@@ -3,8 +3,8 @@ use {
     agave_feature_set::FeatureSet,
     lazy_static::lazy_static,
     solana_builtins_default_costs::get_builtin_instruction_cost,
-    solana_sdk::saturating_add_assign,
     solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
+    std::num::Saturating,
     thiserror::Error,
 };
 
@@ -31,14 +31,14 @@ impl ImmutableDeserializedPacket {
     /// which are statically known to exceed the compute budget, and will
     /// result in no useful state-change.
     pub fn check_insufficent_compute_unit_limit(&self) -> Result<(), PacketFilterFailure> {
-        let mut static_builtin_cost_sum: u64 = 0;
+        let mut static_builtin_cost_sum = Saturating::<u64>(0);
         for (program_id, _) in self.transaction().get_message().program_instructions_iter() {
             if let Some(ix_cost) = get_builtin_instruction_cost(program_id, &FEATURE_SET) {
-                saturating_add_assign!(static_builtin_cost_sum, ix_cost);
+                static_builtin_cost_sum += ix_cost;
             }
         }
 
-        if self.compute_unit_limit() >= static_builtin_cost_sum {
+        if Saturating(self.compute_unit_limit()) >= static_builtin_cost_sum {
             Ok(())
         } else {
             Err(PacketFilterFailure::InsufficientComputeLimit)
@@ -48,18 +48,18 @@ impl ImmutableDeserializedPacket {
     /// Returns ok if the number of precompile signature verifications
     /// performed by the transaction is not excessive.
     pub fn check_excessive_precompiles(&self) -> Result<(), PacketFilterFailure> {
-        let mut num_precompile_signatures: u64 = 0;
+        let mut num_precompile_signatures = Saturating::<u64>(0);
         for (program_id, ix) in self.transaction().get_message().program_instructions_iter() {
             if secp256k1_program::check_id(program_id)
                 || ed25519_program::check_id(program_id)
                 || secp256r1_program::check_id(program_id)
             {
                 let num_signatures = ix.data.first().map_or(0, |byte| u64::from(*byte));
-                saturating_add_assign!(num_precompile_signatures, num_signatures);
+                num_precompile_signatures += num_signatures;
             }
         }
 
-        if num_precompile_signatures <= MAX_ALLOWED_PRECOMPILE_SIGNATURES {
+        if num_precompile_signatures <= Saturating(MAX_ALLOWED_PRECOMPILE_SIGNATURES) {
             Ok(())
         } else {
             Err(PacketFilterFailure::ExcessivePrecompiles)

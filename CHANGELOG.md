@@ -17,6 +17,9 @@ Release channels have their own copy of this changelog:
 
 ### Validator
 
+#### Breaking
+* ABI of `TimedTracedEvent` changed, since `PacketBatch` became an enum, which carries different packet batch types. (#5646)
+
 #### Changes
 * Account notifications for Geyser are no longer deduplicated when restorting from a snapshot.
 * Add `--no-snapshots` to disable generating snapshots.

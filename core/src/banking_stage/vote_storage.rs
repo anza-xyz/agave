@@ -345,7 +345,7 @@ mod tests {
         solana_genesis_config::GenesisConfig,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::{Packet, PacketFlags},
+        solana_perf::packet::{BytesPacket, PacketFlags},
         solana_runtime::genesis_utils::{self, ValidatorVoteKeypairs},
         solana_signer::Signer,
         solana_vote::vote_transaction::new_tower_sync_transaction,
@@ -357,7 +357,7 @@ mod tests {
         slots: Vec<(u64, u32)>,
         keypairs: &ValidatorVoteKeypairs,
         timestamp: Option<UnixTimestamp>,
-    ) -> Packet {
+    ) -> BytesPacket {
         let mut vote = TowerSync::from(slots);
         vote.timestamp = timestamp;
         let vote_tx = new_tower_sync_transaction(
@@ -368,7 +368,7 @@ mod tests {
             &keypairs.vote_keypair,
             None,
         );
-        let mut packet = Packet::from_data(None, vote_tx).unwrap();
+        let mut packet = BytesPacket::from_data(None, vote_tx).unwrap();
         packet
             .meta_mut()
             .flags
@@ -384,7 +384,7 @@ mod tests {
         timestamp: Option<UnixTimestamp>,
     ) -> LatestValidatorVotePacket {
         let packet = packet_from_slots(slots, keypairs, timestamp);
-        LatestValidatorVotePacket::new(&packet, vote_source, true).unwrap()
+        LatestValidatorVotePacket::new(packet.as_ref(), vote_source, true).unwrap()
     }
 
     #[test]
@@ -395,7 +395,7 @@ mod tests {
                 .genesis_config;
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let vote_keypair = Keypair::new();
-        let mut vote = Packet::from_data(
+        let mut vote = BytesPacket::from_data(
             None,
             new_tower_sync_transaction(
                 TowerSync::default(),
@@ -411,7 +411,7 @@ mod tests {
         let mut vote_storage = VoteStorage::new_for_tests(&[vote_keypair.pubkey()]);
         vote_storage.insert_batch(
             VoteSource::Tpu,
-            std::iter::once(ImmutableDeserializedPacket::new(&vote)?),
+            std::iter::once(ImmutableDeserializedPacket::new(vote.as_ref())?),
         );
         assert_eq!(1, vote_storage.len());
 
@@ -676,10 +676,10 @@ mod tests {
         let vote_c = packet_from_slots(vec![(vote_c_slot, 1)], &keypair_c, None);
         let vote_d = packet_from_slots(vec![(4, 1)], &keypair_d, None);
         let votes = vec![
-            ImmutableDeserializedPacket::new(&vote_a).unwrap(),
-            ImmutableDeserializedPacket::new(&vote_b).unwrap(),
-            ImmutableDeserializedPacket::new(&vote_c).unwrap(),
-            ImmutableDeserializedPacket::new(&vote_d).unwrap(),
+            ImmutableDeserializedPacket::new(vote_a.as_ref()).unwrap(),
+            ImmutableDeserializedPacket::new(vote_b.as_ref()).unwrap(),
+            ImmutableDeserializedPacket::new(vote_c.as_ref()).unwrap(),
+            ImmutableDeserializedPacket::new(vote_d.as_ref()).unwrap(),
         ];
 
         let bank_0 = Bank::new_for_tests(&GenesisConfig::default());

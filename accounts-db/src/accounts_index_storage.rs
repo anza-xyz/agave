@@ -99,6 +99,7 @@ impl BgThreads {
 }
 
 /// modes the system can be in
+#[derive(Debug, Eq, PartialEq)]
 pub enum Startup {
     /// not startup, but steady state execution
     Normal,
@@ -118,8 +119,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
     ///      also creates some additional bg threads to facilitate flushing to disk asap
     /// startup=false is 'normal' operation
     pub fn set_startup(&self, startup: Startup) {
-        let value = !matches!(startup, Startup::Normal);
-        if matches!(startup, Startup::StartupWithExtraThreads) {
+        if startup == Startup::StartupWithExtraThreads && self.storage.is_disk_index_enabled() {
             // create some additional bg threads to help get things to the disk index asap
             *self.startup_worker_threads.lock().unwrap() = Some(BgThreads::new(
                 &self.storage,
@@ -129,8 +129,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
                 self.exit.clone(),
             ));
         }
-        self.storage.set_startup(value);
-        if !value {
+        let is_startup = startup != Startup::Normal;
+        self.storage.set_startup(is_startup);
+        if !is_startup {
             // transitioning from startup to !startup (ie. steady state)
             // shutdown the bg threads
             *self.startup_worker_threads.lock().unwrap() = None;

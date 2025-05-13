@@ -1096,7 +1096,6 @@ pub struct AccountsToStore<'a> {
     /// if 'accounts' contains more items than can be contained in the primary storage, then we have to split these accounts.
     /// 'index_first_item_overflow' specifies the index of the first item in 'accounts' that will go into the overflow storage
     index_first_item_overflow: usize,
-    slot: Slot,
     /// bytes required to store primary accounts
     bytes_primary: usize,
     /// bytes required to store overflow accounts
@@ -1112,7 +1111,6 @@ impl<'a> AccountsToStore<'a> {
         mut available_bytes: u64,
         accounts: &'a [&'a AccountFromStorage],
         alive_total_bytes: usize,
-        slot: Slot,
     ) -> Self {
         let num_accounts = accounts.len();
         let mut bytes_primary = alive_total_bytes;
@@ -1139,7 +1137,6 @@ impl<'a> AccountsToStore<'a> {
         Self {
             accounts,
             index_first_item_overflow,
-            slot,
             bytes_primary,
             bytes_overflow,
         }
@@ -1165,10 +1162,6 @@ impl<'a> AccountsToStore<'a> {
             StorageSelector::Overflow => self.index_first_item_overflow..self.accounts.len(),
         };
         &self.accounts[range]
-    }
-
-    pub fn slot(&self) -> Slot {
-        self.slot
     }
 }
 
@@ -2421,8 +2414,7 @@ pub mod tests {
     #[test]
     fn test_accounts_to_store_simple() {
         let map = vec![];
-        let slot = 1;
-        let accounts_to_store = AccountsToStore::new(0, &map, 0, slot);
+        let accounts_to_store = AccountsToStore::new(0, &map, 0);
         for selector in [StorageSelector::Primary, StorageSelector::Overflow] {
             let accounts = accounts_to_store.get(selector);
             assert!(accounts.is_empty());
@@ -2467,11 +2459,10 @@ pub mod tests {
             (StorageSelector::Primary, account_size),
             (StorageSelector::Overflow, account_size - 1),
         ] {
-            let slot = 1;
             let alive_total_bytes = account_size;
             let temp = map_accounts_from_storage.iter().collect::<Vec<_>>();
             let accounts_to_store =
-                AccountsToStore::new(available_bytes as u64, &temp, alive_total_bytes, slot);
+                AccountsToStore::new(available_bytes as u64, &temp, alive_total_bytes);
             let accounts = accounts_to_store.get(selector);
             assert_eq!(
                 accounts.to_vec(),

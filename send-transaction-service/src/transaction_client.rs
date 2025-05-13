@@ -6,7 +6,7 @@ use {
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_sdk::quic::NotifyKeyUpdate,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,

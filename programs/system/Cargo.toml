@@ -16,6 +16,7 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 solana-account = { workspace = true }
 solana-bincode = { workspace = true }
+solana-fee-calculator = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-nonce = { workspace = true, features = ["serde"] }
@@ -37,7 +38,6 @@ solana-compute-budget = { workspace = true }
 solana-hash = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-rent = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }

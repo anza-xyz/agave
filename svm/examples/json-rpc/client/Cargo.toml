@@ -10,7 +10,13 @@ borsh = { workspace = true }
 clap = { workspace = true }
 home = { workspace = true }
 solana-client = { workspace = true }
-solana-sdk = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
 thiserror = { workspace = true }
 yaml-rust = { workspace = true }
 

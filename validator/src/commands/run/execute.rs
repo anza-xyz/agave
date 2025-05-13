@@ -24,9 +24,11 @@ use {
     solana_clap_utils::input_parsers::{
         keypair_of, keypairs_of, parse_cpu_ranges, pubkey_of, value_of, values_of,
     },
+    solana_clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
+        snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         tpu::DEFAULT_TPU_COALESCE,
         validator::{
@@ -39,6 +41,8 @@ use {
         cluster_info::{Node, NodeConfig},
         contact_info::ContactInfo,
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         blockstore_options::{
@@ -50,6 +54,7 @@ use {
     solana_logger::redirect_stderr_to_file,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
@@ -60,13 +65,8 @@ use {
         snapshot_config::{SnapshotConfig, SnapshotUsage},
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_SLOTS_PER_EPOCH},
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
     solana_send_transaction_service::send_transaction_service,
+    solana_signer::Signer,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_turbine::xdp::{set_cpu_affinity, XdpConfig},
@@ -78,7 +78,7 @@ use {
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
-        sync::{Arc, RwLock},
+        sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
 };
@@ -1071,6 +1071,13 @@ pub fn execute(
         }
     }
 
+    let validator_exit_backpressure = [(
+        SnapshotPackagerService::NAME.to_string(),
+        Arc::new(AtomicBool::new(false)),
+    )]
+    .into();
+    validator_config.validator_exit_backpressure = validator_exit_backpressure;
+
     let mut ledger_lock = ledger_lockfile(&ledger_path);
     let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
 
@@ -1089,6 +1096,7 @@ pub fn execute(
             rpc_addr: validator_config.rpc_addrs.map(|(rpc_addr, _)| rpc_addr),
             start_time: std::time::SystemTime::now(),
             validator_exit: validator_config.validator_exit.clone(),
+            validator_exit_backpressure: validator_config.validator_exit_backpressure.clone(),
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             post_init: admin_service_post_init.clone(),

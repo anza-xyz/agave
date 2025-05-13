@@ -2,6 +2,10 @@
 
 use {
     agave_validator::test_validator::*,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
@@ -9,14 +13,9 @@ use {
         loader_utils::load_program_of_loader_v4,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        sysvar::{clock, slot_history},
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
+    solana_sysvar::{clock, slot_history},
+    solana_transaction::Transaction,
     std::{thread::sleep, time::Duration},
 };
 

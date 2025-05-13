@@ -18,7 +18,7 @@ solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-perf = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
-solana-sdk = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-version = { workspace = true }
 
 [package.metadata.docs.rs]

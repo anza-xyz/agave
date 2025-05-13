@@ -1,3 +1,5 @@
+#[cfg(test)]
+use solana_perf::packet::PacketRef;
 use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     solana_clock::{Slot, UnixTimestamp},
@@ -82,7 +84,7 @@ impl LatestValidatorVotePacket {
 
     #[cfg(test)]
     pub fn new(
-        packet: &solana_perf::packet::Packet,
+        packet: PacketRef,
         vote_source: VoteSource,
         deprecate_legacy_vote_ixs: bool,
     ) -> Result<Self, DeserializedPacketError> {
@@ -129,7 +131,7 @@ mod tests {
         super::*,
         itertools::Itertools,
         solana_packet::PacketFlags,
-        solana_perf::packet::{Packet, PacketBatch},
+        solana_perf::packet::{BytesPacket, PacketBatch},
         solana_runtime::genesis_utils::ValidatorVoteKeypairs,
         solana_signer::Signer,
         solana_system_transaction::transfer,
@@ -137,13 +139,12 @@ mod tests {
         solana_vote_program::vote_state::TowerSync,
     };
 
-    fn deserialize_packets<'a>(
-        packet_batch: &'a PacketBatch,
-        packet_indexes: &'a [usize],
+    fn deserialize_packets(
+        packet_batch: &PacketBatch,
         vote_source: VoteSource,
-    ) -> impl Iterator<Item = LatestValidatorVotePacket> + 'a {
-        packet_indexes.iter().filter_map(move |packet_index| {
-            LatestValidatorVotePacket::new(&packet_batch[*packet_index], vote_source, true).ok()
+    ) -> impl Iterator<Item = LatestValidatorVotePacket> + '_ {
+        packet_batch.iter().filter_map(move |packet| {
+            LatestValidatorVotePacket::new(packet, vote_source, true).ok()
         })
     }
 
@@ -152,7 +153,7 @@ mod tests {
         let keypairs = ValidatorVoteKeypairs::new_rand();
         let blockhash = Hash::new_unique();
         let switch_proof = Hash::new_unique();
-        let mut tower_sync = Packet::from_data(
+        let mut tower_sync = BytesPacket::from_data(
             None,
             new_tower_sync_transaction(
                 TowerSync::from(vec![(0, 3), (1, 2), (2, 1)]),
@@ -168,7 +169,7 @@ mod tests {
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let mut tower_sync_switch = Packet::from_data(
+        let mut tower_sync_switch = BytesPacket::from_data(
             None,
             new_tower_sync_transaction(
                 TowerSync::from(vec![(0, 3), (1, 2), (3, 1)]),
@@ -184,7 +185,7 @@ mod tests {
             .meta_mut()
             .flags
             .set(PacketFlags::SIMPLE_VOTE_TX, true);
-        let random_transaction = Packet::from_data(
+        let random_transaction = BytesPacket::from_data(
             None,
             transfer(
                 &keypairs.node_keypair,
@@ -195,14 +196,10 @@ mod tests {
         )
         .unwrap();
         let packet_batch =
-            PacketBatch::new(vec![tower_sync, tower_sync_switch, random_transaction]);
+            PacketBatch::from(vec![tower_sync, tower_sync_switch, random_transaction]);
 
-        let deserialized_packets = deserialize_packets(
-            &packet_batch,
-            &(0..packet_batch.len()).collect_vec(),
-            VoteSource::Gossip,
-        )
-        .collect_vec();
+        let deserialized_packets =
+            deserialize_packets(&packet_batch, VoteSource::Gossip).collect_vec();
 
         assert_eq!(2, deserialized_packets.len());
         assert_eq!(VoteSource::Gossip, deserialized_packets[0].vote_source);

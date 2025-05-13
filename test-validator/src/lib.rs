@@ -4,18 +4,23 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_commitment_config::CommitmentConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
@@ -24,11 +29,18 @@ use {
         contact_info::Protocol,
         socketaddr,
     },
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
         create_new_tmp_ledger,
     },
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_message::Message,
+    solana_native_token::sol_to_lamports,
     solana_net_utils::PortRange,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
@@ -38,23 +50,10 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
     },
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable::UpgradeableLoaderState,
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        commitment_config::CommitmentConfig,
-        epoch_schedule::EpochSchedule,
-        exit::Exit,
-        fee_calculator::FeeRateGovernor,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+    solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
         ffi::OsStr,
@@ -175,7 +174,7 @@ fn try_transform_program_data(
     address: &Pubkey,
     account: &mut AccountSharedData,
 ) -> Result<(), String> {
-    if account.owner() == &solana_sdk::bpf_loader_upgradeable::id() {
+    if account.owner() == &solana_sdk_ids::bpf_loader_upgradeable::id() {
         let programdata_offset = UpgradeableLoaderState::size_of_programdata_metadata();
         let programdata_meta = account.data().get(0..programdata_offset).ok_or(format!(
             "Failed to get upgradeable programdata data from {address}"
@@ -441,7 +440,7 @@ impl TestValidatorGenesis {
                 .for_each(|(maybe_account, feature_id)| {
                     if maybe_account
                         .as_ref()
-                        .and_then(solana_sdk::feature::from_account)
+                        .and_then(solana_feature_gate_interface::from_account)
                         .and_then(|feature| feature.activated_at)
                         .is_none()
                     {
@@ -581,7 +580,7 @@ impl TestValidatorGenesis {
 
         self.upgradeable_programs.push(UpgradeableProgramInfo {
             program_id,
-            loader: solana_sdk::bpf_loader_upgradeable::id(),
+            loader: solana_sdk_ids::bpf_loader_upgradeable::id(),
             upgrade_authority: Pubkey::default(),
             program_path,
         });
@@ -857,7 +856,7 @@ impl TestValidator {
             validator_identity_lamports,
             config.fee_rate_governor.clone(),
             config.rent.clone(),
-            solana_sdk::genesis_config::ClusterType::Development,
+            solana_cluster_type::ClusterType::Development,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config
@@ -1185,7 +1184,7 @@ impl Drop for TestValidator {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_sdk::feature::Feature};
+    use {super::*, solana_feature_gate_interface::Feature};
 
     #[test]
     fn get_health() {
@@ -1215,8 +1214,8 @@ mod test {
         let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
         [
-            solana_sdk::feature_set::deprecate_rewards_sysvar::id(),
-            solana_sdk::feature_set::disable_fees_sysvar::id(),
+            agave_feature_set::deprecate_rewards_sysvar::id(),
+            agave_feature_set::disable_fees_sysvar::id(),
         ]
         .into_iter()
         .for_each(|feature| {
@@ -1256,8 +1255,8 @@ mod test {
 
     #[tokio::test]
     async fn test_override_feature_account() {
-        let with_deactivate_flag = solana_sdk::feature_set::deprecate_rewards_sysvar::id();
-        let without_deactivate_flag = solana_sdk::feature_set::disable_fees_sysvar::id();
+        let with_deactivate_flag = agave_feature_set::deprecate_rewards_sysvar::id();
+        let without_deactivate_flag = agave_feature_set::disable_fees_sysvar::id();
 
         let owner = Pubkey::new_unique();
         let account = || AccountSharedData::new(100_000, 0, &owner);
@@ -1287,7 +1286,7 @@ mod test {
 
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();
-        assert_eq!(feature_account.owner, solana_sdk::feature::id());
+        assert_eq!(feature_account.owner, solana_sdk_ids::feature::id());
         let feature_state: Feature = bincode::deserialize(feature_account.data()).unwrap();
         assert!(feature_state.activated_at.is_some());
     }
@@ -1297,7 +1296,7 @@ mod test {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[
                 // Don't migrate the stake program.
-                solana_sdk::feature_set::migrate_stake_program_to_core_bpf::id(),
+                agave_feature_set::migrate_stake_program_to_core_bpf::id(),
             ])
             .start_async()
             .await;

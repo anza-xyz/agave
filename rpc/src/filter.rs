@@ -1,6 +1,6 @@
 use {
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_rpc_client_api::filter::RpcFilterType,
-    solana_sdk::account::{AccountSharedData, ReadableAccount},
     spl_generic_token::{token::GenericTokenAccount, token_2022::Account},
 };
 

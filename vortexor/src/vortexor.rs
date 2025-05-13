@@ -4,9 +4,10 @@ use {
         banking_trace::TracedSender, sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
     },
+    solana_keypair::Keypair,
     solana_net_utils::{multi_bind_in_range_with_config, SocketConfig},
     solana_perf::packet::PacketBatch,
-    solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
@@ -85,7 +86,7 @@ impl Vortexor {
     }
 
     pub fn create_sigverify_stage(
-        tpu_receiver: Receiver<solana_perf::packet::PacketBatch>,
+        tpu_receiver: Receiver<PacketBatch>,
         non_vote_sender: TracedSender,
     ) -> SigVerifyStage {
         let verifier = TransactionSigVerifier::new(non_vote_sender, None);

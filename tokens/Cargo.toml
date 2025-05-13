@@ -23,10 +23,22 @@ serde_derive = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
+solana-message = { workspace = true }
+solana-native-token = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
-solana-sdk = "=2.2.2"
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-stake-interface = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-associated-token-account = { version = "=7.0.0", features = ["no-entrypoint"] }
@@ -40,3 +52,4 @@ bincode = { workspace = true }
 solana-logger = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
+solana-transaction-error = { workspace = true }

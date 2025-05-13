@@ -123,11 +123,7 @@ impl Blockstore {
                     slot,
                     from_slot..=to_slot
                 );
-                self.put_meta_bytes(
-                    slot,
-                    &bincode::serialize(&meta).expect("couldn't update meta"),
-                )
-                .expect("couldn't update meta");
+                self.put_meta(slot, &meta).expect("couldn't update meta");
             }
             time.stop();
             total_retain_us += time.as_us();

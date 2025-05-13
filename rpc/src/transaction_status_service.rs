@@ -268,28 +268,30 @@ pub(crate) mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
         dashmap::DashMap,
+        solana_account::state_traits::StateMut,
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
+        solana_clock::Slot,
+        solana_fee_structure::FeeDetails,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{genesis_utils::create_genesis_config, get_tmp_ledger_path_auto_delete},
+        solana_message::SimpleAddressLoader,
+        solana_nonce::{self as nonce, state::DurableNonce},
+        solana_nonce_account as nonce_account,
+        solana_pubkey::Pubkey,
+        solana_rent_debits::RentDebits,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
-        solana_sdk::{
-            account_utils::StateMut,
-            clock::Slot,
-            fee::FeeDetails,
-            hash::Hash,
-            nonce::{self, state::DurableNonce},
-            nonce_account,
-            pubkey::Pubkey,
-            rent_debits::RentDebits,
-            signature::{Keypair, Signature, Signer},
-            system_transaction,
-            transaction::{
-                MessageHash, SanitizedTransaction, SimpleAddressLoader, Transaction,
-                VersionedTransaction,
-            },
-        },
+        solana_signature::Signature,
+        solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            versioned::VersionedTransaction,
+            Transaction,
+        },
         solana_transaction_status::{
             token_balances::TransactionTokenBalancesSet, TransactionStatusMeta,
             TransactionTokenBalance,
@@ -380,9 +382,9 @@ pub(crate) mod tests {
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
         let data = nonce::state::Data::new(Pubkey::from([1u8; 32]), durable_nonce, 42);
         nonce_account
-            .set_state(&nonce::state::Versions::new(nonce::State::Initialized(
-                data,
-            )))
+            .set_state(&nonce::versions::Versions::new(
+                nonce::state::State::Initialized(data),
+            ))
             .unwrap();
 
         let mut rent_debits = RentDebits::default();

@@ -15,13 +15,12 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
-    solana_sdk::saturating_add_assign,
     solana_svm::{
         transaction_balances::BalanceCollector,
         transaction_commit_result::{TransactionCommitResult, TransactionCommitResultExtensions},
         transaction_processing_result::TransactionProcessingResult,
     },
-    std::sync::Arc,
+    std::{num::Saturating, sync::Arc},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,14 +133,14 @@ impl Committer {
                 .iter()
                 .map(|tx| tx.as_sanitized_transaction().into_owned())
                 .collect_vec();
-            let mut transaction_index = starting_transaction_index.unwrap_or_default();
+            let mut transaction_index = Saturating(starting_transaction_index.unwrap_or_default());
             let (batch_transaction_indexes, tx_costs): (Vec<_>, Vec<_>) = commit_results
                 .iter()
                 .zip(sanitized_transactions.iter())
                 .map(|(commit_result, tx)| {
                     if let Ok(committed_tx) = commit_result {
-                        let this_transaction_index = transaction_index;
-                        saturating_add_assign!(transaction_index, 1);
+                        let Saturating(this_transaction_index) = transaction_index;
+                        transaction_index += 1;
 
                         let tx_cost = Some(
                             CostModel::calculate_cost_for_executed_transaction(

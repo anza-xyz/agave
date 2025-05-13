@@ -735,6 +735,30 @@ impl ColumnName for columns::SlotMeta {
 }
 impl TypedColumn for columns::SlotMeta {
     type Type = blockstore_meta::SlotMeta;
+
+    fn deserialize(data: &[u8]) -> Result<Self::Type> {
+        // SlotMeta is being migrated to a new `completed_data_indexes` format.
+        //
+        // Ensure that reject trailing bytes is enabled to prevent false postivies in deserialization.
+        let config = bincode::DefaultOptions::new()
+            // `bincode::serialize` uses fixint encoding by default, so we need to use the same here
+            .with_fixint_encoding()
+            .reject_trailing_bytes();
+
+        // Migration strategy for new column format:
+        // 1. Release 1: Add ability to read new format as fallback, keep writing old format
+        // 2. Release 2: Switch to writing new format, keep reading old format as fallback
+        // 3. Release 3: Remove old format support once stable
+        // This allows safe downgrade to Release 1 since it can read both formats
+        let index: bincode::Result<blockstore_meta::SlotMeta> = config.deserialize(data);
+        match index {
+            Ok(index) => Ok(index),
+            Err(_) => {
+                let index: blockstore_meta::SlotMetaFallback = config.deserialize(data)?;
+                Ok(index.into())
+            }
+        }
+    }
 }
 
 impl Column for columns::ErasureMeta {
