@@ -327,7 +327,12 @@ impl<'a> CallerAccount<'a> {
     }
 }
 
-type TranslatedAccounts<'a> = Vec<(IndexOfAccount, Option<CallerAccount<'a>>)>;
+struct TranslatedAccount<'a> {
+    index_in_caller: IndexOfAccount,
+    caller_account: CallerAccount<'a>,
+    update_caller_account_region: bool,
+    update_caller_account_info: bool,
+}
 
 /// Implemented by language specific data structure translators
 trait SyscallInvokeSigned {
@@ -343,7 +348,7 @@ trait SyscallInvokeSigned {
         is_loader_deprecated: bool,
         memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a>, Error>;
+    ) -> Result<Vec<TranslatedAccount<'a>>, Error>;
     fn translate_signers(
         program_id: &Pubkey,
         signers_seeds_addr: u64,
@@ -442,7 +447,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         is_loader_deprecated: bool,
         memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a>, Error> {
+    ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
@@ -664,7 +669,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         is_loader_deprecated: bool,
         memory_mapping: &MemoryMapping<'_>,
         invoke_context: &mut InvokeContext,
-    ) -> Result<TranslatedAccounts<'a>, Error> {
+    ) -> Result<Vec<TranslatedAccount<'a>>, Error> {
         let (account_infos, account_info_keys) = translate_account_infos(
             account_infos_addr,
             account_infos_len,
@@ -792,7 +797,7 @@ fn translate_and_update_accounts<'a, T, F>(
     invoke_context: &mut InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
     do_translate: F,
-) -> Result<TranslatedAccounts<'a>, Error>
+) -> Result<Vec<TranslatedAccount<'a>>, Error>
 where
     F: Fn(
         &InvokeContext,
@@ -883,13 +888,12 @@ where
                 direct_mapping,
             )?;
 
-            let caller_account =
-                if instruction_account.is_writable || (direct_mapping && update_caller) {
-                    Some(caller_account)
-                } else {
-                    None
-                };
-            accounts.push((instruction_account.index_in_caller, caller_account));
+            accounts.push(TranslatedAccount {
+                index_in_caller: instruction_account.index_in_caller,
+                caller_account,
+                update_caller_account_region: instruction_account.is_writable || update_caller,
+                update_caller_account_info: instruction_account.is_writable,
+            });
         } else {
             ic_msg!(
                 invoke_context,
@@ -1079,13 +1083,15 @@ fn cpi_common<S: SyscallInvokeSigned>(
         // isn't strictly required as we forbid updates to an account to touch
         // other accounts, but since we did have bugs around this in the past,
         // it's better to be safe than sorry.
-        for (index_in_caller, caller_account) in accounts.iter() {
-            if let Some(caller_account) = caller_account {
-                let mut callee_account = instruction_context
-                    .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
+        for translate_account in accounts.iter() {
+            let mut callee_account = instruction_context.try_borrow_instruction_account(
+                transaction_context,
+                translate_account.index_in_caller,
+            )?;
+            if translate_account.update_caller_account_region {
                 update_caller_account_region(
                     memory_mapping,
-                    caller_account,
+                    &translate_account.caller_account,
                     &mut callee_account,
                     is_loader_deprecated,
                 )?;
@@ -1093,15 +1099,17 @@ fn cpi_common<S: SyscallInvokeSigned>(
         }
     }
 
-    for (index_in_caller, caller_account) in accounts.iter_mut() {
-        if let Some(caller_account) = caller_account {
-            let mut callee_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
+    for translate_account in accounts.iter_mut() {
+        let mut callee_account = instruction_context.try_borrow_instruction_account(
+            transaction_context,
+            translate_account.index_in_caller,
+        )?;
+        if translate_account.update_caller_account_info {
             update_caller_account(
                 invoke_context,
                 memory_mapping,
                 is_loader_deprecated,
-                caller_account,
+                &mut translate_account.caller_account,
                 &mut callee_account,
                 direct_mapping,
             )?;
@@ -2336,7 +2344,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(accounts.len(), 1);
-        let caller_account = accounts[0].1.as_ref().unwrap();
+        let caller_account = &accounts[0].caller_account;
         assert_eq!(caller_account.serialized_data, account.data());
         assert_eq!(caller_account.original_data_len, original_data_len);
     }
