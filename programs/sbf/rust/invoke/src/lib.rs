@@ -1231,6 +1231,16 @@ fn process_instruction<'a>(
             )
             .unwrap();
         }
+        TEST_READ_ACCOUNT => {
+            msg!("TEST_READ_ACCOUNT");
+            let account_index = instruction_data[1] as usize;
+            let account = &accounts[account_index];
+            let byte_index = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
+            let data = unsafe {
+                *(account.data.borrow().get_unchecked(byte_index) as *const u8).cast::<u64>()
+            };
+            assert_eq!(data, 0);
+        }
         TEST_WRITE_ACCOUNT => {
             msg!("TEST_WRITE_ACCOUNT");
             let target_account_index = instruction_data[1] as usize;
