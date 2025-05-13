@@ -9,6 +9,7 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
+    bytes::Bytes,
     crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -52,10 +53,7 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio_util::{
-        bytes::Bytes,
-        codec::{BytesCodec, FramedRead},
-    },
+    tokio_util::codec::{BytesCodec, FramedRead},
 };
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";

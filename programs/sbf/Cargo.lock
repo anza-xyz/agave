@@ -6111,6 +6111,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "bs58",
+ "bytes",
  "crossbeam-channel",
  "dashmap",
  "itertools 0.12.1",
