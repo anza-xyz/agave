@@ -3895,23 +3895,22 @@ impl Bank {
                         let post_accounts_states = {
                             match fees_only_tx.rollback_accounts {
                                 RollbackAccounts::FeePayerOnly {
-                                    fee_payer_account: _,
+                                    fee_payer_account,
+                                    fee_payer_address,
                                 } => {
-                                    //no fee_payer_account address here :C
-                                    vec![]
+                                    vec![(fee_payer_address, fee_payer_account)]
                                 }
                                 RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                                    //We eliminate cloning here by making NonceInfo fields public
                                     let NonceInfo { address, account } = nonce;
                                     vec![(address, account)]
                                 }
                                 RollbackAccounts::SeparateNonceAndFeePayer {
                                     nonce,
-                                    fee_payer_account: _,
+                                    fee_payer_account,
+                                    fee_payer_address,
                                 } => {
-                                    //no fee_payer_account address here :C
                                     let NonceInfo { address, account } = nonce;
-                                    vec![(address, account)]
+                                    vec![(fee_payer_address, fee_payer_account), (address, account)]
                                 }
                             }
                         };
