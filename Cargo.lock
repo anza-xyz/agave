@@ -8435,9 +8435,12 @@ dependencies = [
  "solana-pubkey",
  "solana-rpc",
  "solana-runtime",
+ "solana-sdk",
  "solana-signature",
+ "solana-system-program",
  "solana-transaction",
  "solana-transaction-status",
+ "solana-vote-program",
  "thiserror 2.0.12",
  "tokio",
 ]

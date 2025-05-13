@@ -29,10 +29,15 @@ solana-pubkey = { workspace = true }
 solana-rpc = { workspace = true }
 solana-runtime = { workspace = true }
 solana-signature = { workspace = true }
+solana-system-program = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-vote-program = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+solana-sdk = { workspace = true }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
