@@ -98,7 +98,6 @@ solana-faucet = { workspace = true }
 solana-nonce-account = { workspace = true }
 solana-presigner = { workspace = true }
 solana-rpc = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
 solana-sha256-hasher = { workspace = true }
 solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }

@@ -18,16 +18,8 @@ use {
     thiserror::Error,
 };
 
-// inline consts to avoid solana-sdk dep
 const DEFAULT_RPC_PORT: u16 = 8899;
 const DEFAULT_RPC_PUBSUB_PORT: u16 = 8900;
-#[cfg(test)]
-static_assertions::const_assert_eq!(DEFAULT_RPC_PORT, solana_sdk::rpc_port::DEFAULT_RPC_PORT);
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    DEFAULT_RPC_PUBSUB_PORT,
-    solana_sdk::rpc_port::DEFAULT_RPC_PUBSUB_PORT
-);
 
 pub const SOCKET_ADDR_UNSPECIFIED: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), /*port:*/ 0u16);

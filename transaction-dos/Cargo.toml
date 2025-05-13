@@ -30,7 +30,6 @@ solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-system-interface = { workspace = true }

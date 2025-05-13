@@ -86,7 +86,6 @@ serial_test = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
@@ -100,7 +99,6 @@ frozen-abi = [
     "solana-ledger/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",

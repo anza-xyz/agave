@@ -20,7 +20,6 @@ use {
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::rpc_port::DEFAULT_RPC_PORT,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_system_interface::instruction as system_instruction,
@@ -547,7 +546,7 @@ fn main() {
         .get_matches();
 
     let skip_gossip = !matches.is_present("check_gossip");
-    let port = if skip_gossip { DEFAULT_RPC_PORT } else { 8001 };
+    let port = if skip_gossip { 8899 } else { 8001 };
     let mut entrypoint_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     if let Some(addr) = matches.value_of("entrypoint") {
         entrypoint_addr = solana_net_utils::parse_host_port(addr).unwrap_or_else(|e| {

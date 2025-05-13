@@ -35,7 +35,6 @@ use {
             DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         },
     },
-    solana_sdk::rpc_port,
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
@@ -1038,7 +1037,7 @@ pub struct DefaultTestArgs {
 impl DefaultTestArgs {
     pub fn new() -> Self {
         DefaultTestArgs {
-            rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
+            rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the

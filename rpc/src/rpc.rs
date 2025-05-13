@@ -4548,7 +4548,6 @@ pub mod tests {
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
-        solana_sdk::rpc_port,
         solana_send_transaction_service::{
             tpu_info::NullTpuInfo,
             transaction_client::{ConnectionCacheClient, TpuClientNextClient},
@@ -5169,8 +5168,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
-            "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
-            "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
+            "rpc": format!("127.0.0.1:8899"),
+            "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
         }, {
@@ -5184,8 +5183,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
-            "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
-            "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
+            "rpc": format!("127.0.0.1:8899"),
+            "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
         }]);

@@ -201,7 +201,6 @@ dependencies = [
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-send-transaction-service",
  "solana-signer",
