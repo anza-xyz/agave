@@ -6,7 +6,7 @@ use {
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
         accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
-        ancient_append_vecs::{self, is_ancient},
+        ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
             StoredMeta,
