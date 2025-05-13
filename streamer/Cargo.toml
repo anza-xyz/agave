@@ -54,7 +54,6 @@ x509-parser = { workspace = true }
 assert_matches = { workspace = true }
 solana-logger = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true }
 solana-streamer = { path = ".", features = ["dev-context-only-utils"] }
 
 [features]
