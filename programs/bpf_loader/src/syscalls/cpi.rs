@@ -1308,6 +1308,7 @@ mod tests {
             rc::Rc,
             slice,
         },
+        test_case::test_matrix,
     };
 
     macro_rules! mock_invoke_context {
@@ -1492,8 +1493,8 @@ mod tests {
         assert_eq!(caller_account.serialized_data, account.data());
     }
 
-    #[test]
-    fn test_update_caller_account_lamports_owner() {
+    #[test_matrix([false, true])]
+    fn test_update_caller_account_lamports_owner(direct_mapping: bool) {
         let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
         let account = transaction_accounts[1].1.clone();
         mock_invoke_context!(
@@ -1538,7 +1539,7 @@ mod tests {
             &memory_mapping,
             &mut caller_account,
             &mut callee_account,
-            false,
+            direct_mapping,
         )
         .unwrap();
 
@@ -1910,8 +1911,8 @@ mod tests {
         assert_eq!(data, callee_account.get_data());
     }
 
-    #[test]
-    fn test_update_callee_account_lamports_owner() {
+    #[test_matrix([false, true])]
+    fn test_update_callee_account_lamports_owner(direct_mapping: bool) {
         let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
         let account = transaction_accounts[1].1.clone();
 
@@ -1939,15 +1940,15 @@ mod tests {
         *caller_account.lamports = 42;
         *caller_account.owner = Pubkey::new_unique();
 
-        update_callee_account(false, &caller_account, callee_account, false).unwrap();
+        update_callee_account(false, &caller_account, callee_account, direct_mapping).unwrap();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_lamports(), 42);
         assert_eq!(caller_account.owner, callee_account.get_owner());
     }
 
-    #[test]
-    fn test_update_callee_account_data() {
+    #[test_matrix([false, true])]
+    fn test_update_callee_account_data_writable(direct_mapping: bool) {
         let transaction_accounts =
             transaction_with_one_writable_instruction_account(b"foobar".to_vec());
         let account = transaction_accounts[1].1.clone();
@@ -1970,16 +1971,32 @@ mod tests {
         );
 
         let mut caller_account = mock_caller_account.caller_account();
-
         let callee_account = borrow_instruction_account!(invoke_context, 0);
 
-        let mut data = b"foo".to_vec();
-        caller_account.serialized_data = &mut data;
-
+        // direct mapping does not copy data in update_callee_account()
+        caller_account.serialized_data[0] = b'b';
         update_callee_account(false, &caller_account, callee_account, false).unwrap();
-
         let callee_account = borrow_instruction_account!(invoke_context, 0);
-        assert_eq!(callee_account.get_data(), caller_account.serialized_data);
+        assert_eq!(callee_account.get_data(), b"boobar");
+
+        // growing resize
+        let mut data = b"foobarbaz".to_vec();
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
+        caller_account.serialized_data = &mut data;
+        assert_eq!(
+            update_callee_account(false, &caller_account, callee_account, direct_mapping).unwrap(),
+            direct_mapping,
+        );
+
+        // truncating resize
+        let mut data = b"baz".to_vec();
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
+        caller_account.serialized_data = &mut data;
+        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        assert_eq!(
+            update_callee_account(false, &caller_account, callee_account, direct_mapping).unwrap(),
+            direct_mapping,
+        );
 
         // close the account
         let mut data = Vec::new();
@@ -1987,13 +2004,26 @@ mod tests {
         *caller_account.ref_to_len_in_vm = 0;
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
-        update_callee_account(false, &caller_account, callee_account, false).unwrap();
+        let callee_account = borrow_instruction_account!(invoke_context, 0);
+        update_callee_account(false, &caller_account, callee_account, direct_mapping).unwrap();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"");
+
+        // growing beyond address_space_reserved_for_account
+        *caller_account.ref_to_len_in_vm = (7 + MAX_PERMITTED_DATA_INCREASE) as u64;
+        let result = update_callee_account(false, &caller_account, callee_account, direct_mapping);
+        if direct_mapping {
+            assert_matches!(
+                result,
+                Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
+            );
+        } else {
+            result.unwrap();
+        }
     }
 
-    #[test]
-    fn test_update_callee_account_data_readonly() {
+    #[test_matrix([false, true])]
+    fn test_update_callee_account_data_readonly(direct_mapping: bool) {
         let transaction_accounts =
             transaction_with_one_readonly_instruction_account(b"foobar".to_vec());
         let account = transaction_accounts[1].1.clone();
@@ -2014,11 +2044,10 @@ mod tests {
             account.data(),
             false,
         );
-
         let mut caller_account = mock_caller_account.caller_account();
-
         let callee_account = borrow_instruction_account!(invoke_context, 0);
 
+        // direct mapping does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
         assert_matches!(
             update_callee_account(
@@ -2030,34 +2059,32 @@ mod tests {
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
         );
 
-        // without direct mapping
+        // growing resize
         let mut data = b"foobarbaz".to_vec();
         *caller_account.ref_to_len_in_vm = data.len() as u64;
         caller_account.serialized_data = &mut data;
-
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_matches!(
             update_callee_account(
                 false,
                 &caller_account,
                 callee_account,
-                false,
+                direct_mapping,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
         );
 
-        // with direct mapping
+        // truncating resize
         let mut data = b"baz".to_vec();
-        *caller_account.ref_to_len_in_vm = 9;
+        *caller_account.ref_to_len_in_vm = data.len() as u64;
         caller_account.serialized_data = &mut data;
-
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_matches!(
             update_callee_account(
                 false,
                 &caller_account,
                 callee_account,
-                true,
+                direct_mapping,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
         );
