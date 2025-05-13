@@ -319,17 +319,15 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                         continue;
                     }
 
-                    let dropped_packet = self
-                        .packet_container
-                        .pop_and_remove_min()
-                        .expect("not empty");
+                    let dropped_packet = self.packet_container.pop_min().expect("not empty");
                     self.metrics.votes_dropped_on_capacity +=
                         usize::from(dropped_packet.meta().is_simple_vote_tx());
                     self.metrics.non_votes_dropped_on_capacity +=
                         usize::from(!dropped_packet.meta().is_simple_vote_tx());
                 }
 
-                self.packet_container.insert(packet.to_packet(), priority);
+                self.packet_container
+                    .insert(packet.to_bytes_packet(), priority);
             }
         }
     }
@@ -345,7 +343,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
         let mut vote_batch = Vec::with_capacity(FORWARD_BATCH_SIZE);
 
         // Loop through packets creating batches of packets to forward.
-        while let Some(packet) = self.packet_container.pop_and_remove_max() {
+        while let Some(packet) = self.packet_container.pop_max() {
             // If it exceeds our data-budget, drop.
             if !self.data_budget.take(packet.meta().size) {
                 self.metrics.votes_dropped_on_data_budget +=
