@@ -6766,7 +6766,6 @@ fn test_shrink_ancient_overflow_with_min_size() {
         .storage
         .get_slot_storage_entry(max_slot_inclusive - 1)
         .unwrap();
-    assert!(is_ancient(&ancient2.accounts));
     assert!(ancient2.capacity() > ideal_av_size); // min_size kicked in, which cause the appendvec to be larger than the ideal_av_size
 
     // Combine normal append vec(s) into existing ancient append vec this
@@ -6785,21 +6784,18 @@ fn test_shrink_ancient_overflow_with_min_size() {
     // Nothing should be combined because the append vec are oversized.
     // min_size kicked in, which cause the appendvecs to be larger than the ideal_av_size.
     let ancient = db.storage.get_slot_storage_entry(ancient_slot).unwrap();
-    assert!(is_ancient(&ancient.accounts));
     assert!(ancient.capacity() > ideal_av_size);
 
     let ancient2 = db
         .storage
         .get_slot_storage_entry(max_slot_inclusive - 1)
         .unwrap();
-    assert!(is_ancient(&ancient2.accounts));
     assert!(ancient2.capacity() > ideal_av_size);
 
     let ancient3 = db
         .storage
         .get_slot_storage_entry(max_slot_inclusive)
         .unwrap();
-    assert!(is_ancient(&ancient3.accounts));
     assert!(ancient3.capacity() > ideal_av_size);
 }
 

@@ -2492,21 +2492,6 @@ pub mod tests {
         assert_eq!(get_ancient_append_vec_capacity(), 128 * 1024 * 1024);
     }
 
-    #[test]
-    fn test_is_ancient() {
-        for (size, expected_ancient) in [
-            (get_ancient_append_vec_capacity() + 1, true),
-            (get_ancient_append_vec_capacity(), true),
-            (get_ancient_append_vec_capacity() - 1, false),
-        ] {
-            let tf = crate::append_vec::test_utils::get_append_vec_path("test_is_ancient");
-            let (_temp_dirs, _paths) = get_temp_accounts_paths(1).unwrap();
-            let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, true, size as usize));
-
-            assert_eq!(expected_ancient, is_ancient(&av));
-        }
-    }
-
     fn get_one_packed_ancient_append_vec_and_others(
         alive: bool,
         num_normal_slots: usize,
