@@ -380,7 +380,6 @@ trait SyscallInvokeSigned {
     ) -> Result<StableInstruction, Error>;
     fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
-        program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -480,7 +479,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
 
     fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
-        program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -497,7 +495,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
 
         translate_and_update_accounts(
             instruction_accounts,
-            program_indices,
             &account_info_keys,
             account_infos,
             account_infos_addr,
@@ -704,7 +701,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
 
     fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
-        program_indices: &[IndexOfAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -721,7 +717,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
 
         translate_and_update_accounts(
             instruction_accounts,
-            program_indices,
             &account_info_keys,
             account_infos,
             account_infos_addr,
@@ -832,7 +827,6 @@ where
 // accounts in preparation of executing the callee.
 fn translate_and_update_accounts<'a, T, F>(
     instruction_accounts: &[InstructionAccount],
-    program_indices: &[IndexOfAccount],
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
@@ -852,12 +846,7 @@ where
 {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut accounts = Vec::with_capacity(instruction_accounts.len().saturating_add(1));
-
-    let program_account_index = program_indices
-        .last()
-        .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
-    accounts.push((*program_account_index, None));
+    let mut accounts = Vec::with_capacity(instruction_accounts.len());
 
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
@@ -893,8 +882,6 @@ where
                     .checked_div(invoke_context.get_execution_cost().cpi_bytes_per_unit)
                     .unwrap_or(u64::MAX),
             )?;
-
-            accounts.push((instruction_account.index_in_caller, None));
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| *key == account_key)
         {
@@ -1094,7 +1081,6 @@ fn cpi_common<S: SyscallInvokeSigned>(
 
     let mut accounts = S::translate_accounts(
         &instruction_accounts,
-        &program_indices,
         account_infos_addr,
         account_infos_len,
         is_loader_deprecated,
@@ -2634,7 +2620,6 @@ mod tests {
                     is_writable: true,
                 },
             ],
-            &[0],
             vm_addr,
             1,
             false,
@@ -2642,9 +2627,8 @@ mod tests {
             &mut invoke_context,
         )
         .unwrap();
-        assert_eq!(accounts.len(), 2);
-        assert!(accounts[0].1.is_none());
-        let caller_account = accounts[1].1.as_ref().unwrap();
+        assert_eq!(accounts.len(), 1);
+        let caller_account = accounts[0].1.as_ref().unwrap();
         assert_eq!(caller_account.serialized_data, account.data());
         assert_eq!(caller_account.original_data_len, original_data_len);
     }
