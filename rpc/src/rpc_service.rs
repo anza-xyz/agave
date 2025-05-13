@@ -271,7 +271,12 @@ impl RpcRequestMiddleware {
             .to_string();
         info!("get {} -> {:?} ({} bytes)", path, filename, file_length);
 
-        // `self.snapshot_config` is None only in tests
+        if cfg!(not(test)) {
+            assert!(
+                self.snapshot_config.is_some(),
+                "snapshot_config should never be None outside of tests"
+            );
+        }
         let snapshot_timeout = self.snapshot_config.as_ref().and_then(|config| {
             snapshot_type.map(|st| {
                 let slots = match st {
@@ -308,10 +313,6 @@ impl RpcRequestMiddleware {
                         let body = if let Some(timeout) = snapshot_timeout {
                             hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
                         } else {
-                            #[cfg(not(test))]
-                            panic!("snapshot_config should not be None outside of tests");
-
-                            #[cfg(test)]
                             hyper::Body::wrap_stream(stream)
                         };
                         Ok(hyper::Response::builder()
