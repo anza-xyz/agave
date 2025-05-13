@@ -431,48 +431,6 @@ fn test_sort_and_remove_dups_random() {
     assert_eq!(num_dups1, num_dups2);
 }
 
-/// Reserve ancient storage size is not supported for TiredStorage
-#[test]
-fn test_create_ancient_accounts_file() {
-    let ancient_append_vec_size = ancient_append_vecs::get_ancient_append_vec_capacity();
-    let db = AccountsDb::new_single_for_tests();
-
-    {
-        // create an ancient appendvec from a small appendvec, the size of
-        // the ancient appendvec should be the size of the ideal ancient
-        // appendvec size.
-        let mut current_ancient = CurrentAncientAccountsFile::default();
-        let slot0 = 0;
-
-        // there has to be an existing append vec at this slot for a new current ancient at the slot to make sense
-        let _existing_append_vec = db.create_and_insert_store(slot0, 1000, "test");
-        let _ = current_ancient.create_ancient_accounts_file(slot0, &db, 0);
-        assert_eq!(
-            current_ancient.accounts_file().capacity(),
-            ancient_append_vec_size
-        );
-    }
-
-    {
-        // create an ancient appendvec from a large appendvec (bigger than
-        // current ancient_append_vec_size), the ancient appendvec should be
-        // the size of the bigger ancient appendvec size.
-        let mut current_ancient = CurrentAncientAccountsFile::default();
-        let slot1 = 1;
-        // there has to be an existing append vec at this slot for a new current ancient at the slot to make sense
-        let _existing_append_vec = db.create_and_insert_store(slot1, 1000, "test");
-        let _ = current_ancient.create_ancient_accounts_file(
-            slot1,
-            &db,
-            2 * ancient_append_vec_size as usize,
-        );
-        assert_eq!(
-            current_ancient.accounts_file().capacity(),
-            2 * ancient_append_vec_size
-        );
-    }
-}
-
 pub(crate) fn sample_storages_and_account_in_slot(
     slot: Slot,
     accounts: &AccountsDb,
@@ -6485,83 +6443,6 @@ fn test_sweep_get_oldest_non_ancient_slot2() {
                 );
             }
         }
-    }
-}
-
-#[test]
-#[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
-fn test_current_ancient_slot_assert() {
-    let current_ancient = CurrentAncientAccountsFile::default();
-    _ = current_ancient.slot();
-}
-
-#[test]
-#[should_panic(expected = "called `Option::unwrap()` on a `None` value")]
-fn test_current_ancient_append_vec_assert() {
-    let current_ancient = CurrentAncientAccountsFile::default();
-    _ = current_ancient.accounts_file();
-}
-
-#[test]
-fn test_current_ancient_simple() {
-    let slot = 1;
-    let slot2 = 2;
-    let slot3 = 3;
-    {
-        // new
-        let db = AccountsDb::new_single_for_tests();
-        let size = 1000;
-        let append_vec = db.create_and_insert_store(slot, size, "test");
-        let mut current_ancient = CurrentAncientAccountsFile::new(slot, append_vec.clone());
-        assert_eq!(current_ancient.slot(), slot);
-        assert_eq!(current_ancient.id(), append_vec.id());
-        assert_eq!(current_ancient.accounts_file().id(), append_vec.id());
-
-        let _shrink_in_progress = current_ancient.create_if_necessary(slot2, &db, 0);
-        assert_eq!(current_ancient.slot(), slot);
-        assert_eq!(current_ancient.id(), append_vec.id());
-    }
-
-    {
-        // create_if_necessary
-        let db = AccountsDb::new_single_for_tests();
-        // there has to be an existing append vec at this slot for a new current ancient at the slot to make sense
-        let _existing_append_vec = db.create_and_insert_store(slot2, 1000, "test");
-
-        let mut current_ancient = CurrentAncientAccountsFile::default();
-        let mut _shrink_in_progress = current_ancient.create_if_necessary(slot2, &db, 0);
-        let id = current_ancient.id();
-        assert_eq!(current_ancient.slot(), slot2);
-        assert!(is_ancient(&current_ancient.accounts_file().accounts));
-        let slot3 = 3;
-        // should do nothing
-        let _shrink_in_progress = current_ancient.create_if_necessary(slot3, &db, 0);
-        assert_eq!(current_ancient.slot(), slot2);
-        assert_eq!(current_ancient.id(), id);
-        assert!(is_ancient(&current_ancient.accounts_file().accounts));
-    }
-
-    {
-        // create_ancient_append_vec
-        let db = AccountsDb::new_single_for_tests();
-        let mut current_ancient = CurrentAncientAccountsFile::default();
-        // there has to be an existing append vec at this slot for a new current ancient at the slot to make sense
-        let _existing_append_vec = db.create_and_insert_store(slot2, 1000, "test");
-
-        {
-            let _shrink_in_progress = current_ancient.create_ancient_accounts_file(slot2, &db, 0);
-        }
-        let id = current_ancient.id();
-        assert_eq!(current_ancient.slot(), slot2);
-        assert!(is_ancient(&current_ancient.accounts_file().accounts));
-
-        // there has to be an existing append vec at this slot for a new current ancient at the slot to make sense
-        let _existing_append_vec = db.create_and_insert_store(slot3, 1000, "test");
-
-        let mut _shrink_in_progress = current_ancient.create_ancient_accounts_file(slot3, &db, 0);
-        assert_eq!(current_ancient.slot(), slot3);
-        assert!(is_ancient(&current_ancient.accounts_file().accounts));
-        assert_ne!(current_ancient.id(), id);
     }
 }
 
