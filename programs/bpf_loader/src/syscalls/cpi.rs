@@ -1083,7 +1083,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
             if let Some(caller_account) = caller_account {
                 let mut callee_account = instruction_context
                     .try_borrow_instruction_account(transaction_context, *index_in_caller)?;
-                update_caller_account_perms(
+                update_caller_account_region(
                     memory_mapping,
                     caller_account,
                     &mut callee_account,
@@ -1179,7 +1179,7 @@ fn update_callee_account(
     Ok(must_update_caller)
 }
 
-fn update_caller_account_perms(
+fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
     caller_account: &CallerAccount,
     callee_account: &mut BorrowedAccount<'_>,
