@@ -168,8 +168,9 @@ pub enum ProgramCliCommand {
         use_lamports_unit: bool,
         bypass_warning: bool,
     },
-    ExtendProgram {
+    ExtendProgramChecked {
         program_pubkey: Pubkey,
+        authority_signer_index: SignerIndex,
         additional_bytes: u32,
     },
     MigrateProgram {
@@ -1008,17 +1009,22 @@ pub fn parse_program_subcommand(
             let program_pubkey = pubkey_of(matches, "program_id").unwrap();
             let additional_bytes = value_of(matches, "additional_bytes").unwrap();
 
+            let (authority_signer, authority_pubkey) =
+                signer_of(matches, "authority", wallet_manager)?;
+
             let signer_info = default_signer.generate_unique_signers(
-                vec![Some(
-                    default_signer.signer_from_path(matches, wallet_manager)?,
-                )],
+                vec![
+                    Some(default_signer.signer_from_path(matches, wallet_manager)?),
+                    authority_signer,
+                ],
                 matches,
                 wallet_manager,
             )?;
 
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::ExtendProgram {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
+                    authority_signer_index: signer_info.index_of(authority_pubkey).unwrap(),
                     additional_bytes,
                 }),
                 signers: signer_info.signers,
@@ -1230,10 +1236,17 @@ pub fn process_program_subcommand(
             *use_lamports_unit,
             *bypass_warning,
         ),
-        ProgramCliCommand::ExtendProgram {
+        ProgramCliCommand::ExtendProgramChecked {
             program_pubkey,
+            authority_signer_index,
             additional_bytes,
-        } => process_extend_program(&rpc_client, config, *program_pubkey, *additional_bytes),
+        } => process_extend_program(
+            &rpc_client,
+            config,
+            *program_pubkey,
+            *authority_signer_index,
+            *additional_bytes,
+        ),
         ProgramCliCommand::MigrateProgram {
             program_pubkey,
             authority_signer_index,
@@ -2365,9 +2378,11 @@ fn process_extend_program(
     rpc_client: &RpcClient,
     config: &CliConfig,
     program_pubkey: Pubkey,
+    authority_signer_index: SignerIndex,
     additional_bytes: u32,
 ) -> ProcessResult {
     let payer_pubkey = config.signers[0].pubkey();
+    let authority_signer = config.signers[authority_signer_index];
 
     if additional_bytes == 0 {
         return Err("Additional bytes must be greater than zero".into());
@@ -2410,23 +2425,39 @@ fn process_extend_program(
         _ => Err(format!("Program {program_pubkey} is closed")),
     }?;
 
-    match upgrade_authority_address {
-        None => Err(format!("Program {program_pubkey} is not upgradeable")),
-        _ => Ok(()),
-    }?;
+    let upgrade_authority_address = upgrade_authority_address
+        .ok_or_else(|| format!("Program {program_pubkey} is not upgradeable"))?;
+
+    if authority_signer.pubkey() != upgrade_authority_address {
+        return Err(format!(
+            "Upgrade authority {} does not match {}",
+            upgrade_authority_address,
+            authority_signer.pubkey(),
+        )
+        .into());
+    }
 
     let blockhash = rpc_client.get_latest_blockhash()?;
+    let feature_set = fetch_feature_set(rpc_client)?;
 
-    let mut tx = Transaction::new_unsigned(Message::new(
-        &[loader_v3_instruction::extend_program(
-            &program_pubkey,
-            Some(&payer_pubkey),
-            additional_bytes,
-        )],
-        Some(&payer_pubkey),
-    ));
+    let instruction =
+        if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
+            loader_v3_instruction::extend_program_checked(
+                &program_pubkey,
+                &upgrade_authority_address,
+                Some(&payer_pubkey),
+                additional_bytes,
+            )
+        } else {
+            loader_v3_instruction::extend_program(
+                &program_pubkey,
+                Some(&payer_pubkey),
+                additional_bytes,
+            )
+        };
+    let mut tx = Transaction::new_unsigned(Message::new(&[instruction], Some(&payer_pubkey)));
 
-    tx.try_sign(&[config.signers[0]], blockhash)?;
+    tx.try_sign(&[config.signers[0], authority_signer], blockhash)?;
     let result = rpc_client.send_and_confirm_transaction_with_spinner_and_config(
         &tx,
         config.commitment,
@@ -2971,6 +3002,17 @@ fn extend_program_data_if_needed(
         return Ok(());
     };
 
+    let upgrade_authority_address = match program_data_account.state() {
+        Ok(UpgradeableLoaderState::ProgramData {
+            slot: _,
+            upgrade_authority_address,
+        }) => Ok(upgrade_authority_address),
+        _ => Err(format!("Program {program_id} is closed")),
+    }?;
+
+    let upgrade_authority_address = upgrade_authority_address
+        .ok_or_else(|| format!("Program {program_id} is not upgradeable"))?;
+
     let required_len = UpgradeableLoaderState::size_of_programdata(program_len);
     let max_permitted_data_length = usize::try_from(MAX_PERMITTED_DATA_LENGTH).unwrap();
     if required_len > max_permitted_data_length {
@@ -2992,11 +3034,20 @@ fn extend_program_data_if_needed(
 
     let additional_bytes =
         u32::try_from(additional_bytes).expect("`u32` is big enough to hold an account size");
-    initial_instructions.push(loader_v3_instruction::extend_program(
-        program_id,
-        Some(fee_payer),
-        additional_bytes,
-    ));
+
+    let feature_set = fetch_feature_set(rpc_client)?;
+    let instruction =
+        if feature_set.is_active(&agave_feature_set::enable_extend_program_checked::id()) {
+            loader_v3_instruction::extend_program_checked(
+                program_id,
+                &upgrade_authority_address,
+                Some(fee_payer),
+                additional_bytes,
+            )
+        } else {
+            loader_v3_instruction::extend_program(program_id, Some(fee_payer), additional_bytes)
+        };
+    initial_instructions.push(instruction);
 
     Ok(())
 }
@@ -3091,7 +3142,12 @@ fn send_deploy_messages(
             // account to sign the transaction. One (transfer) only requires the fee-payer signature.
             // This check is to ensure signing does not fail on a KeypairPubkeyMismatch error from an
             // extraneous signature.
-            if message.header.num_required_signatures == 2 {
+            if message.header.num_required_signatures == 3 {
+                initial_transaction.try_sign(
+                    &[fee_payer_signer, initial_signer, write_signer.unwrap()],
+                    blockhash,
+                )?;
+            } else if message.header.num_required_signatures == 2 {
                 initial_transaction.try_sign(&[fee_payer_signer, initial_signer], blockhash)?;
             } else {
                 initial_transaction.try_sign(&[fee_payer_signer], blockhash)?;
@@ -4401,8 +4457,9 @@ mod tests {
         assert_eq!(
             parse_command(&test_command, &default_signer, &mut None).unwrap(),
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::ExtendProgram {
+                command: CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
                     program_pubkey,
+                    authority_signer_index: 0,
                     additional_bytes
                 }),
                 signers: vec![Box::new(read_keypair_file(&keypair_file).unwrap())],
