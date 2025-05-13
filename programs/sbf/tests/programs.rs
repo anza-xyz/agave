@@ -4244,6 +4244,74 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 
 #[test]
 #[cfg(feature = "sbf_rust")]
+fn test_deny_access_beyond_current_length() {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_123_456_789);
+
+    for direct_mapping in [false, true] {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let feature_set = Arc::make_mut(&mut bank.feature_set);
+        // by default test banks have all features enabled, so we only need to
+        // disable when needed
+        if !direct_mapping {
+            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let mut bank_client = BankClient::new_shared(bank);
+        let authority_keypair = Keypair::new();
+
+        let (bank, invoke_program_id) = load_program_of_loader_v4(
+            &mut bank_client,
+            &bank_forks,
+            &mint_keypair,
+            &authority_keypair,
+            "solana_sbf_rust_invoke",
+        );
+        let account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let readonly_account_keypair = Keypair::new();
+        let writable_account_keypair = Keypair::new();
+        bank.store_account(&readonly_account_keypair.pubkey(), &account);
+        bank.store_account(&writable_account_keypair.pubkey(), &account);
+
+        let mint_pubkey = mint_keypair.pubkey();
+        let account_metas = vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new_readonly(readonly_account_keypair.pubkey(), false),
+            AccountMeta::new(writable_account_keypair.pubkey(), false),
+            AccountMeta::new_readonly(invoke_program_id, false),
+        ];
+
+        for (instruction_account_index, expected_error) in [
+            (1, InstructionError::AccountDataTooSmall),
+            (2, InstructionError::InvalidRealloc),
+        ] {
+            let mut instruction_data = vec![TEST_READ_ACCOUNT, instruction_account_index];
+            instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
+            let instruction = Instruction::new_with_bytes(
+                invoke_program_id,
+                &instruction_data,
+                account_metas.clone(),
+            );
+            let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+            if direct_mapping {
+                assert_eq!(
+                    result.unwrap_err().unwrap(),
+                    TransactionError::InstructionError(0, expected_error)
+                );
+            } else {
+                result.unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
 fn test_deny_executable_write() {
     solana_logger::setup();
 
