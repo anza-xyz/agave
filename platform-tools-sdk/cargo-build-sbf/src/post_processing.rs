@@ -59,6 +59,14 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             });
         }
 
+        #[cfg(windows)]
+        let llvm_bin = config
+            .sbf_sdk
+            .join("dependencies")
+            .join("platform-tools")
+            .join("llvm")
+            .join("bin");
+
         if file_older_or_missing(&program_unstripped_so, &program_so) {
             #[cfg(windows)]
             let output = spawn(
