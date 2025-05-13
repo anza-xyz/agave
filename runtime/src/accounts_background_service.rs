@@ -68,10 +68,8 @@ impl PrunedBankQueueLenReporter {
     }
 }
 
-lazy_static! {
-    static ref BANK_DROP_QUEUE_REPORTER: PrunedBankQueueLenReporter =
-        PrunedBankQueueLenReporter::default();
-}
+static BANK_DROP_QUEUE_REPORTER: std::sync::LazyLock<PrunedBankQueueLenReporter> =
+    std::sync::LazyLock::new(PrunedBankQueueLenReporter::default);
 
 #[derive(Clone)]
 pub struct SendDroppedBankCallback {

@@ -4,7 +4,6 @@ use {
         transaction_builder::SanitizedTransactionBuilder,
     },
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
-    lazy_static::lazy_static,
     prost::Message,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
@@ -58,14 +57,13 @@ const fn feature_u64(feature: &Pubkey) -> u64 {
         | ((feature_id[7] as u64) << 56)
 }
 
-lazy_static! {
-    static ref INDEXED_FEATURES: HashMap<u64, Pubkey> = {
+static INDEXED_FEATURES: std::sync::LazyLock<HashMap<u64, Pubkey>> =
+    std::sync::LazyLock::new(|| {
         FEATURE_NAMES
             .iter()
             .map(|(pubkey, _)| (feature_u64(pubkey), *pubkey))
             .collect()
-    };
-}
+    });
 
 fn setup() -> PathBuf {
     let mut dir = env::current_dir().unwrap();

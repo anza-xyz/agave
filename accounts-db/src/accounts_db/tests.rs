@@ -2114,10 +2114,11 @@ fn test_hash_stored_account() {
 }
 
 // something we can get a ref to
-lazy_static! {
-    pub static ref EPOCH_SCHEDULE: EpochSchedule = EpochSchedule::default();
-    pub static ref RENT_COLLECTOR: RentCollector = RentCollector::default();
-}
+
+pub static EPOCH_SCHEDULE: std::sync::LazyLock<EpochSchedule> =
+    std::sync::LazyLock::new(EpochSchedule::default);
+pub static RENT_COLLECTOR: std::sync::LazyLock<RentCollector> =
+    std::sync::LazyLock::new(RentCollector::default);
 
 impl CalcAccountsHashConfig<'_> {
     pub(crate) fn default() -> Self {

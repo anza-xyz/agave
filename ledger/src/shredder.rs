@@ -4,7 +4,6 @@ use {
     },
     itertools::Itertools,
     lazy_lru::LruCache,
-    lazy_static::lazy_static,
     rayon::{prelude::*, ThreadPool},
     reed_solomon_erasure::{
         galois_8::ReedSolomon,
@@ -23,13 +22,13 @@ use {
     },
 };
 
-lazy_static! {
-    static ref PAR_THREAD_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
+static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
         .num_threads(get_thread_count())
         .thread_name(|i| format!("solShredder{i:02}"))
         .build()
-        .unwrap();
-}
+        .unwrap()
+});
 
 // Maps number of data shreds to the optimal erasure batch size which has the
 // same recovery probabilities as a 32:32 erasure batch.

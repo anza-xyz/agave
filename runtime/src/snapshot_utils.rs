@@ -19,7 +19,6 @@ use {
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     flate2::read::GzDecoder,
-    lazy_static::lazy_static,
     log::*,
     regex::Regex,
     solana_accounts_db::{
@@ -2015,9 +2014,8 @@ pub fn build_incremental_snapshot_archive_path(
 pub(crate) fn parse_full_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, SnapshotHash, ArchiveFormat)> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap();
-    }
+    static RE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap());
 
     let do_parse = || {
         RE.captures(archive_filename).and_then(|captures| {
@@ -2047,9 +2045,10 @@ pub(crate) fn parse_full_snapshot_archive_filename(
 pub(crate) fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Slot, SnapshotHash, ArchiveFormat)> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap();
-    }
+    //SHOULD IT BE INSIDE THIS FN?
+    static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap()
+    });
 
     let do_parse = || {
         RE.captures(archive_filename).and_then(|captures| {

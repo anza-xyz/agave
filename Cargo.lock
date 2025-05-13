@@ -290,7 +290,6 @@ dependencies = [
  "digest 0.10.7",
  "ed25519-dalek",
  "hex",
- "lazy_static",
  "libsecp256k1",
  "openssl",
  "rand 0.7.3",
@@ -312,7 +311,6 @@ name = "agave-reserved-account-keys"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
- "lazy_static",
  "solana-frozen-abi",
  "solana-frozen-abi-macro",
  "solana-message",
@@ -406,7 +404,6 @@ dependencies = [
  "jsonrpc-core-client",
  "jsonrpc-derive",
  "jsonrpc-ipc-server",
- "lazy_static",
  "libc",
  "libloading",
  "log",
@@ -6548,7 +6545,6 @@ dependencies = [
  "bincode",
  "bs58",
  "bv",
- "lazy_static",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6689,7 +6685,6 @@ dependencies = [
  "dashmap",
  "indexmap 2.9.0",
  "itertools 0.12.1",
- "lazy_static",
  "libsecp256k1",
  "log",
  "lz4",
@@ -7193,7 +7188,6 @@ version = "2.3.0"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.11",
- "lazy_static",
  "log",
  "rand 0.8.5",
  "solana-bpf-loader-program",
@@ -7405,7 +7399,6 @@ version = "2.3.0"
 dependencies = [
  "anyhow",
  "dirs-next",
- "lazy_static",
  "serde",
  "serde_derive",
  "serde_yaml 0.9.34+deprecated",
@@ -7738,7 +7731,6 @@ dependencies = [
  "futures 0.3.31",
  "histogram",
  "itertools 0.12.1",
- "lazy_static",
  "log",
  "lru",
  "min-max-heap",
@@ -7870,7 +7862,6 @@ dependencies = [
  "agave-reserved-account-keys",
  "ahash 0.8.11",
  "itertools 0.12.1",
- "lazy_static",
  "log",
  "rand 0.8.5",
  "solana-bincode",
@@ -8055,7 +8046,6 @@ dependencies = [
  "bincode",
  "crossbeam-channel",
  "dlopen2",
- "lazy_static",
  "log",
  "rand 0.8.5",
  "rayon",
@@ -8690,7 +8680,6 @@ dependencies = [
  "futures 0.3.31",
  "itertools 0.12.1",
  "lazy-lru",
- "lazy_static",
  "libc",
  "log",
  "lru",
@@ -9026,7 +9015,6 @@ dependencies = [
  "crossbeam-channel",
  "env_logger",
  "gethostname",
- "lazy_static",
  "log",
  "rand 0.8.5",
  "reqwest 0.12.15",
@@ -9173,7 +9161,6 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "dlopen2",
  "fnv",
- "lazy_static",
  "libc",
  "log",
  "nix",
@@ -9628,7 +9615,6 @@ dependencies = [
  "crossbeam-channel",
  "futures 0.3.31",
  "itertools 0.12.1",
- "lazy_static",
  "log",
  "quinn",
  "quinn-proto",
@@ -9665,7 +9651,6 @@ dependencies = [
 name = "solana-rayon-threadlimit"
 version = "2.3.0"
 dependencies = [
- "lazy_static",
  "num_cpus",
 ]
 
@@ -10052,7 +10037,6 @@ dependencies = [
  "fnv",
  "im",
  "itertools 0.12.1",
- "lazy_static",
  "libc",
  "libsecp256k1",
  "log",
@@ -10796,7 +10780,6 @@ dependencies = [
  "bincode",
  "ed25519-dalek",
  "itertools 0.12.1",
- "lazy_static",
  "libsecp256k1",
  "log",
  "openssl",
@@ -11404,7 +11387,6 @@ version = "2.3.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
- "lazy_static",
  "log",
  "rand 0.8.5",
  "solana-hash",
@@ -11428,7 +11410,6 @@ dependencies = [
  "borsh 1.5.7",
  "bs58",
  "bytemuck",
- "lazy_static",
  "log",
  "serde",
  "serde_derive",
@@ -11545,7 +11526,6 @@ name = "solana-type-overrides"
 version = "2.3.0"
 dependencies = [
  "futures 0.3.31",
- "lazy_static",
  "rand 0.8.5",
  "shuttle",
 ]
@@ -11591,7 +11571,6 @@ dependencies = [
  "derive-where",
  "derive_more 1.0.0",
  "dyn-clone",
- "lazy_static",
  "log",
  "qualifier_attr",
  "scopeguard",
@@ -11914,7 +11893,6 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "itertools 0.12.1",
  "js-sys",
- "lazy_static",
  "merlin",
  "num-derive",
  "num-traits",
@@ -11967,7 +11945,6 @@ dependencies = [
  "bytemuck_derive",
  "curve25519-dalek 4.1.3",
  "itertools 0.12.1",
- "lazy_static",
  "merlin",
  "num-derive",
  "num-traits",

@@ -219,14 +219,12 @@ pub struct AppendVecStat {
     pub files_dirty: AtomicU64,
 }
 
-lazy_static! {
-    pub static ref APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
-        open_as_mmap: AtomicU64::new(0),
-        open_as_file_io: AtomicU64::new(0),
-        files_open: AtomicU64::new(0),
-        files_dirty: AtomicU64::new(0),
-    };
-}
+pub static APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
+    open_as_mmap: AtomicU64::new(0),
+    open_as_file_io: AtomicU64::new(0),
+    files_open: AtomicU64::new(0),
+    files_dirty: AtomicU64::new(0),
+};
 
 impl Drop for AppendVec {
     fn drop(&mut self) {

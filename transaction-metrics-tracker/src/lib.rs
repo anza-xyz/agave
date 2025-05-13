@@ -1,5 +1,4 @@
 use {
-    lazy_static::lazy_static,
     log::*,
     rand::Rng,
     solana_perf::{packet::BytesPacket, sigverify::PacketError},
@@ -9,9 +8,8 @@ use {
 
 // The mask is 12 bits long (1<<12 = 4096), it means the probability of matching
 // the transaction is 1/4096 assuming the portion being matched is random.
-lazy_static! {
-    static ref TXN_MASK: u16 = rand::thread_rng().gen_range(0..4096);
-}
+static TXN_MASK: std::sync::LazyLock<u16> =
+    std::sync::LazyLock::new(|| rand::thread_rng().gen_range(0..4096));
 
 /// Check if a transaction given its signature matches the randomly selected mask.
 /// The signaure should be from the reference of Signature

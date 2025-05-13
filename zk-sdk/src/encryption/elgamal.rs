@@ -125,7 +125,7 @@ impl ElGamal {
     /// amount, use `DiscreteLog::decode`.
     fn decrypt(secret: &ElGamalSecretKey, ciphertext: &ElGamalCiphertext) -> DiscreteLog {
         DiscreteLog::new(
-            *G,
+            G,
             ciphertext.commitment.get_point() - &(&secret.0 * &ciphertext.handle.0),
         )
     }
@@ -638,7 +638,7 @@ pub struct ElGamalCiphertext {
 }
 impl ElGamalCiphertext {
     pub fn add_amount<T: Into<Scalar>>(&self, amount: T) -> Self {
-        let point = amount.into() * &(*G);
+        let point = amount.into() * G;
         let commitment_to_add = PedersenCommitment::new(point);
         ElGamalCiphertext {
             commitment: &self.commitment + &commitment_to_add,
@@ -647,7 +647,7 @@ impl ElGamalCiphertext {
     }
 
     pub fn subtract_amount<T: Into<Scalar>>(&self, amount: T) -> Self {
-        let point = amount.into() * &(*G);
+        let point = amount.into() * &G;
         let commitment_to_subtract = PedersenCommitment::new(point);
         ElGamalCiphertext {
             commitment: &self.commitment - &commitment_to_subtract,
@@ -860,7 +860,7 @@ mod tests {
         let amount: u32 = 57;
         let ciphertext = ElGamal::encrypt(&public, amount);
 
-        let expected_instance = DiscreteLog::new(*G, Scalar::from(amount) * &(*G));
+        let expected_instance = DiscreteLog::new(G, Scalar::from(amount) * &G);
 
         assert_eq!(expected_instance, ElGamal::decrypt(&secret, &ciphertext));
         assert_eq!(57_u64, secret.decrypt_u32(&ciphertext).unwrap());
@@ -904,7 +904,7 @@ mod tests {
             handle: handle_1,
         };
 
-        let expected_instance = DiscreteLog::new(*G, Scalar::from(amount) * &(*G));
+        let expected_instance = DiscreteLog::new(G, Scalar::from(amount) * &G);
 
         assert_eq!(expected_instance, secret_0.decrypt(&ciphertext_0));
         assert_eq!(expected_instance, secret_1.decrypt(&ciphertext_1));

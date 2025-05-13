@@ -6,13 +6,12 @@
 //! and signer.
 //!
 //! The default path to the configuration file can be retrieved from
-//! [`CONFIG_FILE`], which is a [lazy_static] of `Option<String>`, the value of
+//! [`CONFIG_FILE`], which is a [LazyLock] of `Option<String>`, the value of
 //! which is
 //!
 //! > `~/.config/solana/cli/config.yml`
 //!
 //! [`CONFIG_FILE`]: struct@CONFIG_FILE
-//! [lazy_static]: https://docs.rs/lazy_static
 //!
 //! `CONFIG_FILE` will only be `None` if it is unable to identify the user's
 //! home directory, which should not happen under typical OS environments.
@@ -50,9 +49,6 @@
 //! cli_config.save(&config_file)?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
-
-#[macro_use]
-extern crate lazy_static;
 
 mod config;
 mod config_input;

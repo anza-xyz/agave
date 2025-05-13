@@ -40,7 +40,6 @@ vec_extract_if_polyfill = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-lazy_static = { workspace = true }
 solana-clock = { workspace = true }
 solana-entry = { workspace = true }
 solana-hash = { workspace = true }

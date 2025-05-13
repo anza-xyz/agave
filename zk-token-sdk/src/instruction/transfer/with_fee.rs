@@ -57,12 +57,12 @@ const FEE_AMOUNT_LO_BITS: usize = 16;
 const FEE_AMOUNT_HI_BITS: usize = 32;
 
 #[cfg(not(target_os = "solana"))]
-lazy_static::lazy_static! {
-    pub static ref COMMITMENT_MAX: PedersenCommitment = Pedersen::encode((1_u64 <<
-                                                                         TRANSFER_AMOUNT_LO_NEGATED_BITS) - 1);
-    pub static ref COMMITMENT_MAX_FEE_BASIS_POINTS: PedersenCommitment = Pedersen::encode(MAX_FEE_BASIS_POINTS);
-    pub static ref COMMITMENT_MAX_DELTA_RANGE: PedersenCommitment = Pedersen::encode(MAX_DELTA_RANGE);
-}
+pub static COMMITMENT_MAX: std::sync::LazyLock<PedersenCommitment> =
+    std::sync::LazyLock::new(|| Pedersen::encode((1_u64 << TRANSFER_AMOUNT_LO_NEGATED_BITS) - 1));
+pub static COMMITMENT_MAX_FEE_BASIS_POINTS: std::sync::LazyLock<PedersenCommitment> =
+    std::sync::LazyLock::new(|| Pedersen::encode(MAX_FEE_BASIS_POINTS));
+pub static COMMITMENT_MAX_DELTA_RANGE: std::sync::LazyLock<PedersenCommitment> =
+    std::sync::LazyLock::new(|| Pedersen::encode(MAX_DELTA_RANGE));
 
 /// The instruction data that is needed for the `ProofInstruction::TransferWithFee` instruction.
 ///
