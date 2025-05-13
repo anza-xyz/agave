@@ -323,8 +323,6 @@ impl TransactionStatusService {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use solana_sdk::account::AccountSharedData;
-
     use {
         super::*,
         crate::transaction_notifier_interface::TransactionNotifier,
@@ -346,6 +344,7 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_rent_debits::RentDebits,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_sdk::account::AccountSharedData,
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
