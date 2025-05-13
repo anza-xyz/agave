@@ -67,6 +67,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 ] }
 solana-inline-spl = { workspace = true }
 solana-lattice-hash = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true, features = ["serde"] }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
@@ -114,7 +115,6 @@ rand0-7 = { package = "rand", version = "0.7" }
 rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
-solana-loader-v3-interface = { workspace = true }
 solana-logger = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["dev-context-only-utils"] }

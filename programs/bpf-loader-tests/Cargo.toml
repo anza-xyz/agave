@@ -15,6 +15,7 @@ edition = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-program-test = { workspace = true }
 solana-sdk = { workspace = true }
 
