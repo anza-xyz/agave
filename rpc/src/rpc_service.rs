@@ -55,15 +55,10 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-<<<<<<< HEAD
-    tokio_util::codec::{BytesCodec, FramedRead},
-=======
-    tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
     tokio_util::{
         bytes::Bytes,
         codec::{BytesCodec, FramedRead},
     },
->>>>>>> a1c122714 (add timeout for serving full snapshot/incremental snapshot (#6208))
 };
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
