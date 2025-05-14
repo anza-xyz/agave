@@ -2857,7 +2857,10 @@ impl ReplayStage {
             GRACE_TICKS_FACTOR * MAX_GRACE_SLOTS,
         );
 
-        poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        let cleared_bank = poh_recorder.write().unwrap().reset(bank, next_leader_slot);
+        if let Some(cleared_bank) = cleared_bank {
+            cleared_bank.ensure_return_abandoned_bp_scheduler_to_scheduler_pool();
+        }
 
         let next_leader_msg = if let Some(next_leader_slot) = next_leader_slot {
             format!("My next leader slot is {}", next_leader_slot.0)

@@ -5,8 +5,9 @@ use {
         HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
     solana_pubkey::Pubkey,
+    solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
-        sync::{Arc, RwLock},
+        sync::{atomic::Ordering::Relaxed, Arc, RwLock},
         time::{Duration, Instant},
     },
 };
@@ -29,9 +30,10 @@ impl BufferedPacketsDecision {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct DecisionMaker {
     my_pubkey: Pubkey,
+    #[debug("{poh_recorder:p}")]
     poh_recorder: Arc<RwLock<PohRecorder>>,
 
     cached_decision: Option<BufferedPacketsDecision>,
@@ -131,6 +133,21 @@ impl DecisionMaker {
 
     fn leader_pubkey(poh_recorder: &PohRecorder) -> Option<Pubkey> {
         poh_recorder.leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
+    }
+}
+
+impl BankingStageMonitor for DecisionMaker {
+    fn status(&mut self) -> BankingStageStatus {
+        if self.poh_recorder.read().unwrap().is_exited.load(Relaxed) {
+            BankingStageStatus::Exited
+        } else if matches!(
+            self.make_consume_or_forward_decision(),
+            BufferedPacketsDecision::Forward,
+        ) {
+            BankingStageStatus::Inactive
+        } else {
+            BankingStageStatus::Active
+        }
     }
 }
 
