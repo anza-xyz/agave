@@ -8,7 +8,6 @@ use {
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_metrics::*,
-    solana_pubkey::Pubkey,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::sanitized::SanitizedTransaction,
@@ -93,15 +92,13 @@ impl TransactionNotifierImpl {
     ) -> ReplicaTransactionInfoV2<'a> {
         let msg = transaction.message();
         let instructions = msg.instructions();
+        let account_keys = msg.account_keys();
 
         // Detect the two-instruction durable-nonce advance + vote pattern
-        let durable_nonce_and_vote = instructions.len() == 2 && {
-            // we need the full account_keys slice here so that
-            // .program_id(&keys) won't index out of bounds
-            let keys: Vec<Pubkey> = msg.account_keys().iter().copied().collect();
-            instructions[0].program_id(&keys) == &solana_system_program::id()
-                && instructions[1].program_id(&keys) == &solana_vote_program::id()
-        };
+        let durable_nonce_and_vote = instructions.len() == 2
+            && account_keys[instructions[0].program_id_index as usize]
+                == solana_system_program::id()
+            && account_keys[instructions[1].program_id_index as usize] == solana_vote_program::id();
 
         ReplicaTransactionInfoV2 {
             index,
