@@ -4615,9 +4615,15 @@ mod tests {
                 None,
                 Some(leader_schedule_cache),
             );
+        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
         let fixed_banking_packet_handler =
-            Box::new(move |helper: &BankingStageHelper, banking_packet: BankingPacketBatch| {
-                helper.send_new_task(helper.create_new_task(banking_packet[0], 18))
+            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
+                helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
             });
         pool.register_banking_stage(
             None,
