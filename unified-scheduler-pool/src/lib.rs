@@ -4997,7 +4997,7 @@ mod tests {
 
         const DISCARDED_TASK_COUNT: usize = 3;
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1)
+            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded(DISCARDED_TASK_COUNT),
             &TestCheckPoint::AfterDiscarded,
