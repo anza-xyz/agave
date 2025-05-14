@@ -44,6 +44,7 @@ crate-type = ["lib"]
 name = "solana_vote"
 
 [dev-dependencies]
+criterion = { workspace = true }
 arbitrary = { workspace = true }
 bincode = { workspace = true }
 rand = { workspace = true }
@@ -54,6 +55,10 @@ solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
 solana-vote-interface = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
 static_assertions = { workspace = true }
+
+[[bench]]
+name = "vote_account"
+harness = false
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
