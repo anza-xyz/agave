@@ -4580,6 +4580,7 @@ mod tests {
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::DiscardRequested,
+            &CheckPoint::Discarded,
         ]);
 
         let bank = Bank::new_for_tests(&genesis_config);
