@@ -2665,6 +2665,7 @@ mod tests {
         BeforeThreadManagerDrop,
         BeforeEndSession,
         AfterSession,
+        AfterDiscarded,
     }
 
     #[test]
