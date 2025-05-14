@@ -4559,22 +4559,22 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct SimpleBankingMinitor;
-    static START_DISCARD: Mutex<bool> = Mutex::new(false);
-
-    impl BankingStageMonitor for SimpleBankingMinitor {
-        fn status(&mut self) -> BankingStageStatus {
-            if *START_DISCARD.lock().unwrap() {
-                BankingStageStatus::Inactive
-            } else {
-                BankingStageStatus::Active
-            }
-        }
-    }
-
     #[test]
     fn test_block_production_scheduler_discard_on_reset() {
+        #[derive(Debug)]
+        struct SimpleBankingMinitor;
+        static START_DISCARD: Mutex<bool> = Mutex::new(false);
+
+        impl BankingStageMonitor for SimpleBankingMinitor {
+            fn status(&mut self) -> BankingStageStatus {
+                if *START_DISCARD.lock().unwrap() {
+                    BankingStageStatus::Inactive
+                } else {
+                    BankingStageStatus::Active
+                }
+            }
+        }
+
         solana_logger::setup();
 
         let GenesisConfigInfo {
