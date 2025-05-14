@@ -171,7 +171,7 @@ dependencies = [
  "ctrlc",
  "dirs-next",
  "indicatif",
- "nix 0.29.0",
+ "nix",
  "reqwest 0.12.15",
  "scopeguard",
  "semver 1.0.26",
@@ -2133,7 +2133,7 @@ version = "3.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46f93780a459b7d656ef7f071fe699c4d3d2cb201c4b24d085b6ddc505276e73"
 dependencies = [
- "nix 0.30.1",
+ "nix",
  "windows-sys 0.59.0",
 ]
 
@@ -4420,19 +4420,6 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
-dependencies = [
- "bitflags 2.9.0",
- "cfg-if 1.0.0",
- "cfg_aliases",
- "libc",
- "memoffset 0.9.1",
-]
-
-[[package]]
-name = "nix"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
@@ -4441,6 +4428,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "cfg_aliases",
  "libc",
+ "memoffset 0.9.1",
 ]
 
 [[package]]
@@ -9071,7 +9059,7 @@ dependencies = [
  "hxdmp",
  "itertools 0.12.1",
  "log",
- "nix 0.29.0",
+ "nix",
  "pcap-file",
  "rand 0.8.5",
  "serde",
@@ -9173,7 +9161,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "nix 0.29.0",
+ "nix",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
@@ -10751,7 +10739,7 @@ dependencies = [
  "itertools 0.12.1",
  "libc",
  "log",
- "nix 0.29.0",
+ "nix",
  "pem",
  "percentage",
  "quinn",
@@ -11663,7 +11651,7 @@ dependencies = [
  "itertools 0.12.1",
  "libc",
  "log",
- "nix 0.29.0",
+ "nix",
  "pem",
  "percentage",
  "quinn",
