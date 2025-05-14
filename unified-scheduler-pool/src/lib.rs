@@ -4633,9 +4633,6 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
-
-        sleep(Duration::from_secs(5));
-        info!("sent tx");
         banking_packet_sender
             .send(BankingPacketBatch::default())
             .unwrap();
