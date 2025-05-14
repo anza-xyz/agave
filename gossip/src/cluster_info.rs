@@ -177,39 +177,58 @@ pub struct ClusterInfo {
     socket_addr_space: SocketAddrSpace,
 }
 
-// Returns false if the CRDS value should be discarded.
+pub(crate) enum GossipFilterDirection {
+    Ingress,
+    Egress,
+}
+
+/// Returns false if the CRDS value should be discarded.
+/// `direction` controls whether we are looking at
+/// incoming packet (via Push or PullResponse) or
+/// we are about to make a packet
 #[inline]
 #[must_use]
-fn should_retain_crds_value(
+pub(crate) fn should_retain_crds_value(
     value: &CrdsValue,
     stakes: &HashMap<Pubkey, u64>,
-    drop_unstaked_node_instance: bool,
+    direction: GossipFilterDirection,
 ) -> bool {
+    let retain_if_staked = || {
+        stakes.len() < MIN_NUM_STAKED_NODES || {
+            let stake = stakes.get(&value.pubkey()).copied();
+            stake.unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP
+        }
+    };
     match value.data() {
         CrdsData::ContactInfo(_) => true,
-        CrdsData::LegacyContactInfo(_) => true,
-        // May Impact new validators starting up without any stake yet.
-        CrdsData::Vote(_, _) => true,
-        // Unstaked nodes can still help repair.
-        CrdsData::EpochSlots(_, _) => true,
         // Unstaked nodes can still serve snapshots.
-        CrdsData::LegacySnapshotHashes(_) | CrdsData::SnapshotHashes(_) => true,
-        // Otherwise unstaked voting nodes will show up with no version in
-        // the various dashboards.
-        CrdsData::Version(_) => true,
-        CrdsData::AccountsHashes(_) => true,
-        CrdsData::NodeInstance(_) if !drop_unstaked_node_instance => true,
-        CrdsData::LowestSlot(_, _)
-        | CrdsData::LegacyVersion(_)
-        | CrdsData::DuplicateShred(_, _)
+        CrdsData::SnapshotHashes(_) => true,
+        // Messages only allowed for staked nodes
+        CrdsData::DuplicateShred(_, _)
+        | CrdsData::LowestSlot(_, _)
         | CrdsData::RestartHeaviestFork(_)
-        | CrdsData::RestartLastVotedForkSlots(_)
-        | CrdsData::NodeInstance(_) => {
-            stakes.len() < MIN_NUM_STAKED_NODES || {
-                let stake = stakes.get(&value.pubkey()).copied();
-                stake.unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP
+        | CrdsData::RestartLastVotedForkSlots(_) => retain_if_staked(),
+        // Legacy unstaked nodes can still send EpochSlots
+        CrdsData::EpochSlots(_, _) | CrdsData::Vote(_, _) => match direction {
+            // always store if we have received them
+            // to avoid getting them again in PullResponses
+            GossipFilterDirection::Ingress => true,
+            // only forward if the origin is staked
+            GossipFilterDirection::Egress => retain_if_staked(),
+        },
+        // Deprecated messages we still see in the mainnet.
+        // We want to store them to avoid getting them again
+        // in PullResponses.
+        CrdsData::NodeInstance(_) | CrdsData::LegacyContactInfo(_) | CrdsData::Version(_) => {
+            match direction {
+                GossipFilterDirection::Ingress => true,
+                GossipFilterDirection::Egress => false,
             }
         }
+        // Fully deprecated messages
+        CrdsData::LegacySnapshotHashes(_) => false,
+        CrdsData::LegacyVersion(_) => false,
+        CrdsData::AccountsHashes(_) => false,
     }
 }
 
@@ -1282,9 +1301,7 @@ impl ClusterInfo {
             self.flush_push_queue();
             self.gossip
                 .new_push_messages(&self_id, timestamp(), stakes, |value| {
-                    should_retain_crds_value(
-                        value, stakes, /*drop_unstaked_node_instance:*/ false,
-                    )
+                    should_retain_crds_value(value, stakes, GossipFilterDirection::Egress)
                 })
         };
         self.stats
@@ -1690,11 +1707,7 @@ impl ClusterInfo {
                 &requests,
                 output_size_limit,
                 now,
-                |value| {
-                    should_retain_crds_value(
-                        value, stakes, /*drop_unstaked_node_instance:*/ true,
-                    )
-                },
+                |value| should_retain_crds_value(value, stakes, GossipFilterDirection::Egress),
                 self.my_shred_version(),
                 &self.stats,
             )
@@ -2132,9 +2145,7 @@ impl ClusterInfo {
                 &mut protocol
             {
                 values.retain(|value| {
-                    should_retain_crds_value(
-                        value, stakes, /*drop_unstaked_node_instance:*/ false,
-                    )
+                    should_retain_crds_value(value, stakes, GossipFilterDirection::Ingress)
                 });
                 if values.is_empty() {
                     return None;
