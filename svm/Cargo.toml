@@ -91,7 +91,7 @@ solana-program-runtime = { workspace = true, features = ["dev-context-only-utils
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
+solana-sdk = { workspace = true }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
 solana-signature = { workspace = true }

@@ -108,7 +108,7 @@ solana-rent-collector = { workspace = true }
 solana-rent-debits = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
+solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-secp256k1-program = { workspace = true }
