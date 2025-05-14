@@ -4997,7 +4997,7 @@ mod tests {
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::DiscardRequested,
-            &CheckPoint::Discarded,
+            &CheckPoint::Discarded(1),
             &TestCheckPoint::AfterDiscarded,
         ]);
 
