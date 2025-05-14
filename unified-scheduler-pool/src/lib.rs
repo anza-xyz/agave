@@ -2029,7 +2029,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 count += 1;
                             }
                             state_machine.reinitialize();
-                            sleepless_testing::at(CheckPoint::Discarded(count.into()));
+                            sleepless_testing::at(CheckPoint::Discarded(count.0));
                         }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
