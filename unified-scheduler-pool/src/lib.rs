@@ -4995,9 +4995,9 @@ mod tests {
             ..
         } = create_genesis_config_for_block_production(10_000);
 
-        const DISCARDED_TASK_COUNT: Saturating<usize> = 3;
+        const DISCARDED_TASK_COUNT: usize = 3;
         let _progress = sleepless_testing::setup(&[
-            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT-1)
+            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1)
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded(DISCARDED_TASK_COUNT),
             &TestCheckPoint::AfterDiscarded,
@@ -5023,7 +5023,7 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                for index in 0..DISCARDED_TASK_COUNT.0 {
+                for index in 0..DISCARDED_TASK_COUNT {
                     helper.send_new_task(helper.create_new_task(tx0.clone(), index))
                 }
             });
