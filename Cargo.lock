@@ -7030,6 +7030,7 @@ name = "solana-bloom"
 version = "2.3.0"
 dependencies = [
  "bv",
+ "criterion",
  "fnv",
  "rand 0.8.5",
  "rayon",
