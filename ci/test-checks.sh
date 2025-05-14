@@ -53,7 +53,7 @@ echo --- build environment
 )
 
 export RUST_BACKTRACE=1
-export RUSTFLAGS="-D warnings -A incomplete_features"
+export RUSTFLAGS="-D warnings -D unused-crate-dependencies -A incomplete_features"
 
 # run cargo check for all rust files in this monorepo for faster turnaround in
 # case of any compilation/build error for nightly
