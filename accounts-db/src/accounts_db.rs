@@ -23,6 +23,8 @@ mod scan_account_storage;
 pub mod stats;
 pub mod tests;
 
+#[cfg(test)]
+use crate::append_vec::StoredAccountMeta;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -60,7 +62,7 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         ancient_append_vecs::get_ancient_append_vec_capacity,
-        append_vec::{aligned_stored_size, StoredAccountMeta, STORE_META_OVERHEAD},
+        append_vec::{aligned_stored_size, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
@@ -438,6 +440,7 @@ impl AccountFromStorage {
     pub fn data_len(&self) -> usize {
         self.data_len as usize
     }
+    #[cfg(test)]
     pub fn new(account: &StoredAccountMeta) -> Self {
         // the id is irrelevant in this account info. This structure is only used DURING shrink operations.
         // In those cases, there is only 1 append vec id per slot when we read the accounts.
