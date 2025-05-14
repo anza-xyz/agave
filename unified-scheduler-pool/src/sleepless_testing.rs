@@ -117,10 +117,7 @@ mod real {
                         .unwrap();
                     true
                 }
-                Less => {
-                    trace!("??? {anchored_index}.cmp({next_index}) {anchored_check_point}");
-                    false
-                }
+                Less => unreachable!(),
             };
 
             if should_change {
