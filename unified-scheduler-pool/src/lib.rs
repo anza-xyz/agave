@@ -5022,8 +5022,8 @@ mod tests {
         ));
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                for _ in 0..DISCARDED_TASK_COUNT {
-                    helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
+                for index in 0..DISCARDED_TASK_COUNT {
+                    helper.send_new_task(helper.create_new_task(tx0.clone(), index))
                 }
             });
 
