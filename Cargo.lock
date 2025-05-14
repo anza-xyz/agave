@@ -7745,6 +7745,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "dashmap",
+ "derive_more 1.0.0",
  "etcd-client",
  "fs_extra",
  "futures 0.3.31",
