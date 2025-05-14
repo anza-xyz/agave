@@ -583,13 +583,12 @@ where
                             drop(inner);
                             drop(pooled);
                         } else {
-                            sleepless_testing::at(CheckPoint::DiscardRequested);
-                            trace!("Discarding pooled block production scheduler...");
                             pooled.discard_buffer();
                             // Prevent replay stage's OpenSubchannel from winning the race by
-                            // holding the inner lock for extended duration of sending a discard
-                            // message just above. Reset must be sent
+                            // holding the inner lock for the duration sending a discard
+                            // message sending just above. Reset must be sent
                             // only during gaps of subchannels of the new task channel.
+                            sleepless_testing::at(CheckPoint::DiscardRequested);
                             drop(inner);
                         }
                     }
@@ -1946,7 +1945,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
-                                        trace!("new task2");
                                         let task_index = task.task_index();
                                         sleepless_testing::at(CheckPoint::NewTask(task_index));
 
@@ -2033,7 +2031,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
-                                trace!("new task");
                                 sleepless_testing::at(CheckPoint::NewBufferedTask(
                                     task.task_index(),
                                 ));
@@ -2162,7 +2159,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 handler_context.banking_packet_receiver = never();
                                 continue;
                             };
-                            info!("banking packet");
                             banking_packet_handler(banking_stage_helper, banking_packet);
                             continue;
                         },
@@ -5014,17 +5010,6 @@ mod tests {
             ignored_prioritization_fee_cache,
         );
 
-        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &mint_keypair,
             &solana_pubkey::new_rand(),
@@ -5035,6 +5020,21 @@ mod tests {
             Box::new(move |helper: &BankingStageHelper, _banking_packet| {
                 helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
             });
+
+        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        banking_packet_sender
+            .send(BankingPacketBatch::default())
+            .unwrap();
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
@@ -5043,9 +5043,7 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
-        banking_packet_sender
-            .send(BankingPacketBatch::default())
-            .unwrap();
+        // By now, there shuold be a bufferd transaction. Let's discard it.
         *START_DISCARD.lock().unwrap() = true;
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
