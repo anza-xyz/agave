@@ -97,7 +97,7 @@ impl TransactionNotifierImpl {
         ReplicaTransactionInfoV2 {
             index,
             signature,
-            is_vote: if account_keys.len() > 0 && instructions.len() > 0 {
+            is_vote: if !account_keys.is_empty() && !instructions.is_empty() {
                 account_keys[instructions[0].program_id_index as usize] == solana_vote_program::id()
             } else {
                 false
