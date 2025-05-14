@@ -46,7 +46,7 @@ solana-connection-cache = { workspace = true }
 solana-decode-error = "=2.2.1"
 solana-epoch-schedule = "=2.2.1"
 solana-feature-gate-client = "=0.0.2"
-solana-feature-gate-interface = "=2.2.1"
+solana-feature-gate-interface = "=2.2.2"
 solana-fee-calculator = "=2.2.1"
 solana-fee-structure = "=2.2.1"
 solana-hash = "=2.2.1"
