@@ -94,16 +94,12 @@ impl TransactionNotifierImpl {
         let instructions = msg.instructions();
         let account_keys = msg.account_keys();
 
-        // Detect the two-instruction durable-nonce advance + vote pattern
-        let durable_nonce_and_vote = instructions.len() == 2
-            && account_keys[instructions[0].program_id_index as usize]
-                == solana_system_program::id()
-            && account_keys[instructions[1].program_id_index as usize] == solana_vote_program::id();
-
         ReplicaTransactionInfoV2 {
             index,
             signature,
-            is_vote: durable_nonce_and_vote || transaction.is_simple_vote_transaction(),
+            is_vote: account_keys[instructions[0].program_id_index as usize]
+                == solana_vote_program::id()
+                || transaction.is_simple_vote_transaction(),
             transaction,
             transaction_status_meta,
         }
@@ -135,21 +131,18 @@ mod transaction_notifier_tests {
         let vote_pubkey = Pubkey::new_unique();
         let recent_blockhash = Hash::new_unique();
 
-        // 2) build exactly two instructions:
-        //    a transfer (system program) then a vote
-        let ix1 = system_instruction::transfer(
-            &fee_payer.pubkey(),
-            &recipient.pubkey(),
-            1, // lamports
-        );
-        // vote data
         let vote = Vote {
             slots: vec![0],
             hash: recent_blockhash,
             timestamp: Some(0),
         };
-        // make the vote instruction
-        let ix2 = vote_instruction(&vote_pubkey, &vote_authority.pubkey(), vote);
+        let ix1 = vote_instruction(&vote_pubkey, &vote_authority.pubkey(), vote);
+
+        let ix2 = system_instruction::transfer(
+            &fee_payer.pubkey(),
+            &recipient.pubkey(),
+            1, // lamports
+        );
 
         // 3) assemble & sign a legacy transaction
         let mut legacy_tx =

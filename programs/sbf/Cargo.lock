@@ -6486,7 +6486,6 @@ dependencies = [
  "solana-rpc",
  "solana-runtime",
  "solana-signature",
- "solana-system-program",
  "solana-transaction",
  "solana-transaction-status",
  "solana-vote-program",

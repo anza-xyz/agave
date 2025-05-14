@@ -8437,7 +8437,6 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-signature",
- "solana-system-program",
  "solana-transaction",
  "solana-transaction-status",
  "solana-vote-program",
