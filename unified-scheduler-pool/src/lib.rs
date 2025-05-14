@@ -4615,11 +4615,14 @@ mod tests {
                 None,
                 Some(leader_schedule_cache),
             );
+        let fixed_banking_packet_handler =
+            Box::new(move |helper: &BankingStageHelper, banking_packet| {
+                helper.send_new_task(helper.create_new_task(banking_packet[0][0], 18))
+            });
         pool.register_banking_stage(
             None,
             banking_packet_receiver,
-            // we don't use the banking packet channel in this test. so, pass panicking handler.
-            Box::new(|_, _| unreachable!()),
+            fixed_banking_packet_handler,
             transaction_recorder,
             Box::new(SimpleBankingMinitor),
         );
