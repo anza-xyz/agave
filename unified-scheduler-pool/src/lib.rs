@@ -4639,7 +4639,6 @@ mod tests {
         banking_packet_sender
             .send(BankingPacketBatch::default())
             .unwrap();
-        sleep(Duration::from_secs(5));
         *START_DISCARD.lock().unwrap() = true;
         sleep(Duration::from_secs(5));
 
