@@ -629,13 +629,6 @@ impl EncodableWithMeta for VersionedTransaction {
         meta: &TransactionStatusMeta,
     ) -> Self::Encoded {
         match encoding {
-            UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
-            ),
-            UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
-                TransactionBinaryEncoding::Base58,
-            ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
                 BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
                 TransactionBinaryEncoding::Base64,
@@ -669,13 +662,6 @@ impl Encodable for VersionedTransaction {
     type Encoded = EncodedTransaction;
     fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
         match encoding {
-            UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
-            ),
-            UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
-                TransactionBinaryEncoding::Base58,
-            ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
                 BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
                 TransactionBinaryEncoding::Base64,
@@ -701,13 +687,6 @@ impl Encodable for Transaction {
     type Encoded = EncodedTransaction;
     fn encode(&self, encoding: UiTransactionEncoding) -> Self::Encoded {
         match encoding {
-            UiTransactionEncoding::Binary => EncodedTransaction::LegacyBinary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
-            ),
-            UiTransactionEncoding::Base58 => EncodedTransaction::Binary(
-                bs58::encode(bincode::serialize(self).unwrap()).into_string(),
-                TransactionBinaryEncoding::Base58,
-            ),
             UiTransactionEncoding::Base64 => EncodedTransaction::Binary(
                 BASE64_STANDARD.encode(bincode::serialize(self).unwrap()),
                 TransactionBinaryEncoding::Base64,
