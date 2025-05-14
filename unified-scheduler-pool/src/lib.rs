@@ -83,6 +83,8 @@ enum CheckPoint<'a> {
     IdleSchedulerCleaned(usize),
     TrashedSchedulerCleaned(usize),
     TimeoutListenerTriggered(usize),
+    DiscardRequested,
+    Discarded,
 }
 
 type CountOrDefault = Option<usize>;
@@ -581,6 +583,8 @@ where
                             drop(inner);
                             drop(pooled);
                         } else {
+                            sleepless_testing::at(CheckPoint::DiscardRequested);
+                            trace!("Discarding pooled block production scheduler...");
                             pooled.discard_buffer();
                             // Prevent replay stage's OpenSubchannel from winning the race by
                             // holding the inner lock for extended duration of sending a discard
@@ -4548,6 +4552,88 @@ mod tests {
         fn status(&mut self) -> BankingStageStatus {
             BankingStageStatus::Active
         }
+    }
+
+    #[derive(Debug)]
+    struct SimpleBankingMinitor;
+    static START_DISCARD: Mutex<bool> = Mutex::new(false);
+
+    impl BankingStageMonitor for SimpleBankingMinitor {
+        fn status(&mut self) -> BankingStageStatus {
+            if *START_DISCARD.lock().unwrap() {
+                BankingStageStatus::Inactive
+            } else {
+                BankingStageStatus::Active
+            }
+        }
+    }
+
+    #[test]
+    fn test_block_production_scheduler_discard_on_reset() {
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_for_block_production(10_000);
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::DiscardRequested,
+        ]);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
+        pool.register_banking_stage(
+            None,
+            banking_packet_receiver,
+            // we don't use the banking packet channel in this test. so, pass panicking handler.
+            Box::new(|_, _| unreachable!()),
+            transaction_recorder,
+            Box::new(SimpleBankingMinitor),
+        );
+
+        assert_eq!(bank.transaction_count(), 0);
+        let context = SchedulingContext::for_production(bank.clone());
+        let scheduler = pool.take_scheduler(context).unwrap();
+        scheduler.unpause_after_taken();
+        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        scheduler.schedule_execution(tx0, 0).unwrap();
+        let bank = BankWithScheduler::new(bank, Some(scheduler));
+        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
+        assert_eq!(bank.transaction_count(), 1);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+        sleep(Duration::from_secs(10));
+        *START_DISCARD.lock().unwrap() = true;
+        sleep(Duration::from_secs(10));
     }
 
     #[test]
