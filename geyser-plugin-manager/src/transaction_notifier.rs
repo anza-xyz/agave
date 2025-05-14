@@ -130,7 +130,7 @@ mod transaction_notifier_tests {
     };
 
     #[test]
-    fn test_build_replica_transaction_info_vote_detection() {
+    fn build_replica_transaction_info_vote() {
         // 1) set up keypairs and a unique vote account
         let fee_payer = Keypair::new();
         let recipient = Keypair::new();
@@ -175,5 +175,40 @@ mod transaction_notifier_tests {
 
         // 8) ensure we classified this 2‐instruction pattern as a vote
         assert!(info.is_vote, "system+vote should be classified as vote");
+    }
+
+    #[test]
+    fn build_replica_transaction_info_non_vote() {
+        // 1) set up a fee payer and two recipients
+        let fee_payer = Keypair::new();
+        let recipient1 = Keypair::new();
+        let recipient2 = Keypair::new();
+        let recent_blockhash = Hash::new_unique();
+
+        // 2) build two plain system‐transfer instructions
+        let ix1 = system_instruction::transfer(&fee_payer.pubkey(), &recipient1.pubkey(), 1);
+        let ix2 = system_instruction::transfer(&fee_payer.pubkey(), &recipient2.pubkey(), 2);
+
+        // 3) assemble & sign a legacy transaction with those two transfers
+        let mut legacy_tx =
+            LegacyTransaction::new_with_payer(&[ix1, ix2], Some(&fee_payer.pubkey()));
+        legacy_tx.sign(&[&fee_payer], recent_blockhash);
+
+        // 4) convert into a SanitizedTransaction
+        let tx: SanitizedTransaction = SanitizedTransaction::from_transaction_for_tests(legacy_tx);
+
+        // 5) grab its signature and a dummy status meta
+        let signature = &tx.signatures()[0];
+        let meta = TransactionStatusMeta::default();
+
+        // 6) run your patched vote‐detection
+        let info =
+            TransactionNotifierImpl::build_replica_transaction_info(0, signature, &meta, &tx);
+
+        // 7) assert that this is *not* classified as a vote
+        assert!(
+            !info.is_vote,
+            "two plain transfers should not be classified as vote"
+        );
     }
 }
