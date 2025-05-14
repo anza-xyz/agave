@@ -10366,7 +10366,7 @@ fn calculate_test_fee(
         )
         .unwrap_or_default(),
     );
-    solana_fee::calculate_fee(
+    solana_fee::calculate_fee_details(
         message,
         lamports_per_signature == 0,
         fee_structure.lamports_per_signature,
@@ -10375,6 +10375,7 @@ fn calculate_test_fee(
             enable_secp256r1_precompile: true,
         },
     )
+    .total_fee()
 }
 
 #[test]
