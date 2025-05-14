@@ -118,7 +118,7 @@ mod real {
                     true
                 }
                 Less => {
-                    trace!("??? {anchored_index}.cmp({next_index})");
+                    trace!("??? {anchored_index}.cmp({next_index}) {anchored_check_point}");
                     panic!();
                 }
             };
