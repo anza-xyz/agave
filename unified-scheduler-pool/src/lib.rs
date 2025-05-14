@@ -4582,6 +4582,7 @@ mod tests {
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded,
+            &TestCheckPoint::AfterDiscarded,
         ]);
 
         let bank = Bank::new_for_tests(&genesis_config);
@@ -4636,6 +4637,8 @@ mod tests {
         sleep(Duration::from_secs(10));
         *START_DISCARD.lock().unwrap() = true;
         sleep(Duration::from_secs(10));
+
+        sleepless_testing::at(TestCheckPoint::AfterDiscarded);
     }
 
     #[test]
