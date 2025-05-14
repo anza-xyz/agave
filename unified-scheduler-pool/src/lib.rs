@@ -4617,7 +4617,7 @@ mod tests {
             );
         let fixed_banking_packet_handler =
             Box::new(move |helper: &BankingStageHelper, banking_packet: BankingPacketBatch| {
-                helper.send_new_task(helper.create_new_task(banking_packet[0][0], 18))
+                helper.send_new_task(helper.create_new_task(banking_packet[0], 18))
             });
         pool.register_banking_stage(
             None,
