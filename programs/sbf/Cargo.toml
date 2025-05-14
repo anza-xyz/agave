@@ -11,7 +11,8 @@ edition = "2021"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("custom-panic", "custom-heap"))'
+    'cfg(feature, values("custom-panic", "custom-heap"))',
+    'cfg(target_feature, values("dynamic-frames"))'
 ]
 
 [workspace.dependencies]
