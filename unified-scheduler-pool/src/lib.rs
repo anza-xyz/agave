@@ -4560,88 +4560,6 @@ mod tests {
     }
 
     #[test]
-    fn test_block_production_scheduler_discard_on_reset() {
-        #[derive(Debug)]
-        struct SimpleBankingMinitor;
-        static START_DISCARD: Mutex<bool> = Mutex::new(false);
-
-        impl BankingStageMonitor for SimpleBankingMinitor {
-            fn status(&mut self) -> BankingStageStatus {
-                if *START_DISCARD.lock().unwrap() {
-                    BankingStageStatus::Inactive
-                } else {
-                    BankingStageStatus::Active
-                }
-            }
-        }
-
-        solana_logger::setup();
-
-        let GenesisConfigInfo {
-            genesis_config,
-            mint_keypair,
-            ..
-        } = create_genesis_config_for_block_production(10_000);
-
-        let _progress = sleepless_testing::setup(&[
-            &CheckPoint::DiscardRequested,
-            &CheckPoint::Discarded,
-            &TestCheckPoint::AfterDiscarded,
-        ]);
-
-        let bank = Bank::new_for_tests(&genesis_config);
-        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
-
-        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = DefaultSchedulerPool::new_for_production(
-            None,
-            None,
-            None,
-            None,
-            ignored_prioritization_fee_cache,
-        );
-
-        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
-        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
-        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
-        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
-            create_test_recorder_with_index_tracking(
-                bank.clone(),
-                blockstore.clone(),
-                None,
-                Some(leader_schedule_cache),
-            );
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        let fixed_banking_packet_handler =
-            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
-                helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
-            });
-        pool.register_banking_stage(
-            None,
-            banking_packet_receiver,
-            fixed_banking_packet_handler,
-            transaction_recorder,
-            Box::new(SimpleBankingMinitor),
-        );
-
-        banking_packet_sender
-            .send(BankingPacketBatch::default())
-            .unwrap();
-        *START_DISCARD.lock().unwrap() = true;
-
-        sleepless_testing::at(TestCheckPoint::AfterDiscarded);
-
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
-    }
-
-    #[test]
     fn test_block_production_scheduler_schedule_execution_success() {
         solana_logger::setup();
 
@@ -5049,6 +4967,88 @@ mod tests {
         let scheduler = pool.take_scheduler(context).unwrap();
         let bank_tmp = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_block_production_scheduler_discard_on_reset() {
+        #[derive(Debug)]
+        struct SimpleBankingMinitor;
+        static START_DISCARD: Mutex<bool> = Mutex::new(false);
+
+        impl BankingStageMonitor for SimpleBankingMinitor {
+            fn status(&mut self) -> BankingStageStatus {
+                if *START_DISCARD.lock().unwrap() {
+                    BankingStageStatus::Inactive
+                } else {
+                    BankingStageStatus::Active
+                }
+            }
+        }
+
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_for_block_production(10_000);
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::DiscardRequested,
+            &CheckPoint::Discarded,
+            &TestCheckPoint::AfterDiscarded,
+        ]);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = DefaultSchedulerPool::new_for_production(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+        );
+
+        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
+        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let fixed_banking_packet_handler =
+            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
+                helper.send_new_task(helper.create_new_task(tx0.clone(), 18))
+            });
+        pool.register_banking_stage(
+            None,
+            banking_packet_receiver,
+            fixed_banking_packet_handler,
+            transaction_recorder,
+            Box::new(SimpleBankingMinitor),
+        );
+
+        banking_packet_sender
+            .send(BankingPacketBatch::default())
+            .unwrap();
+        *START_DISCARD.lock().unwrap() = true;
+
+        sleepless_testing::at(TestCheckPoint::AfterDiscarded);
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
