@@ -119,6 +119,7 @@ mod real {
                 }
                 Less => {
                     trace!("??? {anchored_index}.cmp({next_index})");
+                    panic!();
                 }
             };
 
