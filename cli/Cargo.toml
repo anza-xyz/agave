@@ -47,7 +47,7 @@ solana-connection-cache = { workspace = true }
 solana-decode-error = "=2.2.1"
 solana-epoch-schedule = "=2.2.1"
 solana-feature-gate-client = "=0.0.2"
-solana-feature-gate-interface = "=2.2.1"
+solana-feature-gate-interface = "=2.2.2"
 solana-hash = "=2.2.1"
 solana-instruction = "=2.2.1"
 solana-keypair = "=2.2.1"
