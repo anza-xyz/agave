@@ -84,7 +84,7 @@ enum CheckPoint<'a> {
     TrashedSchedulerCleaned(usize),
     TimeoutListenerTriggered(usize),
     DiscardRequested,
-    Discarded,
+    Discarded(usize),
 }
 
 type CountOrDefault = Option<usize>;
@@ -2023,11 +2023,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     loop {
                         if discard_on_reset {
                             discard_on_reset = false;
+                            let mut count = Saturating(0);
                             while let Some(task) = state_machine.schedule_next_unblocked_task() {
+                                count += 1;
                                 state_machine.deschedule_task(&task);
                             }
                             state_machine.reinitialize();
-                            sleepless_testing::at(CheckPoint::Discarded);
+                            sleepless_testing::at(CheckPoint::Discarded(count.0));
                         }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
