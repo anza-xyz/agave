@@ -1046,8 +1046,10 @@ pub fn execute(
         "block_production_method",
         BlockProductionMethod
     );
-    if matches!(validator_config.block_production_method, BlockProductionMethod::UnifiedScheduler)
-        && !matches.is_present("enable_experimental_block_production_method")
+    if matches!(
+        validator_config.block_production_method,
+        BlockProductionMethod::UnifiedScheduler
+    ) && !matches.is_present("enable_experimental_block_production_method")
     {
         eprintln!(
             "Currently, the unified-scheduler method is experimental for block-production. \
