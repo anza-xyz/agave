@@ -1947,6 +1947,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                                 match message {
                                     Ok(NewTaskPayload::Payload(task)) => {
+                                        trace!("new task2");
                                         let task_index = task.task_index();
                                         sleepless_testing::at(CheckPoint::NewTask(task_index));
 
@@ -2035,6 +2036,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
+                                trace!("new task");
                                 sleepless_testing::at(CheckPoint::NewBufferedTask(
                                     task.task_index(),
                                 ));
