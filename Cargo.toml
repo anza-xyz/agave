@@ -115,6 +115,7 @@ members = [
     "runtime",
     "runtime-transaction",
     "send-transaction-service",
+    "shred",
     "stake-accounts",
     "storage-bigtable",
     "storage-bigtable/build-proto",
@@ -538,6 +539,7 @@ solana-secp256k1-program = "2.2.1"
 solana-secp256k1-recover = "2.2.1"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.3.0" }
 solana-short-vec = "2.2.1"
+solana-shred = { path = "shred", version = "2.3.0" }
 solana-shred-version = "2.2.1"
 solana-stable-layout = "2.2.1"
 solana-stake-interface = { version = "1.2.1" }
