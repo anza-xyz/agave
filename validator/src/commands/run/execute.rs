@@ -1055,7 +1055,7 @@ pub fn execute(
             "Currently, the unified-scheduler method is experimental for block-production. \
              Explicitly pass --enable-experimental-block-production-method to use it."
         );
-        exit(1);
+        //exit(1);
     }
     validator_config.transaction_struct = value_t_or_exit!(
         matches, // comment to align formatting...
