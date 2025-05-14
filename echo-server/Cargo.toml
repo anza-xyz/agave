@@ -1,0 +1,49 @@
+[package]
+name = "solana-echo-server"
+description = "Solana Echo Server implementation"
+documentation = "https://docs.rs/solana-echo-server"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+rust-version = "1.83.0"
+
+[dependencies]
+anyhow = { workspace = true }
+bincode = { workspace = true }
+bytes = { workspace = true }
+clap = { version = "4", features = ["cargo", "derive"], optional = true }
+itertools = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+solana-logger = { version = "=2.3.1", optional = true }
+solana-net-utils = { workspace = true }
+solana-serde = "=2.2.1"
+solana-version = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+solana-logger = { workspace = true }
+
+[features]
+default = []
+clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
+
+[lib]
+name = "solana_echo_server"
+
+[[bin]]
+name = "solana-ip-address"
+path = "src/bin/ip_address.rs"
+required-features = ["clap"]
+
+[[bin]]
+name = "solana-ip-address-server"
+path = "src/bin/ip_address_server.rs"
+required-features = ["clap"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
