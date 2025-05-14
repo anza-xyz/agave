@@ -2027,6 +2027,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 state_machine.deschedule_task(&task);
                             }
                             state_machine.reinitialize();
+                            sleepless_testing::at(CheckPoint::Discarded);
                         }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
