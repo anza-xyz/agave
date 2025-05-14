@@ -2163,6 +2163,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 handler_context.banking_packet_receiver = never();
                                 continue;
                             };
+                            info!("banking packet");
                             banking_packet_handler(banking_stage_helper, banking_packet);
                             continue;
                         },
@@ -4621,13 +4622,14 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
+
+        sleep(Duration::from_secs(5));
+        info!("sent tx");
         banking_packet_sender
             .send(BankingPacketBatch::default())
             .unwrap();
-
-        sleep(Duration::from_secs(10));
         *START_DISCARD.lock().unwrap() = true;
-        sleep(Duration::from_secs(10));
+        sleep(Duration::from_secs(5));
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
 
