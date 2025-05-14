@@ -167,7 +167,7 @@ scripts/cargo-for-all-lock-files.sh tree >/dev/null
   total=${#lines[@]}
   while [ "$i" -lt "$total" ]; do
     line="${lines[$i]}"
-    ((i++))
+    i=$((i + 1))
 
     # filter out orphaned dependency lines
     if [[ "$line" =~ ^@@.*dependencies ]]; then
