@@ -1042,6 +1042,12 @@ fn check_authorized_program(
                     && bpf_loader_upgradeable::is_set_authority_checked_instruction(
                         instruction_data,
                     ))
+                || (invoke_context
+                    .get_feature_set()
+                    .enable_extend_program_checked
+                    && bpf_loader_upgradeable::is_extend_program_checked_instruction(
+                        instruction_data,
+                    ))
                 || bpf_loader_upgradeable::is_close_instruction(instruction_data)))
         || invoke_context.is_precompile(program_id)
     {
