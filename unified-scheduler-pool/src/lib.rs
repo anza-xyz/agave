@@ -64,7 +64,6 @@ use {
     unwrap_none::UnwrapNone,
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use std::num::Saturating;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
@@ -4586,7 +4585,7 @@ mod tests {
 
         let _progress = sleepless_testing::setup(&[
             &CheckPoint::DiscardRequested,
-            &CheckPoint::Discarded(1),
+            &CheckPoint::Discarded,
             &TestCheckPoint::AfterDiscarded,
         ]);
 
