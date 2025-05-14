@@ -52,6 +52,7 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
+        num::Saturating,
         ops::DerefMut,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
@@ -64,7 +65,6 @@ use {
     unwrap_none::UnwrapNone,
     vec_extract_if_polyfill::MakeExtractIf,
 };
-use std::num::Saturating;
 
 mod sleepless_testing;
 use crate::sleepless_testing::BuilderTracked;
