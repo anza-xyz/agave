@@ -4637,7 +4637,6 @@ mod tests {
             .send(BankingPacketBatch::default())
             .unwrap();
         *START_DISCARD.lock().unwrap() = true;
-        sleep(Duration::from_secs(5));
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
 
