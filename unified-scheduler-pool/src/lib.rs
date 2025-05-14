@@ -4601,7 +4601,7 @@ mod tests {
             ignored_prioritization_fee_cache,
         );
 
-        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
         let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
         let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
@@ -4621,28 +4621,18 @@ mod tests {
             Box::new(SimpleBankingMinitor),
         );
 
-        assert_eq!(bank.transaction_count(), 0);
-        let context = SchedulingContext::for_production(bank.clone());
-        let scheduler = pool.take_scheduler(context).unwrap();
-        scheduler.unpause_after_taken();
-        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
-            &mint_keypair,
-            &solana_pubkey::new_rand(),
-            2,
-            genesis_config.hash(),
-        ));
-        scheduler.schedule_execution(tx0, 0).unwrap();
-        let bank = BankWithScheduler::new(bank, Some(scheduler));
-        assert_matches!(bank.wait_for_completed_scheduler(), Some((Ok(()), _)));
-        assert_eq!(bank.transaction_count(), 1);
+        banking_packet_sender
+            .send(BankingPacketBatch::default())
+            .unwrap();
 
-        exit.store(true, Ordering::Relaxed);
-        poh_service.join().unwrap();
         sleep(Duration::from_secs(10));
         *START_DISCARD.lock().unwrap() = true;
         sleep(Duration::from_secs(10));
 
         sleepless_testing::at(TestCheckPoint::AfterDiscarded);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
     }
 
     #[test]
