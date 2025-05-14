@@ -4995,8 +4995,9 @@ mod tests {
             ..
         } = create_genesis_config_for_block_production(10_000);
 
-        const DISCARDED_TASK_COUNT: usize = 3;
+        const DISCARDED_TASK_COUNT: Saturating<usize> = 3;
         let _progress = sleepless_testing::setup(&[
+            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT-1)
             &CheckPoint::DiscardRequested,
             &CheckPoint::Discarded(DISCARDED_TASK_COUNT),
             &TestCheckPoint::AfterDiscarded,
