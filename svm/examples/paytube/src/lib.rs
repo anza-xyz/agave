@@ -67,10 +67,11 @@ use {
         create_transaction_batch_processor, get_transaction_check_results, PayTubeForkGraph,
     },
     solana_client::rpc_client::RpcClient,
+    solana_fee_structure::FeeStructure,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
-    solana_sdk::{
-        fee::FeeStructure, hash::Hash, rent_collector::RentCollector, signature::Keypair,
-    },
+    solana_rent_collector::RentCollector,
     solana_svm::transaction_processor::{
         TransactionProcessingConfig, TransactionProcessingEnvironment,
     },
@@ -149,7 +150,7 @@ impl PayTubeChannel {
             blockhash: Hash::default(),
             blockhash_lamports_per_signature: fee_structure.lamports_per_signature,
             epoch_total_stake: 0,
-            feature_set: Arc::new(feature_set),
+            feature_set,
             rent_collector: Some(&rent_collector),
         };
 

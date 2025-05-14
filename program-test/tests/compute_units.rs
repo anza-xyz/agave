@@ -1,12 +1,11 @@
 use {
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
     solana_program_test::ProgramTest,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        signature::{Keypair, Signer},
-        system_instruction,
-        sysvar::rent,
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::rent,
+    solana_transaction::Transaction,
 };
 
 #[should_panic]
@@ -25,7 +24,7 @@ async fn max_compute_units() {
     // Invalid compute unit maximums are only triggered by BPF programs, so send
     // a valid instruction into a BPF program to make sure the issue doesn't
     // manifest.
-    let token_2022_id = solana_inline_spl::token_2022::id();
+    let token_2022_id = spl_generic_token::token_2022::id();
     let mint = Keypair::new();
     let rent = context.banks_client.get_rent().await.unwrap();
     let space = 82;

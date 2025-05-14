@@ -1,7 +1,3 @@
-pub use solana_account_decoder_client_types::token::{
-    real_number_string, real_number_string_trimmed, TokenAccountType, UiAccountState, UiMint,
-    UiMultisig, UiTokenAccount, UiTokenAmount,
-};
 use {
     crate::{
         parse_account_data::{
@@ -19,16 +15,13 @@ use {
     },
     std::str::FromStr,
 };
-
-// Returns all known SPL Token program ids
-pub fn spl_token_ids() -> Vec<Pubkey> {
-    vec![spl_token::id(), spl_token_2022::id()]
-}
-
-// Check if the provided program id as a known SPL Token program id
-pub fn is_known_spl_token_id(program_id: &Pubkey) -> bool {
-    *program_id == spl_token::id() || *program_id == spl_token_2022::id()
-}
+pub use {
+    solana_account_decoder_client_types::token::{
+        real_number_string, real_number_string_trimmed, TokenAccountType, UiAccountState, UiMint,
+        UiMultisig, UiTokenAccount, UiTokenAmount,
+    },
+    spl_generic_token::{is_known_spl_token_id, spl_token_ids},
+};
 
 #[deprecated(since = "2.0.0", note = "Use `parse_token_v3` instead")]
 #[allow(deprecated)]

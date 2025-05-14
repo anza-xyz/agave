@@ -16,6 +16,7 @@ use {
         BoxFuture, Error, Metadata, Result,
     },
     jsonrpc_derive::rpc,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_account_decoder::{
         encode_ui_account,
         parse_account_data::SplTokenAdditionalDataV2,
@@ -29,21 +30,26 @@ use {
         },
     },
     solana_client::connection_cache::Protocol,
+    solana_clock::{Slot, UnixTimestamp, MAX_PROCESSING_AGE},
+    solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_entry::entry::Entry,
+    solana_epoch_info::EpochInfo,
+    solana_epoch_rewards_hasher::EpochRewardsHasher,
+    solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::request_airdrop_transaction,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_inline_spl::{
-        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
-        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
-    },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError, SignatureInfosForAddress},
         blockstore_meta::{PerfSample, PerfSampleV1, PerfSampleV2},
         leader_schedule_cache::LeaderScheduleCache,
     },
+    solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
     solana_perf::packet::PACKET_DATA_SIZE,
     solana_program_pack::Pack,
+    solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_rpc_client_api::{
         config::*,
         custom_error::RpcCustomError,
@@ -67,28 +73,17 @@ use {
         snapshot_utils,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::{Slot, UnixTimestamp, MAX_PROCESSING_AGE},
-        commitment_config::{CommitmentConfig, CommitmentLevel},
-        epoch_info::EpochInfo,
-        epoch_rewards_hasher::EpochRewardsHasher,
-        epoch_schedule::EpochSchedule,
-        exit::Exit,
-        hash::Hash,
-        message::SanitizedMessage,
-        pubkey::{Pubkey, PUBKEY_BYTES},
-        signature::{Keypair, Signature, Signer},
-        system_instruction,
-        transaction::{
-            self, AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
-            VersionedTransaction, MAX_TX_ACCOUNT_LOCKS,
-        },
-    },
     solana_send_transaction_service::send_transaction_service::TransactionInfo,
+    solana_signature::Signature,
+    solana_signer::Signer,
     solana_stake_program,
     solana_storage_bigtable::Error as StorageError,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
+        versioned::VersionedTransaction,
+    },
     solana_transaction_context::TransactionAccount,
+    solana_transaction_error::TransactionError,
     solana_transaction_status::{
         map_inner_instructions, BlockEncodingOptions, ConfirmedBlock,
         ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta,
@@ -96,7 +91,12 @@ use {
         TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_validator_exit::Exit,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
+    spl_generic_token::{
+        token::{SPL_TOKEN_ACCOUNT_MINT_OFFSET, SPL_TOKEN_ACCOUNT_OWNER_OFFSET},
+        token_2022::{self, ACCOUNTTYPE_ACCOUNT},
+    },
     spl_token_2022::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,
@@ -130,6 +130,10 @@ use {
     },
     solana_streamer::socket::SocketAddrSpace,
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 pub mod account_resolver;
 
@@ -460,7 +464,7 @@ impl JsonRpcRequestProcessor {
             let keypair = Arc::new(Keypair::new());
             let contact_info = ContactInfo::new_localhost(
                 &keypair.pubkey(),
-                solana_sdk::timing::timestamp(), // wallclock
+                solana_time_utils::timestamp(), // wallclock
             );
             ClusterInfo::new(contact_info, keypair, socket_addr_space)
         });
@@ -670,29 +674,28 @@ impl JsonRpcRequestProcessor {
     }
 
     fn filter_map_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
+        rewards: Option<Rewards>,
         slot: Slot,
         addresses: &'a [String],
         reward_type_filter: &'a F,
-    ) -> HashMap<String, (Reward, Slot)>
+    ) -> impl Iterator<Item = (String, (Reward, Slot))> + use<'a, F>
     where
         F: Fn(RewardType) -> bool,
     {
         Self::filter_rewards(rewards, reward_type_filter)
             .filter(|reward| addresses.contains(&reward.pubkey))
-            .map(|reward| (reward.pubkey.clone(), (reward.clone(), slot)))
-            .collect()
+            .map(move |reward| (reward.pubkey.clone(), (reward, slot)))
     }
 
-    fn filter_rewards<'a, F>(
-        rewards: &'a Option<Rewards>,
-        reward_type_filter: &'a F,
-    ) -> impl Iterator<Item = &'a Reward>
+    fn filter_rewards<F>(
+        rewards: Option<Rewards>,
+        reward_type_filter: &F,
+    ) -> impl Iterator<Item = Reward> + use<'_, F>
     where
         F: Fn(RewardType) -> bool,
     {
         rewards
-            .iter()
+            .into_iter()
             .flatten()
             .filter(move |reward| reward.reward_type.is_some_and(reward_type_filter))
     }
@@ -781,7 +784,7 @@ impl JsonRpcRequestProcessor {
             let addresses: Vec<String> =
                 addresses.iter().map(|pubkey| pubkey.to_string()).collect();
             Self::filter_map_rewards(
-                &epoch_boundary_block.rewards,
+                epoch_boundary_block.rewards,
                 first_confirmed_block_in_epoch,
                 &addresses,
                 &|reward_type| -> bool {
@@ -789,6 +792,7 @@ impl JsonRpcRequestProcessor {
                         || (!epoch_has_partitioned_rewards && reward_type == RewardType::Staking)
                 },
             )
+            .collect()
         };
 
         // Append stake account rewards from partitions if partitions epoch
@@ -862,7 +866,7 @@ impl JsonRpcRequestProcessor {
                 };
 
                 let index_reward_map = Self::filter_map_rewards(
-                    &block.rewards,
+                    block.rewards,
                     slot,
                     addresses,
                     &|reward_type| -> bool { reward_type == RewardType::Staking },
@@ -3009,7 +3013,7 @@ pub mod rpc_bank {
                 "get_minimum_balance_for_rent_exemption rpc request received: {:?}",
                 data_len
             );
-            if data_len as u64 > system_instruction::MAX_PERMITTED_DATA_LENGTH {
+            if data_len as u64 > solana_system_interface::MAX_PERMITTED_DATA_LENGTH {
                 return Err(Error::invalid_request());
             }
             Ok(meta.get_minimum_balance_for_rent_exemption(data_len, commitment))
@@ -3134,7 +3138,7 @@ pub mod rpc_bank {
                 }
 
                 let entry = block_production.entry(identity).or_default();
-                if slot_history.check(slot) == solana_sdk::slot_history::Check::Found {
+                if slot_history.check(slot) == solana_slot_history::Check::Found {
                     entry.1 += 1; // Increment blocks_produced
                 }
                 entry.0 += 1; // Increment leader_slots
@@ -3470,7 +3474,7 @@ pub mod rpc_accounts_scan {
 pub mod rpc_full {
     use {
         super::*,
-        solana_sdk::message::{SanitizedVersionedMessage, VersionedMessage},
+        solana_message::{SanitizedVersionedMessage, VersionedMessage},
         solana_transaction_status::parse_ui_inner_instructions,
     };
     #[rpc]
@@ -4410,7 +4414,7 @@ pub fn create_test_transaction_entries(
     let mut signatures = Vec::new();
     // Generate transactions for processing
     // Successful transaction
-    let success_tx = solana_sdk::system_transaction::transfer(
+    let success_tx = solana_system_transaction::transfer(
         mint_keypair,
         &keypair1.pubkey(),
         rent_exempt_amount,
@@ -4419,7 +4423,7 @@ pub fn create_test_transaction_entries(
     signatures.push(success_tx.signatures[0]);
     let entry_1 = solana_entry::entry::next_entry(&blockhash, 1, vec![success_tx]);
     // Failed transaction, InstructionError
-    let ix_error_tx = solana_sdk::system_transaction::transfer(
+    let ix_error_tx = solana_system_transaction::transfer(
         keypair2,
         &keypair3.pubkey(),
         2 * rent_exempt_amount,
@@ -4501,9 +4505,18 @@ pub mod tests {
         jsonrpc_core::{futures, ErrorCode, MetaIoHandler, Output, Response, Value},
         jsonrpc_core_client::transports::local,
         serde::de::DeserializeOwned,
+        solana_account::{Account, WritableAccount},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+        solana_address_lookup_table_interface::{
+            self as address_lookup_table,
+            state::{AddressLookupTable, LookupTableMeta},
+        },
+        solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_entry::entry::next_versioned_entry,
+        solana_fee_calculator::FeeRateGovernor,
         solana_gossip::{contact_info::ContactInfo, socketaddr},
+        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore_meta::PerfSampleV2,
             blockstore_processor::fill_blockstore_slot_with_ticks,
@@ -4511,6 +4524,11 @@ pub mod tests {
             get_tmp_ledger_path,
         },
         solana_log_collector::ic_logger_msg,
+        solana_message::{
+            v0::{self, MessageAddressTableLookup},
+            Message, MessageHeader, SimpleAddressLoader, VersionedMessage,
+        },
+        solana_nonce::{self as nonce, state::DurableNonce},
         solana_program_option::COption,
         solana_program_runtime::{
             invoke_context::InvokeContext,
@@ -4530,39 +4548,23 @@ pub mod tests {
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
-        solana_sdk::{
-            account::{Account, WritableAccount},
-            address_lookup_table::{
-                self,
-                state::{AddressLookupTable, LookupTableMeta},
-            },
-            compute_budget::ComputeBudgetInstruction,
-            fee_calculator::FeeRateGovernor,
-            hash::{hash, Hash},
-            instruction::{AccountMeta, Instruction, InstructionError},
-            message::{
-                v0::{self, MessageAddressTableLookup},
-                Message, MessageHeader, VersionedMessage,
-            },
-            nonce::{self, state::DurableNonce},
-            rpc_port,
-            signature::{Keypair, Signer},
-            slot_hashes::SlotHashes,
-            system_program, system_transaction,
-            timing::slot_duration_from_slots_per_year,
-            transaction::{
-                self, SimpleAddressLoader, Transaction, TransactionError, TransactionVersion,
-            },
-            vote::state::VoteState,
-        },
         solana_send_transaction_service::{
             tpu_info::NullTpuInfo,
             transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
+        solana_sha256_hasher::hash,
+        solana_signer::Signer,
+        solana_system_interface::{instruction as system_instruction, program as system_program},
+        solana_system_transaction as system_transaction,
+        solana_sysvar::slot_hashes::SlotHashes,
+        solana_time_utils::slot_duration_from_slots_per_year,
+        solana_transaction::{versioned::TransactionVersion, Transaction},
+        solana_transaction_error::TransactionError,
         solana_transaction_status::{
             EncodedConfirmedBlock, EncodedTransaction, EncodedTransactionWithStatusMeta,
             TransactionDetails,
         },
+        solana_vote_interface::state::VoteState,
         solana_vote_program::{
             vote_instruction,
             vote_state::{self, TowerSync, VoteInit, VoteStateVersions, MAX_LOCKOUT_HISTORY},
@@ -4588,7 +4590,7 @@ pub mod tests {
         let keypair = Arc::new(Keypair::new());
         let contact_info = ContactInfo::new_localhost(
             &keypair.pubkey(),
-            solana_sdk::timing::timestamp(), // wallclock
+            solana_time_utils::timestamp(), // wallclock
         );
         ClusterInfo::new(contact_info, keypair, SocketAddrSpace::Unspecified)
     }
@@ -4693,7 +4695,7 @@ pub mod tests {
         const COMPUTE_UNITS: u64 = 800;
         const NAME: &str = "test_builtin";
         const PROGRAM_ID: Pubkey =
-            solana_sdk::pubkey!("TestProgram11111111111111111111111111111111");
+            solana_pubkey::pubkey!("TestProgram11111111111111111111111111111111");
 
         fn cache_entry() -> ProgramCacheEntry {
             ProgramCacheEntry::new_builtin(0, Self::NAME.len(), Self::vm)
@@ -5166,8 +5168,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:8010",
             "tpuVote": "127.0.0.1:8005",
             "serveRepair": "127.0.0.1:8008",
-            "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
-            "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
+            "rpc": format!("127.0.0.1:8899"),
+            "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
         }, {
@@ -5181,8 +5183,8 @@ pub mod tests {
             "tpuForwardsQuic": "127.0.0.1:1245",
             "tpuVote": "127.0.0.1:1241",
             "serveRepair": "127.0.0.1:1242",
-            "rpc": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PORT),
-            "pubsub": format!("127.0.0.1:{}", rpc_port::DEFAULT_RPC_PUBSUB_PORT),
+            "rpc": format!("127.0.0.1:8899"),
+            "pubsub": format!("127.0.0.1:8900"),
             "version": format!("{version}"),
             "featureSet": version.feature_set,
         }]);
@@ -5846,7 +5848,7 @@ pub mod tests {
                 let authority = Pubkey::new_unique();
                 let account = AccountSharedData::new_data(
                     42,
-                    &nonce::state::Versions::new(nonce::State::new_initialized(
+                    &nonce::versions::Versions::new(nonce::state::State::new_initialized(
                         &authority,
                         DurableNonce::default(),
                         1000,
@@ -5895,7 +5897,7 @@ pub mod tests {
             "getProgramAccounts",
             Some(json!([
                 system_program::id().to_string(),
-                {"filters": [{"dataSize": nonce::State::size()}]},
+                {"filters": [{"dataSize": nonce::state::State::size()}]},
             ])),
         );
         let result: Vec<RpcKeyedAccount> = parse_success_result(rpc.handle_request_sync(request));
@@ -7803,7 +7805,7 @@ pub mod tests {
             let token_account_pubkey = solana_pubkey::new_rand();
             let token_with_different_mint_pubkey = solana_pubkey::new_rand();
             let new_mint = Pubkey::new_from_array([5; 32]);
-            if program_id == solana_inline_spl::token_2022::id() {
+            if program_id == spl_generic_token::token_2022::id() {
                 // Add the token account
                 let account_base = TokenAccount {
                     mint,
@@ -8060,7 +8062,7 @@ pub mod tests {
                 .expect("actual response deserialization");
             let accounts: Vec<RpcKeyedAccount> =
                 serde_json::from_value(result["result"].clone()).unwrap();
-            if program_id == solana_inline_spl::token::id() {
+            if program_id == spl_generic_token::token::id() {
                 // native mint is included for token-v3
                 assert_eq!(accounts.len(), 4);
             } else {
@@ -8308,7 +8310,7 @@ pub mod tests {
         let supply = 500;
         let decimals = 2;
         let (program_name, account_size, mint_size, additional_data) = if program_id
-            == solana_inline_spl::token_2022::id()
+            == spl_generic_token::token_2022::id()
         {
             let account_base = TokenAccount {
                 mint,
@@ -8479,7 +8481,7 @@ pub mod tests {
                 }
             }
         });
-        if program_id == solana_inline_spl::token_2022::id() {
+        if program_id == spl_generic_token::token_2022::id() {
             expected_value["parsed"]["info"]["extensions"] = json!([
                 {
                     "extension": "immutableOwner"
@@ -8515,7 +8517,7 @@ pub mod tests {
                 }
             }
         });
-        if program_id == solana_inline_spl::token_2022::id() {
+        if program_id == spl_generic_token::token_2022::id() {
             if interest_bearing_config.is_some() {
                 expected_value["parsed"]["info"]["extensions"] = json!([
                     {
@@ -8603,7 +8605,7 @@ pub mod tests {
 
         // Can't filter on account type for token-v3
         assert!(get_spl_token_owner_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, owner.to_bytes().to_vec())),
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8613,7 +8615,7 @@ pub mod tests {
 
         // Filtering on mint instead of owner
         assert!(get_spl_token_owner_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, owner.to_bytes().to_vec())),
                 RpcFilterType::DataSize(165)
@@ -8646,7 +8648,7 @@ pub mod tests {
         let mint = Pubkey::new_unique();
         assert_eq!(
             get_spl_token_mint_filter(
-                &solana_inline_spl::token::id(),
+                &spl_generic_token::token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::DataSize(165)
@@ -8659,7 +8661,7 @@ pub mod tests {
         // Filtering on token-2022 account type
         assert_eq!(
             get_spl_token_mint_filter(
-                &solana_inline_spl::token_2022::id(),
+                &spl_generic_token::token_2022::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8672,7 +8674,7 @@ pub mod tests {
         // Filtering on token account state
         assert_eq!(
             get_spl_token_mint_filter(
-                &solana_inline_spl::token::id(),
+                &spl_generic_token::token::id(),
                 &[
                     RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                     RpcFilterType::TokenAccountState,
@@ -8684,7 +8686,7 @@ pub mod tests {
 
         // Can't filter on account type for token-v3
         assert!(get_spl_token_mint_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(0, mint.to_bytes().to_vec())),
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(165, vec![ACCOUNTTYPE_ACCOUNT])),
@@ -8694,7 +8696,7 @@ pub mod tests {
 
         // Filtering on owner instead of mint
         assert!(get_spl_token_mint_filter(
-            &solana_inline_spl::token::id(),
+            &spl_generic_token::token::id(),
             &[
                 RpcFilterType::Memcmp(Memcmp::new_raw_bytes(32, mint.to_bytes().to_vec())),
                 RpcFilterType::DataSize(165)

@@ -1,5 +1,5 @@
 use {
-    solana_sdk::{hash::Hash, instruction::InstructionError, pubkey::Pubkey},
+    solana_hash::Hash, solana_instruction::error::InstructionError, solana_pubkey::Pubkey,
     thiserror::Error,
 };
 

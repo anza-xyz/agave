@@ -5,7 +5,7 @@ use {
     solana_account::{create_account_shared_data_for_test, AccountSharedData, WritableAccount},
     solana_clock::{Clock, Epoch},
     solana_instruction::AccountMeta,
-    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::sysvar::{clock, rent, stake_history},
@@ -124,7 +124,7 @@ impl TestSetup {
             (withdraw_authority_address, AccountSharedData::default()),
         ];
 
-        let accounts = mock_process_instruction(
+        let accounts = mock_process_instruction_with_feature_set(
             &solana_stake_program::id(),
             Vec::new(),
             &instruction.data,
@@ -132,10 +132,9 @@ impl TestSetup {
             instruction.accounts.clone(),
             Ok(()),
             stake_instruction::Entrypoint::vm,
-            |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
-            },
             |_invoke_context| {},
+            |_invoke_context| {},
+            &self.feature_set.runtime_features(),
         );
         // update stake account
         self.transaction_accounts[0] = (self.stake_address, accounts[0].clone());
@@ -165,7 +164,7 @@ impl TestSetup {
             ),
         ];
 
-        let accounts = mock_process_instruction(
+        let accounts = mock_process_instruction_with_feature_set(
             &solana_stake_program::id(),
             Vec::new(),
             &instruction.data,
@@ -173,10 +172,9 @@ impl TestSetup {
             instruction.accounts.clone(),
             Ok(()),
             stake_instruction::Entrypoint::vm,
-            |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
-            },
             |_invoke_context| {},
+            |_invoke_context| {},
+            &self.feature_set.runtime_features(),
         );
         self.stake_account = accounts[0].clone();
         self.stake_account.set_lamports(ACCOUNT_BALANCE * 2);
@@ -184,7 +182,7 @@ impl TestSetup {
     }
 
     fn run(&self, instruction_data: &[u8]) {
-        mock_process_instruction(
+        mock_process_instruction_with_feature_set(
             &solana_stake_program::id(),
             Vec::new(),
             instruction_data,
@@ -192,10 +190,9 @@ impl TestSetup {
             self.instruction_accounts.clone(),
             Ok(()), //expected_result,
             stake_instruction::Entrypoint::vm,
-            |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::new(self.feature_set.runtime_features()));
-            },
             |_invoke_context| {},
+            |_invoke_context| {},
+            &self.feature_set.runtime_features(),
         );
     }
 }

@@ -92,7 +92,7 @@ pub fn dedup_packets_and_count_discards<const K: usize>(
     batches
         .iter_mut()
         .flat_map(|batch| batch.iter_mut())
-        .map(|packet| {
+        .map(|mut packet| {
             if !packet.meta().discard()
                 && packet
                     .data(..)

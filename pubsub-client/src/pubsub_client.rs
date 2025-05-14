@@ -49,7 +49,7 @@
 //! use solana_commitment_config::CommitmentConfig;
 //! use solana_pubkey::Pubkey;
 //! use solana_pubsub_client::pubsub_client::PubsubClient;
-//! use solana_rpc_client_api::config::RpcAccountInfoConfig;
+//! use solana_rpc_client_types::config::RpcAccountInfoConfig;
 //! use std::thread;
 //!
 //! fn get_account_updates(account_pubkey: Pubkey) -> Result<()> {
@@ -99,7 +99,7 @@ use {
     solana_account_decoder_client_types::UiAccount,
     solana_clock::Slot,
     solana_pubkey::Pubkey,
-    solana_rpc_client_api::{
+    solana_rpc_client_types::{
         config::{
             RpcAccountInfoConfig, RpcBlockSubscribeConfig, RpcBlockSubscribeFilter,
             RpcProgramAccountsConfig, RpcSignatureSubscribeConfig, RpcTransactionLogsConfig,

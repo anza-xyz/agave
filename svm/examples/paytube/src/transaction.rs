@@ -7,13 +7,12 @@
 //! case Solana.
 
 use {
-    solana_sdk::{
-        instruction::Instruction as SolanaInstruction,
-        pubkey::Pubkey,
-        system_instruction,
-        transaction::{
-            SanitizedTransaction as SolanaSanitizedTransaction, Transaction as SolanaTransaction,
-        },
+    solana_instruction::Instruction as SolanaInstruction,
+    solana_pubkey::Pubkey,
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::{
+        sanitized::SanitizedTransaction as SolanaSanitizedTransaction,
+        Transaction as SolanaTransaction,
     },
     spl_associated_token_account::get_associated_token_address,
     std::collections::HashSet,

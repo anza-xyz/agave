@@ -18,37 +18,36 @@ use {
         distributions::{Distribution, WeightedError, WeightedIndex},
         Rng,
     },
+    solana_clock::Slot,
+    solana_genesis_config::ClusterType,
     solana_gossip::{
         cluster_info::{ClusterInfo, ClusterInfoError},
         contact_info::{ContactInfo, Protocol},
         ping_pong::{self, Pong},
         weighted_shuffle::WeightedShuffle,
     },
+    solana_hash::{Hash, HASH_BYTES},
+    solana_keypair::{signable::Signable, Keypair},
     solana_ledger::{
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
         shred::{self, Nonce, ShredFetchStats, SIZE_OF_NONCE},
     },
+    solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         data_budget::DataBudget,
-        packet::{Packet, PacketBatch, PacketBatchRecycler},
+        packet::{Packet, PacketBatch, PacketBatchRecycler, PinnedPacketBatch},
     },
+    solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_runtime::{bank_forks::BankForks, root_bank_cache::RootBankCache},
-    solana_sdk::{
-        clock::Slot,
-        genesis_config::ClusterType,
-        hash::{Hash, HASH_BYTES},
-        packet::PACKET_DATA_SIZE,
-        pubkey::{Pubkey, PUBKEY_BYTES},
-        signature::{Signable, Signature, Signer, SIGNATURE_BYTES},
-        signer::keypair::Keypair,
-        timing::timestamp,
-    },
+    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signer::Signer,
     solana_streamer::{
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
         streamer::PacketBatchSender,
     },
+    solana_time_utils::timestamp,
     std::{
         cmp::Reverse,
         collections::{HashMap, HashSet},
@@ -1037,8 +1036,8 @@ impl ServeRepair {
 
         if !pending_pings.is_empty() {
             stats.pings_sent += pending_pings.len();
-            let batch = PacketBatch::new(pending_pings);
-            let _ = packet_batch_sender.send(batch);
+            let batch = PinnedPacketBatch::new(pending_pings);
+            let _ = packet_batch_sender.send(batch.into());
         }
     }
 
@@ -1218,7 +1217,7 @@ impl ServeRepair {
         stats: &mut ShredFetchStats,
     ) {
         let mut pending_pongs = Vec::default();
-        for packet in packet_batch.iter_mut() {
+        for mut packet in packet_batch.iter_mut() {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
                 continue;
             }
@@ -1302,11 +1301,14 @@ impl ServeRepair {
             from_addr,
             nonce,
         )?;
-        Some(PacketBatch::new_unpinned_with_recycler_data(
-            recycler,
-            "run_window_request",
-            vec![packet],
-        ))
+        Some(
+            PinnedPacketBatch::new_unpinned_with_recycler_data(
+                recycler,
+                "run_window_request",
+                vec![packet],
+            )
+            .into(),
+        )
     }
 
     fn run_highest_window_request(
@@ -1328,11 +1330,14 @@ impl ServeRepair {
                 from_addr,
                 nonce,
             )?;
-            return Some(PacketBatch::new_unpinned_with_recycler_data(
-                recycler,
-                "run_highest_window_request",
-                vec![packet],
-            ));
+            return Some(
+                PinnedPacketBatch::new_unpinned_with_recycler_data(
+                    recycler,
+                    "run_highest_window_request",
+                    vec![packet],
+                )
+                .into(),
+            );
         }
         None
     }
@@ -1346,7 +1351,7 @@ impl ServeRepair {
         nonce: Nonce,
     ) -> Option<PacketBatch> {
         let mut res =
-            PacketBatch::new_unpinned_with_recycler(recycler, max_responses, "run_orphan");
+            PinnedPacketBatch::new_unpinned_with_recycler(recycler, max_responses, "run_orphan");
         // Try to find the next "n" parent slots of the input slot
         let packets = std::iter::successors(blockstore.meta(slot).ok()?, |meta| {
             blockstore.meta(meta.parent_slot?).ok()?
@@ -1363,7 +1368,7 @@ impl ServeRepair {
         for packet in packets.take(max_responses) {
             res.push(packet);
         }
-        (!res.is_empty()).then_some(res)
+        (!res.is_empty()).then_some(res.into())
     }
 
     fn run_ancestor_hashes(
@@ -1392,11 +1397,14 @@ impl ServeRepair {
             from_addr,
             nonce,
         )?;
-        Some(PacketBatch::new_unpinned_with_recycler_data(
-            recycler,
-            "run_ancestor_hashes",
-            vec![packet],
-        ))
+        Some(
+            PinnedPacketBatch::new_unpinned_with_recycler_data(
+                recycler,
+                "run_ancestor_hashes",
+                vec![packet],
+            )
+            .into(),
+        )
     }
 }
 
@@ -1444,6 +1452,8 @@ mod tests {
         crate::repair::repair_response,
         agave_feature_set::FeatureSet,
         solana_gossip::{contact_info::ContactInfo, socketaddr, socketaddr_any},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::make_many_slot_entries,
             blockstore_processor::fill_blockstore_slot_with_ticks,
@@ -1451,10 +1461,11 @@ mod tests {
             get_tmp_ledger_path_auto_delete,
             shred::{max_ticks_per_n_shreds, Shred, ShredFlags},
         },
-        solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags},
+        solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_sdk::{hash::Hash, pubkey::Pubkey, signature::Keypair, timing::timestamp},
         solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
         std::{io::Cursor, net::Ipv4Addr},
     };
 
@@ -1912,10 +1923,10 @@ mod tests {
 
         let rv: Vec<Shred> = rv
             .iter_mut()
-            .map(|packet| {
+            .map(|mut packet| {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
                 let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet).unwrap();
+                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
@@ -1976,10 +1987,10 @@ mod tests {
         verify_responses(&request, rv.iter());
         let rv: Vec<Shred> = rv
             .iter_mut()
-            .map(|packet| {
+            .map(|mut packet| {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
                 let (shred, repair_nonce) =
-                    shred::layout::get_shred_and_repair_nonce(packet).unwrap();
+                    shred::layout::get_shred_and_repair_nonce(packet.as_ref()).unwrap();
                 assert_eq!(repair_nonce.unwrap(), nonce);
                 Shred::new_from_serialized_shred(shred.to_vec()).unwrap()
             })
@@ -2138,7 +2149,7 @@ mod tests {
 
         // For a orphan request for `slot + num_slots - 1`, we should return the highest shreds
         // from slots in the range [slot, slot + num_slots - 1]
-        let rv: Vec<_> = ServeRepair::run_orphan(
+        let rv = ServeRepair::run_orphan(
             &recycler,
             &socketaddr_any!(),
             &blockstore,
@@ -2146,10 +2157,7 @@ mod tests {
             5,
             nonce,
         )
-        .expect("run_orphan packets")
-        .iter()
-        .cloned()
-        .collect();
+        .expect("run_orphan packets");
 
         // Verify responses
         let request = ShredRepairType::Orphan(slot + num_slots - 1);
@@ -2168,6 +2176,7 @@ mod tests {
                 )
             })
             .collect();
+        let expected = PacketBatch::Pinned(PinnedPacketBatch::new(expected));
         assert_eq!(rv, expected);
     }
 
@@ -2203,28 +2212,25 @@ mod tests {
         // Orphan request for slot 2 should only return slot 1 since
         // calling `repair_response_packet` on slot 1's shred will
         // be corrupted
-        let rv: Vec<_> =
-            ServeRepair::run_orphan(&recycler, &socketaddr_any!(), &blockstore, 2, 5, nonce)
-                .expect("run_orphan packets")
-                .iter()
-                .cloned()
-                .collect();
+        let rv = ServeRepair::run_orphan(&recycler, &socketaddr_any!(), &blockstore, 2, 5, nonce)
+            .expect("run_orphan packets");
 
         // Verify responses
-        let expected = vec![repair_response::repair_response_packet(
+        let expected = PinnedPacketBatch::new(vec![repair_response::repair_response_packet(
             &blockstore,
             2,
             31, // shred_index
             &socketaddr_any!(),
             nonce,
         )
-        .unwrap()];
+        .unwrap()])
+        .into();
         assert_eq!(rv, expected);
     }
 
     #[test]
     fn test_run_ancestor_hashes() {
-        fn deserialize_ancestor_hashes_response(packet: &Packet) -> AncestorHashesResponse {
+        fn deserialize_ancestor_hashes_response(packet: PacketRef) -> AncestorHashesResponse {
             packet
                 .deserialize_slice(..packet.meta().size - SIZE_OF_NONCE)
                 .unwrap()
@@ -2257,7 +2263,7 @@ mod tests {
         )
         .expect("run_ancestor_hashes packets");
         assert_eq!(rv.len(), 1);
-        let packet = &rv[0];
+        let packet = rv.first().unwrap();
         let ancestor_hashes_response = deserialize_ancestor_hashes_response(packet);
         match ancestor_hashes_response {
             AncestorHashesResponse::Hashes(hashes) => {
@@ -2279,7 +2285,7 @@ mod tests {
         )
         .expect("run_ancestor_hashes packets");
         assert_eq!(rv.len(), 1);
-        let packet = &rv[0];
+        let packet = rv.first().unwrap();
         let ancestor_hashes_response = deserialize_ancestor_hashes_response(packet);
         match ancestor_hashes_response {
             AncestorHashesResponse::Hashes(hashes) => {
@@ -2308,7 +2314,7 @@ mod tests {
         )
         .expect("run_ancestor_hashes packets");
         assert_eq!(rv.len(), 1);
-        let packet = &rv[0];
+        let packet = rv.first().unwrap();
         let ancestor_hashes_response = deserialize_ancestor_hashes_response(packet);
         match ancestor_hashes_response {
             AncestorHashesResponse::Hashes(hashes) => {
@@ -2458,7 +2464,10 @@ mod tests {
         assert!(!request.verify_response(shred.payload()));
     }
 
-    fn verify_responses<'a>(request: &ShredRepairType, packets: impl Iterator<Item = &'a Packet>) {
+    fn verify_responses<'a>(
+        request: &ShredRepairType,
+        packets: impl Iterator<Item = PacketRef<'a>>,
+    ) {
         for packet in packets {
             let shred = shred::layout::get_shred(packet).unwrap();
             assert!(request.verify_response(shred));

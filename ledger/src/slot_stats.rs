@@ -2,7 +2,7 @@ use {
     crate::blockstore_meta::SlotMeta,
     bitflags::bitflags,
     lru::LruCache,
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{
         collections::HashMap,
         sync::{Mutex, MutexGuard},
@@ -124,7 +124,7 @@ impl SlotsStats {
         if let Some((num_repaired, num_recovered)) = slot_full_reporting_info {
             let slot_meta = slot_meta.unwrap();
             let total_time_ms =
-                solana_sdk::timing::timestamp().saturating_sub(slot_meta.first_shred_timestamp);
+                solana_time_utils::timestamp().saturating_sub(slot_meta.first_shred_timestamp);
             let last_index = slot_meta
                 .last_index
                 .and_then(|ix| i64::try_from(ix).ok())

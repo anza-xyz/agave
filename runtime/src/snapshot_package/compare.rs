@@ -62,7 +62,7 @@ pub fn cmp_snapshot_kinds_by_priority(a: &SnapshotKind, b: &SnapshotKind) -> Ord
 
 #[cfg(test)]
 mod tests {
-    use {super::*, solana_sdk::clock::Slot};
+    use {super::*, solana_clock::Slot};
 
     #[test]
     fn test_cmp_snapshot_packages_by_priority() {

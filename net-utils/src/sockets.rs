@@ -19,6 +19,7 @@ const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
 ///
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
+#[allow(clippy::arithmetic_side_effects)]
 pub fn localhost_port_range_for_tests() -> (u16, u16) {
     static SLICE: AtomicU16 = AtomicU16::new(0);
     let offset = SLICE.fetch_add(20, Ordering::Relaxed);
@@ -38,7 +39,7 @@ pub fn localhost_port_range_for_tests() -> (u16, u16) {
     (start, start + 20)
 }
 
-pub fn get_gossip_port(
+pub fn bind_gossip_port_in_range(
     gossip_addr: &SocketAddr,
     port_range: PortRange,
     bind_ip_addr: IpAddr,

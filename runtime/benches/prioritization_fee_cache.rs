@@ -3,6 +3,9 @@ extern crate test;
 
 use {
     rand::{thread_rng, Rng},
+    solana_compute_budget_interface::ComputeBudgetInstruction,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
@@ -10,13 +13,8 @@ use {
         prioritization_fee_cache::*,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        compute_budget::ComputeBudgetInstruction,
-        message::Message,
-        pubkey::Pubkey,
-        system_instruction,
-        transaction::{SanitizedTransaction, Transaction},
-    },
+    solana_system_interface::instruction as system_instruction,
+    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
     std::sync::Arc,
     test::Bencher,
 };

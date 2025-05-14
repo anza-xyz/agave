@@ -4,6 +4,8 @@
 //! 2. multiple 'slots' squashed into a single older (ie. ancient) slot for convenience and performance
 //!
 //! Otherwise, an ancient append vec is the same as any other append vec
+#[cfg(test)]
+use crate::accounts_file::AccountsFile;
 use {
     crate::{
         account_storage::ShrinkInProgress,
@@ -12,7 +14,6 @@ use {
             AccountFromStorage, AccountStorageEntry, AccountsDb, AliveAccounts,
             GetUniqueAccountsResult, ShrinkCollect, ShrinkCollectAliveSeparatedByRefs,
         },
-        accounts_file::AccountsFile,
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
     },
@@ -1073,6 +1074,9 @@ impl<'a> PackedAncientStorage<'a> {
 
 /// a set of accounts need to be stored.
 /// If there are too many to fit in 'Primary', the rest are put in 'Overflow'
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum StorageSelector {
     Primary,
@@ -1084,18 +1088,22 @@ pub enum StorageSelector {
 /// The 'store' functions need data stored in a slice of specific type.
 /// We need 1-2 of these slices constructed based on available bytes and individual account sizes.
 /// The slice arithmetic across both hashes and account data gets messy. So, this struct abstracts that.
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 pub struct AccountsToStore<'a> {
     accounts: &'a [&'a AccountFromStorage],
     /// if 'accounts' contains more items than can be contained in the primary storage, then we have to split these accounts.
     /// 'index_first_item_overflow' specifies the index of the first item in 'accounts' that will go into the overflow storage
     index_first_item_overflow: usize,
-    slot: Slot,
     /// bytes required to store primary accounts
     bytes_primary: usize,
     /// bytes required to store overflow accounts
     bytes_overflow: usize,
 }
 
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 impl<'a> AccountsToStore<'a> {
     /// break 'stored_accounts' into primary and overflow
     /// available_bytes: how many bytes remain in the primary storage. Excess accounts will be directed to an overflow storage
@@ -1103,7 +1111,6 @@ impl<'a> AccountsToStore<'a> {
         mut available_bytes: u64,
         accounts: &'a [&'a AccountFromStorage],
         alive_total_bytes: usize,
-        slot: Slot,
     ) -> Self {
         let num_accounts = accounts.len();
         let mut bytes_primary = alive_total_bytes;
@@ -1130,7 +1137,6 @@ impl<'a> AccountsToStore<'a> {
         Self {
             accounts,
             index_first_item_overflow,
-            slot,
             bytes_primary,
             bytes_overflow,
         }
@@ -1156,10 +1162,6 @@ impl<'a> AccountsToStore<'a> {
             StorageSelector::Overflow => self.index_first_item_overflow..self.accounts.len(),
         };
         &self.accounts[range]
-    }
-
-    pub fn slot(&self) -> Slot {
-        self.slot
     }
 }
 
@@ -1187,6 +1189,9 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
 }
 
 /// is this a max-size append vec designed to be used as an ancient append vec?
+//
+// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+#[cfg(test)]
 pub fn is_ancient(storage: &AccountsFile) -> bool {
     storage.capacity() >= get_ancient_append_vec_capacity()
 }
@@ -1197,7 +1202,6 @@ pub mod tests {
         super::*,
         crate::{
             account_info::{AccountInfo, StorageLocation},
-            account_storage::meta::{AccountMeta, StoredAccountMeta, StoredMeta},
             accounts_db::{
                 get_temp_accounts_paths,
                 tests::{
@@ -1211,7 +1215,9 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{aligned_stored_size, AppendVec, AppendVecStoredAccountMeta},
+            append_vec::{
+                aligned_stored_size, AccountMeta, AppendVec, StoredAccountMeta, StoredMeta,
+            },
             storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
         },
         rand::seq::SliceRandom as _,
@@ -2408,8 +2414,7 @@ pub mod tests {
     #[test]
     fn test_accounts_to_store_simple() {
         let map = vec![];
-        let slot = 1;
-        let accounts_to_store = AccountsToStore::new(0, &map, 0, slot);
+        let accounts_to_store = AccountsToStore::new(0, &map, 0);
         for selector in [StorageSelector::Primary, StorageSelector::Overflow] {
             let accounts = accounts_to_store.get(selector);
             assert!(accounts.is_empty());
@@ -2439,7 +2444,7 @@ pub mod tests {
             pubkey,
             data_len: 43,
         };
-        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+        let account = StoredAccountMeta {
             meta: &stored_meta,
             // account data
             account_meta: &account_meta,
@@ -2447,18 +2452,17 @@ pub mod tests {
             offset,
             stored_size: account_size,
             hash: &hash,
-        });
+        };
         let map = [&account];
         let map_accounts_from_storage = build_accounts_from_storage(map.iter().copied());
         for (selector, available_bytes) in [
             (StorageSelector::Primary, account_size),
             (StorageSelector::Overflow, account_size - 1),
         ] {
-            let slot = 1;
             let alive_total_bytes = account_size;
             let temp = map_accounts_from_storage.iter().collect::<Vec<_>>();
             let accounts_to_store =
-                AccountsToStore::new(available_bytes as u64, &temp, alive_total_bytes, slot);
+                AccountsToStore::new(available_bytes as u64, &temp, alive_total_bytes);
             let accounts = accounts_to_store.get(selector);
             assert_eq!(
                 accounts.to_vec(),

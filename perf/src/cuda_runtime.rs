@@ -214,7 +214,7 @@ impl<T: Clone + Default + Sized> PinnedVec<T> {
         let api = perf_libs::api();
         if api.is_some()
             && self.pinnable
-            && (self.x.as_ptr() != old_ptr || self.x.capacity() != old_capacity)
+            && (!std::ptr::eq(self.x.as_ptr(), old_ptr) || self.x.capacity() != old_capacity)
         {
             if self.pinned {
                 unpin(old_ptr);
@@ -279,6 +279,14 @@ impl<T: Sized + Default + Clone> Drop for PinnedVec<T> {
         }
     }
 }
+
+impl<T: Sized + Default + Clone + PartialEq> PartialEq for PinnedVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.x.eq(&other.x)
+    }
+}
+
+impl<T: Sized + Default + Clone + PartialEq + Eq> Eq for PinnedVec<T> {}
 
 #[cfg(test)]
 mod tests {

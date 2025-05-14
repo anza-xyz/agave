@@ -1,13 +1,15 @@
 use {
     crate::{
         cluster_info_vote_listener::SlotVoteTracker,
-        cluster_slots_service::cluster_slots::SlotPubkeys,
+        cluster_slots_service::slot_supporters::SlotSupporters,
         consensus::{Stake, ThresholdDecision, VotedStakes},
         replay_stage::SUPERMINORITY_THRESHOLD,
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore_processor::{ConfirmationProgress, ReplaySlotStats},
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey},
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{
         collections::{BTreeMap, HashMap, HashSet},
@@ -209,7 +211,7 @@ pub struct PropagatedStats {
     pub is_leader_slot: bool,
     pub prev_leader_slot: Option<Slot>,
     pub slot_vote_tracker: Option<Arc<RwLock<SlotVoteTracker>>>,
-    pub cluster_slot_pubkeys: Option<Arc<RwLock<SlotPubkeys>>>,
+    pub cluster_slot_pubkeys: Option<Arc<SlotSupporters>>,
     pub total_epoch_stake: u64,
 }
 

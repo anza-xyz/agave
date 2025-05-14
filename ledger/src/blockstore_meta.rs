@@ -1,17 +1,16 @@
 use {
     crate::{
+        bit_vec::BitVec,
         blockstore::MAX_DATA_SHREDS_PER_SLOT,
         shred::{self, Shred, ShredType},
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     std::{
         collections::BTreeSet,
-        ops::{Bound, Range, RangeBounds},
+        ops::{Range, RangeBounds},
     },
 };
 
@@ -52,9 +51,84 @@ impl Default for ConnectedFlags {
     }
 }
 
+/// Legacy completed data indexes type; de/serialization is inefficient for a BTreeSet.
+///
+/// Replaced by [`CompletedDataIndexesV2`].
+pub type CompletedDataIndexesV1 = BTreeSet<u32>;
+/// A fixed size BitVec offers fast lookup and fast de/serialization.
+///
+/// Supersedes [`CompletedDataIndexesV1`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct CompletedDataIndexesV2 {
+    index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
+}
+
+// API for CompletedDataIndexesV2 that mirrors BTreeSet<u32> to make migration easier.
+// This allows CompletedDataIndexesV2 to be a drop-in replacement for CompletedDataIndexesV1.
+impl CompletedDataIndexesV2 {
+    #[inline]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.index.iter_ones().map(|i| i as u32)
+    }
+
+    /// Only needed for V1 / V2 test compatibility.
+    ///
+    /// TODO: Remove once the migration is complete.
+    #[cfg(test)]
+    #[inline]
+    pub fn into_iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.iter()
+    }
+
+    #[inline]
+    pub fn insert(&mut self, index: u32) {
+        self.index.insert_unchecked(index as usize);
+    }
+
+    #[inline]
+    pub fn contains(&self, index: &u32) -> bool {
+        self.index.contains(*index as usize)
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    #[inline]
+    pub fn range<R>(&self, bounds: R) -> impl DoubleEndedIterator<Item = u32> + '_
+    where
+        R: RangeBounds<u32>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).iter_ones().map(|i| i as u32)
+    }
+}
+
+impl FromIterator<u32> for CompletedDataIndexesV2 {
+    fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
+        let index = iter.into_iter().map(|i| i as usize).collect();
+        CompletedDataIndexesV2 { index }
+    }
+}
+
+impl From<CompletedDataIndexesV2> for CompletedDataIndexesV1 {
+    fn from(value: CompletedDataIndexesV2) -> Self {
+        value.iter().collect()
+    }
+}
+
+impl From<CompletedDataIndexesV1> for CompletedDataIndexesV2 {
+    fn from(value: CompletedDataIndexesV1) -> Self {
+        value.into_iter().collect()
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 /// The Meta column family
-pub struct SlotMeta {
+pub struct SlotMetaBase<T> {
     /// The number of slots above the root (the genesis block). The first
     /// slot has slot 0.
     pub slot: Slot,
@@ -83,8 +157,68 @@ pub struct SlotMeta {
     pub connected_flags: ConnectedFlags,
     /// Shreds indices which are marked data complete.  That is, those that have the
     /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
-    pub completed_data_indexes: BTreeSet<u32>,
+    pub completed_data_indexes: T,
 }
+
+pub type SlotMetaV1 = SlotMetaBase<CompletedDataIndexesV1>;
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexesV2>;
+
+impl From<SlotMetaV1> for SlotMetaV2 {
+    fn from(value: SlotMetaV1) -> Self {
+        SlotMetaV2 {
+            slot: value.slot,
+            consumed: value.consumed,
+            received: value.received,
+            first_shred_timestamp: value.first_shred_timestamp,
+            last_index: value.last_index,
+            parent_slot: value.parent_slot,
+            next_slots: value.next_slots,
+            connected_flags: value.connected_flags,
+            completed_data_indexes: value.completed_data_indexes.into(),
+        }
+    }
+}
+
+impl From<SlotMetaV2> for SlotMetaV1 {
+    fn from(value: SlotMetaV2) -> Self {
+        SlotMetaV1 {
+            slot: value.slot,
+            consumed: value.consumed,
+            received: value.received,
+            first_shred_timestamp: value.first_shred_timestamp,
+            last_index: value.last_index,
+            parent_slot: value.parent_slot,
+            next_slots: value.next_slots,
+            connected_flags: value.connected_flags,
+            completed_data_indexes: value.completed_data_indexes.into(),
+        }
+    }
+}
+
+// We need to maintain both formats during migration,
+// as both formats will need to be supported when reading
+// from rocksdb until the migration is complete.
+//
+// Swap these types to migrate to the new format.
+//
+// For example, to enable the new format,
+//
+// ```
+// pub type SlotMeta = SlotMetaV2;
+// pub type CompletedDataIndexes = CompletedDataIndexesV2;
+// pub type SlotMetaFallback = SlotMetaV1;
+// ```
+//
+// To enable the old format,
+//
+// ```
+// pub type SlotMeta = SlotMetaV1;
+// pub type CompletedDataIndexes = CompletedDataIndexesV1;
+// pub type SlotMetaFallback = SlotMetaV2;
+// ```
+pub type SlotMeta = SlotMetaV1;
+pub type CompletedDataIndexes = CompletedDataIndexesV1;
+pub type SlotMetaFallback = SlotMetaV2;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.
@@ -355,167 +489,45 @@ impl ShredIndexV1 {
 ///   requested range, avoiding unnecessary traversal.
 /// - **Simplified Serialization**: The contiguous memory layout allows for efficient
 ///   serialization/deserialization without tree reconstruction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ShredIndexV2 {
-    #[serde(with = "serde_bytes")]
-    index: Vec<u8>,
+    index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
     num_shreds: usize,
 }
 
-impl Default for ShredIndexV2 {
-    fn default() -> Self {
-        Self {
-            index: vec![0; Self::MAX_WORDS_PER_SLOT],
-            num_shreds: 0,
-        }
-    }
-}
-
-type ShredIndexV2Word = u8;
 impl ShredIndexV2 {
-    const SIZE_OF_WORD: usize = std::mem::size_of::<ShredIndexV2Word>();
-    const BITS_PER_WORD: usize = Self::SIZE_OF_WORD * 8;
-    const MAX_WORDS_PER_SLOT: usize = MAX_DATA_SHREDS_PER_SLOT.div_ceil(Self::BITS_PER_WORD);
-
     pub fn num_shreds(&self) -> usize {
         self.num_shreds
     }
 
-    fn index_and_mask(index: u64) -> (usize, ShredIndexV2Word) {
-        let word_idx = index as usize / Self::BITS_PER_WORD;
-        let bit_idx = index as usize % Self::BITS_PER_WORD;
-        let mask = 1 << bit_idx;
-        (word_idx, mask as ShredIndexV2Word)
-    }
-
     #[cfg(test)]
     fn remove(&mut self, index: u64) {
-        assert!(
-            index < MAX_DATA_SHREDS_PER_SLOT as u64,
-            "index out of bounds. {index} >= {MAX_DATA_SHREDS_PER_SLOT}"
-        );
-
-        let (word_idx, mask) = Self::index_and_mask(index);
-
-        if self.index[word_idx] & mask != 0 {
-            self.index[word_idx] ^= mask;
+        if self.index.remove_unchecked(index as usize) {
             self.num_shreds -= 1;
         }
     }
 
     #[allow(unused)]
     pub(crate) fn contains(&self, idx: u64) -> bool {
-        if idx >= MAX_DATA_SHREDS_PER_SLOT as u64 {
-            return false;
-        }
-        let (word_idx, mask) = Self::index_and_mask(idx);
-        (self.index[word_idx] & mask) != 0
+        self.index.contains(idx as usize)
     }
 
     pub(crate) fn insert(&mut self, idx: u64) {
-        if idx >= MAX_DATA_SHREDS_PER_SLOT as u64 {
-            return;
-        }
-        let (word_idx, mask) = Self::index_and_mask(idx);
-        if self.index[word_idx] & mask == 0 {
-            self.index[word_idx] |= mask;
+        if let Ok(true) = self.index.insert(idx as usize) {
             self.num_shreds += 1;
         }
     }
 
-    /// Provides an iterator over the set shred indices within a specified range.
-    ///
-    /// # Algorithm
-    /// 1. Divide the specified range into 8-bit words (u8).
-    /// 2. For each word:HH
-    ///    - Calculate the base index (position of the word * 8).
-    ///    - Process all set bits in the word.
-    ///    - For words overlapping the range boundaries:
-    ///      - Determine the relevant bit range using boundaries.
-    ///      - Mask out bits outside the range.
-    ///    - Use bit manipulation to iterate over set bits efficiently.
-    ///
-    /// ## Explanation
-    /// Given range `[75..205]`:
-    ///
-    /// Word layout (each word is 8 bits), where each X represents a bit candidate:
-    /// ```text
-    /// Word 9  (72-79):   [..XXXXXX] ← Partial word (start)
-    /// Word 10 (80-87):   [XXXXXXXX] ← Full word (entirely in range)
-    /// ...
-    /// Word 25 (200-207): [XXXXXX..] ← Partial word (end)
-    /// ```
-    ///
-    /// Partial Word 9 (contains start boundary 75):
-    /// - Base index = 72
-    /// - Lower boundary = 75 - 72 = 3
-    /// - Lower mask = `11111000` (right-shift)
-    ///
-    /// Partial Word 25 (contains end boundary 205):
-    /// - Base index = 200
-    /// - Upper boundary = 205 - 200 = 5
-    /// - Upper mask = `00111111` (left-shift)
-    ///
-    /// Final mask = `word & lower_mask & upper_mask`
-    ///
-    /// Bit iteration:
-    /// 1. Apply masks to restrict the bits to the range.
-    /// 2. While bits remain in the masked word:
-    ///    a. Find the lowest set bit (`trailing_zeros`).
-    ///    b. Add the bit's position to the base index.
-    ///    c. Clear the lowest set bit (`n & (n - 1)`).
-    /// ```
     pub(crate) fn range<R>(&self, bounds: R) -> impl Iterator<Item = u64> + '_
     where
         R: RangeBounds<u64>,
     {
-        let start = match bounds.start_bound() {
-            Bound::Included(&n) => n as usize,
-            Bound::Excluded(&n) => n as usize + 1,
-            Bound::Unbounded => 0,
-        };
-        let end = match bounds.end_bound() {
-            Bound::Included(&n) => n as usize + 1,
-            Bound::Excluded(&n) => n as usize,
-            Bound::Unbounded => MAX_DATA_SHREDS_PER_SLOT,
-        };
-
-        let end_word = end
-            .div_ceil(Self::BITS_PER_WORD)
-            .min(Self::MAX_WORDS_PER_SLOT);
-        let start_word = (start / Self::BITS_PER_WORD).min(end_word);
-
-        self.index[start_word..end_word]
-            .iter()
-            .enumerate()
-            .flat_map(move |(word_offset, &word)| {
-                let base_idx = (start_word + word_offset) * Self::BITS_PER_WORD;
-
-                let lower_bound = start.saturating_sub(base_idx);
-                let upper_bound = if base_idx + Self::BITS_PER_WORD > end {
-                    end - base_idx
-                } else {
-                    Self::BITS_PER_WORD
-                };
-
-                let lower_mask = !0 << lower_bound;
-                let upper_mask = !0 >> (Self::BITS_PER_WORD - upper_bound);
-                let mask = word & lower_mask & upper_mask;
-
-                std::iter::from_fn({
-                    let mut remaining = mask;
-                    move || {
-                        if remaining == 0 {
-                            None
-                        } else {
-                            let bit_idx = remaining.trailing_zeros();
-                            // Clear the lowest set bit
-                            remaining &= remaining - 1;
-                            Some(base_idx as u64 + bit_idx as u64)
-                        }
-                    }
-                })
-            })
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index
+            .range((start, end))
+            .iter_ones()
+            .map(|idx| idx as u64)
     }
 
     fn iter(&self) -> impl Iterator<Item = u64> + '_ {

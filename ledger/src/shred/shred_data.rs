@@ -8,7 +8,9 @@ use {
         DataShredHeader, Error, ShredCommonHeader, ShredFlags, ShredType, ShredVariant, SignedData,
         MAX_DATA_SHREDS_PER_SLOT,
     },
-    solana_sdk::{clock::Slot, hash::Hash, signature::Signature},
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_signature::Signature,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,10 +30,6 @@ impl ShredData {
     dispatch!(pub(super) fn payload(&self) -> &Payload);
     dispatch!(pub(super) fn sanitize(&self) -> Result<(), Error>);
     dispatch!(pub(super) fn set_signature(&mut self, signature: Signature));
-
-    // Only for tests.
-    dispatch!(pub(super) fn set_index(&mut self, index: u32));
-    dispatch!(pub(super) fn set_slot(&mut self, slot: Slot));
 
     pub(super) fn signed_data(&self) -> Result<SignedData, Error> {
         match self {

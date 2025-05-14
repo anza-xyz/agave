@@ -1,8 +1,8 @@
 use {
     super::{stake_weighted_slot_leaders, LeaderScheduleVariant},
     itertools::Itertools,
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_sdk::clock::Epoch,
     std::{collections::HashMap, ops::Index, sync::Arc},
 };
 

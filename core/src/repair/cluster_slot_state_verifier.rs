@@ -9,8 +9,9 @@ use {
             AncestorHashesReplayUpdate, AncestorHashesReplayUpdateSender,
         },
     },
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
-    solana_sdk::{clock::Slot, hash::Hash},
     std::collections::{BTreeMap, BTreeSet, HashMap},
 };
 

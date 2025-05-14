@@ -3,7 +3,7 @@ use {
         snapshot_bank_utils,
         snapshot_utils::{self, ArchiveFormat, SnapshotVersion, ZstdConfig},
     },
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{num::NonZeroUsize, path::PathBuf},
 };
 

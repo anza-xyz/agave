@@ -186,11 +186,7 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        let oldest_non_ancient_slot_for_split = self
-            .get_oldest_non_ancient_slot_for_hash_calc_scan(
-                snapshot_storages.max_slot_inclusive(),
-                config,
-            );
+        let oldest_non_ancient_slot_for_split = None;
         let splitter =
             SplitAncientStorages::new(oldest_non_ancient_slot_for_split, snapshot_storages);
         let oldest_non_ancient_slot_for_identification = self

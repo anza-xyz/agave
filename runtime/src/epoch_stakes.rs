@@ -1,7 +1,8 @@
 use {
     crate::stakes::{serde_stakes_to_delegation_format, SerdeStakesToStakeFormat, StakesEnum},
     serde::{Deserialize, Serialize},
-    solana_sdk::{clock::Epoch, pubkey::Pubkey},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, sync::Arc},
 };
@@ -228,7 +229,8 @@ pub(crate) mod tests {
             stake_account::StakeAccount,
             stakes::{Stakes, StakesCache},
         },
-        solana_sdk::{account::AccountSharedData, rent::Rent},
+        solana_account::AccountSharedData,
+        solana_rent::Rent,
         solana_stake_program::stake_state::{self, Delegation, Stake},
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{self, create_account_with_authorized},

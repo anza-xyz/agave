@@ -325,10 +325,9 @@ pub fn bind_common_in_range_with_config(
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        format!("No available TCP/UDP ports in {range:?}"),
-    ))
+    Err(io::Error::other(format!(
+        "No available TCP/UDP ports in {range:?}"
+    )))
 }
 
 // Find a port in the given range that is available for both TCP and UDP
@@ -364,10 +363,9 @@ pub fn bind_in_range_with_config(
         }
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        format!("No available UDP ports in {range:?}"),
-    ))
+    Err(io::Error::other(format!(
+        "No available UDP ports in {range:?}"
+    )))
 }
 
 pub fn bind_with_any_port_with_config(
@@ -378,10 +376,7 @@ pub fn bind_with_any_port_with_config(
     let addr = SocketAddr::new(ip_addr, 0);
     match sock.bind(&SockAddr::from(addr)) {
         Ok(_) => Result::Ok(sock.into()),
-        Err(err) => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("No available UDP port: {err}"),
-        )),
+        Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
 }
 
@@ -575,8 +570,7 @@ pub fn bind_two_in_range_with_offset_and_config(
     sock2_config: SocketConfig,
 ) -> io::Result<((u16, UdpSocket), (u16, UdpSocket))> {
     if range.1.saturating_sub(range.0) < offset {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
+        return Err(io::Error::other(
             "range too small to find two ports with the correct offset".to_string(),
         ));
     }
@@ -596,8 +590,7 @@ pub fn bind_two_in_range_with_offset_and_config(
             }
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::Other,
+    Err(io::Error::other(
         "couldn't find two ports with the correct offset in range".to_string(),
     ))
 }
@@ -609,19 +602,19 @@ pub fn bind_two_in_range_with_offset_and_config(
 ///
 /// Keep in mind this will not reserve the port for you, only find one that is empty.
 pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<u16> {
-    find_available_ports_in_range(ip_addr, range, 1).map(|v| *v.first().unwrap())
+    let [port] = find_available_ports_in_range(ip_addr, range)?;
+    Ok(port)
 }
 
 /// Searches for several ports on a given binding ip_addr in the provided range.
 ///
 /// This will start at a random point in the range provided, and search sequencially.
 /// If it can not find anything, an Error is returned.
-pub fn find_available_ports_in_range(
+pub fn find_available_ports_in_range<const N: usize>(
     ip_addr: IpAddr,
     range: PortRange,
-    mut num: usize,
-) -> io::Result<Vec<u16>> {
-    let mut result = vec![];
+) -> io::Result<[u16; N]> {
+    let mut result = [0u16; N];
     let range = range.0..range.1;
     let mut next_port_to_try = range
         .clone()
@@ -629,12 +622,13 @@ pub fn find_available_ports_in_range(
         .skip(thread_rng().gen_range(range.clone()) as usize) // skip to random position
         .take(range.len()) // never take the same value twice
         .peekable();
-    while num > 0 {
+    let mut num = 0;
+    while num < N {
         let port_to_try = next_port_to_try.next().unwrap(); // this unwrap never fails since we exit earlier
         match bind_common(ip_addr, port_to_try) {
             Ok(_) => {
-                num -= 1;
-                result.push(port_to_try);
+                result[num] = port_to_try;
+                num = num.saturating_add(1);
             }
             Err(err) => {
                 if next_port_to_try.peek().is_none() {
@@ -825,6 +819,20 @@ mod tests {
 
         let _socket = bind_to(ip_addr, port, false).unwrap();
         find_available_port_in_range(ip_addr, (port, port + 1)).unwrap_err();
+    }
+
+    #[test]
+    fn test_find_available_ports_in_range() {
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let port_range = sockets::localhost_port_range_for_tests();
+        assert!(port_range.1 - port_range.0 > 16);
+        // reserve 1 port to make it non-trivial
+        let sock = bind_to_with_config(ip_addr, port_range.0 + 2, SocketConfig::default()).unwrap();
+        let ports: [u16; 15] = find_available_ports_in_range(ip_addr, port_range).unwrap();
+        let mut ports_vec = Vec::from(ports);
+        ports_vec.push(sock.local_addr().unwrap().port());
+        let res: Vec<_> = ports_vec.into_iter().unique().collect();
+        assert_eq!(res.len(), 16, "Should reserve 16 unique ports");
     }
 
     #[test]

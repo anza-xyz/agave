@@ -1,7 +1,7 @@
 use {
     clap::{crate_description, crate_name, crate_version, ArgEnum, Args, Parser},
     serde::{Deserialize, Serialize},
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{net::SocketAddr, process::exit, str::FromStr},
 };
 
@@ -189,7 +189,7 @@ pub fn build_cli_parameters() -> DosClientParameters {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, clap::Parser, solana_sdk::pubkey::Pubkey};
+    use {super::*, clap::Parser, solana_pubkey::Pubkey};
 
     #[test]
     fn test_cli_parse_rpc_no_data_input() {

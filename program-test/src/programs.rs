@@ -1,26 +1,26 @@
-use solana_sdk::{
-    account::{Account, AccountSharedData},
-    bpf_loader,
-    bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-    pubkey::Pubkey,
-    rent::Rent,
+use {
+    solana_account::{Account, AccountSharedData},
+    solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
 };
 
 mod spl_memo_1_0 {
-    solana_sdk::declare_id!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo");
+    solana_sdk_macro::declare_id!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo");
 }
 mod spl_memo_3_0 {
-    solana_sdk::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+    solana_sdk_macro::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 }
 
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
     (
-        solana_inline_spl::token::ID,
+        spl_generic_token::token::ID,
         solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_token-3.5.0.so"),
     ),
     (
-        solana_inline_spl::token_2022::ID,
+        spl_generic_token::token_2022::ID,
         solana_sdk_ids::bpf_loader_upgradeable::ID,
         include_bytes!("programs/spl_token_2022-8.0.0.so"),
     ),
@@ -35,7 +35,7 @@ static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[
         include_bytes!("programs/spl_memo-3.0.0.so"),
     ),
     (
-        solana_inline_spl::associated_token_account::ID,
+        spl_generic_token::associated_token_account::ID,
         solana_sdk_ids::bpf_loader::ID,
         include_bytes!("programs/spl_associated_token_account-1.1.1.so"),
     ),

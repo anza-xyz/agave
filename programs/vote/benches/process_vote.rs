@@ -8,7 +8,9 @@ use {
     solana_clock::{Clock, Slot},
     solana_hash::Hash,
     solana_instruction::AccountMeta,
-    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_program_runtime::invoke_context::{
+        mock_process_instruction, mock_process_instruction_with_feature_set,
+    },
     solana_pubkey::Pubkey,
     solana_sdk_ids::sysvar,
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
@@ -20,7 +22,6 @@ use {
             MAX_LOCKOUT_HISTORY,
         },
     },
-    std::sync::Arc,
     test::Bencher,
 };
 
@@ -101,8 +102,10 @@ fn bench_process_deprecated_vote_instruction(
     instruction_account_metas: Vec<AccountMeta>,
     instruction_data: Vec<u8>,
 ) {
+    let mut deprecated_feature_set = FeatureSet::all_enabled();
+    deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
     bencher.iter(|| {
-        mock_process_instruction(
+        mock_process_instruction_with_feature_set(
             &solana_vote_program::id(),
             Vec::new(),
             &instruction_data,
@@ -110,13 +113,9 @@ fn bench_process_deprecated_vote_instruction(
             instruction_account_metas.clone(),
             Ok(()),
             solana_vote_program::vote_processor::Entrypoint::vm,
-            |invoke_context| {
-                let mut deprecated_feature_set = FeatureSet::all_enabled();
-                deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
-                invoke_context
-                    .mock_set_feature_set(Arc::new(deprecated_feature_set.runtime_features()));
-            },
             |_invoke_context| {},
+            |_invoke_context| {},
+            &deprecated_feature_set.runtime_features(),
         );
     });
 }

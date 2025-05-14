@@ -14,9 +14,13 @@ use {
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_url_or_moniker,
         },
     },
+    solana_clock::Slot,
     solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+    solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
+    solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
@@ -30,10 +34,6 @@ use {
             DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         },
-    },
-    solana_sdk::{
-        clock::Slot, epoch_schedule::MINIMUM_SLOTS_PER_EPOCH, hash::Hash, quic::QUIC_PORT_OFFSET,
-        rpc_port,
     },
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
@@ -863,8 +863,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .default_value("0.0.0.0")
-                .help("IP address to bind the validator ports [default: 0.0.0.0]"),
+                .default_value("127.0.0.1")
+                .help("IP address to bind the validator ports [default: 127.0.0.1]"),
         )
         .arg(
             Arg::with_name("clone_account")
@@ -1037,7 +1037,7 @@ pub struct DefaultTestArgs {
 impl DefaultTestArgs {
     pub fn new() -> Self {
         DefaultTestArgs {
-            rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
+            rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the

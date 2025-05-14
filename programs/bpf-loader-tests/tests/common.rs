@@ -1,16 +1,16 @@
 #![allow(dead_code)]
 
 use {
+    solana_account::{state_traits::StateMut, AccountSharedData},
+    solana_instruction::{error::InstructionError, Instruction},
+    solana_keypair::Keypair,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_test::*,
-    solana_sdk::{
-        account::AccountSharedData,
-        account_utils::StateMut,
-        bpf_loader_upgradeable::{id, UpgradeableLoaderState},
-        instruction::{Instruction, InstructionError},
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        transaction::{Transaction, TransactionError},
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable::id,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
 };
 
 pub async fn setup_test_context() -> ProgramTestContext {

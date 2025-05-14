@@ -38,7 +38,7 @@ solana-clock = "=2.2.1"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"
-solana-frozen-abi = { version = "=2.2.1", optional = true, features = [
+solana-frozen-abi = { version = "=2.2.2", optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [
@@ -50,7 +50,7 @@ solana-ledger = { workspace = true }
 solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-native-token = "=2.2.1"
+solana-native-token = "=2.2.2"
 solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
@@ -86,7 +86,6 @@ serial_test = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
@@ -100,7 +99,6 @@ frozen-abi = [
     "solana-ledger/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-version/frozen-abi",
     "solana-vote/frozen-abi",

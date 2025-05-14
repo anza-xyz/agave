@@ -1,16 +1,15 @@
 use {
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_cpi::invoke,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_program_error::ProgramResult,
     solana_program_test::{processor, ProgramTest},
-    solana_sdk::{
-        account_info::{next_account_info, AccountInfo},
-        entrypoint::ProgramResult,
-        instruction::{AccountMeta, Instruction},
-        program::invoke,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_instruction,
-        sysvar::rent,
-        transaction::Transaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::rent,
+    solana_transaction::Transaction,
 };
 
 fn process_instruction(
@@ -52,7 +51,7 @@ async fn realloc_smaller_in_cpi() {
     );
     let context = program_test.start_with_context().await;
 
-    let token_2022_id = solana_inline_spl::token_2022::id();
+    let token_2022_id = spl_generic_token::token_2022::id();
     let mint = Keypair::new();
     let account = Keypair::new();
     let rent = context.banks_client.get_rent().await.unwrap();

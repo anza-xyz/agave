@@ -1,7 +1,6 @@
 use {
-    crate::bank::partitioned_epoch_rewards::PartitionedStakeReward,
-    itertools::enumerate,
-    solana_sdk::{epoch_rewards_hasher::EpochRewardsHasher, hash::Hash},
+    crate::bank::partitioned_epoch_rewards::PartitionedStakeReward, itertools::enumerate,
+    solana_epoch_rewards_hasher::EpochRewardsHasher, solana_hash::Hash,
 };
 
 pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
@@ -33,7 +32,8 @@ mod tests {
             tests::create_genesis_config,
             Bank,
         },
-        solana_sdk::{epoch_schedule::EpochSchedule, native_token::LAMPORTS_PER_SOL},
+        solana_epoch_schedule::EpochSchedule,
+        solana_native_token::LAMPORTS_PER_SOL,
         std::sync::Arc,
     };
 

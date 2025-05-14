@@ -17,6 +17,8 @@ use {
     serde_json::json,
     solana_clap_utils::{hidden_unless_forced, input_validators::is_slot},
     solana_cli_output::OutputFormat,
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{
@@ -25,10 +27,6 @@ use {
         },
         blockstore_options::AccessType,
         shred::Shred,
-    },
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
     },
     std::{
         borrow::Cow,

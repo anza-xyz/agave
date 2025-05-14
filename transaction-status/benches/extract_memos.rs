@@ -5,15 +5,15 @@ extern crate test;
 use {
     solana_message::{compiled_instruction::CompiledInstruction, Message},
     solana_pubkey::Pubkey,
-    solana_transaction_status::extract_memos::{spl_memo_id_v1, spl_memo_id_v3, ExtractMemos},
+    solana_transaction_status::extract_memos::ExtractMemos,
     test::Bencher,
 };
 
 #[bench]
 fn bench_extract_memos(b: &mut Bencher) {
     let mut account_keys: Vec<Pubkey> = (0..64).map(|_| Pubkey::new_unique()).collect();
-    account_keys[62] = spl_memo_id_v1();
-    account_keys[63] = spl_memo_id_v3();
+    account_keys[62] = spl_memo::v1::id();
+    account_keys[63] = spl_memo::id();
     let memo = "Test memo";
 
     let instructions: Vec<_> = (0..20)

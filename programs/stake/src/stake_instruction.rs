@@ -385,7 +385,7 @@ mod tests {
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,
         solana_instruction::{AccountMeta, Instruction},
-        solana_program_runtime::invoke_context::mock_process_instruction,
+        solana_program_runtime::invoke_context::mock_process_instruction_with_feature_set,
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{
@@ -458,7 +458,7 @@ mod tests {
         instruction_accounts: Vec<AccountMeta>,
         expected_result: Result<(), InstructionError>,
     ) -> Vec<AccountSharedData> {
-        mock_process_instruction(
+        mock_process_instruction_with_feature_set(
             &id(),
             Vec::new(),
             instruction_data,
@@ -466,10 +466,9 @@ mod tests {
             instruction_accounts,
             expected_result,
             Entrypoint::vm,
-            |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::new(feature_set.runtime_features()))
-            },
             |_invoke_context| {},
+            |_invoke_context| {},
+            &feature_set.runtime_features(),
         )
     }
 
@@ -6973,7 +6972,7 @@ mod tests {
             is_writable: true,
         }];
 
-        mock_process_instruction(
+        mock_process_instruction_with_feature_set(
             &id(),
             Vec::new(),
             &instruction_data,
@@ -6981,9 +6980,7 @@ mod tests {
             instruction_accounts,
             Ok(()),
             Entrypoint::vm,
-            |invoke_context| {
-                invoke_context.mock_set_feature_set(Arc::new(feature_set.runtime_features()));
-            },
+            |_invoke_context| {},
             |invoke_context| {
                 let expected_minimum_delegation = crate::get_minimum_delegation(
                     invoke_context.is_stake_raise_minimum_delegation_to_1_sol_active(),
@@ -6993,6 +6990,7 @@ mod tests {
                     invoke_context.transaction_context.get_return_data().1;
                 assert_eq!(expected_minimum_delegation, actual_minimum_delegation);
             },
+            &feature_set.runtime_features(),
         );
     }
 

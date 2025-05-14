@@ -37,13 +37,11 @@ use {
         utils::delete_contents_of_path,
     },
     solana_builtins::prototype::BuiltinPrototype,
+    solana_clock::{Epoch, Slot},
+    solana_genesis_config::GenesisConfig,
     solana_measure::{measure::Measure, measure_time},
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        genesis_config::GenesisConfig,
-        pubkey::Pubkey,
-        slot_history::{Check, SlotHistory},
-    },
+    solana_pubkey::Pubkey,
+    solana_slot_history::{Check, SlotHistory},
     std::{
         collections::{HashMap, HashSet},
         ops::RangeInclusive,
@@ -53,7 +51,7 @@ use {
     tempfile::TempDir,
 };
 
-pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 25_000;
+pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 50_000;
 pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 100;
 pub const DISABLED_SNAPSHOT_ARCHIVE_INTERVAL: Slot = Slot::MAX;
 
@@ -975,8 +973,11 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
+        snapshot_package,
+        &snapshot_config,
+        false, // flushing the storages is not needed because we do not intend to fastboot
+    )?;
 
     Ok(FullSnapshotArchiveInfo::new(snapshot_archive_info))
 }
@@ -1074,8 +1075,11 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_version,
         ..Default::default()
     };
-    let snapshot_archive_info =
-        snapshot_utils::serialize_and_archive_snapshot_package(snapshot_package, &snapshot_config)?;
+    let snapshot_archive_info = snapshot_utils::serialize_and_archive_snapshot_package(
+        snapshot_package,
+        &snapshot_config,
+        false, // flushing the storages is not needed because we do not intend to fastboot
+    )?;
 
     Ok(IncrementalSnapshotArchiveInfo::new(
         full_snapshot_slot,
@@ -1112,13 +1116,12 @@ mod tests {
             accounts_hash::{CalcAccountsHashConfig, HashStats},
             sorted_storages::SortedStorages,
         },
-        solana_sdk::{
-            genesis_config::create_genesis_config,
-            native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::SanitizedTransaction,
-        },
+        solana_genesis_config::create_genesis_config,
+        solana_keypair::Keypair,
+        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
+        solana_transaction::sanitized::SanitizedTransaction,
         std::{
             fs,
             sync::{atomic::Ordering, Arc, RwLock},
@@ -1628,7 +1631,7 @@ mod tests {
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
         // test expects 0 transaction fee
-        genesis_config.fee_rate_governor = solana_sdk::fee_calculator::FeeRateGovernor::new(0, 0);
+        genesis_config.fee_rate_governor = solana_fee_calculator::FeeRateGovernor::new(0, 0);
 
         let lamports_to_transfer = sol_to_lamports(123_456.);
         let (bank0, bank_forks) = Bank::new_with_paths_for_tests(
@@ -2196,8 +2199,9 @@ mod tests {
     ///     - remove Account2's reference back to slot 2 by transferring from the mint to Account2
     ///     - take a full snap shot
     ///     - verify that recovery from full snapshot does not bring account1 back to life
-    #[test]
-    fn test_snapshots_handle_zero_lamport_accounts() {
+    #[test_case(StorageAccess::Mmap)]
+    #[test_case(StorageAccess::File)]
+    fn test_snapshots_handle_zero_lamport_accounts(storage_access: StorageAccess) {
         let collector = Pubkey::new_unique();
         let key1 = Keypair::new();
         let key2 = Keypair::new();
@@ -2210,7 +2214,16 @@ mod tests {
         let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
 
         let lamports_to_transfer = sol_to_lamports(123_456.);
-        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let bank_test_config = BankTestConfig {
+            accounts_db_config: AccountsDbConfig {
+                storage_access,
+                ..AccountsDbConfig::default()
+            },
+        };
+
+        let bank0 = Bank::new_with_config_for_tests(&genesis_config, bank_test_config);
+
+        let (bank0, bank_forks) = Bank::wrap_with_bank_forks_for_tests(bank0);
 
         bank0
             .transfer(lamports_to_transfer, &mint_keypair, &key2.pubkey())
@@ -2745,24 +2758,37 @@ mod tests {
         // 1. call get_highest_loadable() but bad snapshot dir, so returns None
         assert!(get_highest_loadable_bank_snapshot(&SnapshotConfig::default()).is_none());
 
-        // 2. get_highest_loadable(), should return highest_bank_snapshot_post_slot
+        // 2. the 'storages flushed' file hasn't been written yet, so get_highest_loadable() should return NONE
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+
+        // 3. write 'storages flushed' file, get_highest_loadable(), should return highest_bank_snapshot_post_slot
+        snapshot_utils::write_storages_flushed_file(&highest_bank_snapshot_post.snapshot_dir)
+            .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
-        // 3. delete highest full snapshot archive, get_highest_loadable() should return NONE
+        // 4. delete highest full snapshot archive, get_highest_loadable() should return NONE
         fs::remove_file(highest_full_snapshot_archive.path()).unwrap();
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
-        // 4. get_highest_loadable(), but with a load-only snapshot config, should return Some()
+        // 5. get_highest_loadable(), but with a load-only snapshot config, should return Some()
         let bank_snapshot = get_highest_loadable_bank_snapshot(&load_only_snapshot_config).unwrap();
         assert_eq!(bank_snapshot, highest_bank_snapshot_post);
 
-        // 5. delete highest bank snapshot, get_highest_loadable() should return Some() again, with slot-1
+        // 6. delete highest bank snapshot, get_highest_loadable() should return NONE
         fs::remove_dir_all(&highest_bank_snapshot_post.snapshot_dir).unwrap();
+        assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
+
+        // 7. write 'storages flushed' file, get_highest_loadable() should return Some() again, with slot-1
+        snapshot_utils::write_storages_flushed_file(get_bank_snapshot_dir(
+            &snapshot_config.bank_snapshots_dir,
+            highest_bank_snapshot_post.slot - 1,
+        ))
+        .unwrap();
         let bank_snapshot = get_highest_loadable_bank_snapshot(&snapshot_config).unwrap();
         assert_eq!(bank_snapshot.slot, highest_bank_snapshot_post.slot - 1);
 
-        // 6. delete the full snapshot slot file, get_highest_loadable() should return NONE
+        // 8. delete the full snapshot slot file, get_highest_loadable() should return NONE
         fs::remove_file(
             bank_snapshot
                 .snapshot_dir
@@ -2771,7 +2797,7 @@ mod tests {
         .unwrap();
         assert!(get_highest_loadable_bank_snapshot(&snapshot_config).is_none());
 
-        // 7. however, a load-only snapshot config should return Some() again
+        // 9. however, a load-only snapshot config should return Some() again
         let bank_snapshot2 =
             get_highest_loadable_bank_snapshot(&load_only_snapshot_config).unwrap();
         assert_eq!(bank_snapshot2, bank_snapshot);

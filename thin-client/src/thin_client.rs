@@ -250,11 +250,7 @@ where
             let blockhash = self.get_latest_blockhash()?;
             transaction.sign(keypairs, blockhash);
         }
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("retry_transfer failed in {tries} retries"),
-        )
-        .into())
+        Err(io::Error::other(format!("retry_transfer failed in {tries} retries")).into())
     }
 
     pub fn poll_get_balance(&self, pubkey: &Pubkey) -> TransportResult<u64> {
@@ -423,10 +419,7 @@ where
             .rpc_client()
             .get_signature_status(signature)
             .map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("send_transaction failed with error {err:?}"),
-                )
+                io::Error::other(format!("send_transaction failed with error {err:?}"))
             })?;
         Ok(status)
     }
@@ -440,10 +433,7 @@ where
             .rpc_client()
             .get_signature_status_with_commitment(signature, commitment_config)
             .map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("send_transaction failed with error {err:?}"),
-                )
+                io::Error::other(format!("send_transaction failed with error {err:?}"))
             })?;
         Ok(status)
     }
@@ -460,10 +450,7 @@ where
             .rpc_client()
             .get_slot_with_commitment(commitment_config)
             .map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("send_transaction failed with error {err:?}"),
-                )
+                io::Error::other(format!("send_transaction failed with error {err:?}"))
             })?;
         Ok(slot)
     }

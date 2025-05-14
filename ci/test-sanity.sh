@@ -51,7 +51,6 @@ source ci/_
 
 _ ci/check-channel-version.sh
 _ ci/nits.sh
-_ ci/check-ssh-keys.sh
 
 scripts/increment-cargo-version.sh check
 

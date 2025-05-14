@@ -4,7 +4,8 @@ use {
     chrono::{DateTime, Local},
     crossbeam_channel::{unbounded, Receiver, SendError, Sender, TryRecvError},
     rolling_file::{RollingCondition, RollingConditionBasic, RollingFileAppender},
-    solana_sdk::{hash::Hash, slot_history::Slot},
+    solana_clock::Slot,
+    solana_hash::Hash,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         fs::{create_dir_all, remove_dir_all},
@@ -63,7 +64,7 @@ pub struct BankingTracer {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample),
-    frozen_abi(digest = "DAdZnX6ijBWaxKAyksq4nJa6PAZqT4RShZqLWTtNvyAM")
+    frozen_abi(digest = "91baCBT3aY2nXSAuzY3S5dnMhWabVsHowgWqYPLjfyg7")
 )]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TimedTracedEvent(pub std::time::SystemTime, pub TracedEvent);
@@ -489,7 +490,7 @@ pub mod for_test {
     pub fn drop_and_clean_temp_dir_unless_suppressed(temp_dir: TempDir) {
         std::env::var("BANKING_TRACE_LEAVE_FILES").is_ok().then(|| {
             warn!("prevented to remove {:?}", temp_dir.path());
-            drop(temp_dir.into_path());
+            drop(temp_dir.keep());
         });
     }
 

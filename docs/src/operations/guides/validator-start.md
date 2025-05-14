@@ -314,11 +314,11 @@ the validator to ports 11000-11020.
 ### Limiting ledger size to conserve disk space
 
 The `--limit-ledger-size` parameter allows you to specify how many ledger
-[shreds](https://solana.com/docs/terminology#shred) your node retains on disk. If you do not
-include this parameter, the validator will keep all received ledger data
-until it runs out of disk space. Otherwise, the validator will continually
-purge the oldest data once to stay under the specified `--limit-ledger-size`
-value.
+[shreds](https://solana.com/docs/terminology#shred) your node retains on disk.
+If you do not include this parameter, the validator will keep all received
+ledger data until it runs out of disk space. Otherwise, the validator will
+periodically purge the oldest data (FIFO) to remain under the specified
+`--limit-ledger-size` value.
 
 The default value attempts to keep the blockstore (data within the rocksdb
 directory) disk usage under 500 GB. More or less disk usage may be requested
@@ -332,6 +332,11 @@ These items may include (but are not limited to):
 - Persistent accounts data
 - Persistent accounts index
 - Snapshots
+
+Additionally, specifying `--enable-rpc-transaction-history` will store extra
+block and transaction metadata. The space required to store this data varies
+with cluster activity, and is hard to account for. Thus, using this flag will
+likely cause the 500 GB target to be exceeded.
 
 ### Systemd Unit
 

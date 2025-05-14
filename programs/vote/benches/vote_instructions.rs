@@ -7,11 +7,12 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta},
-    solana_program_runtime::invoke_context::mock_process_instruction,
+    solana_program_runtime::invoke_context::{
+        mock_process_instruction, mock_process_instruction_with_feature_set,
+    },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_sdk::sysvar,
-    solana_sdk_ids::vote::id,
+    solana_sdk_ids::{sysvar, vote::id},
     solana_slot_hashes::{SlotHashes, MAX_ENTRIES},
     solana_transaction_context::TransactionAccount,
     solana_vote_program::{
@@ -23,7 +24,6 @@ use {
             VoteStateUpdate, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
-    std::sync::Arc,
 };
 
 fn create_default_rent_account() -> AccountSharedData {
@@ -176,7 +176,9 @@ fn process_deprecated_instruction(
     instruction_accounts: Vec<AccountMeta>,
     expected_result: Result<(), InstructionError>,
 ) -> Vec<AccountSharedData> {
-    mock_process_instruction(
+    let mut deprecated_feature_set = FeatureSet::all_enabled();
+    deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
+    mock_process_instruction_with_feature_set(
         &id(),
         Vec::new(),
         instruction_data,
@@ -184,13 +186,9 @@ fn process_deprecated_instruction(
         instruction_accounts,
         expected_result,
         Entrypoint::vm,
-        |invoke_context| {
-            let mut deprecated_feature_set = FeatureSet::all_enabled();
-            deprecated_feature_set.deactivate(&deprecate_legacy_vote_ixs::id());
-            invoke_context
-                .mock_set_feature_set(Arc::new(deprecated_feature_set.runtime_features()));
-        },
         |_invoke_context| {},
+        |_invoke_context| {},
+        &deprecated_feature_set.runtime_features(),
     )
 }
 

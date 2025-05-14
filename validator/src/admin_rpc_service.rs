@@ -17,20 +17,22 @@ use {
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
-    solana_sdk::{
-        exit::Exit,
-        pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair, Signer},
-    },
+    solana_signer::Signer,
+    solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
         net::SocketAddr,
         path::{Path, PathBuf},
-        sync::{Arc, RwLock},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, RwLock,
+        },
         thread::{self, Builder},
         time::{Duration, SystemTime},
     },
@@ -43,6 +45,7 @@ pub struct AdminRpcRequestMetadata {
     pub start_time: SystemTime,
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
     pub validator_exit: Arc<RwLock<Exit>>,
+    pub validator_exit_backpressure: HashMap<String, Arc<AtomicBool>>,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub tower_storage: Arc<dyn TowerStorage>,
     pub staked_nodes_overrides: Arc<RwLock<HashMap<Pubkey, u64>>>,
@@ -266,6 +269,30 @@ impl AdminRpc for AdminRpcImpl {
                 warn!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
+                if !meta.validator_exit_backpressure.is_empty() {
+                    let service_names = meta.validator_exit_backpressure.keys();
+                    info!("Wait for these services to complete: {service_names:?}");
+                    loop {
+                        // The initial sleep is a grace period to allow the services to raise their
+                        // backpressure flags.
+                        // Subsequent sleeps are to throttle how often we check and log.
+                        thread::sleep(Duration::from_secs(1));
+
+                        let mut any_flags_raised = false;
+                        for (name, flag) in meta.validator_exit_backpressure.iter() {
+                            let is_flag_raised = flag.load(Ordering::Relaxed);
+                            if is_flag_raised {
+                                info!("{name}'s exit backpressure flag is raised");
+                                any_flags_raised = true;
+                            }
+                        }
+                        if !any_flags_raised {
+                            break;
+                        }
+                    }
+                    info!("All services have completed");
+                }
+
                 // TODO: Debug why Exit doesn't always cause the validator to fully exit
                 // (rocksdb background processing or some other stuck thread perhaps?).
                 //
@@ -280,6 +307,7 @@ impl AdminRpc for AdminRpcImpl {
                 std::process::exit(0);
             })
             .unwrap();
+
         Ok(())
     }
 
@@ -869,6 +897,7 @@ mod tests {
     use {
         super::*,
         serde_json::Value,
+        solana_account::{Account, AccountSharedData},
         solana_accounts_db::{
             accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
             accounts_index::AccountSecondaryIndexes,
@@ -878,7 +907,6 @@ mod tests {
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
         solana_gossip::cluster_info::{ClusterInfo, Node},
-        solana_inline_spl::token,
         solana_ledger::{
             create_new_tmp_ledger,
             genesis_utils::{
@@ -888,18 +916,16 @@ mod tests {
         solana_net_utils::bind_to_unspecified,
         solana_program_option::COption,
         solana_program_pack::Pack,
+        solana_pubkey::Pubkey,
         solana_rpc::rpc::create_validator_exit,
         solana_runtime::{
             bank::{Bank, BankTestConfig},
             bank_forks::BankForks,
         },
-        solana_sdk::{
-            account::{Account, AccountSharedData},
-            pubkey::Pubkey,
-            system_program,
-        },
         solana_streamer::socket::SocketAddrSpace,
+        solana_system_interface::program as system_program,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+        spl_generic_token::token,
         spl_token_2022::state::{Account as TokenAccount, AccountState as TokenAccountState, Mint},
         std::{collections::HashSet, fs::remove_dir_all, sync::atomic::AtomicBool},
     };
@@ -925,8 +951,8 @@ mod tests {
             let cluster_info = Arc::new(ClusterInfo::new(
                 ContactInfo::new(
                     keypair.pubkey(),
-                    solana_sdk::timing::timestamp(), // wallclock
-                    0u16,                            // shred_version
+                    solana_time_utils::timestamp(), // wallclock
+                    0u16,                           // shred_version
                 ),
                 keypair,
                 SocketAddrSpace::Unspecified,
@@ -947,6 +973,7 @@ mod tests {
                 start_time: SystemTime::now(),
                 start_progress,
                 validator_exit,
+                validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: Arc::new(RwLock::new(vec![vote_keypair])),
                 tower_storage: Arc::new(NullTowerStorage {}),
                 post_init: Arc::new(RwLock::new(Some(AdminRpcRequestMetadataPostInit {
@@ -1379,6 +1406,7 @@ mod tests {
                 start_time: SystemTime::now(),
                 start_progress: start_progress.clone(),
                 validator_exit: validator_config.validator_exit.clone(),
+                validator_exit_backpressure: HashMap::default(),
                 authorized_voter_keypairs: authorized_voter_keypairs.clone(),
                 tower_storage: Arc::new(NullTowerStorage {}),
                 post_init: post_init.clone(),

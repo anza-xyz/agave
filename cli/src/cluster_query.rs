@@ -2435,12 +2435,4 @@ mod tests {
             }
         );
     }
-
-    #[test]
-    fn check_default_rpc_port_inline() {
-        assert_eq!(
-            DEFAULT_RPC_PORT_STR,
-            solana_sdk::rpc_port::DEFAULT_RPC_PORT_STR
-        )
-    }
 }

@@ -1,10 +1,10 @@
 use {
     clap::{builder::ValueParser, crate_description, crate_name, ArgAction, ColorChoice, Parser},
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
-    solana_sdk::{net::DEFAULT_TPU_COALESCE, quic::QUIC_PORT_OFFSET},
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_streamer::quic::{
         DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE, DEFAULT_MAX_STAKED_CONNECTIONS,
-        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS,
+        DEFAULT_MAX_STREAMS_PER_MS, DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_TPU_COALESCE,
     },
     std::{
         net::{IpAddr, SocketAddr},
@@ -91,6 +91,19 @@ pub struct Cli {
     /// Range to use for dynamically assigned ports
     #[arg(long, value_parser = parse_port_range, value_name = "MIN_PORT-MAX_PORT", default_value = get_default_port_range())]
     pub dynamic_port_range: (u16, u16),
+
+    /// Optional TPU address to bind to. If not specified, the vortexor will bind to
+    /// the first available port in the dynamic port range. When this argument is
+    /// specified, the --bind-address and --dynamic-port-range arguments are ignored.
+    #[arg(long, value_name = "HOST:PORT")]
+    pub tpu_address: Option<SocketAddr>,
+
+    /// Optional TPU-forward address to bind to. If not specified, the vortexor will bind to
+    /// the first available port in the dynamic port range after binding the tpu_address.
+    /// When this argument is specified, the --bind-address and --dynamic-port-range
+    /// arguments are ignored.
+    #[arg(long, value_name = "HOST:PORT")]
+    pub tpu_forward_address: Option<SocketAddr>,
 
     /// Controls the max concurrent connections per IpAddr.
     #[arg(long, default_value_t = DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER)]

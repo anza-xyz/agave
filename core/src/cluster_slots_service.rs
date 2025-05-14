@@ -1,12 +1,13 @@
 pub mod cluster_slots;
+pub mod slot_supporters;
 use {
     cluster_slots::ClusterSlots,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::clock::Slot,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -119,12 +120,7 @@ impl ClusterSlotsService {
                 }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
-            cluster_slots.update(
-                root_bank.slot(),
-                epoch_specs.current_epoch_staked_nodes(),
-                &cluster_info,
-                root_bank.epoch(),
-            );
+            cluster_slots.update(&root_bank, &cluster_info);
             process_cluster_slots_updates_elapsed.stop();
 
             cluster_slots_service_timing.update(
@@ -199,7 +195,8 @@ mod test {
     use {
         super::*,
         solana_gossip::{cluster_info::Node, crds_data::LowestSlot},
-        solana_sdk::signature::{Keypair, Signer},
+        solana_keypair::Keypair,
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
     };
 

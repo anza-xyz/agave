@@ -7,18 +7,24 @@
     allow(dead_code, unused_imports)
 )]
 
-use {solana_sdk::signer::keypair::Keypair, std::slice};
+use {solana_keypair::Keypair, std::slice};
 
 extern crate test;
 
 use {
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
+    solana_account::AccountSharedData,
     solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
+    solana_client_traits::SyncClient,
+    solana_instruction::{AccountMeta, Instruction},
     solana_measure::measure::Measure,
+    solana_message::Message,
+    solana_program_entrypoint::SUCCESS,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
         serialization::serialize_parameters,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
@@ -29,17 +35,8 @@ use {
         ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
         verifier::RequisiteVerifier, vm::ContextObject,
     },
-    solana_sdk::{
-        account::AccountSharedData,
-        bpf_loader,
-        client::SyncClient,
-        entrypoint::SUCCESS,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        native_loader,
-        pubkey::Pubkey,
-        signature::Signer,
-    },
+    solana_sdk_ids::{bpf_loader, native_loader},
+    solana_signer::Signer,
     solana_svm_feature_set::SVMFeatureSet,
     solana_transaction_context::InstructionAccount,
     std::{mem, sync::Arc},

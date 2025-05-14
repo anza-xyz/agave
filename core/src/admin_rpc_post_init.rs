@@ -4,8 +4,9 @@ use {
         repair::{outstanding_requests::OutstandingRequests, serve_repair::ShredRepairType},
     },
     solana_gossip::cluster_info::ClusterInfo,
+    solana_pubkey::Pubkey,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{pubkey::Pubkey, quic::NotifyKeyUpdate},
     std::{
         collections::HashSet,
         net::UdpSocket,

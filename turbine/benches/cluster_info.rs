@@ -8,18 +8,17 @@ use {
         cluster_info::{ClusterInfo, Node},
         contact_info::ContactInfo,
     },
+    solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         shred::{Shred, ShredFlags},
     },
     solana_net_utils::bind_to_unspecified,
+    solana_pubkey as pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_sdk::{
-        pubkey,
-        signature::{Keypair, Signer},
-        timing::{timestamp, AtomicInterval},
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_time_utils::{timestamp, AtomicInterval},
     solana_turbine::{
         broadcast_stage::{
             broadcast_metrics::TransmitShredsStats, broadcast_shreds, BroadcastStage,

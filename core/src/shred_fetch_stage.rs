@@ -6,19 +6,18 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_keypair::Keypair,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
+    solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
-        Packet, PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH,
+        PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef, PinnedPacketBatch,
+        PACKETS_PER_BATCH,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        packet::{Meta, PACKET_DATA_SIZE},
-        pubkey::Pubkey,
-        signature::Keypair,
-    },
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
@@ -117,17 +116,21 @@ impl ShredFetchStage {
                     );
                 }
                 // Discard packets if repair nonce does not verify.
-                let now = solana_sdk::timing::timestamp();
+                let now = solana_time_utils::timestamp();
                 let mut outstanding_repair_requests =
                     repair_context.outstanding_repair_requests.write().unwrap();
                 packet_batch
                     .iter_mut()
                     .filter(|packet| !packet.meta().discard())
-                    .for_each(|packet| {
+                    .for_each(|mut packet| {
                         // Have to set repair flag here so that the nonce is
                         // taken off the shred's payload.
                         packet.meta_mut().flags |= PacketFlags::REPAIR;
-                        if !verify_repair_nonce(packet, now, &mut outstanding_repair_requests) {
+                        if !verify_repair_nonce(
+                            packet.as_ref(),
+                            now,
+                            &mut outstanding_repair_requests,
+                        ) {
                             packet.meta_mut().set_discard(true);
                         }
                     });
@@ -145,10 +148,10 @@ impl ShredFetchStage {
                 )
             };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
-            for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
+            for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
                     || should_discard_shred(
-                        packet,
+                        packet.as_ref(),
                         last_root,
                         max_slot,
                         shred_version,
@@ -377,8 +380,8 @@ impl RepairContext {
 // Returns false if repair nonce is invalid and packet should be discarded.
 #[must_use]
 fn verify_repair_nonce(
-    packet: &Packet,
-    now: u64, // solana_sdk::timing::timestamp()
+    packet: PacketRef,
+    now: u64, // solana_time_utils::timestamp()
     outstanding_repair_requests: &mut OutstandingShredRepairs,
 ) -> bool {
     debug_assert!(packet.meta().flags.contains(PacketFlags::REPAIR));
@@ -405,8 +408,11 @@ pub(crate) fn receive_quic_datagrams(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "receive_quic_datagrams");
+        let mut packet_batch = PinnedPacketBatch::new_with_recycler(
+            &recycler,
+            PACKETS_PER_BATCH,
+            "receive_quic_datagrams",
+        );
         unsafe {
             packet_batch.set_len(PACKETS_PER_BATCH);
         };
@@ -430,7 +436,7 @@ pub(crate) fn receive_quic_datagrams(
             .count();
         if size > 0 {
             packet_batch.truncate(size);
-            if sender.send(packet_batch).is_err() {
+            if sender.send(packet_batch.into()).is_err() {
                 return; // The receiver end of the channel is disconnected.
             }
         }

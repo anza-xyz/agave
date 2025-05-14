@@ -19,8 +19,7 @@ pub use {
     solana_tls_utils::QuicClientCertificate,
 };
 
-pub(crate) fn create_client_config(client_certificate: QuicClientCertificate) -> ClientConfig {
-    // adapted from QuicLazyInitializedEndpoint::create_endpoint
+pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -> ClientConfig {
     let mut crypto = tls_client_config_builder()
         .with_client_auth_cert(
             vec![client_certificate.certificate.clone()],
@@ -57,9 +56,7 @@ pub(crate) fn create_client_endpoint(
         }
         BindTarget::Socket(socket) => {
             let runtime = default_runtime()
-                .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::Other, "no async runtime found")
-                })
+                .ok_or_else(|| std::io::Error::other("no async runtime found"))
                 .map_err(IoErrorWithPartialEq::from)?;
             Endpoint::new(EndpointConfig::default(), None, socket, runtime)
                 .map_err(IoErrorWithPartialEq::from)?

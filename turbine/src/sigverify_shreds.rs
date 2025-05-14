@@ -7,22 +7,21 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender},
     itertools::{Either, Itertools},
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_keypair::Keypair,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred,
         sigverify_shreds::{verify_shreds_gpu, LruCache},
     },
     solana_perf::{self, deduper::Deduper, packet::PacketBatch, recycler_cache::RecyclerCache},
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
         bank_forks::BankForks,
     },
-    solana_sdk::{
-        clock::Slot,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_signer::Signer,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
     static_assertions::const_assert_eq,
     std::{
@@ -166,12 +165,12 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| {
                 !packet.meta().discard()
-                    && shred::wire::get_shred(packet)
+                    && shred::wire::get_shred(packet.as_ref())
                         .map(|shred| deduper.dedup(shred))
                         .unwrap_or(true)
                     && !packet.meta().repair()
             })
-            .map(|packet| packet.meta_mut().set_discard(true))
+            .map(|mut packet| packet.meta_mut().set_discard(true))
             .count()
     });
     let (working_bank, root_bank) = {
@@ -196,9 +195,9 @@ fn run_shred_sigverify<const K: usize>(
             .par_iter_mut()
             .flatten()
             .filter(|packet| !packet.meta().discard())
-            .for_each(|packet| {
+            .for_each(|mut packet| {
                 let repair = packet.meta().repair();
-                let Some(shred) = shred::layout::get_shred_mut(packet) else {
+                let Some(shred) = shred::layout::get_shred_mut(&mut packet) else {
                     packet.meta_mut().set_discard(true);
                     return;
                 };
@@ -381,7 +380,7 @@ fn get_slot_leaders(
         .flat_map(|batch| batch.iter_mut())
         .filter(|packet| !packet.meta().discard())
         .filter(|packet| {
-            let shred = shred::layout::get_shred(packet);
+            let shred = shred::layout::get_shred(packet.as_ref());
             let Some(slot) = shred.and_then(shred::layout::get_slot) else {
                 return true;
             };
@@ -395,7 +394,7 @@ fn get_slot_leaders(
                 })
                 .is_none()
         })
-        .for_each(|packet| packet.meta_mut().set_discard(true));
+        .for_each(|mut packet| packet.meta_mut().set_discard(true));
     leaders
 }
 
@@ -524,18 +523,22 @@ impl ShredSigVerifyStats {
 mod tests {
     use {
         super::*,
+        solana_entry::entry::create_ticks,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             genesis_utils::create_genesis_config_with_leader,
-            shred::{Shred, ShredFlags},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
         },
-        solana_perf::packet::Packet,
+        solana_perf::packet::{Packet, PinnedPacketBatch},
         solana_runtime::bank::Bank,
-        solana_sdk::signature::{Keypair, Signer},
+        solana_signer::Signer,
     };
 
     #[test]
     fn test_sigverify_shreds_verify_batches() {
         let leader_keypair = Arc::new(Keypair::new());
+        let wrong_keypair = Keypair::new();
         let leader_pubkey = leader_keypair.pubkey();
         let bank = Bank::new_for_tests(
             &create_genesis_config_with_leader(100, &leader_pubkey, 10).genesis_config,
@@ -543,42 +546,50 @@ mod tests {
         let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
         let bank_forks = BankForks::new_rw_arc(bank);
         let batch_size = 2;
-        let mut batch = PacketBatch::with_capacity(batch_size);
+        let mut batch = PinnedPacketBatch::with_capacity(batch_size);
         batch.resize(batch_size, Packet::default());
         let mut batches = vec![batch];
 
-        let mut shred = Shred::new_from_data(
+        let entries = create_ticks(1, 1, Hash::new_unique());
+        let shredder = Shredder::new(1, 0, 1, 0).unwrap();
+        let (shreds_data, _shreds_code) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true,
+            Some(Hash::new_unique()),
             0,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
             0,
-            0,
-            0xc0de,
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
         );
-        shred.sign(&leader_keypair);
+        let (shreds_data_wrong, _shreds_code_wrong) = shredder.entries_to_shreds(
+            &wrong_keypair,
+            &entries,
+            true,
+            Some(Hash::new_unique()),
+            0,
+            0,
+            true,
+            &ReedSolomonCache::default(),
+            &mut ProcessShredsStats::default(),
+        );
+
+        let shred = shreds_data[0].clone();
         batches[0][0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][0].meta_mut().size = shred.payload().len();
 
-        let mut shred = Shred::new_from_data(
-            0,
-            0xbeef,
-            0xc0de,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        let wrong_keypair = Keypair::new();
-        shred.sign(&wrong_keypair);
+        let shred = shreds_data_wrong[0].clone();
         batches[0][1].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
         batches[0][1].meta_mut().size = shred.payload().len();
 
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         let working_bank = bank_forks.read().unwrap().working_bank();
+        let mut batches = batches
+            .into_iter()
+            .map(PacketBatch::from)
+            .collect::<Vec<_>>();
         verify_packets(
             &thread_pool,
             &Pubkey::new_unique(), // self_pubkey
@@ -588,7 +599,7 @@ mod tests {
             &mut batches,
             &cache,
         );
-        assert!(!batches[0][0].meta().discard());
-        assert!(batches[0][1].meta().discard());
+        assert!(!batches[0].get(0).unwrap().meta().discard());
+        assert!(batches[0].get(1).unwrap().meta().discard());
     }
 }

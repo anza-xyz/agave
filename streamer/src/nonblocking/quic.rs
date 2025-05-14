@@ -10,9 +10,8 @@ use {
         quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
-    async_channel::{bounded as async_bounded, Receiver as AsyncReceiver, Sender as AsyncSender},
-    bytes::Bytes,
-    crossbeam_channel::{Sender, TrySendError},
+    bytes::{BufMut, Bytes, BytesMut},
+    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
@@ -23,7 +22,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{PacketBatch, PacketBatchRecycler, PACKETS_PER_BATCH},
+    solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_MAX_STAKED_CONCURRENT_STREAMS,
@@ -47,6 +46,7 @@ use {
             Arc, RwLock,
         },
         task::Poll,
+        thread,
         time::{Duration, Instant},
     },
     tokio::{
@@ -315,14 +315,15 @@ async fn run_server(
         .store(endpoints.len(), Ordering::Relaxed);
     let staked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
-    let (sender, receiver) = async_bounded(coalesce_channel_size);
-    tokio::spawn(packet_batch_sender(
-        packet_sender,
-        receiver,
-        exit.clone(),
-        stats.clone(),
-        coalesce,
-    ));
+    let (sender, receiver) = bounded(coalesce_channel_size);
+
+    thread::spawn({
+        let exit = exit.clone();
+        let stats = stats.clone();
+        move || {
+            packet_batch_sender(packet_sender, receiver, exit, stats, coalesce);
+        }
+    });
 
     let mut accepts = endpoints
         .iter()
@@ -524,7 +525,7 @@ struct NewConnectionHandlerParams {
     // but I've found that it's simply too easy to accidentally block
     // in async code when using the crossbeam channel, so for the sake of maintainability,
     // we're sticking with an async channel
-    packet_sender: AsyncSender<PacketAccumulator>,
+    packet_sender: Sender<PacketAccumulator>,
     remote_pubkey: Option<Pubkey>,
     peer_type: ConnectionPeerType,
     total_stake: u64,
@@ -536,7 +537,7 @@ struct NewConnectionHandlerParams {
 
 impl NewConnectionHandlerParams {
     fn new_unstaked(
-        packet_sender: AsyncSender<PacketAccumulator>,
+        packet_sender: Sender<PacketAccumulator>,
         max_connections_per_peer: usize,
         stats: Arc<StreamerStats>,
     ) -> NewConnectionHandlerParams {
@@ -711,7 +712,7 @@ async fn setup_connection(
     client_connection_tracker: ClientConnectionTracker,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
-    packet_sender: AsyncSender<PacketAccumulator>,
+    packet_sender: Sender<PacketAccumulator>,
     max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
@@ -887,22 +888,20 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
     }
 }
 
-// Holder(s) of the AsyncSender<PacketAccumulator> on the other end should not
+// Holder(s) of the Sender<PacketAccumulator> on the other end should not
 // wait for this function to exit
-async fn packet_batch_sender(
+fn packet_batch_sender(
     packet_sender: Sender<PacketBatch>,
-    packet_receiver: AsyncReceiver<PacketAccumulator>,
+    packet_receiver: Receiver<PacketAccumulator>,
     exit: Arc<AtomicBool>,
     stats: Arc<StreamerStats>,
     coalesce: Duration,
 ) {
     trace!("enter packet_batch_sender");
-    let recycler = PacketBatchRecycler::default();
     let mut batch_start_time = Instant::now();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "quic_packet_coalescer");
+        let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
         let mut total_bytes: usize = 0;
 
         stats
@@ -923,7 +922,7 @@ async fn packet_batch_sender(
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
-                if let Err(e) = packet_sender.try_send(packet_batch) {
+                if let Err(e) = packet_sender.try_send(packet_batch.into()) {
                     stats
                         .total_packet_batch_send_err
                         .fetch_add(1, Ordering::Relaxed);
@@ -954,7 +953,7 @@ async fn packet_batch_sender(
 
             let timeout_res = if !packet_batch.is_empty() {
                 // If we get here, elapsed < coalesce (see above if condition)
-                timeout(coalesce - elapsed, packet_receiver.recv()).await
+                packet_receiver.recv_timeout(coalesce - elapsed)
             } else {
                 // Small bit of non-idealness here: the holder(s) of the other end
                 // of packet_receiver must drop it (without waiting for us to exit)
@@ -963,40 +962,46 @@ async fn packet_batch_sender(
                 // only time this happens is when we tear down the server
                 // and at that time the other end does indeed not wait for us
                 // to exit here
-                Ok(packet_receiver.recv().await)
+                packet_receiver
+                    .recv()
+                    .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
             };
 
-            if let Ok(Ok(packet_accumulator)) = timeout_res {
+            if let Ok(mut packet_accumulator) = timeout_res {
                 // Start the timeout from when the packet batch first becomes non-empty
                 if packet_batch.is_empty() {
                     batch_start_time = Instant::now();
                 }
 
-                unsafe {
-                    let new_len = packet_batch.len() + 1;
-                    packet_batch.set_len(new_len);
-                }
-
-                let i = packet_batch.len() - 1;
-                *packet_batch[i].meta_mut() = packet_accumulator.meta;
+                // 86% of transactions/packets come in one chunk. In that case,
+                // we can just move the chunk to the `Packet` and no copy is
+                // made.
+                // 14% of them come in multiple chunks. In that case, we copy
+                // them into one `Bytes` buffer. We make a copy once, with
+                // intention to not do it again.
                 let num_chunks = packet_accumulator.chunks.len();
-                let mut offset = 0;
-                for chunk in packet_accumulator.chunks {
-                    packet_batch[i].buffer_mut()[offset..offset + chunk.len()]
-                        .copy_from_slice(&chunk);
-                    offset += chunk.len();
-                }
+                let mut packet = if packet_accumulator.chunks.len() == 1 {
+                    BytesPacket::new(
+                        packet_accumulator.chunks.pop().expect("expected one chunk"),
+                        packet_accumulator.meta,
+                    )
+                } else {
+                    let size: usize = packet_accumulator.chunks.iter().map(Bytes::len).sum();
+                    let mut buf = BytesMut::with_capacity(size);
+                    for chunk in packet_accumulator.chunks {
+                        buf.put_slice(&chunk);
+                    }
+                    BytesPacket::new(buf.freeze(), packet_accumulator.meta)
+                };
 
-                total_bytes += packet_batch[i].meta().size;
+                total_bytes += packet.meta().size;
 
-                if let Some(signature) = signature_if_should_track_packet(&packet_batch[i])
-                    .ok()
-                    .flatten()
-                {
+                if let Some(signature) = signature_if_should_track_packet(&packet).ok().flatten() {
                     packet_perf_measure.push((*signature, packet_accumulator.start_time));
                     // we set the PERF_TRACK_PACKET on
-                    packet_batch[i].meta_mut().set_track_performance(true);
+                    packet.meta_mut().set_track_performance(true);
                 }
+                packet_batch.push(packet);
                 stats
                     .total_chunks_processed_by_batcher
                     .fetch_add(num_chunks, Ordering::Relaxed);
@@ -1226,7 +1231,7 @@ enum StreamState {
 async fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
-    packet_sender: &AsyncSender<PacketAccumulator>,
+    packet_sender: &Sender<PacketAccumulator>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
 ) -> Result<StreamState, ()> {
@@ -1270,10 +1275,22 @@ async fn handle_chunks(
     let bytes_sent = accum.meta.size;
     let chunks_sent = accum.chunks.len();
 
-    if let Err(err) = packet_sender.send(accum.clone()).await {
+    if let Err(err) = packet_sender.try_send(accum.clone()) {
         stats
             .total_handle_chunk_to_packet_batcher_send_err
             .fetch_add(1, Ordering::Relaxed);
+        match err {
+            TrySendError::Full(_) => {
+                stats
+                    .total_handle_chunk_to_packet_batcher_send_full_err
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            TrySendError::Disconnected(_) => {
+                stats
+                    .total_handle_chunk_to_packet_batcher_send_disconnected_err
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
         trace!("packet batch send error {:?}", err);
     } else {
         stats
@@ -1551,7 +1568,6 @@ pub mod test {
             quic::DEFAULT_TPU_COALESCE,
         },
         assert_matches::assert_matches,
-        async_channel::unbounded as async_unbounded,
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
@@ -1695,17 +1711,22 @@ pub mod test {
     async fn test_packet_batcher() {
         solana_logger::setup();
         let (pkt_batch_sender, pkt_batch_receiver) = unbounded();
-        let (ptk_sender, pkt_receiver) = async_unbounded();
+        let (ptk_sender, pkt_receiver) = unbounded();
         let exit = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(StreamerStats::default());
 
-        let handle = tokio::spawn(packet_batch_sender(
-            pkt_batch_sender,
-            pkt_receiver,
-            exit.clone(),
-            stats,
-            DEFAULT_TPU_COALESCE,
-        ));
+        let handle = thread::spawn({
+            let exit = exit.clone();
+            move || {
+                packet_batch_sender(
+                    pkt_batch_sender,
+                    pkt_receiver,
+                    exit,
+                    stats,
+                    DEFAULT_TPU_COALESCE,
+                );
+            }
+        });
 
         let num_packets = 1000;
 
@@ -1719,7 +1740,7 @@ pub mod test {
                 chunks: smallvec::smallvec![bytes],
                 start_time: Instant::now(),
             };
-            ptk_sender.send(packet_accum).await.unwrap();
+            ptk_sender.send(packet_accum).unwrap();
         }
         let mut i = 0;
         let start = Instant::now();
@@ -1734,7 +1755,7 @@ pub mod test {
         exit.store(true, Ordering::Relaxed);
         // Explicit drop to wake up packet_batch_sender
         drop(ptk_sender);
-        handle.await.unwrap();
+        handle.join().unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]

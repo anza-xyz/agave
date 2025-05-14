@@ -70,12 +70,16 @@ pub(crate) fn process_message(
 
         *accumulated_consumed_units =
             accumulated_consumed_units.saturating_add(compute_units_consumed);
-        execute_timings.details.accumulate_program(
-            program_id,
-            process_instruction_us,
-            compute_units_consumed,
-            result.is_err(),
-        );
+        // The per_program_timings are only used for metrics reporting at the trace
+        // level, so they should only be accumulated when trace level is enabled.
+        if log::log_enabled!(log::Level::Trace) {
+            execute_timings.details.accumulate_program(
+                program_id,
+                process_instruction_us,
+                compute_units_consumed,
+                result.is_err(),
+            );
+        }
         invoke_context.timings = {
             execute_timings.details.accumulate(&invoke_context.timings);
             ExecuteDetailsTimings::default()
@@ -237,11 +241,12 @@ mod tests {
             ]),
         ));
         let sysvar_cache = SysvarCache::default();
+        let feature_set = SVMFeatureSet::all_enabled();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -295,7 +300,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -339,7 +344,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -470,11 +475,12 @@ mod tests {
             Some(transaction_context.get_key_of_account_at_index(0).unwrap()),
         ));
         let sysvar_cache = SysvarCache::default();
+        let feature_set = SVMFeatureSet::all_enabled();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -513,7 +519,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -549,7 +555,7 @@ mod tests {
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(
@@ -670,12 +676,12 @@ mod tests {
                 }
             }
         }
-
+        let feature_set = SVMFeatureSet::all_enabled();
         let environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::new(SVMFeatureSet::all_enabled()),
+            &feature_set,
             &sysvar_cache,
         );
         let mut invoke_context = InvokeContext::new(

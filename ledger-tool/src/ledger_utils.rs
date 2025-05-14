@@ -7,11 +7,13 @@ use {
         hardened_unpack::open_genesis_config,
         utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
     },
+    solana_clock::Slot,
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
         snapshot_packager_service::PendingSnapshotPackages,
         validator::{supported_scheduling_mode, BlockProductionMethod, BlockVerificationMethod},
     },
+    solana_genesis_config::GenesisConfig,
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
     },
@@ -25,6 +27,7 @@ use {
         use_snapshot_archives_at_startup::UseSnapshotArchivesAtStartup,
     },
     solana_measure::measure_time,
+    solana_pubkey::Pubkey,
     solana_rpc::{
         block_meta_service::BlockMetaService, transaction_status_service::TransactionStatusService,
     },
@@ -40,10 +43,7 @@ use {
         snapshot_hash::StartingSnapshotHashes,
         snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
     },
-    solana_sdk::{
-        clock::Slot, genesis_config::GenesisConfig, pubkey::Pubkey,
-        transaction::VersionedTransaction,
-    },
+    solana_transaction::versioned::VersionedTransaction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::{
         path::{Path, PathBuf},
@@ -362,12 +362,6 @@ pub fn load_and_process_ledger(
         )
         .map_err(LoadAndProcessLedgerError::LoadBankForks)?;
     let leader_schedule_cache = Arc::new(leader_schedule_cache);
-    let block_verification_method = value_t!(
-        arg_matches,
-        "block_verification_method",
-        BlockVerificationMethod
-    )
-    .unwrap_or_default();
     let block_production_method = value_t!(
         arg_matches,
         "block_production_method",

@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use crate::account_storage::meta::StoredAccountMeta;
+use crate::append_vec::StoredAccountMeta;
 use {
     crate::{
         account_info::AccountInfo,
@@ -28,7 +28,8 @@ pub const ALIGN_BOUNDARY_OFFSET: usize = mem::size_of::<u64>();
 #[macro_export]
 macro_rules! u64_align {
     ($addr: expr) => {
-        ($addr + (ALIGN_BOUNDARY_OFFSET - 1)) & !(ALIGN_BOUNDARY_OFFSET - 1)
+        ($addr + ($crate::accounts_file::ALIGN_BOUNDARY_OFFSET - 1))
+            & !($crate::accounts_file::ALIGN_BOUNDARY_OFFSET - 1)
     };
 }
 
@@ -88,6 +89,9 @@ impl AccountsFile {
     }
 
     /// true if this storage can possibly be appended to (independent of capacity check)
+    //
+    // NOTE: Only used by ancient append vecs "append" method, which is test-only now.
+    #[cfg(test)]
     pub(crate) fn can_append(&self) -> bool {
         match self {
             Self::AppendVec(av) => av.can_append(),
@@ -325,13 +329,25 @@ impl AccountsFile {
         })
     }
 
-    /// for each offset in `sorted_offsets`, return the account size
-    pub(crate) fn get_account_sizes(&self, sorted_offsets: &[usize]) -> Vec<usize> {
+    /// Calculate the amount of storage required for an account with the passed
+    /// in data_len
+    pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
         match self {
-            Self::AppendVec(av) => av.get_account_sizes(sorted_offsets),
+            Self::AppendVec(av) => av.calculate_stored_size(data_len),
             Self::TieredStorage(ts) => ts
                 .reader()
-                .and_then(|reader| reader.get_account_sizes(sorted_offsets).ok())
+                .expect("Reader must be initalized as stored size is specific to format")
+                .calculate_stored_size(data_len),
+        }
+    }
+
+    /// for each offset in `sorted_offsets`, get the data size
+    pub(crate) fn get_account_data_lens(&self, sorted_offsets: &[usize]) -> Vec<usize> {
+        match self {
+            Self::AppendVec(av) => av.get_account_data_lens(sorted_offsets),
+            Self::TieredStorage(ts) => ts
+                .reader()
+                .and_then(|reader| reader.get_account_data_lens(sorted_offsets).ok())
                 .unwrap_or_default(),
         }
     }

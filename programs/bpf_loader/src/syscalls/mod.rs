@@ -4900,11 +4900,12 @@ mod tests {
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let feature_set = SVMFeatureSet::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::<SVMFeatureSet>::default(),
+            &feature_set,
             &sysvar_cache,
         );
 
@@ -4961,11 +4962,12 @@ mod tests {
         compute_budget.compute_unit_limit = expected_cus;
 
         with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let feature_set = SVMFeatureSet::default();
         invoke_context.environment_config = EnvironmentConfig::new(
             Hash::default(),
             0,
             &MockCallback {},
-            Arc::<SVMFeatureSet>::default(),
+            &feature_set,
             &sysvar_cache,
         );
 

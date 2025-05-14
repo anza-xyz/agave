@@ -4,11 +4,16 @@ use {
     log::*,
     serde_derive::{Deserialize, Serialize},
     serde_json::Result,
+    solana_account::{
+        create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
+    },
     solana_bpf_loader_program::{
         create_vm, load_program_from_bytes, syscalls::create_program_runtime_environment_v1,
     },
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
+    solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         invoke_context::InvokeContext,
         loaded_programs::{
@@ -17,19 +22,13 @@ use {
         serialization::serialize_parameters,
         with_mock_invoke_context,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_sbpf::{
         assembler::assemble, elf::Executable, static_analysis::Analysis,
         verifier::RequisiteVerifier,
     },
-    solana_sdk::{
-        account::{create_account_shared_data_for_test, AccountSharedData},
-        account_utils::StateMut,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        pubkey::Pubkey,
-        slot_history::Slot,
-        sysvar,
-    },
+    solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_transaction_context::{IndexOfAccount, InstructionAccount},
     std::{
         collections::HashMap,
@@ -502,7 +501,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let program_index: u16 = instruction_accounts.len().try_into().unwrap();
     transaction_accounts.push((
         loader_id,
-        AccountSharedData::new(0, 0, &solana_sdk::native_loader::id()),
+        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
     ));
     transaction_accounts.push((
         program_id, // ID of the loaded program. It can modify accounts with the same owner key

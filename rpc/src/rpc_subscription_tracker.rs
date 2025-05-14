@@ -2,15 +2,16 @@ use {
     crate::rpc_subscriptions::{NotificationEntry, RpcNotification, TimestampedNotificationEntry},
     dashmap::{mapref::entry::Entry as DashEntry, DashMap},
     solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_metrics::{CounterToken, TokenCounter},
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::filter::RpcFilterType,
     solana_runtime::{
         bank::{TransactionLogCollectorConfig, TransactionLogCollectorFilter},
         bank_forks::BankForks,
     },
-    solana_sdk::{
-        clock::Slot, commitment_config::CommitmentConfig, pubkey::Pubkey, signature::Signature,
-    },
+    solana_signature::Signature,
     solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
     std::{
         collections::hash_map::{Entry, HashMap},
@@ -717,7 +718,7 @@ mod tests {
         assert_eq!(*info.last_notified_slot.read().unwrap(), 0);
 
         let account_params = SubscriptionParams::Account(AccountSubscriptionParams {
-            pubkey: solana_inline_spl::token::id(),
+            pubkey: spl_generic_token::token::id(),
             commitment: CommitmentConfig::finalized(),
             encoding: UiAccountEncoding::Base64Zstd,
             data_slice: None,
@@ -757,7 +758,7 @@ mod tests {
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
 
         let account_params = SubscriptionParams::Account(AccountSubscriptionParams {
-            pubkey: solana_inline_spl::token::id(),
+            pubkey: spl_generic_token::token::id(),
             commitment: CommitmentConfig::finalized(),
             encoding: UiAccountEncoding::Base64Zstd,
             data_slice: None,
@@ -768,7 +769,7 @@ mod tests {
         assert_eq!(counts(&tracker), (0, 0, 0, 0));
 
         let account_params2 = SubscriptionParams::Account(AccountSubscriptionParams {
-            pubkey: solana_inline_spl::token::id(),
+            pubkey: spl_generic_token::token::id(),
             commitment: CommitmentConfig::confirmed(),
             encoding: UiAccountEncoding::Base64Zstd,
             data_slice: None,

@@ -311,6 +311,12 @@ impl Serialize for VoteAccount {
     }
 }
 
+impl<'a> From<&'a VoteAccount> for AccountSharedData {
+    fn from(account: &'a VoteAccount) -> Self {
+        account.0.account.clone()
+    }
+}
+
 impl From<VoteAccount> for AccountSharedData {
     fn from(account: VoteAccount) -> Self {
         account.0.account.clone()

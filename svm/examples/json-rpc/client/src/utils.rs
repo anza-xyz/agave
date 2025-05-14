@@ -1,13 +1,12 @@
 use {
     borsh::{BorshDeserialize, BorshSerialize},
-    solana_sdk::{
-        pubkey::Pubkey,
-        signer::keypair::{read_keypair_file, Keypair},
-    },
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_pubkey::Pubkey,
     thiserror::Error,
     yaml_rust::YamlLoader,
 };
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("failed to read solana config file: ({0})")]
@@ -21,7 +20,7 @@ pub enum Error {
     Client(#[from] solana_client::client_error::ClientError),
 
     #[error("error in public key derivation: ({0})")]
-    KeyDerivation(#[from] solana_sdk::pubkey::PubkeyError),
+    KeyDerivation(#[from] solana_pubkey::PubkeyError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

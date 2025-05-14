@@ -11,9 +11,13 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_connection_cache::client_connection::ClientConnection,
     solana_cost_model::cost_model::CostModel,
+    solana_fee_structure::{FeeBudgetLimits, FeeDetails},
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
+    solana_keypair::Keypair,
+    solana_packet as packet,
     solana_perf::data_budget::DataBudget,
     solana_poh::poh_recorder::PohRecorder,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
         bank::{Bank, CollectorFeeDetails},
         root_bank_cache::RootBankCache,
@@ -21,27 +25,27 @@ use {
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
     },
-    solana_sdk::{
-        fee::{FeeBudgetLimits, FeeDetails},
-        packet,
-        signer::keypair::Keypair,
-        transaction::MessageHash,
-        transport::TransportError,
-    },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     solana_tpu_client_next::{
-        connection_workers_scheduler::{BindTarget, ConnectionWorkersSchedulerConfig, Fanout},
+        connection_workers_scheduler::{
+            BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
+        },
         leader_updater::LeaderUpdater,
         transaction_batch::TransactionBatch,
         ConnectionWorkersScheduler,
     },
+    solana_transaction::sanitized::MessageHash,
+    solana_transaction_error::TransportError,
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::{runtime::Handle as RuntimeHandle, sync::mpsc},
+    tokio::{
+        runtime::Handle as RuntimeHandle,
+        sync::{mpsc, watch},
+    },
     tokio_util::sync::CancellationToken,
 };
 
@@ -50,7 +54,7 @@ mod packet_container;
 /// [`ForwardingClientOption`] enum represents the available client types for
 /// TPU communication:
 /// * [`ConnectionCacheClient`]: Uses a shared [`ConnectionCache`] to manage
-///       connections.
+///   connections.
 /// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate.
 pub enum ForwardingClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
@@ -109,6 +113,14 @@ impl ForwardAddressGetter {
     }
 }
 
+/// [`SpawnForwardingStageResult`] contains the result of spawning the
+/// [`ForwardingStage`], including the background task handle and a shared
+/// notifier for client address updates.
+pub(crate) struct SpawnForwardingStageResult {
+    pub join_handle: JoinHandle<()>,
+    pub client_updater: Arc<dyn NotifyKeyUpdate + Send + Sync>,
+}
+
 pub(crate) fn spawn_forwarding_stage(
     receiver: Receiver<(BankingPacketBatch, bool)>,
     client: ForwardingClientOption<'_>,
@@ -116,12 +128,12 @@ pub(crate) fn spawn_forwarding_stage(
     root_bank_cache: RootBankCache,
     forward_address_getter: ForwardAddressGetter,
     data_budget: DataBudget,
-) -> JoinHandle<()> {
+) -> SpawnForwardingStageResult {
     let vote_client = VoteClient::new(vote_client_udp_socket, forward_address_getter.clone());
     match client {
         ForwardingClientOption::ConnectionCache(connection_cache) => {
             let non_vote_client =
-                ConnectionCacheClient::new(connection_cache, forward_address_getter);
+                ConnectionCacheClient::new(connection_cache.clone(), forward_address_getter);
             let forwarding_stage = ForwardingStage::new(
                 receiver,
                 vote_client,
@@ -129,10 +141,13 @@ pub(crate) fn spawn_forwarding_stage(
                 root_bank_cache,
                 data_budget,
             );
-            Builder::new()
-                .name("solFwdStage".to_string())
-                .spawn(move || forwarding_stage.run())
-                .unwrap()
+            SpawnForwardingStageResult {
+                join_handle: Builder::new()
+                    .name("solFwdStage".to_string())
+                    .spawn(move || forwarding_stage.run())
+                    .unwrap(),
+                client_updater: connection_cache as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            }
         }
         ForwardingClientOption::TpuClientNext((
             stake_identity,
@@ -148,14 +163,17 @@ pub(crate) fn spawn_forwarding_stage(
             let forwarding_stage = ForwardingStage::new(
                 receiver,
                 vote_client,
-                non_vote_client,
+                non_vote_client.clone(),
                 root_bank_cache,
                 data_budget,
             );
-            Builder::new()
-                .name("solFwdStage".to_string())
-                .spawn(move || forwarding_stage.run())
-                .unwrap()
+            SpawnForwardingStageResult {
+                join_handle: Builder::new()
+                    .name("solFwdStage".to_string())
+                    .spawn(move || forwarding_stage.run())
+                    .unwrap(),
+                client_updater: Arc::new(non_vote_client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            }
         }
     }
 }
@@ -311,7 +329,7 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
                         usize::from(!dropped_packet.meta().is_simple_vote_tx());
                 }
 
-                self.packet_container.insert(packet.clone(), priority);
+                self.packet_container.insert(packet.to_packet(), priority);
             }
         }
     }
@@ -520,8 +538,10 @@ impl LeaderUpdater for ForwardAddressGetter {
     async fn stop(&mut self) {}
 }
 
+#[derive(Clone)]
 struct TpuClientNextClient {
     sender: mpsc::Sender<TransactionBatch>,
+    update_certificate_sender: watch::Sender<Option<StakeIdentity>>,
 }
 
 const METRICS_REPORTING_INTERVAL: Duration = Duration::from_secs(3);
@@ -539,16 +559,24 @@ impl TpuClientNextClient {
         let leader_updater = forward_address_getter.clone();
 
         let config = Self::create_config(bind_socket, stake_identity);
-        let scheduler: ConnectionWorkersScheduler =
-            ConnectionWorkersScheduler::new(Box::new(leader_updater), receiver);
+        let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
+        let scheduler: ConnectionWorkersScheduler = ConnectionWorkersScheduler::new(
+            Box::new(leader_updater),
+            receiver,
+            update_certificate_receiver,
+            cancel.clone(),
+        );
         // leaking handle to this task, as it will run until the cancel signal is received
         runtime_handle.spawn(scheduler.get_stats().report_to_influxdb(
             "forwarding-stage-tpu-client",
             METRICS_REPORTING_INTERVAL,
             cancel.clone(),
         ));
-        let _handle = runtime_handle.spawn(scheduler.run(config, cancel.clone()));
-        Self { sender }
+        let _handle = runtime_handle.spawn(scheduler.run(config));
+        Self {
+            sender,
+            update_certificate_sender,
+        }
     }
 
     fn create_config(
@@ -557,7 +585,7 @@ impl TpuClientNextClient {
     ) -> ConnectionWorkersSchedulerConfig {
         ConnectionWorkersSchedulerConfig {
             bind: BindTarget::Socket(bind_socket),
-            stake_identity: stake_identity.map(Into::into),
+            stake_identity: stake_identity.map(StakeIdentity::new),
             // Cache size of 128 covers all nodes above the P90 slot count threshold,
             // which together account for ~75% of total slots in the epoch.
             num_connections: 128,
@@ -582,6 +610,15 @@ impl ForwardingClient for TpuClientNextClient {
         self.sender
             .try_send(TransactionBatch::new(wire_transactions))
             .map_err(|_e| ForwardingClientError::Failed)
+    }
+}
+
+impl NotifyKeyUpdate for TpuClientNextClient {
+    fn update_key(&self, identity: &Keypair) -> Result<(), Box<dyn std::error::Error>> {
+        let stake_identity = StakeIdentity::new(identity);
+        self.update_certificate_sender
+            .send(Some(stake_identity))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 }
 
@@ -618,8 +655,9 @@ fn calculate_priority(
         .saturating_mul(bank.fee_structure().lamports_per_signature);
     let fee_details = FeeDetails::new(signature_fee, prioritization_fee);
 
-    let (reward, _burn) =
-        bank.calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details));
+    let reward = bank
+        .calculate_reward_and_burn_fee_details(&CollectorFeeDetails::from(fee_details))
+        .get_deposit();
 
     let cost = CostModel::estimate_cost(
         transaction,
@@ -780,10 +818,12 @@ mod tests {
         super::*,
         crossbeam_channel::unbounded,
         packet::PacketFlags,
-        solana_perf::packet::{Packet, PacketBatch},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_perf::packet::{Packet, PacketBatch, PinnedPacketBatch},
         solana_pubkey::Pubkey,
         solana_runtime::genesis_utils::create_genesis_config,
-        solana_sdk::{hash::Hash, signature::Keypair, system_transaction},
+        solana_system_transaction as system_transaction,
         std::sync::{Arc, Mutex},
     };
 
@@ -870,22 +910,28 @@ mod tests {
         );
 
         // Send packet batches.
-        let non_vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
-            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
-            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
-            simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
-        ])]);
-        let vote_packets = BankingPacketBatch::new(vec![PacketBatch::new(vec![
-            simple_transfer_with_flags(PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE),
-            simple_transfer_with_flags(
-                PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD,
-            ),
-            simple_transfer_with_flags(
-                PacketFlags::SIMPLE_VOTE_TX
-                    | PacketFlags::FROM_STAKED_NODE
-                    | PacketFlags::FORWARDED,
-            ),
-        ])]);
+        let non_vote_packets =
+            BankingPacketBatch::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE),
+                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::DISCARD),
+                simple_transfer_with_flags(PacketFlags::FROM_STAKED_NODE | PacketFlags::FORWARDED),
+            ]))]);
+        let vote_packets =
+            BankingPacketBatch::new(vec![PacketBatch::from(PinnedPacketBatch::new(vec![
+                simple_transfer_with_flags(
+                    PacketFlags::SIMPLE_VOTE_TX | PacketFlags::FROM_STAKED_NODE,
+                ),
+                simple_transfer_with_flags(
+                    PacketFlags::SIMPLE_VOTE_TX
+                        | PacketFlags::FROM_STAKED_NODE
+                        | PacketFlags::DISCARD,
+                ),
+                simple_transfer_with_flags(
+                    PacketFlags::SIMPLE_VOTE_TX
+                        | PacketFlags::FROM_STAKED_NODE
+                        | PacketFlags::FORWARDED,
+                ),
+            ]))]);
 
         packet_batch_sender
             .send((non_vote_packets.clone(), false))
@@ -906,13 +952,16 @@ mod tests {
 
         let vote_wired_txs = vote_mock_client.get_packets();
         assert_eq!(vote_wired_txs.len(), 1);
-        assert_eq!(vote_wired_txs[0], vote_packets[0][0].data(..).unwrap());
+        assert_eq!(
+            vote_wired_txs[0],
+            vote_packets[0].first().unwrap().data(..).unwrap()
+        );
 
         let non_vote_wired_txs = non_vote_mock_client.get_packets();
         assert_eq!(non_vote_wired_txs.len(), 1);
         assert_eq!(
             non_vote_wired_txs[0],
-            non_vote_packets[0][0].data(..).unwrap()
+            non_vote_packets[0].first().unwrap().data(..).unwrap()
         );
     }
 }

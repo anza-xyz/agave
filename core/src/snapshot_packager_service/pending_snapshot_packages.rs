@@ -113,8 +113,8 @@ impl PendingSnapshotPackages {
 mod tests {
     use {
         super::*,
+        solana_clock::Slot,
         solana_runtime::snapshot_package::{SnapshotKind, SnapshotPackage},
-        solana_sdk::clock::Slot,
     };
 
     fn new(snapshot_kind: SnapshotKind, slot: Slot) -> SnapshotPackage {

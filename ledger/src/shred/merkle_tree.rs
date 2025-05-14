@@ -1,14 +1,14 @@
 use {
-    crate::shred::Error,
-    solana_sdk::hash::{hashv, Hash},
-    static_assertions::const_assert_eq,
-    std::iter::successors,
+    crate::shred::Error, solana_hash::Hash, solana_sha256_hasher::hashv,
+    static_assertions::const_assert_eq, std::iter::successors,
 };
 
 pub(crate) const SIZE_OF_MERKLE_ROOT: usize = std::mem::size_of::<Hash>();
 const_assert_eq!(SIZE_OF_MERKLE_ROOT, 32);
 const_assert_eq!(SIZE_OF_MERKLE_PROOF_ENTRY, 20);
 pub(crate) const SIZE_OF_MERKLE_PROOF_ENTRY: usize = std::mem::size_of::<MerkleProofEntry>();
+// Number of proof entries for the standard 64 shred batch.
+pub(crate) const PROOF_ENTRIES_FOR_32_32_BATCH: u8 = 6;
 
 // Defense against second preimage attack:
 // https://en.wikipedia.org/wiki/Merkle_tree#Second_preimage_attack
@@ -107,6 +107,19 @@ pub fn get_merkle_tree_size(num_shreds: usize) -> usize {
     successors(Some(num_shreds), |&k| (k > 1).then_some((k + 1) >> 1)).sum()
 }
 
+// Maps number of (code + data) shreds to merkle_proof.len().
+#[cfg(test)]
+pub(crate) const fn get_proof_size(num_shreds: usize) -> u8 {
+    let bits = usize::BITS - num_shreds.leading_zeros();
+    let proof_size = if num_shreds.is_power_of_two() {
+        bits.saturating_sub(1)
+    } else {
+        bits
+    };
+    // this can never overflow because bits < 64
+    proof_size as u8
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -177,6 +190,28 @@ mod tests {
         let mut rng = rand::thread_rng();
         for size in 110..=143 {
             run_merkle_tree_round_trip(&mut rng, size);
+        }
+    }
+
+    #[test]
+    fn test_get_proof_size() {
+        assert_eq!(get_proof_size(0), 0);
+        assert_eq!(get_proof_size(1), 0);
+        assert_eq!(get_proof_size(2), 1);
+        assert_eq!(get_proof_size(3), 2);
+        assert_eq!(get_proof_size(4), 2);
+        assert_eq!(get_proof_size(5), 3);
+        assert_eq!(get_proof_size(63), 6);
+        assert_eq!(get_proof_size(64), 6);
+        assert_eq!(get_proof_size(65), 7);
+        assert_eq!(get_proof_size(usize::MAX - 1), 64);
+        assert_eq!(get_proof_size(usize::MAX), 64);
+        for proof_size in 1u8..9 {
+            let max_num_shreds = 1usize << u32::from(proof_size);
+            let min_num_shreds = (max_num_shreds >> 1) + 1;
+            for num_shreds in min_num_shreds..=max_num_shreds {
+                assert_eq!(get_proof_size(num_shreds), proof_size);
+            }
         }
     }
 }
