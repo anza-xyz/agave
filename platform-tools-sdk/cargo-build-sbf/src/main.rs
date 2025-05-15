@@ -502,12 +502,7 @@ fn prepare_environment(
     install_tools(config, package, metadata);
 }
 
-fn build_solana_package(
-    config: &Config,
-    package: &cargo_metadata::Package,
-    metadata: &cargo_metadata::Metadata,
-) {
-    prepare_environment(config, Some(package), metadata);
+fn invoke_cargo(config: &Config) {
     let target_triple = rust_target_triple(config);
 
     info!("Solana SDK: {}", config.sbf_sdk.display());
@@ -593,6 +588,9 @@ fn build_solana_package(
     if let Some(jobs) = &config.jobs {
         cargo_build_args.push("--jobs");
         cargo_build_args.push(jobs);
+    }
+    if config.workspace {
+        cargo_build_args.push("--workspace");
     }
     cargo_build_args.append(&mut config.cargo_args.clone());
     let output = spawn(
@@ -680,11 +678,15 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
             let program_name = generate_program_name(root_package);
-            build_solana_package(&config, root_package, &metadata);
+            prepare_environment(&config, Some(root_package), &metadata);
+            invoke_cargo(&config);
             post_process(&config, target_dir.as_ref(), program_name);
             return;
         }
     }
+
+    prepare_environment(&config, None, &metadata);
+    invoke_cargo(&config);
 
     let all_sbf_packages = metadata
         .packages
@@ -703,7 +705,6 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
 
     for package in all_sbf_packages {
         let program_name = generate_program_name(package);
-        build_solana_package(&config, package, &metadata);
         post_process(&config, target_dir.as_ref(), program_name);
     }
 }
