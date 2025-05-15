@@ -567,12 +567,16 @@ pub fn clean_orphaned_account_snapshot_dirs(
     for snapshot in snapshots {
         let account_hardlinks_dir = snapshot.snapshot_dir.join(SNAPSHOT_ACCOUNTS_HARDLINKS);
         // loop through entries in the snapshot_hardlink_dir, read the symlinks, add the target to the HashSet
-        let read_dir = fs::read_dir(&account_hardlinks_dir).map_err(|err| {
-            IoError::other(format!(
-                "failed to read account hardlinks dir '{}': {err}",
+        let Ok(read_dir) = fs::read_dir(&account_hardlinks_dir) else {
+            // The bank snapshot may not have a hard links dir with the storages.
+            // This is fine, and happens for bank snapshots we do *not* fastboot from.
+            // In this case, log it and go to the next bank snapshot.
+            debug!(
+                "failed to read account hardlinks dir '{}'",
                 account_hardlinks_dir.display(),
-            ))
-        })?;
+            );
+            continue;
+        };
         for entry in read_dir {
             let path = entry?.path();
             let target = fs::read_link(&path).map_err(|err| {
@@ -787,7 +791,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
 pub fn serialize_and_archive_snapshot_package(
     snapshot_package: SnapshotPackage,
     snapshot_config: &SnapshotConfig,
-    should_flush_storages: bool,
+    should_flush_and_hard_link_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
     let SnapshotPackage {
         snapshot_kind,
@@ -818,7 +822,7 @@ pub fn serialize_and_archive_snapshot_package(
         epoch_accounts_hash,
         bank_incremental_snapshot_persistence.as_ref(),
         write_version,
-        should_flush_storages,
+        should_flush_and_hard_link_storages,
     )?;
 
     // now write the full snapshot slot file after serializing so this bank snapshot is loadable
@@ -881,7 +885,7 @@ fn serialize_snapshot(
     epoch_accounts_hash: Option<EpochAccountsHash>,
     bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     write_version: u64,
-    should_flush_storages: bool,
+    should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
     let slot = bank_fields.slot;
 
@@ -906,7 +910,7 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let (flush_storages_us, hard_link_storages_us) = if should_flush_storages {
+        let (flush_storages_us, hard_link_storages_us) = if should_flush_and_hard_link_storages {
             let flush_measure = Measure::start("");
             for storage in snapshot_storages {
                 storage.flush().map_err(|err| {
