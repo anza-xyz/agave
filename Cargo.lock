@@ -1305,7 +1305,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.13.2",
+ "hashbrown 0.12.3",
 ]
 
 [[package]]
@@ -7351,7 +7351,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-loader-v3-interface 4.0.1",
+ "solana-loader-v3-interface 5.0.0",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
  "solana-logger",
@@ -8795,21 +8795,6 @@ name = "solana-loader-v3-interface"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa4be76cfa9afd84ca2f35ebc09f0da0f0092935ccdac0595d98447f259538c2"
-dependencies = [
- "serde",
- "serde_bytes",
- "serde_derive",
- "solana-instruction",
- "solana-pubkey",
- "solana-sdk-ids",
- "solana-system-interface",
-]
-
-[[package]]
-name = "solana-loader-v3-interface"
-version = "4.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5539bcadd5c3b306045563e9d102bbaa42b3643f335ae02bc9b5260a70ad9742"
 dependencies = [
  "serde",
  "serde_bytes",
