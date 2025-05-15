@@ -23,7 +23,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-entry = { workspace = true }
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "=4.0.1"
+solana-loader-v3-interface = "5.0.0"
 solana-logger = "=2.3.1"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }

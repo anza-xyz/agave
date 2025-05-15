@@ -124,7 +124,7 @@ solana-compute-budget-instruction = { workspace = true, features = [
 ] }
 solana-fee = { workspace = true }
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "4.0.1"
+solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }
