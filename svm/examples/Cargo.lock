@@ -5231,7 +5231,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keccak-hasher",
- "solana-loader-v3-interface 4.0.1",
+ "solana-loader-v3-interface 5.0.0",
  "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
@@ -6315,9 +6315,9 @@ dependencies = [
 
 [[package]]
 name = "solana-loader-v3-interface"
-version = "4.0.1"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5539bcadd5c3b306045563e9d102bbaa42b3643f335ae02bc9b5260a70ad9742"
+checksum = "6f7162a05b8b0773156b443bccd674ea78bb9aa406325b467ea78c06c99a63a2"
 dependencies = [
  "serde",
  "serde_bytes",
@@ -6354,7 +6354,7 @@ dependencies = [
  "solana-bpf-loader-program",
  "solana-compute-budget",
  "solana-instruction",
- "solana-loader-v3-interface 4.0.1",
+ "solana-loader-v3-interface 5.0.0",
  "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
@@ -7231,7 +7231,7 @@ dependencies = [
  "solana-fee",
  "solana-inline-spl",
  "solana-lattice-hash",
- "solana-loader-v3-interface 4.0.1",
+ "solana-loader-v3-interface 5.0.0",
  "solana-loader-v4-interface",
  "solana-measure",
  "solana-metrics",
@@ -7785,7 +7785,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-instructions-sysvar",
- "solana-loader-v3-interface 4.0.1",
+ "solana-loader-v3-interface 5.0.0",
  "solana-loader-v4-interface",
  "solana-loader-v4-program",
  "solana-log-collector",
@@ -8171,7 +8171,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-loader-v2-interface",
- "solana-loader-v3-interface 4.0.1",
+ "solana-loader-v3-interface 5.0.0",
  "solana-message",
  "solana-program",
  "solana-pubkey",
