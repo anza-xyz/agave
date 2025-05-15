@@ -22,11 +22,6 @@ pub mod hint {
     pub use std::hint::*;
 }
 
-pub mod lazy_static {
-    #[cfg(feature = "shuttle-test")]
-    pub use shuttle::lazy_static::*;
-}
-
 pub mod rand {
     pub use rand::*;
     #[cfg(feature = "shuttle-test")]
