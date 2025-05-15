@@ -450,7 +450,7 @@ pub(crate) mod tests {
         })
         .take(num_entries)
         .collect();
-        shredder.entries_to_shreds(
+        shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &entries,
             is_last_in_slot,
@@ -458,7 +458,6 @@ pub(crate) mod tests {
             Some(Hash::new_from_array(rng.gen())),
             next_shred_index,
             next_code_index, // next_code_index
-            true,
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
