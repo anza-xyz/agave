@@ -9,6 +9,7 @@ use {
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
     },
+    bytes::Bytes,
     crossbeam_channel::unbounded,
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -30,7 +31,8 @@ use {
         bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
         snapshot_utils,
     },
     solana_sdk::{
@@ -42,11 +44,14 @@ use {
     std::{
         net::SocketAddr,
         path::{Path, PathBuf},
+        pin::Pin,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
+        task::{Context, Poll},
         thread::{self, Builder, JoinHandle},
+        time::{Duration, Instant},
     },
     tokio_util::codec::{BytesCodec, FramedRead},
 };
@@ -54,6 +59,48 @@ use {
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
+/// Default minimum snapshot download speed is 10 MB/s
+/// Full snapshots are ~90 GB, incremental are ~1 GB today but both will increase over time
+/// Full: 120 GB / 10 MB/s = 12,000 seconds -> ~30k slots
+const FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS: Duration = Duration::from_secs(12_000);
+/// Incremental: 2.5 GB / 10 MB/s = 250 seconds -> ~625 slots
+const FALLBACK_INCREMENTAL_SNAPSHOT_TIMEOUT_SECS: Duration = Duration::from_secs(250);
+
+enum SnapshotKind {
+    Full,
+    Incremental,
+}
+
+struct TimeoutStream<S> {
+    inner: S,
+    deadline: Instant,
+}
+
+impl<S> TimeoutStream<S> {
+    fn new(inner: S, timeout: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + timeout,
+        }
+    }
+}
+
+impl<S> Stream for TimeoutStream<S>
+where
+    S: Stream<Item = std::io::Result<Bytes>> + Unpin,
+{
+    type Item = std::io::Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if Instant::now() >= self.deadline {
+            return Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "snapshot transfer deadline exceeded",
+            ))));
+        }
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
@@ -156,14 +203,14 @@ impl RpcRequestMiddleware {
         tokio::fs::File::open(path).await
     }
 
-    fn find_snapshot_file<P>(&self, stem: P) -> PathBuf
+    fn find_snapshot_file<P>(&self, stem: P) -> (PathBuf, SnapshotKind)
     where
         P: AsRef<Path>,
     {
-        let root = if self
+        let is_full = self
             .full_snapshot_archive_path_regex
-            .is_match(Path::new("").join(&stem).to_str().unwrap())
-        {
+            .is_match(Path::new("").join(&stem).to_str().unwrap());
+        let root = if is_full {
             &self
                 .snapshot_config
                 .as_ref()
@@ -177,37 +224,73 @@ impl RpcRequestMiddleware {
                 .incremental_snapshot_archives_dir
         };
         let local_path = root.join(&stem);
-        if local_path.exists() {
+        let path = if local_path.exists() {
             local_path
         } else {
             // remote snapshot archive path
             snapshot_utils::build_snapshot_archives_remote_dir(root).join(stem)
-        }
+        };
+        (
+            path,
+            if is_full {
+                SnapshotKind::Full
+            } else {
+                SnapshotKind::Incremental
+            },
+        )
     }
 
     fn process_file_get(&self, path: &str) -> RequestMiddlewareAction {
-        let filename = {
+        let (filename, snapshot_type) = {
             let stem = Self::strip_leading_slash(path).expect("path already verified");
             match path {
                 DEFAULT_GENESIS_DOWNLOAD_PATH => {
                     inc_new_counter_info!("rpc-get_genesis", 1);
-                    self.ledger_path.join(stem)
+                    (self.ledger_path.join(stem), None)
                 }
                 _ => {
                     inc_new_counter_info!("rpc-get_snapshot", 1);
-                    self.find_snapshot_file(stem)
+                    let (path, snapshot_type) = self.find_snapshot_file(stem);
+                    (path, Some(snapshot_type))
                 }
             }
         };
-
         let file_length = std::fs::metadata(&filename)
             .map(|m| m.len())
             .unwrap_or(0)
             .to_string();
         info!("get {} -> {:?} ({} bytes)", path, filename, file_length);
+
+        if cfg!(not(test)) {
+            assert!(
+                self.snapshot_config.is_some(),
+                "snapshot_config should never be None outside of tests"
+            );
+        }
+        let snapshot_timeout = self.snapshot_config.as_ref().and_then(|config| {
+            snapshot_type.map(|st| {
+                let slots = match st {
+                    SnapshotKind::Full => config.full_snapshot_archive_interval_slots,
+                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval_slots,
+                };
+                let computed = if slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
+                    Duration::ZERO
+                } else {
+                    Duration::from_millis(
+                        slots.saturating_mul(solana_sdk::clock::DEFAULT_MS_PER_SLOT),
+                    )
+                };
+                let fallback = match st {
+                    SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
+                    SnapshotKind::Incremental => FALLBACK_INCREMENTAL_SNAPSHOT_TIMEOUT_SECS,
+                };
+                std::cmp::max(computed, fallback)
+            })
+        });
+
         RequestMiddlewareAction::Respond {
             should_validate_hosts: true,
-            response: Box::pin(async {
+            response: Box::pin(async move {
                 match Self::open_no_follow(filename).await {
                     Err(err) => Ok(if err.kind() == std::io::ErrorKind::NotFound {
                         Self::not_found()
@@ -217,8 +300,11 @@ impl RpcRequestMiddleware {
                     Ok(file) => {
                         let stream =
                             FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze());
-                        let body = hyper::Body::wrap_stream(stream);
-
+                        let body = if let Some(timeout) = snapshot_timeout {
+                            hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
+                        } else {
+                            hyper::Body::wrap_stream(stream)
+                        };
                         Ok(hyper::Response::builder()
                             .header(hyper::header::CONTENT_LENGTH, file_length)
                             .body(body)
