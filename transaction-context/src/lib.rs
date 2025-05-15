@@ -421,10 +421,13 @@ impl TransactionContext {
                 .ok_or(InstructionError::NotEnoughAccountKeys)?
                 .try_borrow_mut()
                 .map_err(|_| InstructionError::AccountBorrowFailed)?;
-            instructions::store_current_index(
+            if mut_account_ref.owner() != &solana_sdk_ids::sysvar::id() {
+                return Err(InstructionError::InvalidAccountOwner);
+            }
+            instructions::store_current_index_checked(
                 mut_account_ref.data_as_mut_slice(),
                 self.top_level_instruction_index as u16,
-            );
+            )?;
         }
         Ok(())
     }
@@ -1286,5 +1289,52 @@ fn is_zeroed(buf: &[u8]) -> bool {
     {
         chunks.all(|chunk| chunk == &ZEROS[..])
             && chunks.remainder() == &ZEROS[..chunks.remainder().len()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_instructions_sysvar_store_index_checked() {
+        let build_transaction_context = |account: AccountSharedData| {
+            TransactionContext::new(
+                vec![
+                    (Pubkey::new_unique(), AccountSharedData::default()),
+                    (instructions::id(), account),
+                ],
+                Rent::default(),
+                /* max_instruction_stack_depth */ 2,
+                /* max_instruction_trace_length */ 2,
+            )
+        };
+
+        let correct_space = 2;
+        let rent_exempt_lamports = Rent::default().minimum_balance(correct_space);
+
+        // First try it with the wrong owner.
+        let account =
+            AccountSharedData::new(rent_exempt_lamports, correct_space, &Pubkey::new_unique());
+        assert_eq!(
+            build_transaction_context(account).push(),
+            Err(InstructionError::InvalidAccountOwner),
+        );
+
+        // Now with the wrong data length.
+        let account =
+            AccountSharedData::new(rent_exempt_lamports, 0, &solana_sdk_ids::sysvar::id());
+        assert_eq!(
+            build_transaction_context(account).push(),
+            Err(InstructionError::AccountDataTooSmall),
+        );
+
+        // Finally provide the correct account setup.
+        let account = AccountSharedData::new(
+            rent_exempt_lamports,
+            correct_space,
+            &solana_sdk_ids::sysvar::id(),
+        );
+        assert_eq!(build_transaction_context(account).push(), Ok(()),);
     }
 }
