@@ -2542,10 +2542,12 @@ fn main() {
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
+                    // PrimaryForMaintenance needed over Secondary to purge any
+                    // existing simulated shreds from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
-                        AccessType::Primary, // needed for purging already existing simulated block shreds...
+                        AccessType::PrimaryForMaintenance,
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     let LoadAndProcessLedgerOutput { bank_forks, .. } =
