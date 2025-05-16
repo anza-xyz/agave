@@ -1,6 +1,7 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
+    solana_account_decoder::UiAccountEncoding,
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
@@ -368,6 +369,15 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
+    }
+}
+
+pub(crate) fn parse_encoding_format(matches: &ArgMatches<'_>) -> UiAccountEncoding {
+    match matches.value_of("encoding") {
+        Some("jsonParsed") => UiAccountEncoding::JsonParsed,
+        Some("base64") => UiAccountEncoding::Base64,
+        Some("base64+zstd") => UiAccountEncoding::Base64Zstd,
+        _ => UiAccountEncoding::Base64,
     }
 }
 
