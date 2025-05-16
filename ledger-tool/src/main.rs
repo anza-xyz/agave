@@ -22,7 +22,6 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_account_decoder::UiDataSliceConfig,
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
         accounts_index::{ScanConfig, ScanOrder},
@@ -35,7 +34,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
+    solana_cli_output::{CliAccount, OutputFormat},
     solana_clock::{Epoch, Slot},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
@@ -1678,24 +1677,7 @@ fn main() {
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
 
                     if output_accounts {
-                        let data_encoding = parse_encoding_format(arg_matches);
-                        let output_account_data = !arg_matches.is_present("no_account_data");
-                        let data_slice_config = if output_account_data {
-                            // None yields the entire account in the slice
-                            None
-                        } else {
-                            // usize::MAX is a sentinel that will yield an
-                            // empty data slice. Because of this, length is
-                            // ignored so any value will do
-                            let offset = usize::MAX;
-                            let length = 0;
-                            Some(UiDataSliceConfig { offset, length })
-                        };
-                        let cli_account_config = CliAccountNewConfig {
-                            data_encoding,
-                            data_slice_config,
-                            ..CliAccountNewConfig::default()
-                        };
+                        let output_config = parse_account_output_config(arg_matches);
 
                         let accounts: Vec<_> = genesis_config
                             .accounts
@@ -1704,7 +1686,7 @@ fn main() {
                                 CliAccount::new_with_config(
                                     &pubkey,
                                     &AccountSharedData::from(account),
-                                    &cli_account_config,
+                                    &output_config,
                                 )
                             })
                             .collect();
