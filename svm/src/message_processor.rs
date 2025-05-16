@@ -90,7 +90,20 @@ pub(crate) fn process_message(
             .total_us += process_instruction_us;
 
         result.map_err(|err| {
-            TransactionError::InstructionError(top_level_instruction_index as u8, err)
+            let error_attribution = invoke_context
+                .get_first_error_attribution()
+                .as_ref()
+                .expect(
+                    "Invariant: It should be impossible to have encountered an `Err` here \
+                    without the `TransactionContext` having accumulated information about the \
+                    program that threw its first-seen error",
+                );
+            TransactionError::InstructionError(
+                top_level_instruction_index as u8,
+                err,
+                Some(error_attribution.program_account_index as u8),
+                Some(error_attribution.inner_instruction_index as u8),
+            )
         })?;
     }
     Ok(())
@@ -101,6 +114,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
+        assert_matches::assert_matches,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
@@ -318,12 +332,14 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::ReadonlyLamportChange
-            ))
+                InstructionError::ReadonlyLamportChange,
+                None,
+                Some(ii),
+            )) if ii > 0
         );
 
         let message = new_sanitized_message(Message::new_with_compiled_instructions(
@@ -362,12 +378,14 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::ReadonlyDataModified
-            ))
+                InstructionError::ReadonlyDataModified,
+                None,
+                Some(ii),
+            )) if ii > 0
         );
     }
 
@@ -498,12 +516,14 @@ mod tests {
             &mut ExecuteTimings::default(),
             &mut 0,
         );
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 0,
-                InstructionError::AccountBorrowFailed
-            ))
+                InstructionError::AccountBorrowFailed,
+                None,
+                Some(ii),
+            )) if ii > 0
         );
 
         // Try to borrow mut the same account in a safe way
@@ -700,12 +720,14 @@ mod tests {
             &mut 0,
         );
 
-        assert_eq!(
+        assert_matches!(
             result,
             Err(TransactionError::InstructionError(
                 3,
-                InstructionError::Custom(0xbabb1e)
-            ))
+                InstructionError::Custom(0xbabb1e),
+                None,
+                Some(ii),
+            )) if ii > 0
         );
         assert_eq!(transaction_context.get_instruction_trace_length(), 4);
     }

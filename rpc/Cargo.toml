@@ -92,6 +92,7 @@ tokio-util = { workspace = true, features = ["codec", "compat"] }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
+assert_matches = { workspace = true }
 serial_test = { workspace = true }
 solana-address-lookup-table-interface = { workspace = true }
 solana-compute-budget-interface = { workspace = true }

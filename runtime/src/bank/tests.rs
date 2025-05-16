@@ -1079,7 +1079,12 @@ fn test_rent_exempt_executable_account() {
     );
     assert_matches!(
         bank.process_transaction(&tx),
-        Err(TransactionError::InstructionError(0, _))
+        Err(TransactionError::InstructionError(
+            0,
+            _,
+            None,
+            Some(ii),
+        )) if ii > 0
     );
     assert_eq!(bank.get_balance(&account_pubkey), account_balance);
 }
@@ -2459,9 +2464,14 @@ fn test_one_tx_two_out_atomic_fail() {
     );
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
     let tx = Transaction::new(&[&mint_keypair], message, genesis_config.hash());
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&tx).unwrap_err(),
-        TransactionError::InstructionError(1, SystemError::ResultWithNegativeLamports.into())
+        TransactionError::InstructionError(
+            1,
+            actual_err,
+            None,
+            Some(ii),
+        ) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
     assert_eq!(bank.get_balance(&mint_keypair.pubkey()), amount);
     assert_eq!(bank.get_balance(&key1), 0);
@@ -2505,12 +2515,14 @@ fn test_detect_failed_duplicate_transactions() {
     let signature = tx.signatures[0];
     assert!(!bank.has_signature(&signature));
 
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&tx),
         Err(TransactionError::InstructionError(
             0,
-            SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
 
     // The lamports didn't move, but the from address paid the transaction fee.
@@ -2549,12 +2561,14 @@ fn test_insufficient_funds() {
     assert_eq!(bank.transaction_count(), 1);
     assert_eq!(bank.non_vote_transaction_count_since_restart(), 1);
     assert_eq!(bank.get_balance(&pubkey), amount);
-    assert_eq!(
+    assert_matches!(
         bank.transfer((mint_amount - amount) + 1, &mint_keypair, &pubkey),
         Err(TransactionError::InstructionError(
             0,
-            SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
     // transaction_count returns the count of all committed transactions since
     // bank_transaction_count_fix was activated, regardless of success
@@ -2574,12 +2588,14 @@ fn test_executed_transaction_count_post_bank_transaction_count_fix() {
     let pubkey = solana_pubkey::new_rand();
     let amount = genesis_config.rent.minimum_balance(0);
     bank.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_eq!(
+    assert_matches!(
         bank.transfer((mint_amount - amount) + 1, &mint_keypair, &pubkey),
         Err(TransactionError::InstructionError(
             0,
-            SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
 
     // With bank_transaction_count_fix, transaction_count should include both the successful and
@@ -2595,12 +2611,14 @@ fn test_executed_transaction_count_post_bank_transaction_count_fix() {
         genesis_config.epoch_schedule.first_normal_slot,
     );
 
-    assert_eq!(
+    assert_matches!(
         bank2.transfer((mint_amount - amount) + 2, &mint_keypair, &pubkey),
         Err(TransactionError::InstructionError(
             0,
-            SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
 
     // The transaction_count inherited from parent bank is 3: 2 from the parent bank and 1 at this bank2
@@ -4555,12 +4573,14 @@ fn test_is_delta_with_no_committables() {
 
     // Should fail with InstructionError, but InstructionErrors are committable,
     // so is_delta should be true
-    assert_eq!(
+    assert_matches!(
         bank.transfer(10_001, &mint_keypair, &solana_pubkey::new_rand()),
         Err(TransactionError::InstructionError(
             0,
-            SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
 
     assert!(bank.is_delta.load(Relaxed));
@@ -4822,12 +4842,14 @@ fn test_add_builtin() {
     );
 
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             1,
-            InstructionError::Custom(42)
-        ))
+            InstructionError::Custom(42),
+            None,
+            Some(ii),
+        )) if ii > 0
     );
 }
 
@@ -4880,12 +4902,14 @@ fn test_add_duplicate_static_program() {
     let new_vote_loader_account = bank.get_account(&solana_vote_program::id()).unwrap();
     // Vote loader account should not be updated since it was included in the genesis config.
     assert_eq!(vote_loader_account.data(), new_vote_loader_account.data());
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             1,
-            InstructionError::Custom(42)
-        ))
+            InstructionError::Custom(42),
+            None,
+            Some(ii),
+        )) if ii > 0
     );
 }
 
@@ -5228,11 +5252,15 @@ fn test_assign_from_nonce_account_fail() {
     let message = Message::new(&[ix], Some(&nonce.pubkey()));
     let tx = Transaction::new(&[&nonce], message, blockhash);
 
-    let expect = Err(TransactionError::InstructionError(
-        0,
-        InstructionError::ModifiedProgramId,
-    ));
-    assert_eq!(bank.process_transaction(&tx), expect);
+    assert_matches!(
+        bank.process_transaction(&tx),
+        Err(TransactionError::InstructionError(
+            0,
+            InstructionError::ModifiedProgramId,
+            None,
+            Some(ii),
+        )) if ii > 0
+    );
 }
 
 #[test]
@@ -5370,12 +5398,14 @@ fn test_nonce_transaction() {
         &[&custodian_keypair, &nonce_keypair],
         nonce_hash,
     );
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
     /* Check fee charged and nonce has advanced */
     let mut recent_message = nonce_tx.message.clone();
@@ -5497,12 +5527,14 @@ fn test_nonce_transaction_with_tx_wide_caps() {
         &[&custodian_keypair, &nonce_keypair],
         nonce_hash,
     );
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
     /* Check fee charged and nonce has advanced */
     let mut recent_message = nonce_tx.message.clone();
@@ -5626,12 +5658,14 @@ fn test_nonce_payer() {
         nonce_hash,
     );
     debug!("{:?}", nonce_tx);
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
     /* Check fee charged and nonce has advanced */
     let mut recent_message = nonce_tx.message;
@@ -5693,12 +5727,14 @@ fn test_nonce_payer_tx_wide_cap() {
     );
     debug!("{:?}", nonce_tx);
 
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
             1,
-            solana_system_interface::error::SystemError::ResultWithNegativeLamports.into(),
-        ))
+            actual_err,
+            None,
+            Some(ii),
+        )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
     );
     /* Check fee charged and nonce has advanced */
     let mut recent_message = nonce_tx.message;
@@ -6018,12 +6054,14 @@ fn test_pre_post_transaction_balances() {
 
     // Failed transactions still produce balance sets
     // This is an InstructionError - fees charged
-    assert_eq!(
+    assert_matches!(
         commit_results[2].as_ref().unwrap().status,
         Err(TransactionError::InstructionError(
             0,
             InstructionError::Custom(1),
-        )),
+            None,
+            Some(ii),
+        )) if ii > 0
     );
     assert_eq!(
         transaction_balances_set.pre_balances[2],
@@ -7278,12 +7316,14 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         invocation_message.clone(),
         bank.last_blockhash(),
     );
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::UnsupportedProgramId
-        )),
+            InstructionError::UnsupportedProgramId,
+            None,
+            Some(ii),
+        )) if ii > 0
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
@@ -7302,12 +7342,14 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
     let instruction = Instruction::new_with_bytes(buffer_address, &[], Vec::new());
     let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&transaction),
         Err(TransactionError::InstructionError(
             0,
             InstructionError::UnsupportedProgramId,
-        )),
+            None,
+            Some(ii),
+        )) if ii > 0
     );
     {
         let program_cache = bank.transaction_processor.program_cache.read().unwrap();
@@ -7454,12 +7496,17 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         )],
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::AccountAlreadyInitialized),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(&[&mint_keypair, &upgrade_authority_keypair], message)
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            0,
+            InstructionError::AccountAlreadyInitialized,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test initialized ProgramData account
@@ -7478,15 +7525,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::Custom(0)),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(0),
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test deploy no authority
@@ -7512,12 +7564,17 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         )],
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::NotEnoughAccountKeys),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(&[&mint_keypair], message)
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            0,
+            InstructionError::NotEnoughAccountKeys,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test deploy authority not a signer
@@ -7544,12 +7601,17 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         )],
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(&[&mint_keypair], message)
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            0,
+            InstructionError::MissingRequiredSignature,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test invalid Buffer account state
@@ -7569,15 +7631,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidAccountData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test program account not rent exempt
@@ -7597,15 +7664,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::ExecutableAccountNotRentExempt),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::ExecutableAccountNotRentExempt,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test program account not rent exempt because data is larger than needed
@@ -7630,15 +7702,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         &bpf_loader_upgradeable::id(),
     );
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::ExecutableAccountNotRentExempt),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::ExecutableAccountNotRentExempt,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test program account too small
@@ -7663,15 +7740,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         &bpf_loader_upgradeable::id(),
     );
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::AccountDataTooSmall),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::AccountDataTooSmall,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test Insufficient payer funds (need more funds to cover the
@@ -7700,15 +7782,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::Custom(1)),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::Custom(1),
+            None,
+            Some(ii),
+        ) if ii > 0
     );
     bank.store_account(
         &mint_keypair.pubkey(),
@@ -7732,15 +7819,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::AccountDataTooSmall),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::AccountDataTooSmall,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test max_data_len too large
@@ -7766,15 +7858,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidArgument),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidArgument,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test not the system account
@@ -7833,15 +7930,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidAccountData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Test small buffer account
@@ -7877,15 +7979,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::InvalidAccountData,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Mismatched buffer and program authority
@@ -7920,15 +8027,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::IncorrectAuthority),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::IncorrectAuthority,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     // Deploy buffer with mismatched None authority
@@ -7963,15 +8075,20 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len() {
         .unwrap(),
         Some(&mint_keypair.pubkey()),
     );
-    assert_eq!(
-        TransactionError::InstructionError(1, InstructionError::IncorrectAuthority),
+    assert_matches!(
         bank_client
             .send_and_confirm_message(
                 &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
                 message
             )
             .unwrap_err()
-            .unwrap()
+            .unwrap(),
+        TransactionError::InstructionError(
+            1,
+            InstructionError::IncorrectAuthority,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 }
 
@@ -8395,8 +8512,10 @@ fn test_program_is_native_loader() {
         bank.process_transaction(&tx),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::UnsupportedProgramId
-        ))
+            InstructionError::UnsupportedProgramId,
+            None,
+            None,
+        )),
     );
 }
 
@@ -8431,12 +8550,14 @@ fn test_invoke_non_program_account_owned_by_a_builtin() {
         &[&mint_keypair, &created_account_keypair],
         bank.last_blockhash(),
     );
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&tx),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::UnsupportedProgramId
-        ))
+            InstructionError::UnsupportedProgramId,
+            None,
+            Some(ii),
+        )) if ii > 0
     );
 }
 
@@ -9806,12 +9927,14 @@ fn test_transfer_sysvar() {
     #[allow(deprecated)]
     let orig_lamports = bank.get_account(&sysvar::clock::id()).unwrap().lamports();
     let tx = system_transaction::transfer(&mint_keypair, &blockhash_sysvar, 10, blockhash);
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&tx),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::ReadonlyLamportChange
-        ))
+            InstructionError::ReadonlyLamportChange,
+            None,
+            Some(ii),
+        )) if ii > 0
     );
     assert_eq!(
         bank.get_account(&sysvar::clock::id()).unwrap().lamports(),
@@ -9825,12 +9948,14 @@ fn test_transfer_sysvar() {
     let ix = Instruction::new_with_bincode(program_id, &0, accounts);
     let message = Message::new(&[ix], Some(&mint_keypair.pubkey()));
     let tx = Transaction::new(&[&mint_keypair], message, blockhash);
-    assert_eq!(
+    assert_matches!(
         bank.process_transaction(&tx),
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::ReadonlyDataModified
-        ))
+            InstructionError::ReadonlyDataModified,
+            None,
+            Some(ii),
+        )) if ii > 0
     );
 }
 
@@ -10150,8 +10275,10 @@ fn test_failed_compute_request_instruction() {
         results[0],
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::InvalidInstructionData
-        ))
+            InstructionError::InvalidInstructionData,
+            None,
+            None,
+        )),
     );
     assert_eq!(results[1], Ok(()));
     // two transfers and the mock program
@@ -10575,7 +10702,7 @@ fn test_an_empty_instruction_without_program() {
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     assert_eq!(
         bank.process_transaction(&tx).unwrap_err(),
-        TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId),
+        TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId, None, None),
     );
 }
 
@@ -11128,9 +11255,14 @@ fn test_invalid_rent_state_changes_fee_payer() {
         recent_blockhash,
     );
     let result = bank.process_transaction(&tx);
-    assert_eq!(
+    assert_matches!(
         result.unwrap_err(),
-        TransactionError::InstructionError(0, InstructionError::Custom(1))
+        TransactionError::InstructionError(
+            0,
+            InstructionError::Custom(1),
+            None,
+            Some(ii),
+        ) if ii > 0
     );
     assert_ne!(
         fee_payer_balance,
@@ -12002,6 +12134,8 @@ fn test_cap_accounts_data_allocations_per_transaction() {
     const NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION: usize =
         MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION as usize
             / MAX_PERMITTED_DATA_LENGTH as usize;
+    const NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION_AS_U8: u8 =
+        NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION as u8;
 
     let (genesis_config, mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -12031,12 +12165,14 @@ fn test_cap_accounts_data_allocations_per_transaction() {
     let accounts_data_size_after = bank.load_accounts_data_size();
 
     assert_eq!(accounts_data_size_before, accounts_data_size_after);
-    assert_eq!(
+    assert_matches!(
         result,
         Err(TransactionError::InstructionError(
-            NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION as u8,
+            NUM_MAX_SIZE_ALLOCATIONS_PER_TRANSACTION_AS_U8,
             solana_instruction::error::InstructionError::MaxAccountsDataAllocationsExceeded,
-        )),
+            None,
+            Some(ii),
+        )) if ii > 0
     );
 }
 
@@ -12323,12 +12459,14 @@ fn test_feature_activation_loaded_programs_cache_preparation_phase() {
     // Load the program with the new environment.
     let transaction = Transaction::new(&signers, message, bank.last_blockhash());
     let result_with_feature_enabled = bank.process_transaction(&transaction);
-    assert_eq!(
+    assert_matches!(
         result_with_feature_enabled,
         Err(TransactionError::InstructionError(
             0,
-            InstructionError::UnsupportedProgramId
-        ))
+            InstructionError::UnsupportedProgramId,
+            None,
+            Some(ii),
+        )) if ii > 0
     );
 }
 
@@ -12743,12 +12881,17 @@ fn test_system_instruction_unsigned_transaction() {
         &system_instruction::SystemInstruction::Transfer { lamports: amount },
         account_metas,
     );
-    assert_eq!(
+    assert_matches!(
         bank_client
             .send_and_confirm_instruction(&mallory_keypair, malicious_instruction)
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::MissingRequiredSignature,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
     assert_eq!(
         bank_client.get_balance(&alice_pubkey).unwrap(),
@@ -13261,6 +13404,8 @@ fn test_filter_program_errors_and_collect_fee_details() {
             Err(TransactionError::InstructionError(
                 0,
                 SystemError::ResultWithNegativeLamports.into(),
+                None,
+                None,
             )),
             fee_details,
         ),
@@ -13526,9 +13671,14 @@ fn test_loader_v3_to_v4_migration() {
     let signers = &[&payer_keypair];
     let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
     let error = bank.process_transaction(&transaction).unwrap_err();
-    assert_eq!(
+    assert_matches!(
         error,
-        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::InvalidArgument,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 
     let bank = new_bank_from_parent_with_bank_forks(
@@ -13629,35 +13779,37 @@ fn test_loader_v3_to_v4_migration() {
             bank.last_blockhash(),
         );
         let error = bank.process_transaction(&transaction).unwrap_err();
-        assert_eq!(error, TransactionError::InstructionError(0, expected_error));
+        assert_matches!(
+            error,
+            TransactionError::InstructionError(
+                0,
+                err,
+                None,
+                Some(ii),
+            ) if ii > 0 && err == expected_error
+        );
     }
 
-    for (mut programdata_account, transaction, expected_execution_result) in [
+    for (mut programdata_account, transaction, expected_error) in [
         (
             closed_programdata_account,
             finalized_migration_transaction.clone(),
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::UnsupportedProgramId,
-            )),
+            Some(InstructionError::UnsupportedProgramId),
         ),
         (
             uninitialized_programdata_account,
             finalized_migration_transaction.clone(),
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::UnsupportedProgramId,
-            )),
+            Some(InstructionError::UnsupportedProgramId),
         ),
         (
             finalized_programdata_account,
             finalized_migration_transaction,
-            Ok(()),
+            None,
         ),
         (
             upgradeable_programdata_account,
             upgradeable_migration_transaction,
-            Ok(()),
+            None,
         ),
     ] {
         let bank = new_bank_from_parent_with_bank_forks(
@@ -13691,7 +13843,19 @@ fn test_loader_v3_to_v4_migration() {
         let binding = mint_keypair.insecure_clone();
         let transaction = Transaction::new(&[&binding], message, bank.last_blockhash());
         let execution_result = bank.process_transaction(&transaction);
-        assert_eq!(execution_result, expected_execution_result);
+        if let Some(expected_err) = expected_error {
+            assert_matches!(
+                execution_result,
+                Err(TransactionError::InstructionError(
+                    0,
+                    actual_err,
+                    None,
+                    Some(ii),
+                )) if ii > 0 && actual_err == expected_err
+            );
+        } else {
+            assert_matches!(execution_result, Ok(()));
+        }
     }
 }
 

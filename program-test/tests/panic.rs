@@ -1,4 +1,5 @@
 use {
+    assert_matches::assert_matches,
     solana_account_info::AccountInfo,
     solana_instruction::{error::InstructionError, Instruction},
     solana_program_error::ProgramResult,
@@ -29,13 +30,18 @@ async fn panic_test() {
         &[&context.payer],
         context.last_blockhash,
     );
-    assert_eq!(
+    assert_matches!(
         context
             .banks_client
             .process_transaction(transaction)
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
+        TransactionError::InstructionError(
+            0,
+            InstructionError::ProgramFailedToComplete,
+            None,
+            Some(ii),
+        ) if ii > 0
     );
 }

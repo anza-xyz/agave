@@ -3993,12 +3993,14 @@ pub mod tests {
         bank.transfer(1_000, &mint_keypair, &pubkey).unwrap();
         assert_eq!(bank.transaction_count(), 1);
         assert_eq!(bank.get_balance(&pubkey), 1_000);
-        assert_eq!(
+        assert_matches!(
             bank.transfer(10_001, &mint_keypair, &pubkey),
             Err(TransactionError::InstructionError(
                 0,
-                SystemError::ResultWithNegativeLamports.into(),
-            ))
+                actual_err,
+                None,
+                Some(ii),
+            )) if ii > 0 && actual_err == SystemError::ResultWithNegativeLamports.into()
         );
         assert_eq!(
             bank.transfer(10_001, &mint_keypair, &pubkey),
