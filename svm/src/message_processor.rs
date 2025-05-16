@@ -90,7 +90,20 @@ pub(crate) fn process_message(
             .total_us += process_instruction_us;
 
         result.map_err(|err| {
-            TransactionError::InstructionError(top_level_instruction_index as u8, err)
+            let error_attribution = invoke_context
+                .get_first_error_attribution()
+                .as_ref()
+                .expect(
+                    "Invariant: It should be impossible to have encountered an `Err` here \
+                    without the `TransactionContext` having accumulated information about the \
+                    program that threw its first-seen error",
+                );
+            TransactionError::InstructionError(
+                top_level_instruction_index as u8,
+                err,
+                Some(error_attribution.program_account_index as u8),
+                Some(error_attribution.inner_instruction_index as u8),
+            )
         })?;
     }
     Ok(())

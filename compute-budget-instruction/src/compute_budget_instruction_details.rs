@@ -111,6 +111,8 @@ impl ComputeBudgetInstructionDetails {
                     return Err(TransactionError::InstructionError(
                         index,
                         InstructionError::InvalidInstructionData,
+                        None,
+                        None,
                     ));
                 }
             } else {
@@ -153,8 +155,12 @@ impl ComputeBudgetInstructionDetails {
     }
 
     fn process_instruction(&mut self, index: u8, instruction: &SVMInstruction) -> Result<()> {
-        let invalid_instruction_data_error =
-            TransactionError::InstructionError(index, InstructionError::InvalidInstructionData);
+        let invalid_instruction_data_error = TransactionError::InstructionError(
+            index,
+            InstructionError::InvalidInstructionData,
+            None,
+            Some(instruction.program_id_index),
+        );
         let duplicate_instruction_error = TransactionError::DuplicateInstruction(index);
 
         match try_from_slice_unchecked(instruction.data) {
