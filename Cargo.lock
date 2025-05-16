@@ -6676,6 +6676,7 @@ dependencies = [
 name = "solana-accounts-db"
 version = "2.3.0"
 dependencies = [
+ "agave-reserved-account-keys",
  "ahash 0.8.11",
  "assert_matches",
  "bincode",
@@ -6734,6 +6735,7 @@ dependencies = [
  "solana-reward-info",
  "solana-sdk-ids",
  "solana-sha256-hasher",
+ "solana-signature",
  "solana-signer",
  "solana-slot-hashes",
  "solana-slot-history",

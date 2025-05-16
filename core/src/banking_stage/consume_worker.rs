@@ -768,6 +768,7 @@ mod tests {
             thread::JoinHandle,
         },
         tempfile::TempDir,
+        test_case::test_case,
     };
 
     // Helper struct to create tests that hold channels, files, etc.
@@ -787,7 +788,9 @@ mod tests {
         consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
     }
 
-    fn setup_test_frame() -> (
+    fn setup_test_frame(
+        relax_intrabatch_account_locks: bool,
+    ) -> (
         TestFrame,
         ConsumeWorker<RuntimeTransaction<SanitizedTransaction>>,
     ) {
@@ -798,11 +801,15 @@ mod tests {
         } = create_slow_genesis_config(10_000);
         let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         // Warp to next epoch for MaxAge tests.
-        let bank = Arc::new(Bank::new_from_parent(
+        let mut bank = Bank::new_from_parent(
             bank.clone(),
             &Pubkey::new_unique(),
             bank.get_epoch_info().slots_in_epoch,
-        ));
+        );
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let bank = Arc::new(bank);
 
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path())
@@ -861,7 +868,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_no_bank() {
-        let (test_frame, worker) = setup_test_frame();
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -905,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_simple() {
-        let (test_frame, worker) = setup_test_frame();
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -952,9 +959,10 @@ mod tests {
         let _ = worker_thread.join().unwrap();
     }
 
-    #[test]
-    fn test_worker_consume_self_conflicting() {
-        let (test_frame, worker) = setup_test_frame();
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_worker_consume_self_conflicting(relax_intrabatch_account_locks: bool) {
+        let (test_frame, worker) = setup_test_frame(relax_intrabatch_account_locks);
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -998,7 +1006,16 @@ mod tests {
         assert_eq!(consumed.work.batch_id, bid);
         assert_eq!(consumed.work.ids, vec![id1, id2]);
         assert_eq!(consumed.work.max_ages, vec![max_age, max_age]);
-        assert_eq!(consumed.retryable_indexes, vec![1]); // id2 is retryable since lock conflict
+
+        // id2 succeeds with simd83, or is retryable due to lock conflict without simd83
+        assert_eq!(
+            consumed.retryable_indexes,
+            if relax_intrabatch_account_locks {
+                vec![]
+            } else {
+                vec![1]
+            }
+        );
 
         drop(test_frame);
         let _ = worker_thread.join().unwrap();
@@ -1006,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_worker_consume_multiple_messages() {
-        let (test_frame, worker) = setup_test_frame();
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
@@ -1081,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_worker_ttl() {
-        let (test_frame, worker) = setup_test_frame();
+        let (test_frame, worker) = setup_test_frame(true);
         let TestFrame {
             mint_keypair,
             genesis_config,
