@@ -10,7 +10,7 @@ use {
 };
 
 static RESERVED_IDS_SET: std::sync::LazyLock<HashSet<Pubkey>> =
-    std::sync::LazyLock::new(|| ReservedAccountKeys::new_all_activated().active.clone());
+    std::sync::LazyLock::new(|| ReservedAccountKeys::new_all_activated().active);
 
 pub struct ScannedLookupTableExtensions {
     pub possibly_incomplete: bool,
