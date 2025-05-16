@@ -2575,9 +2575,12 @@ fn main() {
                     let bank = bank_forks.read().unwrap().working_bank();
 
                     let include_sysvars = arg_matches.is_present("include_sysvars");
-                    let include_account_contents = !arg_matches.is_present("no_account_contents");
-                    let include_account_data = !arg_matches.is_present("no_account_data");
-                    let account_data_encoding = parse_encoding_format(arg_matches);
+                    let output_config = if arg_matches.is_present("no_account_contents") {
+                        None
+                    } else {
+                        Some(parse_account_output_config(arg_matches))
+                    };
+
                     let mode = if let Some(pubkeys) = pubkeys_of(arg_matches, "account") {
                         info!("Scanning individual accounts: {pubkeys:?}");
                         AccountsOutputMode::Individual(pubkeys)
@@ -2590,10 +2593,8 @@ fn main() {
                     };
                     let config = AccountsOutputConfig {
                         mode,
+                        output_config,
                         include_sysvars,
-                        include_account_contents,
-                        include_account_data,
-                        account_data_encoding,
                     };
                     let output_format =
                         OutputFormat::from_matches(arg_matches, "output_format", false);
