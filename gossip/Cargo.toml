@@ -104,6 +104,7 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+dev-context-only-utils =[]
 
 [[bench]]
 name = "crds"
