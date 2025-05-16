@@ -181,6 +181,12 @@ pub struct SerializedAccountMetadata {
     pub vm_owner_addr: u64,
 }
 
+#[derive(Debug)]
+pub struct FirstErrorAttribution {
+    pub inner_instruction_index: usize,
+    pub program_account_index: usize,
+}
+
 /// Main pipeline from runtime to program execution.
 pub struct InvokeContext<'a> {
     /// Information about the currently executing transaction.
@@ -202,6 +208,7 @@ pub struct InvokeContext<'a> {
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
+    first_error_attribution: Option<FirstErrorAttribution>,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -226,6 +233,7 @@ impl<'a> InvokeContext<'a> {
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             traces: Vec::new(),
+            first_error_attribution: None,
         }
     }
 
@@ -493,7 +501,21 @@ impl<'a> InvokeContext<'a> {
         self.environment_config
             .epoch_stake_callback
             .process_precompile(program_id, instruction_data, instruction_datas)
-            .map_err(InstructionError::from)
+            .map_err(|e| {
+                if self.first_error_attribution.is_none() {
+                    self.first_error_attribution = Some(FirstErrorAttribution {
+                        inner_instruction_index: self
+                            .transaction_context
+                            .get_current_inner_instruction_index(),
+                        program_account_index: self
+                            .transaction_context
+                            .find_index_of_program_account(program_id)
+                            .expect("the running program must be among the transaction's accounts")
+                            as usize,
+                    });
+                }
+                InstructionError::from(e)
+            })
             .and(self.pop())
     }
 
@@ -593,6 +615,20 @@ impl<'a> InvokeContext<'a> {
                 }
             }
         };
+
+        if result.is_err() && self.first_error_attribution.is_none() {
+            self.first_error_attribution = Some(FirstErrorAttribution {
+                inner_instruction_index: self
+                    .transaction_context
+                    .get_current_inner_instruction_index(),
+                program_account_index: self
+                    .transaction_context
+                    .find_index_of_program_account(&program_id)
+                    .map(|i| i as usize)
+                    .expect("the running program must be among the transaction's accounts"),
+            });
+        }
+
         let post_remaining_units = self.get_remaining();
         *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
 
@@ -610,6 +646,11 @@ impl<'a> InvokeContext<'a> {
     /// Get this invocation's LogCollector
     pub fn get_log_collector(&self) -> Option<Rc<RefCell<LogCollector>>> {
         self.log_collector.clone()
+    }
+
+    /// Get details about where to attribute the error this invocation first encountered
+    pub fn get_first_error_attribution(&self) -> &Option<FirstErrorAttribution> {
+        &self.first_error_attribution
     }
 
     /// Consume compute units
