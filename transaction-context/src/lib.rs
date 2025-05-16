@@ -377,6 +377,31 @@ impl TransactionContext {
             .ok_or(InstructionError::CallDepth)
     }
 
+    /// Returns the index of this instruction in a 'stack' of instructions.
+    ///
+    /// Useful for displaying instruction index paths (ie. for the second CPI of the third top level
+    /// instruction, displaying 3.2).
+    ///
+    /// # Example
+    ///
+    /// Observe how the index resets every time a new top-level instruction is called.
+    ///
+    /// * #1 Program A (index 0)
+    ///   * #1.1 CPI to Program B (index 1)
+    ///     * #1.2 CPI to Program C (index 2)
+    ///   * #1.3 CPI to Program D (index 3)
+    ///     * #1.4 CPI to Program E (index 4)
+    ///     * #1.5 CPI to Program F (index 5)
+    /// * #2 Program G (index 0)
+    /// * #3 Program H (index 0)
+    ///   * #3.1 Program I (index 1)
+    pub fn get_current_inner_instruction_index(&self) -> usize {
+        let index_in_trace = self.instruction_stack.last().unwrap_or(&(0 as usize));
+        let trace_index_of_nearest_top_level_instruction =
+            self.instruction_stack.first().unwrap_or(index_in_trace);
+        index_in_trace.saturating_sub(*trace_index_of_nearest_top_level_instruction)
+    }
+
     /// Pushes the next InstructionContext
     #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
