@@ -52,11 +52,11 @@ pub enum CrdsData {
     AccountsHashes(AccountsHashes), // Deprecated
     EpochSlots(EpochSlotsIndex, EpochSlots),
     #[allow(private_interfaces)]
-    LegacyVersion(LegacyVersion),
+    LegacyVersion(LegacyVersion), // Deprecated
     #[allow(private_interfaces)]
-    Version(Version),
+    Version(Version), // Deprecated
     #[allow(private_interfaces)]
-    NodeInstance(NodeInstance),
+    NodeInstance(NodeInstance), // Deprecated
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     SnapshotHashes(SnapshotHashes),
     ContactInfo(ContactInfo),
