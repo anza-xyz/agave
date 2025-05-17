@@ -1040,7 +1040,7 @@ fn reconstruct_accountsdb_from_fields<E>(
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
     genesis_config: &GenesisConfig,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
+    _verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -1236,7 +1236,7 @@ where
         duplicates_lt_hash,
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
-        verify_index,
+        true,
         genesis_config,
         is_accounts_lt_hash_enabled,
     );
