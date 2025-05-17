@@ -446,7 +446,7 @@ solana-last-restart-slot = "2.2.1"
 solana-lattice-hash = { path = "lattice-hash", version = "=2.2.15" }
 solana-ledger = { path = "ledger", version = "=2.2.15" }
 solana-loader-v2-interface = "2.2.1"
-solana-loader-v3-interface = "3.0.0"
+solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-loader-v4-program = { path = "programs/loader-v4", version = "=2.2.15" }
 solana-local-cluster = { path = "local-cluster", version = "=2.2.15" }
