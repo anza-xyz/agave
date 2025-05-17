@@ -3436,12 +3436,10 @@ impl AccountsDb {
             let mut curr = 1;
 
             while curr < accounts.len() {
-                if accounts[curr].pubkey() == accounts[last].pubkey() {
-                    accounts[last] = accounts[curr];
-                } else {
+                if accounts[curr].pubkey() != accounts[last].pubkey() {
                     last += 1;
-                    accounts[last] = accounts[curr];
                 }
+                accounts[last] = accounts[curr];
                 curr += 1;
             }
             accounts.truncate(last + 1);
