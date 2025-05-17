@@ -22,7 +22,6 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
         accounts_index::{ScanConfig, ScanOrder},
@@ -35,7 +34,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
+    solana_cli_output::{CliAccount, OutputFormat},
     solana_clock::{Epoch, Slot},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
@@ -111,15 +110,6 @@ mod ledger_path;
 mod ledger_utils;
 mod output;
 mod program;
-
-fn parse_encoding_format(matches: &ArgMatches<'_>) -> UiAccountEncoding {
-    match matches.value_of("encoding") {
-        Some("jsonParsed") => UiAccountEncoding::JsonParsed,
-        Some("base64") => UiAccountEncoding::Base64,
-        Some("base64+zstd") => UiAccountEncoding::Base64Zstd,
-        _ => UiAccountEncoding::Base64,
-    }
-}
 
 fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result<()> {
     let mut child = Command::new("dot")
@@ -1687,24 +1677,7 @@ fn main() {
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
 
                     if output_accounts {
-                        let data_encoding = parse_encoding_format(arg_matches);
-                        let output_account_data = !arg_matches.is_present("no_account_data");
-                        let data_slice_config = if output_account_data {
-                            // None yields the entire account in the slice
-                            None
-                        } else {
-                            // usize::MAX is a sentinel that will yield an
-                            // empty data slice. Because of this, length is
-                            // ignored so any value will do
-                            let offset = usize::MAX;
-                            let length = 0;
-                            Some(UiDataSliceConfig { offset, length })
-                        };
-                        let cli_account_config = CliAccountNewConfig {
-                            data_encoding,
-                            data_slice_config,
-                            ..CliAccountNewConfig::default()
-                        };
+                        let output_config = parse_account_output_config(arg_matches);
 
                         let accounts: Vec<_> = genesis_config
                             .accounts
@@ -1713,7 +1686,7 @@ fn main() {
                                 CliAccount::new_with_config(
                                     &pubkey,
                                     &AccountSharedData::from(account),
-                                    &cli_account_config,
+                                    &output_config,
                                 )
                             })
                             .collect();
@@ -2602,9 +2575,12 @@ fn main() {
                     let bank = bank_forks.read().unwrap().working_bank();
 
                     let include_sysvars = arg_matches.is_present("include_sysvars");
-                    let include_account_contents = !arg_matches.is_present("no_account_contents");
-                    let include_account_data = !arg_matches.is_present("no_account_data");
-                    let account_data_encoding = parse_encoding_format(arg_matches);
+                    let output_config = if arg_matches.is_present("no_account_contents") {
+                        None
+                    } else {
+                        Some(parse_account_output_config(arg_matches))
+                    };
+
                     let mode = if let Some(pubkeys) = pubkeys_of(arg_matches, "account") {
                         info!("Scanning individual accounts: {pubkeys:?}");
                         AccountsOutputMode::Individual(pubkeys)
@@ -2617,10 +2593,8 @@ fn main() {
                     };
                     let config = AccountsOutputConfig {
                         mode,
+                        output_config,
                         include_sysvars,
-                        include_account_contents,
-                        include_account_data,
-                        account_data_encoding,
                     };
                     let output_format =
                         OutputFormat::from_matches(arg_matches, "output_format", false);
