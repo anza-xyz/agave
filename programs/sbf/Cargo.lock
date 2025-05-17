@@ -6478,6 +6478,7 @@ dependencies = [
  "solana-signature",
  "solana-transaction",
  "solana-transaction-status",
+ "solana-vote-program",
  "thiserror 2.0.12",
  "tokio",
 ]

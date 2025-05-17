@@ -90,12 +90,117 @@ impl TransactionNotifierImpl {
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a SanitizedTransaction,
     ) -> ReplicaTransactionInfoV2<'a> {
+        let msg = transaction.message();
+        let instructions = msg.instructions();
+        let account_keys = msg.account_keys();
+
         ReplicaTransactionInfoV2 {
             index,
             signature,
-            is_vote: transaction.is_simple_vote_transaction(),
+            is_vote: if !account_keys.is_empty() && !instructions.is_empty() {
+                account_keys[instructions[0].program_id_index as usize] == solana_vote_program::id()
+            } else {
+                false
+            },
             transaction,
             transaction_status_meta,
         }
+    }
+}
+
+#[cfg(test)]
+mod transaction_notifier_tests {
+    use {
+        super::TransactionNotifierImpl,
+        solana_pubkey::Pubkey,
+        solana_sdk::{
+            hash::Hash,
+            signature::{Keypair, Signer},
+            system_instruction,
+            transaction::Transaction as LegacyTransaction,
+        },
+        solana_transaction::sanitized::SanitizedTransaction,
+        solana_transaction_status::TransactionStatusMeta,
+        solana_vote_program::{vote_instruction::vote as vote_instruction, vote_state::Vote},
+    };
+
+    #[test]
+    fn build_replica_transaction_info_vote() {
+        // 1) set up keypairs and a unique vote account
+        let fee_payer = Keypair::new();
+        let recipient = Keypair::new();
+        let vote_authority = Keypair::new();
+        let vote_pubkey = Pubkey::new_unique();
+        let recent_blockhash = Hash::new_unique();
+
+        let vote = Vote {
+            slots: vec![0],
+            hash: recent_blockhash,
+            timestamp: Some(0),
+        };
+        let ix1 = vote_instruction(&vote_pubkey, &vote_authority.pubkey(), vote);
+
+        let ix2 = system_instruction::transfer(
+            &fee_payer.pubkey(),
+            &recipient.pubkey(),
+            1, // lamports
+        );
+
+        // 3) assemble & sign a legacy transaction
+        let mut legacy_tx =
+            LegacyTransaction::new_with_payer(&[ix1, ix2], Some(&fee_payer.pubkey()));
+        // fee_payer signs the transfer, vote_authority signs the vote
+        legacy_tx.sign(&[&fee_payer, &vote_authority], recent_blockhash);
+
+        // 4) convert into a SanitizedTransaction for the notifier
+        let tx: SanitizedTransaction = SanitizedTransaction::from_transaction_for_tests(legacy_tx);
+
+        // 5) grab its first signature
+        let signature = &tx.signatures()[0];
+
+        // 6) default‐initialize a dummy TransactionStatusMeta
+        let meta = TransactionStatusMeta::default();
+
+        // 7) run your patched vote‐detection
+        let info =
+            TransactionNotifierImpl::build_replica_transaction_info(0, signature, &meta, &tx);
+
+        // 8) ensure we classified this 2‐instruction pattern as a vote
+        assert!(info.is_vote, "system+vote should be classified as vote");
+    }
+
+    #[test]
+    fn build_replica_transaction_info_non_vote() {
+        // 1) set up a fee payer and two recipients
+        let fee_payer = Keypair::new();
+        let recipient1 = Keypair::new();
+        let recipient2 = Keypair::new();
+        let recent_blockhash = Hash::new_unique();
+
+        // 2) build two plain system‐transfer instructions
+        let ix1 = system_instruction::transfer(&fee_payer.pubkey(), &recipient1.pubkey(), 1);
+        let ix2 = system_instruction::transfer(&fee_payer.pubkey(), &recipient2.pubkey(), 2);
+
+        // 3) assemble & sign a legacy transaction with those two transfers
+        let mut legacy_tx =
+            LegacyTransaction::new_with_payer(&[ix1, ix2], Some(&fee_payer.pubkey()));
+        legacy_tx.sign(&[&fee_payer], recent_blockhash);
+
+        // 4) convert into a SanitizedTransaction
+        let tx: SanitizedTransaction = SanitizedTransaction::from_transaction_for_tests(legacy_tx);
+
+        // 5) grab its signature and a dummy status meta
+        let signature = &tx.signatures()[0];
+        let meta = TransactionStatusMeta::default();
+
+        // 6) run your patched vote‐detection
+        let info =
+            TransactionNotifierImpl::build_replica_transaction_info(0, signature, &meta, &tx);
+
+        // 7) assert that this is *not* classified as a vote
+        assert!(
+            !info.is_vote,
+            "two plain transfers should not be classified as vote"
+        );
     }
 }
