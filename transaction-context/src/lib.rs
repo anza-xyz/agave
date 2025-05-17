@@ -399,13 +399,18 @@ impl TransactionContext {
                 return Err(InstructionError::UnbalancedInstruction);
             }
         }
+        let index_in_trace = self.get_instruction_trace_length();
+        let trace_index_of_nearest_top_level_instruction =
+            self.instruction_stack.first().unwrap_or(&index_in_trace);
+        let instruction_index =
+            index_in_trace.saturating_sub(*trace_index_of_nearest_top_level_instruction);
         {
             let instruction_context = self.get_next_instruction_context()?;
             instruction_context.nesting_level = nesting_level;
             instruction_context.instruction_accounts_lamport_sum =
                 callee_instruction_accounts_lamport_sum;
+            instruction_context.instruction_index = instruction_index;
         }
-        let index_in_trace = self.get_instruction_trace_length();
         if index_in_trace >= self.instruction_trace_capacity {
             return Err(InstructionError::MaxInstructionTraceLengthExceeded);
         }
@@ -566,6 +571,25 @@ pub struct TransactionReturnData {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct InstructionContext {
     nesting_level: usize,
+    /// The index of this instruction in a 'stack' of instructions.
+    ///
+    /// Useful for displaying instruction index paths (ie. for the second CPI of the third top level
+    /// instruction, displaying 3.2).
+    ///
+    /// # Example
+    ///
+    /// Observe how the index resets every time a new top-level instruction is called.
+    ///
+    /// * Program A (index 0, nesting level 0)
+    ///   * CPI to Program B (index 1, nesting level 1)
+    ///     * CPI to Program C (index 2, nesting level 2)
+    ///   * CPI to Program D (index 3, nesting level 1)
+    ///     * CPI to Program E (index 4, nesting level 2)
+    ///     * CPI to Program F (index 5, nesting level 2)
+    /// * Program G (index 0, nesting level 0)
+    /// * Program H (index 0, nesting level 0)
+    ///   * Program I (index 1, nesting level 0)
+    instruction_index: usize,
     instruction_accounts_lamport_sum: u128,
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
@@ -1295,6 +1319,8 @@ fn is_zeroed(buf: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solana_instruction::error::InstructionError;
+    use solana_rent::Rent;
 
     #[test]
     fn test_instructions_sysvar_store_index_checked() {
@@ -1336,5 +1362,73 @@ mod tests {
             &solana_sdk_ids::sysvar::id(),
         );
         assert_eq!(build_transaction_context(account).push(), Ok(()),);
+    }
+
+    #[test]
+    fn test_instruction_index_increments_with_each_instruction_departing_from_top_level(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        const MAX_NESTING_LEVEL: usize = 3;
+        const MAX_INSTRUCTIONS: usize = 9;
+        let mut ctx =
+            TransactionContext::new(vec![], Rent::default(), MAX_NESTING_LEVEL, MAX_INSTRUCTIONS);
+        // This test replicates this call structure.
+        //
+        // * #1 Program A (index 0, nesting level 0)
+        //   * #1.1 CPI to Program B (index 1, nesting level 1)
+        //     * #1.2 CPI to Program C (index 2, nesting level 2)
+        //   * #1.3 CPI to Program D (index 3, nesting level 1)
+        //     * #1.4 CPI to Program E (index 4, nesting level 2)
+        //     * #1.5 CPI to Program F (index 5, nesting level 2)
+        // * #2 Program G (index 0, nesting level 0)
+        // * #3 Program H (index 0, nesting level 0)
+        //   * #3.1 Program I (index 1, nesting level 0)
+        //
+        // Start: ROOT
+        assert_eq!(
+            ctx.get_current_instruction_context(),
+            Err(InstructionError::CallDepth),
+        );
+        ctx.push()?; // -> Program A (Instruction #1)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 0);
+        ctx.push()?; // -> Program B (Instruction #1.1)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 1);
+        ctx.push()?; // -> Program C (Instruction #1.2)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 2);
+        ctx.pop()?; // Program B <- (Instruction #1.1)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 1);
+        ctx.pop()?; // Program A <- (Instruction #1)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 0);
+        ctx.push()?; // -> Program D (Instruction #1.3)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 3);
+        ctx.push()?; // -> Program E (Instruction #1.4)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 4);
+        ctx.pop()?; // Program D <- (Instruction #1.3)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 3);
+        ctx.push()?; // -> Program F (Instruction #1.5)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 5);
+        ctx.pop()?; // Program D <- (Instruction #1.3)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 3);
+        ctx.pop()?; // Program A <- (Instruction #1)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 0);
+        ctx.pop()?; // ROOT <-
+        assert_eq!(
+            ctx.get_current_instruction_context(),
+            Err(InstructionError::CallDepth),
+        );
+        ctx.push()?; // -> Program G (Instruction #2)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 0);
+        ctx.pop()?; // ROOT <-
+        ctx.push()?; // -> Program H (Instruction #3)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 0);
+        ctx.push()?; // -> Program I (Instruction #3.1)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 1);
+        ctx.pop()?; // Program H <- (Instruction #3)
+        assert_eq!(ctx.get_current_instruction_context()?.instruction_index, 0);
+        ctx.pop()?; // ROOT <-
+        assert_eq!(
+            ctx.get_current_instruction_context(),
+            Err(InstructionError::CallDepth),
+        );
+        Ok(())
     }
 }
