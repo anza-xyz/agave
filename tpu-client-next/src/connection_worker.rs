@@ -5,19 +5,21 @@ use {
     super::SendTransactionStats,
     crate::{
         quic_networking::send_data_over_stream, send_transaction_stats::record_error,
-        transaction_batch::TransactionBatch,
+        tpu_feedback::recv_tpu_feedback, transaction_batch::TransactionBatch,
     },
     log::*,
     quinn::{ConnectError, Connection, Endpoint},
     solana_clock::{DEFAULT_MS_PER_SLOT, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
     solana_measure::measure::Measure,
+    solana_streamer::tpu_feedback::TpuFeedback,
     solana_time_utils::timestamp,
     std::{
         net::SocketAddr,
         sync::{atomic::Ordering, Arc},
     },
     tokio::{
-        sync::mpsc,
+        sync::{broadcast, mpsc},
+        task::JoinHandle,
         time::{sleep, Duration},
     },
     tokio_util::sync::CancellationToken,
@@ -75,6 +77,8 @@ pub(crate) struct ConnectionWorker {
     max_reconnect_attempts: usize,
     send_txs_stats: Arc<SendTransactionStats>,
     cancel: CancellationToken,
+    datagram_task: Option<JoinHandle<()>>,
+    feedback_sender: Option<broadcast::Sender<TpuFeedback>>,
 }
 
 impl ConnectionWorker {
@@ -106,6 +110,8 @@ impl ConnectionWorker {
             max_reconnect_attempts,
             send_txs_stats,
             cancel: cancel.clone(),
+            datagram_task: None,
+            feedback_sender: None,
         };
 
         (this, cancel)
@@ -214,6 +220,16 @@ impl ConnectionWorker {
                 );
                 match res {
                     Ok(connection) => {
+                        let cancel = self.cancel.clone();
+                        if let Some(feedback_sender) = &self.feedback_sender {
+                            let recv_task = tokio::spawn(recv_tpu_feedback(
+                                connection.clone(),
+                                cancel,
+                                feedback_sender.clone(),
+                            ));
+                            self.datagram_task = Some(recv_task);
+                        }
+
                         self.connection = ConnectionState::Active(connection);
                     }
                     Err(err) => {
