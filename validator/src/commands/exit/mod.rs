@@ -7,6 +7,8 @@ use {
     solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
     std::path::Path,
 };
+#[cfg(target_os = "linux")]
+use {procfs::process::Process, std::time::Duration};
 
 const COMMAND: &str = "exit";
 
@@ -102,13 +104,57 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     }
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+    let validator_pid =
+        admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
     println!("Exit request sent");
 
     if exit_args.monitor {
         monitor::execute(matches, ledger_path)?;
+    } else {
+        poll_until_pid_terminates(validator_pid)?;
     }
 
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+// This function will be called while the process with id `pid` is terminating.
+// Inspecting  a process that is on the verge of termination is inherently racy
+// so the error handling and flow control reflect that
+fn poll_until_pid_terminates(pid: u32) -> Result<()> {
+    let pid = i32::try_from(pid)?;
+
+    println!("Monitoring agave-validator process {pid}");
+    loop {
+        let Ok(process) = Process::new(pid) else {
+            println!("agave-validator process {pid} has terminated");
+            break;
+        };
+
+        let num_threads = match process.tasks() {
+            Ok(thread_iter) => thread_iter.count(),
+            Err(_) => {
+                // The process might have terminated, go back to top
+                continue;
+            }
+        };
+        if num_threads == 0 {
+            // Process must have terminated if 0 threads, go back to top
+            continue;
+        } else {
+            println!("Waiting for {num_threads} threads to terminate");
+        }
+
+        // Give the process some time to shutdown before checking again
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn poll_until_pid_terminates(pid: u32) -> Result<()> {
+    println!("Unable to monitor agave-validator process {pid} on this platform");
     Ok(())
 }
 
