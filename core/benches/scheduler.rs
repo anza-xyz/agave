@@ -1,5 +1,3 @@
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
-use jemallocator::Jemalloc;
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
@@ -24,9 +22,12 @@ use {
     std::time::{Duration, Instant},
 };
 
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[cfg(all(
+    not(any(target_env = "msvc", target_os = "freebsd")),
+    feature = "jemallocator"
+))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 // a bench consumer worker that quickly drain work channel, then send a OK back via completed-work
 // channel
 // NOTE: Avoid creating PingPong within bench iter since joining threads at its eol would

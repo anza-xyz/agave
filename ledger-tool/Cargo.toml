@@ -84,12 +84,13 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
-jemallocator = { workspace = true }
+jemallocator = { workspace = true, optional = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
 
 [features]
+default = ["jemallocator"]
 dev-context-only-utils = []
 
 [target."cfg(unix)".dependencies]

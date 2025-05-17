@@ -181,9 +181,10 @@ test-case = { workspace = true }
 sysctl = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
-jemallocator = { workspace = true }
+jemallocator = { workspace = true, optional = true }
 
 [features]
+default = ["jemallocator"]
 dev-context-only-utils = [
     "solana-perf/dev-context-only-utils",
     "solana-runtime/dev-context-only-utils",
