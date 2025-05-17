@@ -49,7 +49,13 @@ export RUSTFLAGS="-C instrument-coverage $RUSTFLAGS"
 export LLVM_PROFILE_FILE="$here/../target/cov/${COMMIT_HASH}/profraw/default-%p-%m.profraw"
 
 if [[ -z $1 ]]; then
-  PACKAGES=(--lib --all --exclude solana-local-cluster)
+  PACKAGES=(
+    --lib
+    --workspace
+    --tests
+    --exclude solana-local-cluster
+    --exclude solana-cargo-build-sbf
+  )
 else
   PACKAGES=("$@")
 fi
