@@ -657,7 +657,10 @@ fn setup_slot_recording(
                 }));
 
                 (
-                    Some(TransactionStatusSender { sender }),
+                    Some(TransactionStatusSender {
+                        sender,
+                        event_notification_synchronizer: None,
+                    }),
                     transaction_recorder,
                 )
             } else {
@@ -741,7 +744,7 @@ fn record_transactions(
     slots: Arc<Mutex<Vec<SlotDetails>>>,
 ) {
     for tsm in recv {
-        if let TransactionStatusMessage::Batch(batch) = tsm {
+        if let TransactionStatusMessage::Batch((batch, _event_sequence)) = tsm {
             assert_eq!(batch.transactions.len(), batch.commit_results.len());
 
             let transactions: Vec<_> = batch
