@@ -2273,24 +2273,25 @@ mod tests {
     fn test_hashing(hashes: Vec<Hash>, fanout: usize) -> Hash {
         let temp: Vec<_> = hashes.iter().map(|h| (Pubkey::default(), *h)).collect();
         let result = AccountsHasher::compute_merkle_root(temp, fanout);
-        let reduced: Vec<_> = hashes.clone();
+        let len = hashes.len();
+        let reduced: Vec<_> = hashes;
         let result2 = AccountsHasher::compute_merkle_root_from_slices(
-            hashes.len(),
+            len,
             fanout,
             None,
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", hashes.len());
+        assert_eq!(result, result2.0, "len: {}", len);
 
         let result2 = AccountsHasher::compute_merkle_root_from_slices(
-            hashes.len(),
+            len,
             fanout,
             Some(1),
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", hashes.len());
+        assert_eq!(result, result2.0, "len: {}", len);
 
         let max = std::cmp::min(reduced.len(), fanout * 2);
         for left in 0..max {
