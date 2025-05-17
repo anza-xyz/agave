@@ -1282,7 +1282,6 @@ fn test_snapshot_restart_tower() {
         &cluster.connection_cache,
     );
 }
-
 #[test]
 #[serial]
 fn test_snapshots_blockstore_floor() {

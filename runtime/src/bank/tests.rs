@@ -2379,6 +2379,7 @@ fn test_purge_empty_accounts() {
         bank1.freeze();
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
+
         bank1.update_accounts_hash_for_tests();
         assert!(bank1.verify_accounts_hash(
             None,
@@ -6680,10 +6681,18 @@ fn test_clean_nonrooted() {
     bank3.force_flush_accounts_cache();
 
     bank3.clean_accounts_for_tests();
-    assert_eq!(
-        bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
-        2
-    );
+    if bank3.rc.accounts.accounts_db.track_dead_accounts {
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            1
+        );
+    } else {
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            2
+        );
+    }
+
     assert!(bank3
         .rc
         .accounts
