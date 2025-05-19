@@ -60,7 +60,7 @@ solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = "=2.2.1"
-solana-serde-varint = "=2.2.1"
+solana-serde-varint = "=2.2.2"
 solana-sha256-hasher = "=2.2.1"
 solana-short-vec = "=2.2.1"
 solana-signature = { version = "=2.2.1", default-features = false }
