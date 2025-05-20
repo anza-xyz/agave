@@ -513,7 +513,7 @@ solana-serde = "2.2.1"
 solana-serde-varint = "2.2.2"
 solana-serialize-utils = "2.2.1"
 solana-sha256-hasher = "2.2.1"
-solana-signature = { version = "2.2.1", default-features = false }
+solana-signature = { version = "2.3.0", default-features = false }
 solana-signer = "2.2.1"
 solana-slot-hashes = "2.2.1"
 solana-slot-history = "2.2.1"

@@ -73,7 +73,7 @@ solana-rpc-client-api = { workspace = true }
 solana-rpc-client-nonce-utils = { workspace = true, features = ["clap"] }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = "=2.2.1"
-solana-signature = { version = "=2.2.1", default-features = false }
+solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
 solana-slot-history = "=2.2.1"
 solana-stake-interface = "=1.2.1"
