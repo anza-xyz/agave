@@ -79,7 +79,7 @@ solana-slot-history = "=2.2.1"
 solana-stake-interface = "=1.2.1"
 solana-streamer = { workspace = true }
 solana-system-interface = { version = "=1.0", features = ["bincode"] }
-solana-sysvar = "=2.2.1"
+solana-sysvar = "=2.2.2"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = "=2.2.2"

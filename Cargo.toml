@@ -553,7 +553,7 @@ solana-svm-transaction = { path = "svm-transaction", version = "=2.3.0" }
 solana-system-interface = "1.0"
 solana-system-program = { path = "programs/system", version = "=2.3.0" }
 solana-system-transaction = "2.2.1"
-solana-sysvar = "2.2.1"
+solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=2.3.0" }
 solana-thin-client = { path = "thin-client", version = "=2.3.0" }
