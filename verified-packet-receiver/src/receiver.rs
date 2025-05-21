@@ -1,7 +1,6 @@
 /// This is responsible for receiving the verified and deduplicated transactions
 /// from the vortexor and sending down to the banking stage.
 use {
-    solana_perf::{packet::PacketBatchRecycler, recycler::Recycler},
     solana_streamer::streamer::{self, PacketBatchSender, StreamerReceiveStats},
     std::{
         net::UdpSocket,
@@ -23,8 +22,6 @@ impl VerifiedPacketReceiver {
         in_vote_only_mode: Option<Arc<AtomicBool>>,
         exit: Arc<AtomicBool>,
     ) -> Self {
-        let recycler: PacketBatchRecycler = Recycler::warmed(1000, 1024);
-
         let tpu_stats = Arc::new(StreamerReceiveStats::new("vortexor_receiver"));
 
         let thread_hdls = sockets
@@ -36,10 +33,8 @@ impl VerifiedPacketReceiver {
                     socket,
                     exit.clone(),
                     sender.clone(),
-                    recycler.clone(),
                     tpu_stats.clone(),
                     Some(coalesce),
-                    true,
                     in_vote_only_mode.clone(),
                     false, // is_staked_service
                 )

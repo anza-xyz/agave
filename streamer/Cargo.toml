@@ -20,6 +20,7 @@ name = "solana_streamer"
 dev-context-only-utils = []
 
 [dependencies]
+arrayvec = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
