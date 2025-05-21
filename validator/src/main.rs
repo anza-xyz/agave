@@ -1,6 +1,4 @@
 #![allow(clippy::arithmetic_side_effects)]
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
-use jemallocator::Jemalloc;
 use {
     agave_validator::{
         cli::{app, warn_for_deprecated_arguments, DefaultArgs},
@@ -11,9 +9,12 @@ use {
     std::{path::PathBuf, process::exit},
 };
 
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[cfg(all(
+    not(any(target_env = "msvc", target_os = "freebsd")),
+    feature = "jemallocator"
+))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub fn main() {
     let default_args = DefaultArgs::new();
