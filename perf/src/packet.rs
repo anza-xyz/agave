@@ -26,7 +26,6 @@ pub use {
 pub const NUM_PACKETS: usize = 1024 * 8;
 
 pub const PACKETS_PER_BATCH: usize = 64;
-pub const NUM_RCVMMSGS: usize = 64;
 
 /// Representation of a packet used in TPU.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
