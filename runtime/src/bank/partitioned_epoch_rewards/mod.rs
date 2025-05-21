@@ -611,13 +611,7 @@ mod tests {
                 );
 
                 assert!(curr_bank.is_calculated());
-
-                if slot == SLOTS_PER_EPOCH {
-                    // cap should increase because of new epoch rewards
-                    assert!(post_cap > pre_cap);
-                } else {
-                    assert_eq!(post_cap, pre_cap);
-                }
+                assert_eq!(post_cap, pre_cap);
             } else if slot == SLOTS_PER_EPOCH + 1 {
                 // 1. when curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block.
@@ -694,9 +688,6 @@ mod tests {
 
                 // calculation block, state should be calculated.
                 assert!(curr_bank.is_calculated());
-
-                // cap should increase because of new epoch rewards
-                assert!(post_cap > pre_cap);
             } else if slot == SLOTS_PER_EPOCH + 1 {
                 // When curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block. The
