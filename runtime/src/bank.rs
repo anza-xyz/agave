@@ -6980,10 +6980,15 @@ impl TransactionProcessingCallback for Bank {
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.
-        let account = solana_sdk::native_loader::create_loadable_account_with_fields(
-            name,
-            self.inherit_specially_retained_account_fields(&existing_genuine_program),
-        );
+        let (lamports, rent_epoch) =
+            self.inherit_specially_retained_account_fields(&existing_genuine_program);
+        let account: AccountSharedData = AccountSharedData::from(Account {
+            lamports,
+            data: name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch,
+        });
         self.store_account_and_update_capitalization(program_id, &account);
     }
 

@@ -1,7 +1,7 @@
 use {
     agave_feature_set::FeatureSet,
     log::*,
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallInvokeSignedRust, SyscallLog,
         SyscallLogBpfComputeUnits, SyscallLogPubkey, SyscallLogU64, SyscallMemcpy, SyscallMemset,
@@ -22,7 +22,6 @@ use {
         },
     },
     solana_pubkey::Pubkey,
-    solana_sdk::native_loader,
     solana_svm::{
         transaction_processing_result::TransactionProcessingResult,
         transaction_processor::TransactionBatchProcessor,
@@ -89,7 +88,13 @@ impl TransactionProcessingCallback for MockBankCallback {
     }
 
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let account_data = native_loader::create_loadable_account_with_fields(name, (5000, 0));
+        let account_data = AccountSharedData::from(Account {
+            lamports: 5000,
+            data: name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch: 0,
+        });
 
         self.account_shared_data
             .write()
