@@ -22,7 +22,7 @@ solana-account = "=2.2.1"
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-clock = "=2.2.1"
+solana-clock = "=2.2.2"
 solana-commitment-config = "=2.2.1"
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"
