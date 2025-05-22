@@ -202,7 +202,10 @@ struct GraphConfig {
 #[allow(clippy::cognitive_complexity)]
 fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     let frozen_banks = bank_forks.frozen_banks();
-    let mut fork_slots: HashSet<_> = frozen_banks.keys().cloned().collect();
+    let mut fork_slots: HashSet<_> = bank_forks
+        .frozen_banks()
+        .map(|(slot, _bank)| slot)
+        .collect();
     for (_, bank) in frozen_banks {
         for parent in bank.parents() {
             fork_slots.remove(&parent.slot());

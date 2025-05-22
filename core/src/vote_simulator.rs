@@ -175,8 +175,7 @@ impl VoteSimulator {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         let _ = ReplayStage::compute_bank_stats(

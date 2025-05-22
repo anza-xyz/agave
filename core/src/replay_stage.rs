@@ -867,9 +867,8 @@ impl ReplayStage {
                     .read()
                     .unwrap()
                     .frozen_banks()
-                    .into_iter()
-                    .filter(|(slot, _)| *slot >= forks_root)
-                    .map(|(_, bank)| bank)
+                    .filter(|(slot, _bank)| *slot >= forks_root)
+                    .map(|(_slot, bank)| bank)
                     .collect();
                 collect_frozen_banks_time.stop();
 
@@ -1439,7 +1438,10 @@ impl ReplayStage {
             });
             (
                 root_bank,
-                bank_forks.frozen_banks().values().cloned().collect(),
+                bank_forks
+                    .frozen_banks()
+                    .map(|(_slot, bank)| bank)
+                    .collect(),
                 duplicate_slot_hashes.collect::<Vec<(Slot, Hash)>>(),
             )
         };
@@ -4161,12 +4163,13 @@ impl ReplayStage {
         let forks = bank_forks.read().unwrap();
         generate_new_bank_forks_read_lock.stop();
 
-        let frozen_banks = forks.frozen_banks();
-        let frozen_bank_slots: Vec<u64> = frozen_banks
+        let frozen_banks: HashMap<_, _> = forks.frozen_banks().collect();
+        let frozen_bank_slots: Vec<_> = frozen_banks
             .keys()
             .cloned()
-            .filter(|s| *s >= forks.root())
+            .filter(|slot| *slot >= forks.root())
             .collect();
+
         let mut generate_new_bank_forks_get_slots_since =
             Measure::start("generate_new_bank_forks_get_slots_since");
         let next_slots = blockstore
@@ -5392,8 +5395,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         let mut tower = Tower::new_for_tests(0, 0.67);
         let newly_computed = ReplayStage::compute_bank_stats(
@@ -5445,8 +5447,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         let newly_computed = ReplayStage::compute_bank_stats(
             &my_vote_pubkey,
@@ -5481,8 +5482,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         let newly_computed = ReplayStage::compute_bank_stats(
             &my_vote_pubkey,
@@ -5514,8 +5514,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         let heaviest_subtree_fork_choice = &mut vote_simulator.heaviest_subtree_fork_choice;
         let mut latest_validator_votes_for_frozen_banks =
@@ -5587,8 +5586,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         let my_vote_pubkey = vote_simulator.vote_pubkeys[0];
@@ -6697,8 +6695,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         // Compute bank stats, make sure vote is propagated back to starting root bank
@@ -7325,8 +7322,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         let ancestors = bank_forks.read().unwrap().ancestors();
@@ -7449,8 +7445,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         let ancestors = bank_forks.read().unwrap().ancestors();
@@ -8227,8 +8222,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         ReplayStage::compute_bank_stats(
             &my_vote_pubkey,
@@ -8746,8 +8740,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         let ancestors = &bank_forks.read().unwrap().ancestors();
         let descendants = &bank_forks.read().unwrap().descendants();
@@ -9046,8 +9039,7 @@ pub(crate) mod tests {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         let ancestors = &bank_forks.read().unwrap().ancestors();
 

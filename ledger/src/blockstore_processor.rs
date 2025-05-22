@@ -1080,15 +1080,11 @@ pub fn process_blockstore_from_root(
     };
 
     let processing_time = now.elapsed();
-
+    let num_frozen_banks = bank_forks.read().unwrap().frozen_banks().count();
     datapoint_info!(
         "process_blockstore_from_root",
         ("total_time_us", processing_time.as_micros(), i64),
-        (
-            "frozen_banks",
-            bank_forks.read().unwrap().frozen_banks().len(),
-            i64
-        ),
+        ("frozen_banks", num_frozen_banks, i64),
         ("slot", bank_forks.read().unwrap().root(), i64),
         ("num_slots_processed", num_slots_processed, i64),
         ("num_new_roots_found", num_new_roots_found, i64),
@@ -4371,7 +4367,10 @@ pub mod tests {
     }
 
     fn frozen_bank_slots(bank_forks: &BankForks) -> Vec<Slot> {
-        let mut slots: Vec<_> = bank_forks.frozen_banks().keys().cloned().collect();
+        let mut slots: Vec<_> = bank_forks
+            .frozen_banks()
+            .map(|(slot, _bank)| slot)
+            .collect();
         slots.sort_unstable();
         slots
     }
@@ -4669,7 +4668,7 @@ pub mod tests {
 
         assert_eq!(bank_forks.root(), expected_root_slot);
         assert_eq!(
-            bank_forks.frozen_banks().len() as u64,
+            bank_forks.frozen_banks().count() as u64,
             last_minor_fork_slot - really_expected_root_slot + 1
         );
 

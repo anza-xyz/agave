@@ -165,12 +165,11 @@ impl BankForks {
         self.descendants.clone()
     }
 
-    pub fn frozen_banks(&self) -> HashMap<Slot, Arc<Bank>> {
+    pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
         self.banks
             .iter()
             .filter(|(_, b)| b.is_frozen())
             .map(|(&k, b)| (k, b.clone_without_scheduler()))
-            .collect()
     }
 
     pub fn active_bank_slots(&self) -> Vec<Slot> {
@@ -740,8 +739,13 @@ mod tests {
         let bank0 = bank_forks[0].clone();
         let child_bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         bank_forks.insert(child_bank);
-        assert!(bank_forks.frozen_banks().contains_key(&0));
-        assert!(!bank_forks.frozen_banks().contains_key(&1));
+
+        let frozen_slots: HashSet<Slot> = bank_forks
+            .frozen_banks()
+            .map(|(slot, _bank)| slot)
+            .collect();
+        assert!(frozen_slots.contains(&0));
+        assert!(!frozen_slots.contains(&1));
     }
 
     #[test]
