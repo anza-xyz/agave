@@ -611,8 +611,23 @@ impl AccountsBackgroundService {
                                     break;
                                 }
                             }
-                        } else if bank.block_height() - last_cleaned_block_height
-                            > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10))
+                        } else if (bank.block_height() - last_cleaned_block_height
+                            > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10)))
+                            && (
+                                // If there are snapshot requests in the channel *and* startup
+                                // verification is ongoing, then we must not call `clean` nor
+                                // update `last_cleaned_block_height`.  It is possible a snapshot
+                                // request is in the channel, waiting for startup verification to
+                                // complete, that is for a slot *older* than `bank.slot()`.  Then
+                                // once startup verification completed, this old snapshot request
+                                // would be handled, and we'd break the invariant above that
+                                // last_cleaned_block_height must be <= snapshot_block_height.
+                                !request_handlers
+                                    .snapshot_request_handler
+                                    .snapshot_request_receiver
+                                    .is_empty()
+                                    && !bank.is_startup_verification_complete()
+                            )
                         {
                             // Note that the flush will do an internal clean of the
                             // cache up to bank.slot(), so should be safe as long
