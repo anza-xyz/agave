@@ -37,7 +37,7 @@ solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
 solana-client = { workspace = true }
-solana-clock = "=2.2.1"
+solana-clock = "=2.2.2"
 solana-cluster-type = "=2.2.1"
 solana-commitment-config = "=2.2.1"
 solana-compute-budget-interface = { version = "=2.2.2", features = ["borsh"] }

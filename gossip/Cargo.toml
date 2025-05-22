@@ -34,7 +34,7 @@ siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
-solana-clock = "=2.2.1"
+solana-clock = "=2.2.2"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"

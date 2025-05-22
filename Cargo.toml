@@ -409,7 +409,7 @@ solana-cli-config = { path = "cli-config", version = "=2.3.0" }
 solana-cli-output = { path = "cli-output", version = "=2.3.0" }
 solana-client = { path = "client", version = "=2.3.0" }
 solana-client-traits = "2.2.1"
-solana-clock = "2.2.1"
+solana-clock = "2.2.2"
 solana-cluster-type = "2.2.1"
 solana-commitment-config = "2.2.1"
 solana-compute-budget = { path = "compute-budget", version = "=2.3.0" }
