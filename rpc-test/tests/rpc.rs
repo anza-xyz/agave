@@ -570,7 +570,7 @@ fn deserialize_rpc_error() -> ClientResult<()> {
     let err = rpc_client.send_transaction(&tx);
     let err = err.unwrap_err();
 
-    match err.kind {
+    match err.kind() {
         ClientErrorKind::RpcError(RpcError::RpcRequestError { .. }) => {
             // This is what used to happen
             panic!()

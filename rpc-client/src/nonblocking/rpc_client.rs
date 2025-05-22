@@ -993,7 +993,7 @@ impl RpcClient {
                     code,
                     message,
                     data,
-                }) = &err.kind
+                }) = err.kind()
                 {
                     debug!("{} {}", code, message);
                     if let RpcResponseErrorData::SendTransactionPreflightFailure(
