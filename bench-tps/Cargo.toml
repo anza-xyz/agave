@@ -29,7 +29,7 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true }
+solana-faucet-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-genesis = { workspace = true }
 solana-genesis-config = { workspace = true }

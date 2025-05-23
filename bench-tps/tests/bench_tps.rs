@@ -11,7 +11,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_connection_cache::connection_cache::NewConnectionConfig,
     solana_core::validator::ValidatorConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet_interface::faucet::run_local_faucet,
     solana_fee_calculator::FeeRateGovernor,
     solana_keypair::Keypair,
     solana_local_cluster::{

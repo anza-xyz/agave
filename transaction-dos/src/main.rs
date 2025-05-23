@@ -12,7 +12,7 @@ use {
     },
     solana_client::transaction_executor::TransactionExecutor,
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::{request_airdrop_transaction, FAUCET_PORT},
+    solana_faucet_interface::faucet::{request_airdrop_transaction, FAUCET_PORT},
     solana_gossip::gossip_service::discover,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, Keypair},
