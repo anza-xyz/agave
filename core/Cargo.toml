@@ -151,6 +151,7 @@ criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
@@ -164,7 +165,6 @@ solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true, features = ["full", "dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
@@ -200,7 +200,6 @@ frozen-abi = [
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
     "solana-short-vec/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-vote/frozen-abi",
