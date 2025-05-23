@@ -53,6 +53,7 @@ members = [
     "dos",
     "download-utils",
     "entry",
+    "faucet-bin",
     "faucet-interface",
     "feature-set",
     "fee",
