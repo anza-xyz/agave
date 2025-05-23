@@ -2652,7 +2652,7 @@ impl Bank {
         let mut hash = self.hash.write().unwrap();
         if *hash == Hash::default() {
             self.freeze_started_for_accounts_lt_hash
-                .store(true, Ordering::Release);
+                .store(true, Relaxed);
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
             self.distribute_transaction_fee_details();

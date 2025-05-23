@@ -332,27 +332,30 @@ impl Bank {
             return;
         }
 
-        if self
-            .freeze_started_for_accounts_lt_hash
-            .load(Ordering::Acquire)
-        {
-            // If freezing the bank has started, do not add this account to the cache.
-            // It is possible for the leader to be executing transactions after freeze has started,
-            // i.e. while any deferred changes to account state is finishing up.  This means the
-            // transaction could load an account *after* it was modified by the deferred changes,
-            // which would be the wrong initial state of the account.  Inserting the wrong initial
-            // state of an account into the cache will end up producing the wrong accounts lt hash.
-            self.stats_for_accounts_lt_hash
-                .num_inspect_account_after_freeze_started
-                .fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-
         // Only insert the account the *first* time we see it.
         // We want to capture the value of the account *before* any modifications during this slot.
         let (is_in_cache, lookup_time) =
             meas_dur!(self.cache_for_accounts_lt_hash.contains_key(address));
         if !is_in_cache {
+            // We need to check if the bank has started freezing.  In order to do that safely, we
+            // must take a read lock on Bank::hash before checking the freeze state.
+            let freeze_guard = self.freeze_lock();
+            let has_freeze_started = self
+                .freeze_started_for_accounts_lt_hash
+                .load(Ordering::Relaxed);
+            if has_freeze_started {
+                // If freezing the bank has started, do not add this account to the cache.
+                // It is possible for the leader to be executing transactions after freeze has
+                // started, i.e. while any deferred changes to account state is finishing up.
+                // This means the transaction could load an account *after* it was modified by the
+                // deferred changes, which would be the wrong initial state of the account.
+                // Inserting the wrong initial state of an account into the cache will end up
+                // producing the wrong accounts lt hash.
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_after_freeze_started
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
             let (_, insert_time) = meas_dur!({
                 self.cache_for_accounts_lt_hash
                     .entry(*address)
@@ -366,6 +369,7 @@ impl Bank {
                         CacheValue::InspectAccount(initial_state_of_account)
                     });
             });
+            drop(freeze_guard);
 
             self.stats_for_accounts_lt_hash
                 .num_inspect_account_misses
@@ -804,16 +808,14 @@ mod tests {
         }
 
         // ensure accounts are *not* added to the cache if freeze has started
-        bank.freeze_started_for_accounts_lt_hash
-            .store(true, Ordering::Release);
+        // N.B. this test should remain *last*, as Bank::freeze() is not meant to be undone
+        bank.freeze();
         let address = Pubkey::new_unique();
         let num_cache_entries_prev = bank.cache_for_accounts_lt_hash.len();
         bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
         let num_cache_entries_curr = bank.cache_for_accounts_lt_hash.len();
         assert_eq!(num_cache_entries_curr, num_cache_entries_prev);
         assert!(!bank.cache_for_accounts_lt_hash.contains_key(&address));
-        bank.freeze_started_for_accounts_lt_hash
-            .store(false, Ordering::Release);
     }
 
     #[test_case(Features::None; "no features")]
