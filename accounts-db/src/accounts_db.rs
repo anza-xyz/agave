@@ -1071,6 +1071,16 @@ pub struct AccountStorageEntry {
     /// account as "dead" twice. However, this should be fine. It just makes
     /// shrink more likely to visit this storage.
     zero_lamport_single_ref_offsets: RwLock<IntSet<Offset>>,
+
+    /// Obsolete Accounts. These are accounts that are still present in the storage
+    /// but should be ignored during rebuild. They have been removed
+    /// from the accounts index, so they will not be picked up by scan.
+    /// Slot is the slot at which the account is no longer needed.
+    /// Two scenarios cause an account entry to be marked obsolete
+    /// 1. The account was rewritten to a newer slot
+    /// 2. The account was set to zero lamports and is older than the last
+    ///    full snapshot. In this case, slot is set to the snapshot slot
+    obsolete_accounts: RwLock<Vec<(Offset, usize, Slot)>>,
 }
 
 impl AccountStorageEntry {
@@ -1092,10 +1102,12 @@ impl AccountStorageEntry {
             count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
+            obsolete_accounts: RwLock::default(),
         }
     }
 
     /// open a new instance of the storage that is readonly
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn reopen_as_readonly(&self, storage_access: StorageAccess) -> Option<Self> {
         if storage_access != StorageAccess::File {
             // if we are only using mmap, then no reason to re-open
@@ -1110,6 +1122,7 @@ impl AccountStorageEntry {
             alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
             zero_lamport_single_ref_offsets: RwLock::default(),
+            obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
         })
     }
 
@@ -1126,6 +1139,7 @@ impl AccountStorageEntry {
             count_and_status: SeqLock::new((0, AccountStorageStatus::Available)),
             alive_bytes: AtomicUsize::new(0),
             zero_lamport_single_ref_offsets: RwLock::default(),
+            obsolete_accounts: RwLock::default(),
         }
     }
 
@@ -1160,6 +1174,44 @@ impl AccountStorageEntry {
 
     pub fn alive_bytes(&self) -> usize {
         self.alive_bytes.load(Ordering::Acquire)
+    }
+
+    /// Marks the account at the given offset as obsolete
+    pub fn mark_account_obsolete(&self, offset: Offset, data_len: usize, slot: Slot) {
+        self.obsolete_accounts
+            .write()
+            .unwrap()
+            .push((offset, data_len, slot));
+    }
+
+    /// Returns the accounts that were marked obsolete as of the passed in slot
+    /// or earlier. If slot is None, then slot will be assumed to be the max root
+    /// and all obsolete accounts will be returned.
+    pub fn get_obsolete_accounts(&self, slot: Option<Slot>) -> Vec<(Offset, usize)> {
+        self.obsolete_accounts
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, _, obsolete_slot)| slot.is_none_or(|s| *obsolete_slot <= s))
+            .map(|(offset, data_len, _)| (*offset, *data_len))
+            .collect()
+    }
+
+    /// Returns the number of bytes that were marked obsolete as of the passed
+    /// in slot or earlier. If slot is None, then slot will be assumed to be the
+    /// max root, and all obsolete bytes will be returned.
+    pub fn get_obsolete_bytes(&self, slot: Option<Slot>) -> usize {
+        let obsolete_accounts = self.obsolete_accounts.read().unwrap();
+        let obsolete_bytes = obsolete_accounts
+            .iter()
+            .filter(|(_, _, obsolete_slot)| slot.is_none_or(|s| *obsolete_slot <= s))
+            .map(|(offset, data_len, _)| {
+                self.accounts
+                    .calculate_stored_size(*data_len)
+                    .min(self.accounts.len() - offset)
+            })
+            .sum();
+        obsolete_bytes
     }
 
     /// Return true if offset is "new" and inserted successfully. Otherwise,
