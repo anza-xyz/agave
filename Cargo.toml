@@ -572,7 +572,7 @@ solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=2.3.0" }
 solana-vortexor-receiver = { path = "vortexor-receiver", version = "=2.3.0" }
 solana-vote = { path = "vote", version = "=2.3.0" }
-solana-vote-interface = "2.2.4"
+solana-vote-interface = "2.2.5"
 solana-vote-program = { path = "programs/vote", version = "=2.3.0", default-features = false }
 solana-wen-restart = { path = "wen-restart", version = "=2.3.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=2.3.0" }
