@@ -9504,7 +9504,6 @@ dependencies = [
  "solana-rent",
  "solana-runtime",
  "solana-sbpf",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-signer",
