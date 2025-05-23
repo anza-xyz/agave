@@ -6161,7 +6161,6 @@ dependencies = [
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-native-token",
