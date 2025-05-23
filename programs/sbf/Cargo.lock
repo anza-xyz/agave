@@ -6318,13 +6318,10 @@ name = "solana-faucet-interface"
 version = "2.3.0"
 dependencies = [
  "bincode",
- "clap",
  "crossbeam-channel",
  "log",
  "serde",
  "serde_derive",
- "solana-clap-utils",
- "solana-cli-config",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
@@ -6338,7 +6335,6 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-transaction",
- "solana-version",
  "spl-memo",
  "thiserror 2.0.12",
  "tokio",

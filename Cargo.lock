@@ -8160,17 +8160,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-faucet-bin"
+version = "2.3.0"
+dependencies = [
+ "clap 2.33.3",
+ "log",
+ "solana-clap-utils",
+ "solana-cli-config",
+ "solana-faucet-interface",
+ "solana-keypair",
+ "solana-logger",
+ "solana-metrics",
+ "solana-version",
+ "tokio",
+]
+
+[[package]]
 name = "solana-faucet-interface"
 version = "2.3.0"
 dependencies = [
  "bincode",
- "clap 2.33.3",
  "crossbeam-channel",
  "log",
  "serde",
  "serde_derive",
- "solana-clap-utils",
- "solana-cli-config",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
@@ -8184,7 +8197,6 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-transaction",
- "solana-version",
  "spl-memo",
  "thiserror 2.0.12",
  "tokio",
