@@ -290,6 +290,13 @@ impl Bank {
                 i64
             ),
             (
+                "num_inspect_account_after_freeze_started",
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_after_freeze_started
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
                 "inspect_account_lookup_ns",
                 self.stats_for_accounts_lt_hash
                     .inspect_account_lookup_time_ns
@@ -322,6 +329,22 @@ impl Bank {
         debug_assert!(self.is_accounts_lt_hash_enabled());
         if !is_writable {
             // if the account is not writable, then it cannot be modified; nothing to do here
+            return;
+        }
+
+        if self
+            .freeze_started_for_accounts_lt_hash
+            .load(Ordering::Acquire)
+        {
+            // If freezing the bank has started, do not add this account to the cache.
+            // It is possible for the leader to be executing transactions after freeze has started,
+            // i.e. while any deferred changes to account state is finishing up.  This means the
+            // transaction could load an account *after* it was modified by the deferred changes,
+            // which would be the wrong initial state of the account.  Inserting the wrong initial
+            // state of an account into the cache will end up producing the wrong accounts lt hash.
+            self.stats_for_accounts_lt_hash
+                .num_inspect_account_after_freeze_started
+                .fetch_add(1, Ordering::Relaxed);
             return;
         }
 
@@ -372,6 +395,8 @@ pub struct Stats {
     num_inspect_account_hits: AtomicU64,
     /// the number of times the cache *did not* already contain the account being inspected
     num_inspect_account_misses: AtomicU64,
+    /// the number of times an account was inspected after freeze had started
+    num_inspect_account_after_freeze_started: AtomicU64,
     /// time spent checking if accounts are in the cache
     inspect_account_lookup_time_ns: AtomicU64,
     /// time spent inserting accounts into the cache
@@ -777,6 +802,18 @@ mod tests {
                 _ => panic!("wrong initial state for account"),
             };
         }
+
+        // ensure accounts are *not* added to the cache if freeze has started
+        bank.freeze_started_for_accounts_lt_hash
+            .store(true, Ordering::Release);
+        let address = Pubkey::new_unique();
+        let num_cache_entries_prev = bank.cache_for_accounts_lt_hash.len();
+        bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
+        let num_cache_entries_curr = bank.cache_for_accounts_lt_hash.len();
+        assert_eq!(num_cache_entries_curr, num_cache_entries_prev);
+        assert!(!bank.cache_for_accounts_lt_hash.contains_key(&address));
+        bank.freeze_started_for_accounts_lt_hash
+            .store(false, Ordering::Release);
     }
 
     #[test_case(Features::None; "no features")]
