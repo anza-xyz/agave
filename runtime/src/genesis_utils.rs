@@ -1,7 +1,7 @@
 use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     log::*,
-    solana_account::{Account, AccountSharedData},
+    solana_account::{Account, AccountSharedData, WritableAccount},
     solana_feature_gate_interface::{self as feature, Feature},
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::{ClusterType, GenesisConfig},
@@ -9,11 +9,16 @@ use {
     solana_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_sdk_ids::sysvar,
     solana_seed_derivable::SeedDerivable,
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
     solana_system_interface::program as system_program,
+    solana_sysvar::{
+        epoch_rewards::{self, EpochRewards},
+        Sysvar,
+    },
     solana_vote_program::vote_state,
     std::borrow::Borrow,
 };
@@ -306,6 +311,15 @@ pub fn create_genesis_config_with_leader_ex_no_features(
         spl_generic_token::token::native_mint::id(),
         native_mint_account,
     ));
+
+    let epoch_rewards_account = AccountSharedData::create(
+        1,
+        vec![0; EpochRewards::size_of()],
+        sysvar::id(),
+        false,
+        u64::MAX,
+    );
+    initial_accounts.push((epoch_rewards::id(), epoch_rewards_account));
 
     let mut genesis_config = GenesisConfig {
         accounts: initial_accounts
