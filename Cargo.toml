@@ -53,7 +53,7 @@ members = [
     "dos",
     "download-utils",
     "entry",
-    "faucet",
+    "faucet-interface",
     "feature-set",
     "fee",
     "genesis",
@@ -434,7 +434,7 @@ solana-epoch-rewards = "2.2.1"
 solana-epoch-rewards-hasher = "2.2.1"
 solana-epoch-schedule = "2.2.1"
 solana-example-mocks = "2.2.1"
-solana-faucet = { path = "faucet", version = "=2.3.0" }
+solana-faucet-interface = { path = "faucet-interface", version = "=2.3.0" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "2.2.2"
 solana-fee-calculator = "2.2.1"

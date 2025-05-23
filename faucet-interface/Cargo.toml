@@ -1,7 +1,7 @@
 [package]
-name = "solana-faucet"
+name = "solana-faucet-interface"
 description = "Solana Faucet"
-documentation = "https://docs.rs/solana-faucet"
+documentation = "https://docs.rs/solana-faucet-interface"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -35,10 +35,6 @@ solana-version = { workspace = true }
 spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_faucet"
 
 [[bin]]
 name = "solana-faucet"

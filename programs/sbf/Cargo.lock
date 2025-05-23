@@ -176,7 +176,7 @@ dependencies = [
  "solana-download-utils",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
@@ -6314,7 +6314,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-faucet"
+name = "solana-faucet-interface"
 version = "2.3.0"
 dependencies = [
  "bincode",
@@ -7557,7 +7557,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-rewards-hasher",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-genesis-config",
  "solana-gossip",
  "solana-hash",

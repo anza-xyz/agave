@@ -5,7 +5,7 @@ use {
         cli::{process_command, request_and_confirm_airdrop, CliCommand, CliConfig},
     },
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet_interface::faucet::run_local_faucet,
     solana_keypair::{keypair_from_seed, Keypair},
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,

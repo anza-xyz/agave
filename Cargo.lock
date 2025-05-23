@@ -428,7 +428,7 @@ dependencies = [
  "solana-download-utils",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
@@ -6659,7 +6659,7 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-gossip",
  "solana-hash",
  "solana-instruction",
@@ -6944,7 +6944,7 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-connection-cache",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-fee-calculator",
  "solana-genesis",
  "solana-genesis-config",
@@ -7359,7 +7359,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-decode-error",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-feature-gate-client",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
@@ -7985,7 +7985,7 @@ dependencies = [
  "solana-client",
  "solana-connection-cache",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-gossip",
  "solana-hash",
  "solana-instruction",
@@ -8160,7 +8160,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-faucet"
+name = "solana-faucet-interface"
 version = "2.3.0"
 dependencies = [
  "bincode",
@@ -9759,7 +9759,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-rewards-hasher",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-genesis-config",
@@ -11223,7 +11223,7 @@ dependencies = [
  "solana-client",
  "solana-commitment-config",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-gossip",
  "solana-hash",
  "solana-instruction",

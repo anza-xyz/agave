@@ -12,7 +12,7 @@ use {
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_commitment_config::CommitmentConfig,
     solana_epoch_schedule::EpochSchedule,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet_interface::faucet::run_local_faucet,
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::FeeStructure,
     solana_keypair::{keypair_from_seed, Keypair},
