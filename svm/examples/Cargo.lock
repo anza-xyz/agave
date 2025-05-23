@@ -5916,7 +5916,6 @@ dependencies = [
  "solana-runtime",
  "solana-runtime-transaction",
  "solana-sanitize",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-send-transaction-service",
  "solana-sha256-hasher",

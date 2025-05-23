@@ -104,7 +104,6 @@ solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sanitize = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-sha256-hasher = { workspace = true }
