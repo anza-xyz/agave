@@ -748,7 +748,7 @@ pub mod apply_cost_tracker_during_replay {
 }
 
 pub mod bpf_account_data_direct_mapping {
-    solana_pubkey::declare_id!("1ncomp1ete111111111111111111111111111111111");
+    solana_pubkey::declare_id!("C37iaPi6VE4CZDueU1vL8y6pGp5i8amAbEsF31xzz723");
 }
 
 pub mod add_set_tx_loaded_accounts_data_size_instruction {
