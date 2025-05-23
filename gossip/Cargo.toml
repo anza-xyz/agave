@@ -86,6 +86,7 @@ serial_test = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signature = { version = "=2.3.0", features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }

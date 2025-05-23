@@ -35,7 +35,7 @@ solana-pubkey = { workspace = true }
 solana-quic-client = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
-solana-signature = { workspace = true }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-streamer = { workspace = true }
