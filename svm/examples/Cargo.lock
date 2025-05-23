@@ -7136,6 +7136,7 @@ dependencies = [
  "solana-msg",
  "solana-native-token",
  "solana-poh-config",
+ "solana-program",
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-runtime",
