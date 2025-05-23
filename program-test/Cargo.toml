@@ -42,7 +42,6 @@ solana-message = { workspace = true }
 solana-msg = { workspace = true }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }
-solana-program = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-program-runtime = { workspace = true }
@@ -50,7 +49,6 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sdk-macro = { workspace = true }
 solana-signer = { workspace = true }
@@ -70,5 +68,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
+solana-program = { workspace = true }
 solana-stake-program = { workspace = true }
 test-case = { workspace = true }
