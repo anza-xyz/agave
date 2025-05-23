@@ -2883,7 +2883,6 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rpc-client-api",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-signature",
  "solana-svm",

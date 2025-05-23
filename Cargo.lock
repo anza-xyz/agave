@@ -10817,7 +10817,6 @@ dependencies = [
  "solana-rent-collector",
  "solana-rent-debits",
  "solana-sbpf",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-secp256k1-program",
  "solana-secp256r1-program",
