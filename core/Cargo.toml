@@ -30,6 +30,7 @@ chrono = { workspace = true, features = ["default", "serde"] }
 conditional-mod = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+derive_more = { workspace = true }
 etcd-client = { workspace = true, features = ["tls"] }
 futures = { workspace = true }
 histogram = { workspace = true }
