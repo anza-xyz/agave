@@ -566,71 +566,40 @@ impl Accounts {
     }
 
     /// This function will prevent multiple threads from modifying the same account state at the
-    /// same time
-    #[must_use]
-    pub fn lock_accounts<'a, Tx: SVMMessage + 'a>(
-        &self,
-        txs: impl Iterator<Item = &'a Tx>,
-        tx_account_lock_limit: usize,
-        relax_intrabatch_account_locks: bool,
-    ) -> Vec<Result<()>> {
-        // Validate the account locks, then get iterator if successful validation.
-        let tx_account_locks_results = txs.map(|tx| {
-            validate_account_locks(tx.account_keys(), tx_account_lock_limit)
-                .map(|_| TransactionAccountLocksIterator::new(tx))
-        });
-        self.lock_accounts_inner(tx_account_locks_results, relax_intrabatch_account_locks)
-    }
-
-    /// This function will prevent multiple threads from modifying the same account state at the
     /// same time, possibly excluding transactions based on prior results
     #[must_use]
-    pub fn lock_accounts_with_results<'a>(
+    pub fn lock_accounts<'a>(
         &self,
         txs: impl Iterator<Item = &'a (impl SVMMessage + 'a)>,
         results: impl Iterator<Item = Result<()>>,
         tx_account_lock_limit: usize,
         relax_intrabatch_account_locks: bool,
     ) -> Vec<Result<()>> {
-        // Validate the account locks, then get iterator if successful validation.
-        let tx_account_locks_results = txs.zip(results).map(|(tx, result)| match result {
-            Ok(()) => validate_account_locks(tx.account_keys(), tx_account_lock_limit)
-                .map(|_| TransactionAccountLocksIterator::new(tx)),
-            Err(err) => Err(err),
-        });
-        self.lock_accounts_inner(tx_account_locks_results, relax_intrabatch_account_locks)
-    }
-
-    #[must_use]
-    fn lock_accounts_inner<'a>(
-        &self,
-        tx_account_locks_results: impl Iterator<
-            Item = Result<TransactionAccountLocksIterator<'a, impl SVMMessage + 'a>>,
-        >,
-        relax_intrabatch_account_locks: bool,
-    ) -> Vec<Result<()>> {
-        let account_locks = &mut self.account_locks.lock().unwrap();
-        if relax_intrabatch_account_locks {
-            let validated_batch_keys = tx_account_locks_results
-                .map(|tx_account_locks_result| {
-                    tx_account_locks_result.map(|tx_account_locks| {
-                        tx_account_locks
+        // Validate the account locks, then get keys and is_writable if successful validation.
+        // We collect to fully evaluate before taking the account_locks mutex.
+        let validated_batch_keys = txs
+            .zip(results)
+            .map(|(tx, result)| {
+                result
+                    .and_then(|_| validate_account_locks(tx.account_keys(), tx_account_lock_limit))
+                    .map(|_| {
+                        TransactionAccountLocksIterator::new(tx)
                             .accounts_with_is_writable()
                             .collect::<Vec<_>>()
                     })
-                })
-                .collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>()
+            .into_iter();
 
-            account_locks.try_lock_transaction_batch(validated_batch_keys.into_iter())
+        let account_locks = &mut self.account_locks.lock().unwrap();
+
+        if relax_intrabatch_account_locks {
+            account_locks.try_lock_transaction_batch(validated_batch_keys)
         } else {
-            tx_account_locks_results
-                .map(|tx_account_locks_result| match tx_account_locks_result {
-                    Ok(tx_account_locks) => account_locks.try_lock_accounts(
-                        &tx_account_locks
-                            .accounts_with_is_writable()
-                            .collect::<Vec<_>>(),
-                    ),
-                    Err(err) => Err(err),
+            validated_batch_keys
+                .map(|result_validated_tx_keys| match result_validated_tx_keys {
+                    Ok(validated_tx_keys) => account_locks.try_lock_accounts(&validated_tx_keys),
+                    Err(e) => Err(e),
                 })
                 .collect()
         }
@@ -952,6 +921,7 @@ mod tests {
         let tx = new_sanitized_tx(&[&keypair], message, Hash::default());
         let results = accounts.lock_accounts(
             [tx].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -985,6 +955,7 @@ mod tests {
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
             let results = accounts.lock_accounts(
                 txs.iter(),
+                vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
                 relax_intrabatch_account_locks,
             );
@@ -1011,6 +982,7 @@ mod tests {
             let txs = vec![new_sanitized_tx(&[&keypair], message, Hash::default())];
             let results = accounts.lock_accounts(
                 txs.iter(),
+                vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
                 relax_intrabatch_account_locks,
             );
@@ -1050,6 +1022,7 @@ mod tests {
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
         let results0 = accounts.lock_accounts(
             [tx.clone()].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1084,6 +1057,7 @@ mod tests {
         let txs = vec![tx0, tx1];
         let results1 = accounts.lock_accounts(
             txs.iter(),
+            vec![Ok(()); txs.len()].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1114,6 +1088,7 @@ mod tests {
         let tx = new_sanitized_tx(&[&keypair1], message, Hash::default());
         let results2 = accounts.lock_accounts(
             [tx].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1181,6 +1156,7 @@ mod tests {
             let txs = vec![writable_tx.clone()];
             let results = accounts_clone.clone().lock_accounts(
                 txs.iter(),
+                vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
                 relax_intrabatch_account_locks,
             );
@@ -1199,6 +1175,7 @@ mod tests {
             let txs = vec![readonly_tx.clone()];
             let results = accounts_arc.clone().lock_accounts(
                 txs.iter(),
+                vec![Ok(()); txs.len()].into_iter(),
                 MAX_TX_ACCOUNT_LOCKS,
                 relax_intrabatch_account_locks,
             );
@@ -1245,6 +1222,7 @@ mod tests {
         let tx = new_sanitized_tx(&[&keypair0], message, Hash::default());
         let results0 = accounts.lock_accounts(
             [tx].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1341,7 +1319,7 @@ mod tests {
             Ok(()),
         ];
 
-        let results = accounts.lock_accounts_with_results(
+        let results = accounts.lock_accounts(
             txs.iter(),
             qos_results.into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
@@ -1401,6 +1379,7 @@ mod tests {
         let accounts = Accounts::new(accounts_db.clone());
         let results = accounts.lock_accounts(
             [w_tx.clone()].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1410,6 +1389,7 @@ mod tests {
         // wr conflict cross-batch always fails
         let results = accounts.lock_accounts(
             [r_tx.clone()].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1419,6 +1399,7 @@ mod tests {
         // ww conflict cross-batch always fails
         let results = accounts.lock_accounts(
             [w_tx.clone()].iter(),
+            [Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1429,6 +1410,7 @@ mod tests {
         let accounts = Accounts::new(accounts_db.clone());
         let results = accounts.lock_accounts(
             [w_tx.clone(), r_tx.clone()].iter(),
+            [Ok(()), Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );
@@ -1443,6 +1425,7 @@ mod tests {
         let accounts = Accounts::new(accounts_db.clone());
         let results = accounts.lock_accounts(
             [w_tx.clone(), r_tx.clone()].iter(),
+            [Ok(()), Ok(())].into_iter(),
             MAX_TX_ACCOUNT_LOCKS,
             relax_intrabatch_account_locks,
         );

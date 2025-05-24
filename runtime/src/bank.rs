@@ -3198,7 +3198,7 @@ impl Bank {
         let relax_intrabatch_account_locks = self
             .feature_set
             .is_active(&feature_set::relax_intrabatch_account_locks::id());
-        self.rc.accounts.lock_accounts_with_results(
+        self.rc.accounts.lock_accounts(
             txs.iter(),
             tx_results,
             tx_account_lock_limit,

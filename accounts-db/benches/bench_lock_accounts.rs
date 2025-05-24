@@ -85,12 +85,14 @@ fn bench_entry_lock_accounts(c: &mut Criterion) {
         let transactions = create_test_transactions(lock_count, read_conflicts);
         group.throughput(Throughput::Elements(transactions.len() as u64));
         let transaction_batches: Vec<_> = transactions.chunks(batch_size).collect();
+        let batch_results = vec![Ok(()); batch_size].into_iter();
 
         group.bench_function(name.as_str(), move |b| {
             b.iter(|| {
                 for batch in &transaction_batches {
                     let results = accounts.lock_accounts(
                         black_box(batch.iter()),
+                        batch_results.clone(),
                         MAX_TX_ACCOUNT_LOCKS,
                         relax_intrabatch_account_locks,
                     );
