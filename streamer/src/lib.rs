@@ -8,6 +8,7 @@ pub mod recvmmsg;
 pub mod sendmmsg;
 pub mod socket;
 pub mod streamer;
+pub mod tpu_feedback;
 
 #[macro_use]
 extern crate log;
