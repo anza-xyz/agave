@@ -567,7 +567,7 @@ mod tests {
         let slot = MAX_ENTRIES as Slot;
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::new(42, ACCOUNT_DATA_SIZE, &Pubkey::default());
-        cache.store(pubkey, slot, account.clone());
+        cache.store(pubkey, slot, account);
 
         // wait for the evictor to run...
         let timer = Instant::now();
