@@ -4,7 +4,7 @@ use {
     crate::poh_recorder::{PohRecorder, Record},
     crossbeam_channel::Receiver,
     log::*,
-    solana_clock::UPDATED_HASHES_PER_SECOND_6,
+    solana_clock::DEFAULT_HASHES_PER_SECOND,
     solana_entry::poh::Poh,
     solana_measure::{measure::Measure, measure_us},
     solana_poh_config::PohConfig,
@@ -30,7 +30,7 @@ pub struct PohService {
 // Can use test_poh_service to calibrate this
 const TARGET_HASH_BATCH_TIME_US: u64 = 50;
 pub const DEFAULT_HASHES_PER_BATCH: u64 =
-    TARGET_HASH_BATCH_TIME_US * UPDATED_HASHES_PER_SECOND_6 / 1_000_000;
+    TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
 pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
 

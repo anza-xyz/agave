@@ -99,11 +99,8 @@ use {
     },
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
-        DEFAULT_TICKS_PER_SECOND, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
-        MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY, UPDATED_HASHES_PER_TICK2,
-        UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4, UPDATED_HASHES_PER_TICK5,
-        UPDATED_HASHES_PER_TICK6,
+        BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_TICKS_PER_SECOND,
+        INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -6514,30 +6511,6 @@ impl Bank {
             );
         }
 
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick::id()) {
-            self.apply_updated_hashes_per_tick(DEFAULT_HASHES_PER_TICK);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick2::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK2);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick3::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK3);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick4::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK4);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick5::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK5);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick6::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK6);
-        }
-
         if new_feature_activations.contains(&feature_set::accounts_lt_hash::id()) {
             // Activating the accounts lt hash feature means we need to have an accounts lt hash
             // value at the end of this if-block.  If the cli arg has been used, that means we
@@ -6597,15 +6570,6 @@ impl Bank {
             // AccountHash for modified accounts, and can stop the background account hasher.
             self.rc.accounts.accounts_db.stop_background_hasher();
         }
-    }
-
-    fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {
-        info!(
-            "Activating update_hashes_per_tick {} at slot {}",
-            hashes_per_tick,
-            self.slot(),
-        );
-        self.hashes_per_tick = Some(hashes_per_tick);
     }
 
     fn adjust_sysvar_balance_for_rent(&self, account: &mut AccountSharedData) {
