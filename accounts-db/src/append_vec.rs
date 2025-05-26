@@ -445,10 +445,10 @@ impl AppendVec {
     }
 
     /// Used to open append vec from a stream of bytes
-    pub fn new_from_reader<R: Read>(reader: &mut R, current_len: usize) -> Self {
-        let mut mmap = MmapMut::map_anon(current_len).unwrap();
-        copy(&mut reader.take(current_len as u64), &mut mmap.as_mut()).unwrap();
-        AppendVec {
+    pub fn new_from_reader<R: Read>(reader: &mut R, current_len: usize) -> Result<Self> {
+        let mut mmap = MmapMut::map_anon(current_len)?;
+        copy(&mut reader.take(current_len as u64), &mut mmap.as_mut())?;
+        Ok(AppendVec {
             path: PathBuf::default(),
             backing: AppendVecFileBacking::Mmap(mmap),
             append_lock: Mutex::new(()),
@@ -456,7 +456,7 @@ impl AppendVec {
             file_size: current_len as u64,
             remove_file_on_drop: AtomicBool::new(false),
             is_dirty: AtomicBool::new(false),
-        }
+        })
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
