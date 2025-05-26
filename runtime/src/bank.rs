@@ -583,7 +583,6 @@ impl PartialEq for Bank {
             transaction_account_lock_limit: _,
             fee_structure: _,
             cache_for_accounts_lt_hash: _,
-            freeze_started_for_accounts_lt_hash: _,
             stats_for_accounts_lt_hash: _,
             block_id,
             bank_hash_stats: _,
@@ -935,12 +934,6 @@ pub struct Bank {
     /// and not an intermediate state within this slot.
     cache_for_accounts_lt_hash: DashMap<Pubkey, AccountsLtHashCacheValue, ahash::RandomState>,
 
-    /// A flag to indicate when freeze has started, for the accounts lt hash cache
-    ///
-    /// This is similar to `freeze_started`, but needs to be raised *before* any
-    /// deferred changes to account state is started (instead of afterwards).
-    freeze_started_for_accounts_lt_hash: AtomicBool,
-
     /// Stats related to the accounts lt hash
     stats_for_accounts_lt_hash: AccountsLtHashStats,
 
@@ -1147,7 +1140,6 @@ impl Bank {
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash::identity())),
             cache_for_accounts_lt_hash: DashMap::default(),
-            freeze_started_for_accounts_lt_hash: AtomicBool::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1404,7 +1396,6 @@ impl Bank {
             hash_overrides: parent.hash_overrides.clone(),
             accounts_lt_hash: Mutex::new(parent.accounts_lt_hash.lock().unwrap().clone()),
             cache_for_accounts_lt_hash: DashMap::default(),
-            freeze_started_for_accounts_lt_hash: AtomicBool::new(false),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
@@ -1882,7 +1873,6 @@ impl Bank {
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
             accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
             cache_for_accounts_lt_hash: DashMap::default(),
-            freeze_started_for_accounts_lt_hash: AtomicBool::new(fields.hash != Hash::default()),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
@@ -2651,8 +2641,6 @@ impl Bank {
         // committed before this write lock can be obtained here.
         let mut hash = self.hash.write().unwrap();
         if *hash == Hash::default() {
-            self.freeze_started_for_accounts_lt_hash
-                .store(true, Relaxed);
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
             self.distribute_transaction_fee_details();
