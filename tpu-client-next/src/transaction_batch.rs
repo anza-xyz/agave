@@ -36,6 +36,11 @@ impl TransactionBatch {
             timestamp: timestamp(),
         }
     }
+
+    pub fn len(&self) -> usize {
+        self.wired_transactions.len()
+    }
+
     pub fn timestamp(&self) -> u64 {
         self.timestamp
     }
