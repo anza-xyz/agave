@@ -1,8 +1,32 @@
 #!/usr/bin/env bash
-set -e
+
+# shellcheck disable=SC2317
+cleanup() {
+  ec=$?
+  docker container stop kellnr && docker container prune -f;
+  exit "$ec"
+}
+
+err_handler() {
+    ec=$?
+    echo "ERROR  line $1: $BASH_COMMAND"
+    exit "$ec"
+}
+
+trap cleanup EXIT
+trap err_handler ERR SIGINT
+
+set -Ee
+
 cd "$(dirname "$0")/.."
 source ci/semver_bash/semver.sh
 source ci/rust-version.sh stable
+
+DRY_RUN=false
+if [[ $1 = --dry-run ]]; then
+  DRY_RUN=true
+  shift
+fi
 
 # shellcheck disable=SC2086
 is_crate_version_uploaded() {
@@ -37,6 +61,10 @@ done
 
 Cargo_tomls=$(ci/order-crates-for-publishing.py)
 
+if $DRY_RUN; then
+  docker run --name kellnr -d ghcr.io/kellnr/kellnr:5
+fi
+
 for Cargo_toml in $Cargo_tomls; do
   echo "--- $Cargo_toml"
 
@@ -62,10 +90,14 @@ for Cargo_toml in $Cargo_tomls; do
   fi
 
   (
-    set -x
-
     crate=$(dirname "$Cargo_toml")
-    cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
+    if $DRY_RUN; then
+      # token is a default value from the kellnr image https://kellnr.io/documentation#config-values
+      # registry value is defined in docker-run.sh script
+      cargoCommand="cargo publish --registry KELLNR --token Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD"
+    else
+      cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
+    fi
 
     numRetries=10
     for ((i = 1; i <= numRetries; i++)); do

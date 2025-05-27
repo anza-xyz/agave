@@ -50,6 +50,9 @@ if [[ -n $CI ]]; then
     else
       export CI_TAG=$BUILDKITE_TAG
     fi
+    if [[ -n $CRATE_PUBLISH_TEST ]]; then
+      export CRATE_PUBLISH_TEST=$CRATE_PUBLISH_TEST
+    fi
   elif [[ -n $APPVEYOR ]]; then
     export CI_BRANCH=$APPVEYOR_REPO_BRANCH
     export CI_BUILD_ID=$APPVEYOR_BUILD_ID
