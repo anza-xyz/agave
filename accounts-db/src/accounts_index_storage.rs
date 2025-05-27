@@ -63,10 +63,18 @@ impl BgThreads {
         can_advance_age: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let is_disk_index_enabled = storage.is_disk_index_enabled();
+        let num_threads = if is_disk_index_enabled {
+            threads.get()
+        } else {
+            // no disk index, so only need 1 thread to report stats
+            1
+        };
+
         // stop signal used for THIS batch of bg threads
         let local_exit = Arc::new(AtomicBool::default());
         let handles = Some(
-            (0..threads.get())
+            (0..num_threads)
                 .map(|idx| {
                     // the first thread we start is special
                     let can_advance_age = can_advance_age && idx == 0;
