@@ -1085,7 +1085,7 @@ fn archive_snapshot(
     ));
 
     {
-        let mut archive_file = fs::File::create(&staging_archive_path)
+        let archive_file = fs::File::create(&staging_archive_path)
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {
@@ -1133,18 +1133,6 @@ fn archive_snapshot(
         };
 
         match archive_format {
-            ArchiveFormat::TarBzip2 => {
-                let mut encoder =
-                    bzip2::write::BzEncoder::new(archive_file, bzip2::Compression::best());
-                do_archive_files(&mut encoder)?;
-                encoder.finish().map_err(E::FinishEncoder)?;
-            }
-            ArchiveFormat::TarGzip => {
-                let mut encoder =
-                    flate2::write::GzEncoder::new(archive_file, flate2::Compression::default());
-                do_archive_files(&mut encoder)?;
-                encoder.finish().map_err(E::FinishEncoder)?;
-            }
             ArchiveFormat::TarZstd { config } => {
                 let mut encoder =
                     zstd::stream::Encoder::new(archive_file, config.compression_level)
@@ -1161,9 +1149,7 @@ fn archive_snapshot(
                 let (_output, result) = encoder.finish();
                 result.map_err(E::FinishEncoder)?;
             }
-            ArchiveFormat::Tar => {
-                do_archive_files(&mut archive_file)?;
-            }
+            _ => panic!("archiving snapshot with '{archive_format}' is not supported"),
         };
     }
 
