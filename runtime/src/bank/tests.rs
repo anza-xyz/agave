@@ -13,7 +13,9 @@ use {
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
             genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
-        snapshot_bank_utils, snapshot_utils,
+        snapshot_bank_utils,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils,
         stake_history::StakeHistory,
         stakes::InvalidCacheEntryReason,
         status_cache::MAX_CACHE_ENTRIES,
@@ -12956,7 +12958,7 @@ fn test_rebuild_skipped_rewrites() {
         None,
         full_snapshot_archives_dir.path(),
         incremental_snapshot_archives_dir.path(),
-        snapshot_utils::ArchiveFormat::Tar,
+        SnapshotConfig::default().archive_format,
     )
     .unwrap();
 
