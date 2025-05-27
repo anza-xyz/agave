@@ -1101,6 +1101,10 @@ pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
 }
 
+pub mod alpenglow {
+    solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1337,6 +1341,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
+        (alpenglow::id(), "Enable Alpenglow"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
