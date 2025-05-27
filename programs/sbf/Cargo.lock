@@ -7807,7 +7807,6 @@ dependencies = [
  "solana-reward-info",
  "solana-runtime-transaction",
  "solana-sdk-ids",
- "solana-sdk-macro",
  "solana-secp256k1-program",
  "solana-seed-derivable",
  "solana-serde",

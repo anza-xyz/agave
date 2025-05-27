@@ -108,7 +108,6 @@ solana-rent-debits = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-sdk-macro = { workspace = true }
 solana-secp256k1-program = { workspace = true }
 solana-seed-derivable = { workspace = true }
 solana-serde = { workspace = true }
