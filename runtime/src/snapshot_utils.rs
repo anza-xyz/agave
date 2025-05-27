@@ -23,8 +23,9 @@ use {
     regex::Regex,
     solana_accounts_db::{
         account_storage::AccountStorageMap,
+        account_storage_reader::AccountStorageReader,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
-        accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
         epoch_accounts_hash::EpochAccountsHash,
         hardened_unpack::{self, ParallelSelector, UnpackError},
@@ -516,6 +517,9 @@ pub enum ArchiveSnapshotPackageError {
 
     #[error("failed to move archive from '{1}' to '{2}': {0}")]
     MoveArchive(#[source] IoError, PathBuf, PathBuf),
+
+    #[error("failed to create account storage reader '{1}': {0}")]
+    AccountStorageReaderError(#[source] IoError, PathBuf),
 }
 
 /// Errors that can happen in `hard_link_storages_to_snapshot()`
@@ -1111,21 +1115,20 @@ fn archive_snapshot(
             for storage in snapshot_storages {
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
-                match storage.accounts.internals_for_archive() {
-                    InternalsForArchive::Mmap(data) => {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_path(path_in_archive).map_err(|err| {
-                            E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                        })?;
-                        header.set_size(storage.capacity());
-                        header.set_cksum();
-                        archive.append(&header, data)
-                    }
-                    InternalsForArchive::FileIo(path) => {
-                        archive.append_path_with_name(path, path_in_archive)
-                    }
-                }
-                .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+
+                let reader =
+                    AccountStorageReader::new(storage, Some(snapshot_slot)).map_err(|err| {
+                        E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                    })?;
+                let mut header = tar::Header::new_gnu();
+                header.set_path(path_in_archive).map_err(|err| {
+                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                })?;
+                header.set_size(reader.len() as u64);
+                header.set_cksum();
+                archive.append(&header, reader).map_err(|err| {
+                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                })?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;
