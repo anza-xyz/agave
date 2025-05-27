@@ -38,8 +38,7 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
     solana_rpc::{
-        block_meta_service::BlockMetaSender, max_slots::MaxSlots,
-        optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
+        max_slots::MaxSlots, optimistically_confirmed_bank_tracker::BankNotificationSenderConfig,
         rpc_subscriptions::RpcSubscriptions, slot_status_notifier::SlotStatusNotifier,
     },
     solana_runtime::{
@@ -143,7 +142,6 @@ impl Tvu {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         turbine_disabled: Arc<AtomicBool>,
         transaction_status_sender: Option<TransactionStatusSender>,
-        block_meta_sender: Option<BlockMetaSender>,
         entry_notification_sender: Option<EntryNotifierSender>,
         vote_tracker: Arc<VoteTracker>,
         retransmit_slots_sender: Sender<Slot>,
@@ -299,7 +297,6 @@ impl Tvu {
             rpc_subscriptions: rpc_subscriptions.clone(),
             slot_status_notifier,
             transaction_status_sender,
-            block_meta_sender,
             entry_notification_sender,
             bank_notification_sender,
             ancestor_hashes_replay_update_sender,
@@ -575,7 +572,6 @@ pub mod tests {
             exit.clone(),
             block_commitment_cache,
             Arc::<AtomicBool>::default(),
-            None,
             None,
             None,
             Arc::<VoteTracker>::default(),

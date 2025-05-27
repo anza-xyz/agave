@@ -84,8 +84,8 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_ledger::blockstore_processor::BlockMetaSender,
     solana_rpc::{
-        block_meta_service::{BlockMetaSender, BlockMetaService},
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
             BankNotificationSenderConfig, OptimisticallyConfirmedBank,
@@ -482,7 +482,6 @@ struct TransactionHistoryServices {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     max_complete_rewards_slot: Arc<AtomicU64>,
     block_meta_sender: Option<BlockMetaSender>,
-    block_meta_service: Option<BlockMetaService>,
 }
 
 /// A struct easing passing Validator TPU Configurations
@@ -542,7 +541,6 @@ pub struct Validator {
     rpc_completed_slots_service: Option<JoinHandle<()>>,
     optimistically_confirmed_bank_tracker: Option<OptimisticallyConfirmedBankTracker>,
     transaction_status_service: Option<TransactionStatusService>,
-    block_meta_service: Option<BlockMetaService>,
     entry_notifier_service: Option<EntryNotifierService>,
     system_monitor_service: Option<SystemMonitorService>,
     sample_performance_service: Option<SamplePerformanceService>,
@@ -800,7 +798,6 @@ impl Validator {
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
                 block_meta_sender,
-                block_meta_service,
             },
             blockstore_process_options,
             blockstore_root_scan,
@@ -1528,7 +1525,6 @@ impl Validator {
             block_commitment_cache,
             config.turbine_disabled.clone(),
             transaction_status_sender.clone(),
-            block_meta_sender,
             entry_notification_sender.clone(),
             vote_tracker.clone(),
             retransmit_slots_sender,
@@ -1703,7 +1699,6 @@ impl Validator {
             rpc_completed_slots_service,
             optimistically_confirmed_bank_tracker,
             transaction_status_service,
-            block_meta_service,
             entry_notifier_service,
             system_monitor_service,
             sample_performance_service,
@@ -1803,10 +1798,6 @@ impl Validator {
             transaction_status_service
                 .join()
                 .expect("transaction_status_service");
-        }
-
-        if let Some(block_meta_service) = self.block_meta_service {
-            block_meta_service.join().expect("block_meta_service");
         }
 
         if let Some(system_monitor_service) = self.system_monitor_service {
@@ -2556,21 +2547,15 @@ fn initialize_rpc_transaction_history_services(
     ));
 
     let max_complete_rewards_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
-    let (block_meta_sender, block_meta_receiver) = unbounded();
+    let (block_meta_sender, _block_meta_receiver) = unbounded();
     let block_meta_sender = Some(block_meta_sender);
-    let block_meta_service = Some(BlockMetaService::new(
-        block_meta_receiver,
-        blockstore,
-        max_complete_rewards_slot.clone(),
-        exit,
-    ));
+
     TransactionHistoryServices {
         transaction_status_sender,
         transaction_status_service,
         max_complete_transaction_status_slot,
         max_complete_rewards_slot,
         block_meta_sender,
-        block_meta_service,
     }
 }
 

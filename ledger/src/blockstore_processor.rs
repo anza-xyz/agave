@@ -2223,7 +2223,7 @@ pub fn process_single_slot(
 #[derive(Debug)]
 pub enum TransactionStatusMessage {
     Batch(TransactionStatusBatch),
-    Freeze(Slot),
+    Freeze(Arc<Bank>),
 }
 
 #[derive(Debug)]
@@ -2274,11 +2274,13 @@ impl TransactionStatusSender {
     }
 
     pub fn send_transaction_status_freeze_message(&self, bank: &Arc<Bank>) {
-        let slot = bank.slot();
-        if let Err(e) = self.sender.send(TransactionStatusMessage::Freeze(slot)) {
-            trace!(
-                "Slot {} transaction_status send freeze message failed: {:?}",
-                slot,
+        if let Err(e) = self
+            .sender
+            .send(TransactionStatusMessage::Freeze(bank.clone()))
+        {
+            let slot = bank.slot();
+            warn!(
+                "Slot {slot} transaction_status send freeze message failed: {:?}",
                 e
             );
         }
