@@ -10108,7 +10108,6 @@ dependencies = [
  "solana-reward-info",
  "solana-runtime",
  "solana-runtime-transaction",
- "solana-sdk",
  "solana-sdk-ids",
  "solana-sdk-macro",
  "solana-secp256k1-program",

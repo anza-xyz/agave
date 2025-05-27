@@ -125,6 +125,7 @@ solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-vote = { workspace = true, features = ["dev-context-only-utils"] }
 spl-generic-token = { workspace = true }
 spl-pod = { workspace = true }
