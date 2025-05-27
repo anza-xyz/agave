@@ -2236,7 +2236,11 @@ mod tests {
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
-        std::{mem, str::FromStr},
+        std::{
+            hash::{DefaultHasher, Hash, Hasher},
+            mem,
+            str::FromStr,
+        },
         test_case::test_case,
     };
 
@@ -5093,5 +5097,186 @@ mod tests {
         for address in 0..std::mem::size_of::<u64>() {
             assert_eq!(address_is_aligned::<u64>(address as u64), address == 0);
         }
+    }
+
+    #[test_case(0x100000004, 0x100000004, &[0x00, 0x00, 0x00, 0x00])] // Intra region match
+    #[test_case(0x100000003, 0x100000004, &[0xFF, 0xFF, 0xFF, 0xFF])] // Intra region down
+    #[test_case(0x100000005, 0x100000004, &[0x01, 0x00, 0x00, 0x00])] // Intra region up
+    #[test_case(0x100000004, 0x200000004, &[0x00, 0x00, 0x00, 0x00])] // Inter region match
+    #[test_case(0x100000003, 0x200000004, &[0xFF, 0xFF, 0xFF, 0xFF])] // Inter region down
+    #[test_case(0x100000005, 0x200000004, &[0x01, 0x00, 0x00, 0x00])] // Inter region up
+    fn test_memcmp_success(src_a: u64, src_b: u64, expected_result: &[u8; 4]) {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mem = (0..12).collect::<Vec<u8>>();
+        let mut result_mem = vec![0; 4];
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_readonly(&mem, 0x100000000),
+                MemoryRegion::new_readonly(&mem, 0x200000000),
+                MemoryRegion::new_writable(&mut result_mem, 0x300000000),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result = SyscallMemcmp::rust(
+            &mut invoke_context,
+            src_a,
+            src_b,
+            4,
+            0x300000000,
+            0,
+            &mut memory_mapping,
+        );
+        result.unwrap();
+        assert_eq!(result_mem, expected_result);
+    }
+
+    #[test_case(0x100000002, 0x100000004, 18245498089483734664)] // Down overlapping
+    #[test_case(0x100000004, 0x100000002, 6092969436446403628)] // Up overlapping
+    #[test_case(0x100000002, 0x100000006, 16598193894146733116)] // Down touching
+    #[test_case(0x100000006, 0x100000002, 8940776276357560353)] // Up touching
+    #[test_case(0x100000000, 0x100000008, 1288053912680171784)] // Down apart
+    #[test_case(0x100000008, 0x100000000, 4652742827052033592)] // Up apart
+    #[test_case(0x100000004, 0x200000004, 8833460765081683332)] // Down inter region
+    #[test_case(0x200000004, 0x100000004, 11837649335115988407)] // Up inter region
+    fn test_memmove_success(dst: u64, src: u64, expected_hash: u64) {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mut mem = (0..24).collect::<Vec<u8>>();
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![
+                MemoryRegion::new_writable(&mut mem[..12], 0x100000000),
+                MemoryRegion::new_writable(&mut mem[12..], 0x200000000),
+            ],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result =
+            SyscallMemmove::rust(&mut invoke_context, dst, src, 4, 0, 0, &mut memory_mapping);
+        result.unwrap();
+        let mut hasher = DefaultHasher::new();
+        mem.hash(&mut hasher);
+        assert_eq!(hasher.finish(), expected_hash);
+    }
+
+    #[test_case(0x100000002, 0x00, 6070675560359421890)]
+    #[test_case(0x100000002, 0xFF, 3413209638111181029)]
+    fn test_memset_success(dst: u64, value: u64, expected_hash: u64) {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mut mem = (0..12).collect::<Vec<u8>>();
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result = SyscallMemset::rust(
+            &mut invoke_context,
+            dst,
+            value,
+            4,
+            0,
+            0,
+            &mut memory_mapping,
+        );
+        result.unwrap();
+        let mut hasher = DefaultHasher::new();
+        mem.hash(&mut hasher);
+        assert_eq!(hasher.finish(), expected_hash);
+    }
+
+    #[test_case(0x100000002, 0x100000004)] // Down overlapping
+    #[test_case(0x100000004, 0x100000002)] // Up overlapping
+    fn test_memcpy_overlapping(dst: u64, src: u64) {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mut mem = (0..12).collect::<Vec<u8>>();
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result =
+            SyscallMemcpy::rust(&mut invoke_context, dst, src, 4, 0, 0, &mut memory_mapping);
+        assert_matches!(
+            result,
+            Result::Err(error) if error.downcast_ref::<SyscallError>().unwrap() == &SyscallError::CopyOverlapping
+        );
+    }
+
+    #[test_case(0xFFFFFFFFF, 0x100000006, 0xFFFFFFFFF)] // Dst lower bound
+    #[test_case(0x100000010, 0x100000006, 0x100000010)] // Dst upper bound
+    #[test_case(0x100000002, 0xFFFFFFFFF, 0xFFFFFFFFF)] // Src lower bound
+    #[test_case(0x100000002, 0x100000010, 0x100000010)] // Src upper bound
+    fn test_memops_access_violation(dst: u64, src: u64, fault_address: u64) {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mut mem = (0..12).collect::<Vec<u8>>();
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result =
+            SyscallMemcpy::rust(&mut invoke_context, dst, src, 4, 0, 0, &mut memory_mapping);
+        assert_access_violation!(result, fault_address, 4);
+        let result =
+            SyscallMemmove::rust(&mut invoke_context, dst, src, 4, 0, 0, &mut memory_mapping);
+        assert_access_violation!(result, fault_address, 4);
+        let result =
+            SyscallMemcmp::rust(&mut invoke_context, dst, src, 4, 0, 0, &mut memory_mapping);
+        assert_access_violation!(result, fault_address, 4);
+    }
+
+    #[test_case(0xFFFFFFFFF)] // Dst lower bound
+    #[test_case(0x100000010)] // Dst upper bound
+    fn test_memset_access_violation(dst: u64) {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mut mem = (0..12).collect::<Vec<u8>>();
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_writable(&mut mem, 0x100000000)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result = SyscallMemset::rust(&mut invoke_context, dst, 0, 4, 0, 0, &mut memory_mapping);
+        assert_access_violation!(result, dst, 4);
+    }
+
+    #[test]
+    fn test_memcmp_result_access_violation() {
+        prepare_mockup!(invoke_context, program_id, bpf_loader::id());
+        let mem = (0..12).collect::<Vec<u8>>();
+        let config = Config::default();
+        let mut memory_mapping = MemoryMapping::new(
+            vec![MemoryRegion::new_readonly(&mem, 0x100000000)],
+            &config,
+            SBPFVersion::V3,
+        )
+        .unwrap();
+
+        let result = SyscallMemcmp::rust(
+            &mut invoke_context,
+            0x100000000,
+            0x100000000,
+            4,
+            0x100000000,
+            0,
+            &mut memory_mapping,
+        );
+        assert_access_violation!(result, 0x100000000, 4);
     }
 }
