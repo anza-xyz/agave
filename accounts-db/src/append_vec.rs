@@ -1047,16 +1047,21 @@ impl AppendVec {
                     } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
                         reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
                     } else {
-                        const MAX_CAPACITY: usize =
-                            STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-                        if data_overflow_buffer.is_empty() {
-                            // Reserve to worst case to avoid multiple reallocations.
-                            data_overflow_buffer.reserve_exact(MAX_CAPACITY);
-                            // SAFETY: we only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
+                        const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
+                        // 128KiB covers a reasonably large distribution of typical account sizes.
+                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                        const MIN_CAPACITY: usize = 1024 * 128;
+                        let capacity = data_overflow_buffer.capacity();
+                        if data_len > capacity {
+                            let next_cap = data_len
+                                .next_power_of_two()
+                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
+                            data_overflow_buffer.reserve_exact(next_cap - capacity);
+                            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
                             // Later, we ensure we only read from the initialized portion of the buffer.
                             unsafe {
-                                data_overflow_buffer.set_len(MAX_CAPACITY);
-                            };
+                                data_overflow_buffer.set_len(next_cap);
+                            }
                         }
 
                         // Copy already read data to overflow buffer.
