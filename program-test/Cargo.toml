@@ -49,8 +49,8 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
+solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
-solana-sdk-macro = { workspace = true }
 solana-signer = { workspace = true }
 solana-stable-layout = { workspace = true }
 solana-stake-interface = { workspace = true }
