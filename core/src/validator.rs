@@ -479,7 +479,6 @@ struct TransactionHistoryServices {
     transaction_status_sender: Option<TransactionStatusSender>,
     transaction_status_service: Option<TransactionStatusService>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
-    max_complete_rewards_slot: Arc<AtomicU64>,
 }
 
 /// A struct easing passing Validator TPU Configurations
@@ -794,7 +793,6 @@ impl Validator {
                 transaction_status_sender,
                 transaction_status_service,
                 max_complete_transaction_status_slot,
-                max_complete_rewards_slot,
             },
             blockstore_process_options,
             blockstore_root_scan,
@@ -1063,7 +1061,6 @@ impl Validator {
         let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
             exit.clone(),
             max_complete_transaction_status_slot.clone(),
-            max_complete_rewards_slot.clone(),
             blockstore.clone(),
             bank_forks.clone(),
             block_commitment_cache.clone(),
@@ -1207,7 +1204,6 @@ impl Validator {
                 max_slots: max_slots.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
                 max_complete_transaction_status_slot,
-                max_complete_rewards_slot,
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option,
             };
@@ -2537,13 +2533,10 @@ fn initialize_rpc_transaction_history_services(
         exit.clone(),
     ));
 
-    let max_complete_rewards_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
-
     TransactionHistoryServices {
         transaction_status_sender,
         transaction_status_service,
         max_complete_transaction_status_slot,
-        max_complete_rewards_slot,
     }
 }
 
