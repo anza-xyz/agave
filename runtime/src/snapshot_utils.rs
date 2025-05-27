@@ -2317,12 +2317,10 @@ fn untar_snapshot_create_shared_buffer(
     match archive_format {
         ArchiveFormat::TarBzip2 => SharedBuffer::new(BzDecoder::new(BufReader::new(open_file()))),
         ArchiveFormat::TarGzip => SharedBuffer::new(GzDecoder::new(open_file())),
-        ArchiveFormat::TarZstd { .. } => SharedBuffer::new(
-            zstd::stream::read::Decoder::new(open_file()).unwrap(),
-        ),
-        ArchiveFormat::TarLz4 => {
-            SharedBuffer::new(lz4::Decoder::new(open_file()).unwrap())
+        ArchiveFormat::TarZstd { .. } => {
+            SharedBuffer::new(zstd::stream::read::Decoder::new(open_file()).unwrap())
         }
+        ArchiveFormat::TarLz4 => SharedBuffer::new(lz4::Decoder::new(open_file()).unwrap()),
         ArchiveFormat::Tar => SharedBuffer::new(BufReader::new(open_file())),
     }
 }
