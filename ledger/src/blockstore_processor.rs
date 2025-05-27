@@ -881,6 +881,7 @@ pub fn test_process_blockstore(
         opts,
         None,
         None,
+        None,
         exit.clone(),
     )
     .unwrap();
@@ -943,6 +944,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     opts: &ProcessOptions,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -976,6 +978,7 @@ pub(crate) fn process_blockstore_for_bank_0(
         blockstore,
         &replay_tx_thread_pool,
         opts,
+        transaction_status_sender,
         &VerifyRecyclers::default(),
         entry_notification_sender,
     )?;
@@ -1765,6 +1768,7 @@ fn process_bank_0(
     blockstore: &Blockstore,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     recyclers: &VerifyRecyclers,
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1791,7 +1795,9 @@ fn process_bank_0(
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
     }
 
-    // steviez: Re-add submit of BlockMeta
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_transaction_status_freeze_message(bank0);
+    }
 
     Ok(())
 }
@@ -2206,7 +2212,9 @@ pub fn process_single_slot(
         blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     }
 
-    // steviez: Re-add submit of BlockMeta
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_transaction_status_freeze_message(bank);
+    }
 
     Ok(())
 }
@@ -4150,6 +4158,7 @@ pub mod tests {
             &blockstore,
             &replay_tx_thread_pool,
             &opts,
+            None,
             &recyclers,
             None,
         )

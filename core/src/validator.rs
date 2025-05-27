@@ -2114,6 +2114,9 @@ fn load_blockstore(
             config.account_paths.clone(),
             &config.snapshot_config,
             &process_options,
+            transaction_history_services
+                .transaction_status_sender
+                .as_ref(),
             entry_notifier_service
                 .as_ref()
                 .map(|service| service.sender()),

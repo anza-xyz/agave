@@ -335,6 +335,7 @@ pub fn load_and_process_ledger(
             account_paths,
             &snapshot_config,
             &process_options,
+            transaction_status_sender.as_ref(),
             None, // Maybe support this later, though
             accounts_update_notifier,
             exit.clone(),

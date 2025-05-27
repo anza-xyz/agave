@@ -9168,6 +9168,7 @@ pub(crate) mod tests {
             &blockstore,
             &replay_tx_thread_pool,
             &ProcessOptions::default(),
+            None,
             &recyclers,
             None,
         )
