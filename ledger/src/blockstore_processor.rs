@@ -881,7 +881,6 @@ pub fn test_process_blockstore(
         opts,
         None,
         None,
-        None,
         exit.clone(),
     )
     .unwrap();
@@ -929,7 +928,6 @@ pub fn test_process_blockstore(
         opts,
         None,
         None,
-        None,
         Some(&snapshot_controller),
     )
     .unwrap();
@@ -945,7 +943,6 @@ pub(crate) fn process_blockstore_for_bank_0(
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     opts: &ProcessOptions,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -980,7 +977,6 @@ pub(crate) fn process_blockstore_for_bank_0(
         &replay_tx_thread_pool,
         opts,
         &VerifyRecyclers::default(),
-        block_meta_sender,
         entry_notification_sender,
     )?;
 
@@ -995,7 +991,6 @@ pub fn process_blockstore_from_root(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1061,7 +1056,6 @@ pub fn process_blockstore_from_root(
             leader_schedule_cache,
             opts,
             transaction_status_sender,
-            block_meta_sender,
             entry_notification_sender,
             &mut timing,
             snapshot_controller,
@@ -1772,7 +1766,6 @@ fn process_bank_0(
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     assert_eq!(bank0.slot(), 0);
@@ -1797,7 +1790,8 @@ fn process_bank_0(
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
     }
-    send_block_meta(bank0, block_meta_sender);
+
+    // steviez: Re-add submit of BlockMeta
 
     Ok(())
 }
@@ -1874,7 +1868,6 @@ fn load_frozen_forks(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
     snapshot_controller: Option<&SnapshotController>,
@@ -1958,7 +1951,6 @@ fn load_frozen_forks(
                 &recyclers,
                 &mut progress,
                 transaction_status_sender,
-                block_meta_sender,
                 entry_notification_sender,
                 None,
                 timing,
@@ -2149,7 +2141,6 @@ pub fn process_single_slot(
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
@@ -2214,7 +2205,8 @@ pub fn process_single_slot(
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     }
-    send_block_meta(bank, block_meta_sender);
+
+    // steviez: Re-add submit of BlockMeta
 
     Ok(())
 }
@@ -2284,16 +2276,6 @@ impl TransactionStatusSender {
                 e
             );
         }
-    }
-}
-
-pub type BlockMetaSender = Sender<Arc<Bank>>;
-
-pub fn send_block_meta(bank: &Arc<Bank>, block_meta_sender: Option<&BlockMetaSender>) {
-    if let Some(block_meta_sender) = block_meta_sender {
-        block_meta_sender
-            .send(bank.clone())
-            .unwrap_or_else(|err| warn!("block_meta_sender failed: {:?}", err));
     }
 }
 
@@ -4170,7 +4152,6 @@ pub mod tests {
             &opts,
             &recyclers,
             None,
-            None,
         )
         .unwrap();
         let bank0_last_blockhash = bank0.last_blockhash();
@@ -4202,7 +4183,6 @@ pub mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &opts,
-            None,
             None,
             None,
             None, // snapshot_controller

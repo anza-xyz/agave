@@ -335,7 +335,6 @@ pub fn load_and_process_ledger(
             account_paths,
             &snapshot_config,
             &process_options,
-            None, // block_meta_sender, delete in next commit
             None, // Maybe support this later, though
             accounts_update_notifier,
             exit.clone(),
@@ -420,7 +419,6 @@ pub fn load_and_process_ledger(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender.as_ref(),
-        None, // block_meta_sender, delete in next commit
         None, // entry_notification_sender
         Some(&snapshot_controller),
     )

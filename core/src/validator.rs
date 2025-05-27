@@ -84,7 +84,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
-    solana_ledger::blockstore_processor::BlockMetaSender,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -481,7 +480,6 @@ struct TransactionHistoryServices {
     transaction_status_service: Option<TransactionStatusService>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     max_complete_rewards_slot: Arc<AtomicU64>,
-    block_meta_sender: Option<BlockMetaSender>,
 }
 
 /// A struct easing passing Validator TPU Configurations
@@ -797,7 +795,6 @@ impl Validator {
                 transaction_status_service,
                 max_complete_transaction_status_slot,
                 max_complete_rewards_slot,
-                block_meta_sender,
             },
             blockstore_process_options,
             blockstore_root_scan,
@@ -1017,7 +1014,6 @@ impl Validator {
             &leader_schedule_cache,
             &blockstore_process_options,
             transaction_status_sender.as_ref(),
-            block_meta_sender.clone(),
             entry_notification_sender,
             blockstore_root_scan,
             &snapshot_controller,
@@ -2122,7 +2118,6 @@ fn load_blockstore(
             config.account_paths.clone(),
             &config.snapshot_config,
             &process_options,
-            transaction_history_services.block_meta_sender.as_ref(),
             entry_notifier_service
                 .as_ref()
                 .map(|service| service.sender()),
@@ -2166,7 +2161,6 @@ pub struct ProcessBlockStore<'a> {
     leader_schedule_cache: &'a LeaderScheduleCache,
     process_options: &'a blockstore_processor::ProcessOptions,
     transaction_status_sender: Option<&'a TransactionStatusSender>,
-    block_meta_sender: Option<BlockMetaSender>,
     entry_notification_sender: Option<&'a EntryNotifierSender>,
     blockstore_root_scan: Option<BlockstoreRootScan>,
     snapshot_controller: &'a SnapshotController,
@@ -2186,7 +2180,6 @@ impl<'a> ProcessBlockStore<'a> {
         leader_schedule_cache: &'a LeaderScheduleCache,
         process_options: &'a blockstore_processor::ProcessOptions,
         transaction_status_sender: Option<&'a TransactionStatusSender>,
-        block_meta_sender: Option<BlockMetaSender>,
         entry_notification_sender: Option<&'a EntryNotifierSender>,
         blockstore_root_scan: BlockstoreRootScan,
         snapshot_controller: &'a SnapshotController,
@@ -2202,7 +2195,6 @@ impl<'a> ProcessBlockStore<'a> {
             leader_schedule_cache,
             process_options,
             transaction_status_sender,
-            block_meta_sender,
             entry_notification_sender,
             blockstore_root_scan: Some(blockstore_root_scan),
             snapshot_controller,
@@ -2240,7 +2232,6 @@ impl<'a> ProcessBlockStore<'a> {
                 self.leader_schedule_cache,
                 self.process_options,
                 self.transaction_status_sender,
-                self.block_meta_sender.as_ref(),
                 self.entry_notification_sender,
                 Some(self.snapshot_controller),
             )
@@ -2547,15 +2538,12 @@ fn initialize_rpc_transaction_history_services(
     ));
 
     let max_complete_rewards_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
-    let (block_meta_sender, _block_meta_receiver) = unbounded();
-    let block_meta_sender = Some(block_meta_sender);
 
     TransactionHistoryServices {
         transaction_status_sender,
         transaction_status_service,
         max_complete_transaction_status_slot,
         max_complete_rewards_slot,
-        block_meta_sender,
     }
 }
 

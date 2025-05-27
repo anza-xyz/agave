@@ -9176,7 +9176,6 @@ pub(crate) mod tests {
             &ProcessOptions::default(),
             &recyclers,
             None,
-            None,
         )
         .unwrap();
 
@@ -9215,7 +9214,6 @@ pub(crate) mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &ProcessOptions::default(),
-            None,
             None,
             None,
             None, // snapshot_controller
