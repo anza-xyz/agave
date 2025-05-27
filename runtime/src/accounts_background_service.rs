@@ -622,11 +622,11 @@ impl AccountsBackgroundService {
                                 // once startup verification completed, this old snapshot request
                                 // would be handled, and we'd break the invariant above that
                                 // last_cleaned_block_height must be <= snapshot_block_height.
-                                !request_handlers
-                                    .snapshot_request_handler
-                                    .snapshot_request_receiver
-                                    .is_empty()
-                                    && !bank.is_startup_verification_complete()
+                                bank.is_startup_verification_complete()
+                                    || request_handlers
+                                        .snapshot_request_handler
+                                        .snapshot_request_receiver
+                                        .is_empty()
                             )
                         {
                             // Note that the flush will do an internal clean of the
