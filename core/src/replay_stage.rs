@@ -9167,6 +9167,8 @@ pub(crate) mod tests {
         // Artifically root 3 and 4
         blockstore.set_roots([3, 4].iter()).unwrap();
 
+        // noop
+
         // Set up bank0
         let bank_forks = BankForks::new_rw_arc(Bank::new_for_tests(&genesis_config));
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
