@@ -15,8 +15,9 @@ mod tests {
                 SerdeAccountsHash, SerdeIncrementalAccountsHash, SnapshotStreams,
             },
             snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
             snapshot_utils::{
-                create_tmp_accounts_dir_for_tests, get_storages_to_serialize, ArchiveFormat,
+                create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
             stakes::{SerdeStakesToStakeFormat, Stakes, StakesEnum},
@@ -408,7 +409,7 @@ mod tests {
             None,
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
-            ArchiveFormat::Tar,
+            SnapshotConfig::default().archive_format,
         )
         .unwrap();
 

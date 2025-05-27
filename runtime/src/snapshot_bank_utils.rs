@@ -1106,9 +1106,8 @@ mod tests {
                 purge_all_bank_snapshots, purge_bank_snapshot,
                 purge_bank_snapshots_older_than_slot, purge_incomplete_bank_snapshots,
                 purge_old_bank_snapshots, purge_old_bank_snapshots_at_startup,
-                snapshot_storage_rebuilder::get_slot_and_append_vec_id, ArchiveFormat,
-                BankSnapshotKind, BANK_SNAPSHOT_PRE_FILENAME_EXTENSION,
-                SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME,
+                snapshot_storage_rebuilder::get_slot_and_append_vec_id, BankSnapshotKind,
+                BANK_SNAPSHOT_PRE_FILENAME_EXTENSION, SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME,
             },
             status_cache::Status,
         },
@@ -1156,7 +1155,7 @@ mod tests {
                 SnapshotVersion::default(),
                 &snapshot_archives_dir,
                 &snapshot_archives_dir,
-                ArchiveFormat::Tar,
+                SnapshotConfig::default().archive_format,
                 should_flush_and_hard_link_storages,
             )
             .unwrap();
@@ -1202,7 +1201,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let snapshot_archive_info = bank_to_full_snapshot_archive(
             &bank_snapshots_dir,
@@ -1314,7 +1313,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
             bank_snapshots_dir.path(),
@@ -1402,7 +1401,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let full_snapshot_slot = slot;
         let full_snapshot_archive_info = bank_to_full_snapshot_archive(
@@ -1522,7 +1521,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let full_snapshot_slot = slot;
         bank_to_full_snapshot_archive(
@@ -1631,7 +1630,7 @@ mod tests {
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let (mut genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
         // test expects 0 transaction fee
@@ -1828,7 +1827,7 @@ mod tests {
         }
 
         let all_snapshots_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let full_snapshot_slot = slot;
         bank_to_full_snapshot_archive(
@@ -1885,7 +1884,7 @@ mod tests {
             SnapshotVersion::default(),
             &snapshot_archives_dir,
             &snapshot_archives_dir,
-            ArchiveFormat::Tar,
+            SnapshotConfig::default().archive_format,
             true,
         )
         .unwrap();
@@ -2123,7 +2122,7 @@ mod tests {
             None,
             &full_snapshot_archives_dir,
             &incremental_snapshot_archives_dir,
-            ArchiveFormat::Tar,
+            SnapshotConfig::default().archive_format,
         )
         .unwrap();
         let full_accounts_hash = bank
@@ -2153,7 +2152,7 @@ mod tests {
             None,
             &full_snapshot_archives_dir,
             &incremental_snapshot_archives_dir,
-            ArchiveFormat::Tar,
+            SnapshotConfig::default().archive_format,
         )
         .unwrap();
         let incremental_accounts_hash = bank
@@ -2252,7 +2251,7 @@ mod tests {
 
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
         let full_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
-        let snapshot_archive_format = ArchiveFormat::Tar;
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
 
         let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
 
