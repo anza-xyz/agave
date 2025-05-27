@@ -18,7 +18,7 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-hash = "=2.2.1"
+solana-hash = "=2.3.0"
 solana-instruction = "=2.2.1"
 solana-keypair = "=2.2.1"
 solana-logger = "=2.3.1"

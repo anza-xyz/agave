@@ -451,7 +451,7 @@ agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.3.0" }
 solana-gossip = { path = "gossip", version = "=2.3.0" }
 solana-hard-forks = "2.2.1"
-solana-hash = "2.2.1"
+solana-hash = "2.3.0"
 solana-inflation = "2.2.1"
 solana-instruction = "2.2.1"
 solana-instructions-sysvar = "2.2.2"
