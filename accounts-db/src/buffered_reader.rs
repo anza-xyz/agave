@@ -179,6 +179,27 @@ impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
     }
 }
 
+/// Open file at `path` with buffering reader using `buf_size` memory and doing
+/// read-ahead IO reads (if `io_uring` is supported by the host)
+pub fn large_file_buf_reader(
+    path: &std::path::Path,
+    buf_size: usize,
+) -> std::io::Result<Box<dyn std::io::BufRead>> {
+    #[cfg(target_os = "linux")]
+    if agave_io_uring::io_uring_supported() {
+        let io_uring_reader =
+            crate::io_uring::seq_file_reader::SequentialFileReader::with_capacity(buf_size, path);
+        match io_uring_reader {
+            Ok(reader) => return Ok(Box::new(reader)),
+            Err(error) => {
+                log::warn!("unable to create io_uring reader: {error}");
+            }
+        }
+    }
+    let file = File::open(path)?;
+    Ok(Box::new(std::io::BufReader::with_capacity(buf_size, file)))
+}
+
 #[cfg(all(unix, test))]
 mod tests {
     use {super::*, std::io::Write, tempfile::tempfile, test_case::test_case};

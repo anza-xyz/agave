@@ -62,6 +62,33 @@ impl FromStr for ArchiveFormat {
     }
 }
 
+pub enum ArchiveFormatDecompressor<R> {
+    Zstd(zstd::stream::read::Decoder<'static, R>),
+    Lz4(lz4::Decoder<R>),
+}
+
+impl<R: std::io::BufRead> ArchiveFormatDecompressor<R> {
+    pub fn new(format: ArchiveFormat, input: R) -> std::io::Result<Self> {
+        Ok(match format {
+            ArchiveFormat::TarZstd { .. } => {
+                Self::Zstd(zstd::stream::read::Decoder::with_buffer(input)?)
+            }
+            ArchiveFormat::TarLz4 => {
+                Self::Lz4(lz4::Decoder::new(input).map_err(std::io::Error::other)?)
+            }
+        })
+    }
+}
+
+impl<R: std::io::BufRead> std::io::Read for ArchiveFormatDecompressor<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Zstd(decoder) => decoder.read(buf),
+            Self::Lz4(decoder) => decoder.read(buf),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ParseError {
     InvalidExtension(String),
