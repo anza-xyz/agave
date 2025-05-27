@@ -4,6 +4,7 @@ use {
     rayon::prelude::*,
     solana_account::{accounts_equal, AccountSharedData},
     solana_accounts_db::accounts_db::AccountsDb,
+    solana_hash::Hash,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure},
     solana_pubkey::Pubkey,
@@ -290,6 +291,13 @@ impl Bank {
                 i64
             ),
             (
+                "num_inspect_account_after_frozen",
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_after_frozen
+                    .load(Ordering::Relaxed),
+                i64
+            ),
+            (
                 "inspect_account_lookup_ns",
                 self.stats_for_accounts_lt_hash
                     .inspect_account_lookup_time_ns
@@ -330,6 +338,23 @@ impl Bank {
         let (is_in_cache, lookup_time) =
             meas_dur!(self.cache_for_accounts_lt_hash.contains_key(address));
         if !is_in_cache {
+            // We need to check if the bank is frozen.  In order to do that safely, we
+            // must hold a read lock on Bank::hash to read the frozen state.
+            let freeze_guard = self.freeze_lock();
+            let is_frozen = *freeze_guard != Hash::default();
+            if is_frozen {
+                // If the bank is frozen, do not add this account to the cache.
+                // It is possible for the leader to be executing transactions after freeze has
+                // started, i.e. while any deferred changes to account state is finishing up.
+                // This means the transaction could load an account *after* it was modified by the
+                // deferred changes, which would be the wrong initial state of the account.
+                // Inserting the wrong initial state of an account into the cache will end up
+                // producing the wrong accounts lt hash.
+                self.stats_for_accounts_lt_hash
+                    .num_inspect_account_after_frozen
+                    .fetch_add(1, Ordering::Relaxed);
+                return;
+            }
             let (_, insert_time) = meas_dur!({
                 self.cache_for_accounts_lt_hash
                     .entry(*address)
@@ -343,6 +368,7 @@ impl Bank {
                         CacheValue::InspectAccount(initial_state_of_account)
                     });
             });
+            drop(freeze_guard);
 
             self.stats_for_accounts_lt_hash
                 .num_inspect_account_misses
@@ -372,6 +398,8 @@ pub struct Stats {
     num_inspect_account_hits: AtomicU64,
     /// the number of times the cache *did not* already contain the account being inspected
     num_inspect_account_misses: AtomicU64,
+    /// the number of times an account was inspected after the bank was frozen
+    num_inspect_account_after_frozen: AtomicU64,
     /// time spent checking if accounts are in the cache
     inspect_account_lookup_time_ns: AtomicU64,
     /// time spent inserting accounts into the cache
@@ -777,6 +805,16 @@ mod tests {
                 _ => panic!("wrong initial state for account"),
             };
         }
+
+        // ensure accounts are *not* added to the cache if the bank is frozen
+        // N.B. this test should remain *last*, as Bank::freeze() is not meant to be undone
+        bank.freeze();
+        let address = Pubkey::new_unique();
+        let num_cache_entries_prev = bank.cache_for_accounts_lt_hash.len();
+        bank.inspect_account_for_accounts_lt_hash(&address, &AccountState::Dead, true);
+        let num_cache_entries_curr = bank.cache_for_accounts_lt_hash.len();
+        assert_eq!(num_cache_entries_curr, num_cache_entries_prev);
+        assert!(!bank.cache_for_accounts_lt_hash.contains_key(&address));
     }
 
     #[test_case(Features::None; "no features")]
