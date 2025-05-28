@@ -181,6 +181,12 @@ pub struct SerializedAccountMetadata {
     pub vm_owner_addr: u64,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct FirstErrorAttribution {
+    pub inner_instruction_index: Option<usize>,
+    pub responsible_program_address: Pubkey,
+}
+
 /// Main pipeline from runtime to program execution.
 pub struct InvokeContext<'a> {
     /// Information about the currently executing transaction.
@@ -202,6 +208,7 @@ pub struct InvokeContext<'a> {
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
+    first_error_attribution: Option<FirstErrorAttribution>,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -226,6 +233,7 @@ impl<'a> InvokeContext<'a> {
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             traces: Vec::new(),
+            first_error_attribution: None,
         }
     }
 
@@ -493,6 +501,7 @@ impl<'a> InvokeContext<'a> {
         self.environment_config
             .epoch_stake_callback
             .process_precompile(program_id, instruction_data, instruction_datas)
+            .inspect_err(|_| self.blame_program_for_error(program_id))
             .map_err(InstructionError::from)
             .and(self.pop())
     }
@@ -593,6 +602,11 @@ impl<'a> InvokeContext<'a> {
                 }
             }
         };
+
+        if result.is_err() {
+            self.blame_program_for_error(&program_id);
+        }
+
         let post_remaining_units = self.get_remaining();
         *compute_units_consumed = pre_remaining_units.saturating_sub(post_remaining_units);
 
@@ -610,6 +624,25 @@ impl<'a> InvokeContext<'a> {
     /// Get this invocation's LogCollector
     pub fn get_log_collector(&self) -> Option<Rc<RefCell<LogCollector>>> {
         self.log_collector.clone()
+    }
+
+    /// If no other program has yet been blamed for causing an error in this invocation, blame this
+    /// one and the inner instruction that it belongs to.
+    pub fn blame_program_for_error(&mut self, responsible_program_address: &Pubkey) {
+        if self.first_error_attribution.is_some() {
+            return;
+        }
+        self.first_error_attribution = Some(FirstErrorAttribution {
+            inner_instruction_index: self
+                .transaction_context
+                .get_current_inner_instruction_index(),
+            responsible_program_address: *responsible_program_address,
+        });
+    }
+
+    /// Get details about where to attribute the error this invocation first encountered
+    pub fn get_first_error_attribution(&self) -> &Option<FirstErrorAttribution> {
+        &self.first_error_attribution
     }
 
     /// Consume compute units
@@ -1357,6 +1390,38 @@ mod tests {
                 .accounts_resize_delta()
                 .unwrap(),
             resize_delta
+        );
+    }
+
+    #[test]
+    fn test_attribute_first_error() {
+        with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        invoke_context.transaction_context.push().unwrap(); // First outer instruction
+        invoke_context.transaction_context.push().unwrap(); // First inner instruction
+        let program_id = Pubkey::new_unique();
+        invoke_context.blame_program_for_error(&program_id);
+        assert_eq!(
+            invoke_context.first_error_attribution,
+            Some(FirstErrorAttribution {
+                inner_instruction_index: Some(0),
+                responsible_program_address: program_id,
+            }),
+        );
+    }
+
+    #[test]
+    fn test_attribute_first_error_can_only_set_once() {
+        with_mock_invoke_context!(invoke_context, transaction_context, vec![]);
+        let program_id = Pubkey::new_unique();
+        let some_other_program_id = Pubkey::new_unique();
+        invoke_context.blame_program_for_error(&program_id);
+        invoke_context.blame_program_for_error(&some_other_program_id);
+        assert_eq!(
+            invoke_context.first_error_attribution,
+            Some(FirstErrorAttribution {
+                inner_instruction_index: None,
+                responsible_program_address: program_id,
+            }),
         );
     }
 }
