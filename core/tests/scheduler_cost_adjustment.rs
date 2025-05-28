@@ -15,7 +15,7 @@ use {
     solana_rent::Rent,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, secp256k1_program},
+    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, secp256k1_program, system_program},
     solana_signer::Signer,
     solana_svm::transaction_processor::ExecutionRecordingConfig,
     solana_system_interface::instruction as system_instruction,
@@ -229,19 +229,20 @@ fn test_builtin_ix_cost_adjustment_with_cu_limit_too_low() {
     // Cost model & Compute budget: reserve/allocate requested CU Limit `1`
     // VM Execution: consume `1` CU, then fail
     // Result: 0 adjustment
-    let expected = TestResult {
-        cost_adjustment: 0,
-        execution_status: Err(TransactionError::InstructionError(
-            0,
-            InstructionError::ComputationalBudgetExceeded,
-        )),
-    };
     assert_eq!(
-        expected,
         test_setup.execute_test_transaction(&[
             test_setup.transfer_ix(),
             test_setup.set_cu_limit_ix(cu_limit),
-        ])
+        ]),
+        TestResult {
+            cost_adjustment: 0,
+            execution_status: Err(TransactionError::InstructionError {
+                err: InstructionError::ComputationalBudgetExceeded,
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(system_program::id())
+            }),
+        },
     );
 }
 
@@ -281,16 +282,17 @@ fn test_builtin_ix_cost_adjustment_with_memo_no_cu_limit() {
     //   (3_000 + 200_000) = 203_000 CUs (note: less than memo_ix needs)
     // VM Execution: consume all allocated CUs, then fail
     // Result: no adjustment
-    let expected = TestResult {
-        cost_adjustment: 0,
-        execution_status: Err(TransactionError::InstructionError(
-            1,
-            InstructionError::ProgramFailedToComplete,
-        )),
-    };
     assert_eq!(
-        expected,
-        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix.clone()],)
+        test_setup.execute_test_transaction(&[test_setup.transfer_ix(), memo_ix.clone()],),
+        TestResult {
+            cost_adjustment: 0,
+            execution_status: Err(TransactionError::InstructionError {
+                err: InstructionError::ProgramFailedToComplete,
+                outer_instruction_index: 1,
+                inner_instruction_index: None,
+                responsible_program_address: Some(memo_ix.program_id),
+            })
+        },
     );
 }
 

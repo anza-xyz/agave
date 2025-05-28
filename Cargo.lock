@@ -7593,6 +7593,7 @@ name = "solana-compute-budget-instruction"
 version = "2.3.0"
 dependencies = [
  "agave-feature-set",
+ "assert_matches",
  "bincode",
  "criterion",
  "log",
@@ -8006,6 +8007,7 @@ dependencies = [
  "solana-instruction",
  "solana-precompile-error",
  "solana-program-test",
+ "solana-sdk-ids",
  "solana-signer",
  "solana-transaction",
  "solana-transaction-error",
@@ -8661,6 +8663,7 @@ dependencies = [
  "solana-rayon-threadlimit",
  "solana-runtime",
  "solana-runtime-transaction",
+ "solana-sdk-ids",
  "solana-seed-derivable",
  "solana-sha256-hasher",
  "solana-shred-version",
@@ -9733,6 +9736,7 @@ dependencies = [
  "solana-program",
  "solana-pubkey",
  "solana-rpc-client-api",
+ "solana-sdk-ids",
  "solana-signature",
  "solana-signer",
  "solana-system-transaction",
@@ -11641,6 +11645,7 @@ dependencies = [
 name = "solana-zk-elgamal-proof-program-tests"
 version = "2.3.0"
 dependencies = [
+ "assert_matches",
  "bytemuck",
  "solana-account",
  "solana-compute-budget",
@@ -11649,6 +11654,7 @@ dependencies = [
  "solana-keypair",
  "solana-program-test",
  "solana-pubkey",
+ "solana-sdk-ids",
  "solana-signer",
  "solana-system-interface",
  "solana-transaction",

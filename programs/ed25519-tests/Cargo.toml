@@ -16,6 +16,7 @@ solana-ed25519-program = { workspace = true }
 solana-instruction = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-test = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }

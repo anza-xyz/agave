@@ -84,7 +84,12 @@ async fn clock_sysvar_updated_from_warp() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::Custom(WRONG_SLOT_ERROR))
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(WRONG_SLOT_ERROR),
+            inner_instruction_index: None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(program_id)
+        },
     );
 
     // Warp to success!

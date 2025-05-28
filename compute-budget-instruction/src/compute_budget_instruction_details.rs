@@ -10,6 +10,7 @@ use {
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
+    solana_sdk_ids::compute_budget,
     solana_svm_transaction::instruction::SVMInstruction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::num::{NonZeroU32, Saturating},
@@ -103,20 +104,23 @@ impl ComputeBudgetInstructionDetails {
         feature_set: &FeatureSet,
     ) -> Result<ComputeBudgetLimits> {
         // Sanitize requested heap size
-        let updated_heap_bytes =
-            if let Some((index, requested_heap_size)) = self.requested_heap_size {
-                if Self::sanitize_requested_heap_size(requested_heap_size) {
-                    requested_heap_size
-                } else {
-                    return Err(TransactionError::InstructionError(
-                        index,
-                        InstructionError::InvalidInstructionData,
-                    ));
-                }
+        let updated_heap_bytes = if let Some((outer_instruction_index, requested_heap_size)) =
+            self.requested_heap_size
+        {
+            if Self::sanitize_requested_heap_size(requested_heap_size) {
+                requested_heap_size
             } else {
-                MIN_HEAP_FRAME_BYTES
+                return Err(TransactionError::InstructionError {
+                    err: InstructionError::InvalidInstructionData,
+                    inner_instruction_index: None,
+                    outer_instruction_index,
+                    responsible_program_address: Some(compute_budget::id()),
+                });
             }
-            .min(MAX_HEAP_FRAME_BYTES);
+        } else {
+            MIN_HEAP_FRAME_BYTES
+        }
+        .min(MAX_HEAP_FRAME_BYTES);
 
         // Calculate compute unit limit
         let compute_unit_limit = self
@@ -153,8 +157,12 @@ impl ComputeBudgetInstructionDetails {
     }
 
     fn process_instruction(&mut self, index: u8, instruction: &SVMInstruction) -> Result<()> {
-        let invalid_instruction_data_error =
-            TransactionError::InstructionError(index, InstructionError::InvalidInstructionData);
+        let invalid_instruction_data_error = TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: index,
+            responsible_program_address: Some(compute_budget::id()),
+        };
         let duplicate_instruction_error = TransactionError::DuplicateInstruction(index);
 
         match try_from_slice_unchecked(instruction.data) {
@@ -404,10 +412,12 @@ mod test {
             })
         );
 
-        let expected_heap_size_err = Err(TransactionError::InstructionError(
-            3,
-            InstructionError::InvalidInstructionData,
-        ));
+        let expected_heap_size_err = Err(TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 3,
+            responsible_program_address: Some(compute_budget::id()),
+        });
         // invalid: requested_heap_size can't be zero
         let instruction_details = ComputeBudgetInstructionDetails {
             requested_compute_unit_limit: Some((1, 0)),

@@ -65,8 +65,13 @@ async fn test_failure() {
     assert_matches!(
         client.process_transaction(transaction).await,
         Err(BanksClientError::TransactionError(
-            TransactionError::InstructionError(0, InstructionError::Custom(3))
-        ))
+            TransactionError::InstructionError {
+                err: InstructionError::Custom(3),
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(p),
+            }
+        )) if p == solana_sdk_ids::ed25519_program::id()
     );
     // this assert is for documenting the matched error code above
     assert_eq!(3, PrecompileError::InvalidDataOffsets as u32);

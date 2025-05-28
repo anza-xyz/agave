@@ -858,7 +858,12 @@ mod tests {
                 // actions like StakeInstruction::Withdraw
                 assert_eq!(
                     stake_result,
-                    Err(InstructionError(0, StakeError::EpochRewardsActive.into()))
+                    Err(InstructionError {
+                        err: StakeError::EpochRewardsActive.into(),
+                        inner_instruction_index: None,
+                        outer_instruction_index: 0,
+                        responsible_program_address: Some(solana_sdk_ids::stake::id()),
+                    }),
                 );
             } else {
                 // When the bank is outside of reward interval, the withdraw

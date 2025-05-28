@@ -267,7 +267,7 @@ async fn process_instruction<T: Signers + ?Sized>(
         Err(e) => {
             // banks client error -> transaction error -> instruction error -> program error
             match e.unwrap() {
-                TransactionError::InstructionError(_, e) => Err(e.try_into().unwrap()),
+                TransactionError::InstructionError { err, .. } => Err(err.try_into().unwrap()),
                 TransactionError::InsufficientFundsForRent { .. } => {
                     Err(ProgramError::InsufficientFunds)
                 }

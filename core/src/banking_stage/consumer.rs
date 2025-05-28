@@ -1560,17 +1560,20 @@ mod tests {
                 (transaction.signatures[0], meta.status)
             })
             .collect();
-        let expected_tx_results = vec![
-            (success_signature, Ok(())),
+        assert_eq!(actual_tx_results.len(), 2);
+        assert_eq!(actual_tx_results[0], (success_signature, Ok(())));
+        assert_eq!(
+            actual_tx_results[1],
             (
                 ix_error_signature,
-                Err(TransactionError::InstructionError(
-                    0,
-                    InstructionError::Custom(1),
-                )),
+                Err(TransactionError::InstructionError {
+                    err: InstructionError::Custom(1),
+                    inner_instruction_index: None,
+                    outer_instruction_index: 0,
+                    responsible_program_address: Some(system_program::id()),
+                }),
             ),
-        ];
-        assert_eq!(actual_tx_results, expected_tx_results);
+        );
 
         poh_recorder
             .read()

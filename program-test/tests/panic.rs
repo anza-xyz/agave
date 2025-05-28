@@ -36,6 +36,11 @@ async fn panic_test() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
+        TransactionError::InstructionError {
+            outer_instruction_index: 0,
+            err: InstructionError::ProgramFailedToComplete,
+            inner_instruction_index: None,
+            responsible_program_address: Some(program_id),
+        },
     );
 }

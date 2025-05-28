@@ -4369,6 +4369,7 @@ pub(crate) mod tests {
             commitment::{BlockCommitment, VOTE_THRESHOLD_SIZE},
             genesis_utils::{GenesisConfigInfo, ValidatorVoteKeypairs},
         },
+        solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
         solana_streamer::socket::SocketAddrSpace,
         solana_system_transaction as system_transaction,
@@ -5347,17 +5348,23 @@ pub(crate) mod tests {
                     (transaction.signatures[0], meta.status)
                 })
                 .collect();
-            let expected_tx_results = vec![
-                (test_signatures_iter.next().unwrap(), Ok(())),
+            assert_eq!(actual_tx_results.len(), 2);
+            assert_eq!(
+                actual_tx_results[0],
+                (test_signatures_iter.next().unwrap(), Ok(()))
+            );
+            assert_eq!(
+                actual_tx_results[1],
                 (
                     test_signatures_iter.next().unwrap(),
-                    Err(TransactionError::InstructionError(
-                        0,
-                        InstructionError::Custom(1),
-                    )),
+                    Err(TransactionError::InstructionError {
+                        err: InstructionError::Custom(1),
+                        inner_instruction_index: None,
+                        outer_instruction_index: 0,
+                        responsible_program_address: Some(system_program::id()),
+                    }),
                 ),
-            ];
-            assert_eq!(actual_tx_results, expected_tx_results);
+            );
             assert!(test_signatures_iter.next().is_none());
         }
         Blockstore::destroy(&ledger_path).unwrap();

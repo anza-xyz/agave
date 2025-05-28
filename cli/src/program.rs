@@ -2224,16 +2224,16 @@ fn close(
         config.send_transaction_config,
     );
     if let Err(err) = result {
-        if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidInstructionData,
-        )) = err.kind()
+        if let ClientErrorKind::TransactionError(TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            ..
+        }) = err.kind()
         {
             return Err("Closing a buffer account is not supported by the cluster".into());
-        } else if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidArgument,
-        )) = err.kind()
+        } else if let ClientErrorKind::TransactionError(TransactionError::InstructionError {
+            err: InstructionError::InvalidArgument,
+            ..
+        }) = err.kind()
         {
             return Err("Closing a program account is not supported by the cluster".into());
         } else {
@@ -2465,10 +2465,10 @@ fn process_extend_program(
         config.send_transaction_config,
     );
     if let Err(err) = result {
-        if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidInstructionData,
-        )) = err.kind()
+        if let ClientErrorKind::TransactionError(TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            ..
+        }) = err.kind()
         {
             return Err("Extending a program is not supported by the cluster".into());
         } else {
@@ -2560,10 +2560,10 @@ fn process_migrate_program(
         config.send_transaction_config,
     );
     if let Err(err) = result {
-        if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidInstructionData,
-        )) = err.kind()
+        if let ClientErrorKind::TransactionError(TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            ..
+        }) = err.kind()
         {
             return Err("Migrating a program is not supported by the cluster".into());
         } else {

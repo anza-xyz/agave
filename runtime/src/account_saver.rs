@@ -361,10 +361,12 @@ mod tests {
 
         let txs = vec![tx];
         let processing_results = vec![new_executed_processing_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidArgument,
+                inner_instruction_index: None,
+                outer_instruction_index: 1,
+                responsible_program_address: Some(system_program::id()),
+            }),
             loaded,
         )];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
@@ -456,10 +458,12 @@ mod tests {
 
         let txs = vec![tx];
         let processing_results = vec![new_executed_processing_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidArgument,
+                inner_instruction_index: None,
+                outer_instruction_index: 1,
+                responsible_program_address: Some(system_program::id()),
+            }),
             loaded,
         )];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);
@@ -564,10 +568,12 @@ mod tests {
 
         let txs = vec![tx];
         let processing_results = vec![new_executed_processing_result(
-            Err(TransactionError::InstructionError(
-                1,
-                InstructionError::InvalidArgument,
-            )),
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidArgument,
+                inner_instruction_index: None,
+                outer_instruction_index: 1,
+                responsible_program_address: Some(system_program::id()),
+            }),
             loaded,
         )];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);

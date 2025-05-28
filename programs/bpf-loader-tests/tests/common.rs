@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use {
+    assert_matches::assert_matches,
     solana_account::{state_traits::StateMut, AccountSharedData},
     solana_instruction::{error::InstructionError, Instruction},
     solana_keypair::Keypair,
@@ -41,14 +42,19 @@ pub async fn assert_ix_error(
         recent_blockhash,
     );
 
-    assert_eq!(
+    assert_matches!(
         client
             .process_transaction(transaction)
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, expected_err),
-        "{assertion_failed_msg}",
+        TransactionError::InstructionError {
+            err: actual_err,
+            inner_instruction_index: Some(_) | None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(_) | None,
+        } if actual_err == expected_err,
+        "{assertion_failed_msg}"
     );
 }
 

@@ -2363,6 +2363,7 @@ pub mod tests {
                 SchedulingContext,
             },
         },
+        solana_sdk_ids::system_program,
         solana_seed_derivable::SeedDerivable,
         solana_signer::Signer,
         solana_svm::transaction_processor::ExecutionRecordingConfig,
@@ -3995,10 +3996,12 @@ pub mod tests {
         assert_eq!(bank.get_balance(&pubkey), 1_000);
         assert_eq!(
             bank.transfer(10_001, &mint_keypair, &pubkey),
-            Err(TransactionError::InstructionError(
-                0,
-                SystemError::ResultWithNegativeLamports.into(),
-            ))
+            Err(TransactionError::InstructionError {
+                err: SystemError::ResultWithNegativeLamports.into(),
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(system_program::id()),
+            }),
         );
         assert_eq!(
             bank.transfer(10_001, &mint_keypair, &pubkey),

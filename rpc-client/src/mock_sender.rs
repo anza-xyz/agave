@@ -27,7 +27,7 @@ use {
     },
     solana_signature::Signature,
     solana_transaction::{versioned::TransactionVersion, Transaction},
-    solana_transaction_error::{TransactionError, TransactionResult},
+    solana_transaction_error::TransactionError,
     solana_transaction_status_client_types::{
         option_serializer::OptionSerializer, EncodedConfirmedBlock,
         EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction,
@@ -170,22 +170,23 @@ impl RpcSender for MockSender {
                 transaction_count: Some(123),
             })?,
             "getSignatureStatuses" => {
-                let status: TransactionResult<()> = if self.url == "account_in_use" {
-                    Err(TransactionError::AccountInUse)
+                let err = if self.url == "account_in_use" {
+                    Some(TransactionError::AccountInUse)
                 } else if self.url == "instruction_error" {
-                    Err(TransactionError::InstructionError(
-                        0,
-                        InstructionError::UninitializedAccount,
-                    ))
+                    Some(TransactionError::InstructionError {
+                        err: InstructionError::UninitializedAccount,
+                        inner_instruction_index: None,
+                        outer_instruction_index: 0,
+                        responsible_program_address: Some(Pubkey::from_str_const("s1gnatuerX3Qzstatuz8mV4j2pR9Wf5yB6kLh")),
+                    })
                 } else {
-                    Ok(())
+                    None
                 };
                 let status = if self.url == "sig_not_found" {
                     None
                 } else {
-                    let err = status.clone().err();
                     Some(TransactionStatus {
-                        status,
+                        status: err.clone().map_or(Ok(()), Err),
                         slot: 1,
                         confirmations: None,
                         err,
@@ -234,7 +235,7 @@ impl RpcSender for MockSender {
                         }),
                     meta: Some(UiTransactionStatusMeta {
                             err: None,
-                            status: Ok(()),
+                            status: Ok(()).into(),
                             fee: 0,
                             pre_balances: vec![499999999999999950, 50, 1],
                             post_balances: vec![499999999999999950, 50, 1],

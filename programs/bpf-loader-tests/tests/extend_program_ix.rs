@@ -9,7 +9,7 @@ use {
     },
     solana_program_test::*,
     solana_pubkey::Pubkey,
-    solana_sdk_ids::bpf_loader_upgradeable::id,
+    solana_sdk_ids::bpf_loader_upgradeable::{self, id},
     solana_signer::Signer,
     solana_system_interface::{
         error::SystemError, instruction as system_instruction, program as system_program,
@@ -165,7 +165,12 @@ async fn test_failed_extend_twice_in_same_slot() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::InvalidArgument)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidArgument,
+            inner_instruction_index: None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(p)
+        } if p == bpf_loader_upgradeable::id()
     );
 }
 
@@ -224,7 +229,13 @@ async fn test_failed_extend_upgrade_authority_did_not_sign() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::IncorrectAuthority)
+        TransactionError::InstructionError {
+            err:
+            InstructionError::IncorrectAuthority,
+            outer_instruction_index: 0,
+            inner_instruction_index: None,
+            responsible_program_address: Some(p)
+        } if p == id()
     );
 
     let mut ix = extend_program_checked(
@@ -247,7 +258,13 @@ async fn test_failed_extend_upgrade_authority_did_not_sign() {
             .await
             .unwrap_err()
             .unwrap(),
-        TransactionError::InstructionError(0, InstructionError::MissingRequiredSignature)
+        TransactionError::InstructionError {
+            err:
+            InstructionError::MissingRequiredSignature,
+            outer_instruction_index: 0,
+            inner_instruction_index: None,
+            responsible_program_address: Some(p)
+        } if p == id()
     );
 }
 

@@ -1,4 +1,5 @@
 use {
+    assert_matches::assert_matches,
     bytemuck::{bytes_of, Pod},
     solana_account::Account,
     solana_instruction::error::InstructionError,
@@ -761,9 +762,14 @@ async fn test_verify_proof_without_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     );
 
     // try to verify a valid proof, but with a wrong proof type
@@ -785,9 +791,14 @@ async fn test_verify_proof_without_context<T, U>(
             .await
             .unwrap_err()
             .unwrap();
-        assert_eq!(
+        assert_matches!(
             err,
-            TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+            TransactionError::InstructionError {
+                err: InstructionError::InvalidInstructionData,
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(p)
+            } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
         );
     }
 
@@ -816,9 +827,14 @@ async fn test_verify_proof_without_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     )
 }
 
@@ -870,9 +886,14 @@ async fn test_verify_proof_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 1,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     );
 
     // try to create proof context state with incorrect account data length
@@ -897,9 +918,14 @@ async fn test_verify_proof_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(1, InstructionError::InvalidAccountData)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 1,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     );
 
     // try to create proof context state with insufficient rent
@@ -957,9 +983,14 @@ async fn test_verify_proof_with_context<T, U>(
             .await
             .unwrap_err()
             .unwrap();
-        assert_eq!(
+        assert_matches!(
             err,
-            TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+            TransactionError::InstructionError {
+                err: InstructionError::InvalidInstructionData,
+                inner_instruction_index: None,
+                outer_instruction_index: 1,
+                responsible_program_address: Some(p)
+            } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
         );
     }
 
@@ -996,9 +1027,14 @@ async fn test_verify_proof_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::AccountAlreadyInitialized)
+        TransactionError::InstructionError {
+            err: InstructionError::AccountAlreadyInitialized,
+            inner_instruction_index: None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     );
 
     // self-owned context state account
@@ -1099,9 +1135,14 @@ async fn test_verify_proof_from_account_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(1, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 1,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     );
 
     // successfully create a proof context state
@@ -1144,9 +1185,14 @@ async fn test_verify_proof_from_account_with_context<T, U>(
         .await
         .unwrap_err()
         .unwrap();
-    assert_eq!(
+    assert_matches!(
         err,
-        TransactionError::InstructionError(0, InstructionError::AccountAlreadyInitialized)
+        TransactionError::InstructionError {
+            err: InstructionError::AccountAlreadyInitialized,
+            inner_instruction_index: None,
+            outer_instruction_index: 0,
+            responsible_program_address: Some(p)
+        } if p == solana_sdk_ids::zk_elgamal_proof_program::id()
     );
 
     // self-owned context state account
@@ -1247,7 +1293,12 @@ async fn test_close_context_state<T, U>(
         .unwrap();
     assert_eq!(
         err,
-        TransactionError::InstructionError(0, InstructionError::InvalidAccountOwner)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidAccountOwner,
+            outer_instruction_index: 0,
+            inner_instruction_index: None,
+            responsible_program_address: Some(zk_elgamal_proof_program::id()),
+        }
     );
 
     // successfully close proof context state
@@ -1349,7 +1400,12 @@ async fn test_close_context_state<T, U>(
         .unwrap();
     assert_eq!(
         err,
-        TransactionError::InstructionError(2, InstructionError::InvalidInstructionData)
+        TransactionError::InstructionError {
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: None,
+            outer_instruction_index: 2,
+            responsible_program_address: Some(zk_elgamal_proof_program::id()),
+        }
     );
 
     // close self-owned proof context accounts

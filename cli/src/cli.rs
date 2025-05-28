@@ -1768,7 +1768,7 @@ where
     match result {
         Err(err) => {
             let maybe_tx_err = err.get_transaction_error();
-            if let Some(TransactionError::InstructionError(_, ix_error)) = maybe_tx_err {
+            if let Some(TransactionError::InstructionError { err: ix_error, .. }) = maybe_tx_err {
                 if let Some(specific_error) = error_adapter(&ix_error) {
                     return Err(specific_error.into());
                 }

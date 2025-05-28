@@ -28,6 +28,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_pubkey::Pubkey,
+        solana_sdk_ids::compute_budget,
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
         solana_system_interface::instruction::transfer,
@@ -161,30 +162,36 @@ mod tests {
                 ComputeBudgetInstruction::request_heap_frame(40 * 1024 + 1),
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::InvalidInstructionData,
-            ))
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidInstructionData,
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(compute_budget::id()),
+            })
         );
         test!(
             &[
                 ComputeBudgetInstruction::request_heap_frame(31 * 1024),
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::InvalidInstructionData,
-            ))
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidInstructionData,
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(compute_budget::id()),
+            })
         );
         test!(
             &[
                 ComputeBudgetInstruction::request_heap_frame(MAX_HEAP_FRAME_BYTES + 1),
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
             ],
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::InvalidInstructionData,
-            ))
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidInstructionData,
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(compute_budget::id()),
+            })
         );
         test!(
             &[
@@ -219,10 +226,12 @@ mod tests {
                 Instruction::new_with_bincode(Pubkey::new_unique(), &0_u8, vec![]),
                 ComputeBudgetInstruction::request_heap_frame(1),
             ],
-            Err(TransactionError::InstructionError(
-                3,
-                InstructionError::InvalidInstructionData,
-            ))
+            Err(TransactionError::InstructionError {
+                err: InstructionError::InvalidInstructionData,
+                inner_instruction_index: None,
+                outer_instruction_index: 3,
+                responsible_program_address: Some(compute_budget::id()),
+            })
         );
         test!(
             &[

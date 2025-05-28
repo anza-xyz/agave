@@ -3954,10 +3954,12 @@ mod tests {
         let result = rpc_client.send_and_confirm_transaction(&tx);
         assert_matches!(
             result.unwrap_err().kind(),
-            ErrorKind::TransactionError(TransactionError::InstructionError(
-                0,
-                InstructionError::UninitializedAccount
-            ))
+            ErrorKind::TransactionError(TransactionError::InstructionError {
+                err: InstructionError::UninitializedAccount,
+                inner_instruction_index: None,
+                outer_instruction_index: 0,
+                responsible_program_address: Some(_),
+            })
         );
 
         let rpc_client = RpcClient::new_mock("sig_not_found".to_string());
