@@ -1104,6 +1104,7 @@ mod tests {
             rollback_accounts::RollbackAccounts,
         },
         agave_reserved_account_keys::ReservedAccountKeys,
+        itertools::Itertools,
         solana_account::{create_account_shared_data_for_test, WritableAccount},
         solana_clock::Clock,
         solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -1111,10 +1112,12 @@ mod tests {
         solana_fee_calculator::FeeCalculator,
         solana_fee_structure::FeeDetails,
         solana_hash::Hash,
+        solana_instruction::{AccountMeta, Instruction},
         solana_keypair::Keypair,
         solana_message::{LegacyMessage, Message, MessageHeader, SanitizedMessage},
         solana_nonce as nonce,
         solana_program_runtime::{
+            declare_process_instruction,
             execution_budget::{
                 SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
             },
@@ -1123,12 +1126,15 @@ mod tests {
         solana_rent::Rent,
         solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
         solana_rent_debits::RentDebits,
+        solana_sdk::instruction::InstructionError,
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_transaction_context::TransactionContext,
         solana_transaction_error::{TransactionError, TransactionError::DuplicateInstruction},
+        std::convert::TryInto,
+        std::sync::LazyLock,
         test_case::test_case,
     };
 
@@ -1325,6 +1331,243 @@ mod tests {
                 ]
             ]
         );
+    }
+
+    #[derive(PartialEq)]
+    enum ThrowLocation {
+        // Throw before calling nested programs via CPI.
+        LeadingEdge,
+        // Throw after calling nested programs via CPI.
+        TrailingEdge,
+    }
+
+    #[test_case(0, ThrowLocation::LeadingEdge, 0, None; "Throw in program 0 before CPI")]
+    #[test_case(0, ThrowLocation::TrailingEdge, 0, None; "Throw in program 0 after CPI")]
+    #[test_case(1, ThrowLocation::LeadingEdge, 0, Some(0); "Throw in program 1 before CPI")]
+    #[test_case(1, ThrowLocation::TrailingEdge, 0, Some(0); "Throw in program 1 after CPI")]
+    #[test_case(2, ThrowLocation::LeadingEdge, 0, Some(1); "Throw in program 2 before CPI")]
+    #[test_case(2, ThrowLocation::TrailingEdge, 0, Some(1); "Throw in program 2 after CPI")]
+    #[test_case(3, ThrowLocation::LeadingEdge, 0, Some(2); "Throw in program 3 before CPI")]
+    #[test_case(3, ThrowLocation::TrailingEdge, 0, Some(2); "Throw in program 3 after CPI")]
+    #[test_case(4, ThrowLocation::LeadingEdge, 0, Some(3); "Throw in program 4 before CPI")]
+    #[test_case(4, ThrowLocation::TrailingEdge, 0, Some(3); "Throw in program 4 after CPI")]
+    #[test_case(5, ThrowLocation::LeadingEdge, 0, Some(4); "Throw in program 5 before CPI")]
+    #[test_case(5, ThrowLocation::TrailingEdge, 0, Some(4); "Throw in program 5 after CPI")]
+    #[test_case(6, ThrowLocation::LeadingEdge, 0, Some(5); "Throw in program 6 before CPI")]
+    #[test_case(6, ThrowLocation::TrailingEdge, 0, Some(5); "Throw in program 6 after CPI")]
+    #[test_case(7, ThrowLocation::LeadingEdge, 1, None; "Throw in program 7 before CPI")]
+    #[test_case(7, ThrowLocation::TrailingEdge, 1, None; "Throw in program 7 after CPI")]
+    #[test_case(8, ThrowLocation::LeadingEdge, 1, Some(0); "Throw in program 8 before CPI")]
+    #[test_case(8, ThrowLocation::TrailingEdge, 1, Some(0); "Throw in program 8 after CPI")]
+    #[test_case(9, ThrowLocation::LeadingEdge, 1, Some(1); "Throw in program 9 before CPI")]
+    #[test_case(9, ThrowLocation::TrailingEdge, 1, Some(1); "Throw in program 9 after CPI")]
+    #[test_case(10, ThrowLocation::LeadingEdge, 1, Some(2); "Throw in program 10 before CPI")]
+    #[test_case(10, ThrowLocation::TrailingEdge, 1, Some(2); "Throw in program 10 after CPI")]
+    #[test_case(11, ThrowLocation::LeadingEdge, 1, Some(3); "Throw in program 11 before CPI")]
+    #[test_case(11, ThrowLocation::TrailingEdge, 1, Some(3); "Throw in program 11 after CPI")]
+    #[test_case(12, ThrowLocation::LeadingEdge, 1, Some(4); "Throw in program 12 before CPI")]
+    #[test_case(12, ThrowLocation::TrailingEdge, 1, Some(4); "Throw in program 12 after CPI")]
+    #[test_case(13, ThrowLocation::LeadingEdge, 1, Some(5); "Throw in program 13 before CPI")]
+    #[test_case(13, ThrowLocation::TrailingEdge, 1, Some(5); "Throw in program 13 after CPI")]
+    fn test_instruction_error_carries_responsible_program_account_index(
+        account_index_of_program_that_should_throw_exception: u8,
+        throw_location: ThrowLocation,
+        expected_outer_instruction_index: u8,
+        expected_inner_instruction_index: Option<u8>,
+    ) {
+        static PROGRAM_ADDRESSES: LazyLock<[Pubkey; 14]> =
+            LazyLock::new(|| std::array::from_fn(|_| Pubkey::new_unique()));
+        // This mock program takes in a list of programs and two bytes of data:
+        //   (1) the index of the program that should throw an error
+        //   (2) the index of the program being called
+        //
+        // The programs get executed - two at each CPI call depth - like this:
+        //
+        // Program 0
+        // -- Program 1
+        // -- Program 2
+        // ---- Program 3
+        // ---- Program 4
+        // ------ Program 5
+        // ------ Program 6
+        // Program 7
+        // -- Program 8
+        // -- Program 9
+        // ---- Program 10
+        // ---- Program 11
+        // ------ Program 12
+        // ------ Program 13
+        declare_process_instruction!(MockBuiltin, 1 /* cu_to_consume */, |invoke_context| {
+            let transaction_context = invoke_context.transaction_context.clone();
+            let instruction_context = transaction_context.get_current_instruction_context()?;
+
+            let stack_height: u8 = invoke_context.get_stack_height().try_into().unwrap();
+            let instruction_data = instruction_context.get_instruction_data();
+            let top_level_instruction_index = instruction_data[0] as usize;
+            let index_of_program_that_must_throw_exception = instruction_data[1] as usize;
+            let current_program_index = instruction_data[2] as usize;
+            let throw_location = match instruction_data[3] {
+                0 => ThrowLocation::LeadingEdge,
+                1 => ThrowLocation::TrailingEdge,
+                _ => panic!("Unrecognized value for `throw_location` in instruction data"),
+            };
+            let this_program_should_throw =
+                current_program_index == index_of_program_that_must_throw_exception;
+
+            // Ensure that the program the instruction data claims to be running is the program that
+            // is actually running.
+            let actual_program_address = *instruction_context
+                .get_last_program_key(&transaction_context)
+                .unwrap();
+            assert_eq!(
+                actual_program_address,
+                PROGRAM_ADDRESSES[current_program_index],
+                "The address of the program at index {} that the instruction data claims to be running ({}) is not the program that is actually running ({})",
+                current_program_index,
+                PROGRAM_ADDRESSES[current_program_index],
+                actual_program_address,
+            );
+
+            if this_program_should_throw && throw_location == ThrowLocation::LeadingEdge {
+                return Err(InstructionError::Custom(0xdeadbeef));
+            }
+
+            let mut last_result = Ok(());
+            if stack_height < 4 && current_program_index % 2 == top_level_instruction_index % 2 {
+                // Every odd program does CPIs unless it has reached the maximum CPI stack depth.
+                for ii in 1..3 {
+                    let next_program_index = current_program_index.checked_add(ii).unwrap();
+                    let last_program_index = next_program_index.next_multiple_of(7);
+                    let next_program_address = PROGRAM_ADDRESSES[next_program_index];
+                    let accounts = (next_program_index..last_program_index)
+                        .map(|index| AccountMeta::new_readonly(PROGRAM_ADDRESSES[index], false))
+                        .collect_vec();
+                    last_result = invoke_context.native_invoke(
+                        Instruction::new_with_bytes(
+                            next_program_address,
+                            &[
+                                instruction_data[0],
+                                instruction_data[1],
+                                next_program_index as u8,
+                                instruction_data[3],
+                            ],
+                            accounts,
+                        )
+                        .into(),
+                        &[],
+                    );
+                    if last_result.is_err() {
+                        return last_result;
+                    }
+                }
+            }
+
+            if this_program_should_throw && throw_location == ThrowLocation::TrailingEdge {
+                return Err(InstructionError::Custom(0xdeadbeef));
+            }
+
+            return last_result;
+        });
+
+        // =======================================================
+        // BEGIN: Create a transaction that calls the mock program
+        // =======================================================
+        const FIRST_INSTRUCTION_PROGRAM_INDEX: usize = 0;
+        const SECOND_INSTRUCTION_PROGRAM_INDEX: usize = 7;
+        let first_accounts = (FIRST_INSTRUCTION_PROGRAM_INDEX..SECOND_INSTRUCTION_PROGRAM_INDEX)
+            .map(|index| AccountMeta::new_readonly(PROGRAM_ADDRESSES[index], false))
+            .collect_vec();
+        let second_accounts = (SECOND_INSTRUCTION_PROGRAM_INDEX..PROGRAM_ADDRESSES.len())
+            .map(|index| AccountMeta::new_readonly(PROGRAM_ADDRESSES[index], false))
+            .collect_vec();
+        let throw_location_data = match throw_location {
+            ThrowLocation::LeadingEdge => 0,
+            ThrowLocation::TrailingEdge => 1,
+        };
+        let message: Message = Message::new(
+            &[
+                Instruction::new_with_bytes(
+                    PROGRAM_ADDRESSES[FIRST_INSTRUCTION_PROGRAM_INDEX],
+                    &[
+                        0, /* top-level index of this instruction */
+                        account_index_of_program_that_should_throw_exception,
+                        FIRST_INSTRUCTION_PROGRAM_INDEX as u8, /* index of program being called */
+                        throw_location_data,
+                    ],
+                    first_accounts,
+                ),
+                Instruction::new_with_bytes(
+                    PROGRAM_ADDRESSES[SECOND_INSTRUCTION_PROGRAM_INDEX],
+                    &[
+                        1, /* top-level index of this instruction */
+                        account_index_of_program_that_should_throw_exception,
+                        SECOND_INSTRUCTION_PROGRAM_INDEX as u8, /* index of program being called */
+                        throw_location_data,
+                    ],
+                    second_accounts,
+                ),
+            ],
+            None,
+        );
+        let sanitized_message = new_unchecked_sanitized_message(message);
+        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        for index in 0..PROGRAM_ADDRESSES.len() {
+            program_cache_for_tx_batch.replenish(
+                PROGRAM_ADDRESSES[index],
+                Arc::new(ProgramCacheEntry::new_builtin(0, 0, MockBuiltin::vm)),
+            );
+        }
+        let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
+        let sanitized_transaction = SanitizedTransaction::new_for_tests(
+            sanitized_message,
+            vec![Signature::new_unique()],
+            false,
+        );
+        let mut mock_program_account = AccountSharedData::new(1, 0, &native_loader::id());
+        mock_program_account.set_executable(true);
+        let loaded_transaction = LoadedTransaction {
+            accounts: (0..PROGRAM_ADDRESSES.len())
+                .map(|index| (PROGRAM_ADDRESSES[index], mock_program_account.clone()))
+                .collect_vec(),
+            program_indices: vec![
+                vec![FIRST_INSTRUCTION_PROGRAM_INDEX as u16],
+                vec![SECOND_INSTRUCTION_PROGRAM_INDEX as u16],
+            ],
+            fee_details: FeeDetails::default(),
+            rollback_accounts: RollbackAccounts::default(),
+            compute_budget: SVMTransactionExecutionBudget::default(),
+            rent: 0,
+            rent_debits: RentDebits::default(),
+            loaded_accounts_data_size: 32,
+        };
+        // =======================================================
+        // END: Create a transaction that calls the mock program
+        // =======================================================
+
+        let result = batch_processor.execute_loaded_transaction(
+            &MockBankCallback::default(),
+            &sanitized_transaction,
+            loaded_transaction,
+            &mut ExecuteTimings::default(),
+            &mut TransactionErrorMetrics::default(),
+            &mut program_cache_for_tx_batch,
+            &TransactionProcessingEnvironment::default(),
+            &TransactionProcessingConfig::default(),
+        );
+
+        let status = result.execution_details.status;
+        assert_eq!(
+            status.err(),
+            Some(TransactionError::InstructionError {
+                err: InstructionError::Custom(0xdeadbeef),
+                inner_instruction_index: expected_inner_instruction_index,
+                outer_instruction_index: expected_outer_instruction_index,
+                responsible_program_address: Some(
+                    PROGRAM_ADDRESSES
+                        [account_index_of_program_that_should_throw_exception as usize]
+                ),
+            })
+        )
     }
 
     #[test]

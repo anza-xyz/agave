@@ -10509,6 +10509,7 @@ dependencies = [
  "prost",
  "protobuf-src",
  "serde",
+ "serde_derive",
  "solana-account-decoder",
  "solana-hash",
  "solana-instruction",
@@ -10520,6 +10521,7 @@ dependencies = [
  "solana-transaction-context 2.3.0",
  "solana-transaction-error",
  "solana-transaction-status",
+ "test-case",
  "tonic-build",
 ]
 
@@ -10578,7 +10580,6 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
- "assert_matches",
  "bincode",
  "ed25519-dalek",
  "itertools 0.12.1",

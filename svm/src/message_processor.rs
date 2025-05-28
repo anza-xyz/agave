@@ -1,4 +1,5 @@
 use {
+    log::debug,
     solana_measure::measure_us,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
@@ -20,7 +21,7 @@ pub(crate) fn process_message(
     accumulated_consumed_units: &mut u64,
 ) -> Result<(), TransactionError> {
     debug_assert_eq!(program_indices.len(), message.num_instructions());
-    for (top_level_instruction_index, ((program_id, instruction), program_indices)) in message
+    for (outer_instruction_index, ((program_id, instruction), program_indices)) in message
         .program_instructions_iter()
         .zip(program_indices.iter())
         .enumerate()
@@ -90,7 +91,28 @@ pub(crate) fn process_message(
             .total_us += process_instruction_us;
 
         result.map_err(|err| {
-            TransactionError::InstructionError(top_level_instruction_index as u8, err)
+            let error_attribution = invoke_context.get_first_error_attribution();
+            let (inner_instruction_index, responsible_program_address) = match error_attribution {
+                Some(attr) => (
+                    attr.inner_instruction_index.map(|i| i as u8),
+                    Some(attr.responsible_program_address),
+                ),
+                None => {
+                    debug!(
+                        "FIXME: It should be impossible to have encountered an `Err` here without \
+                        the `TransactionContext` having accumulated information about the program \
+                        that threw its first-seen error. Error was: {:?}",
+                        err,
+                    );
+                    (None, None)
+                }
+            };
+            TransactionError::InstructionError {
+                err,
+                inner_instruction_index,
+                outer_instruction_index: outer_instruction_index as u8,
+                responsible_program_address,
+            }
         })?;
     }
     Ok(())
@@ -320,10 +342,12 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::ReadonlyLamportChange
-            ))
+            Err(TransactionError::InstructionError {
+                outer_instruction_index: 0,
+                err: InstructionError::ReadonlyLamportChange,
+                inner_instruction_index: None,
+                responsible_program_address: Some(mock_system_program_id),
+            }),
         );
 
         let message = new_sanitized_message(Message::new_with_compiled_instructions(
@@ -364,10 +388,12 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::ReadonlyDataModified
-            ))
+            Err(TransactionError::InstructionError {
+                outer_instruction_index: 0,
+                err: InstructionError::ReadonlyDataModified,
+                inner_instruction_index: None,
+                responsible_program_address: Some(mock_system_program_id),
+            }),
         );
     }
 
@@ -500,10 +526,12 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(TransactionError::InstructionError(
-                0,
-                InstructionError::AccountBorrowFailed
-            ))
+            Err(TransactionError::InstructionError {
+                outer_instruction_index: 0,
+                err: InstructionError::AccountBorrowFailed,
+                inner_instruction_index: None,
+                responsible_program_address: Some(mock_program_id),
+            }),
         );
 
         // Try to borrow mut the same account in a safe way
@@ -702,10 +730,12 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(TransactionError::InstructionError(
-                3,
-                InstructionError::Custom(0xbabb1e)
-            ))
+            Err(TransactionError::InstructionError {
+                outer_instruction_index: 3,
+                err: InstructionError::Custom(0xbabb1e),
+                inner_instruction_index: None,
+                responsible_program_address: Some(mock_program_id),
+            }),
         );
         assert_eq!(transaction_context.get_instruction_trace_length(), 4);
     }
