@@ -377,6 +377,37 @@ impl TransactionContext {
             .ok_or(InstructionError::CallDepth)
     }
 
+    /// Returns the index of this instruction in a 'stack' of instructions.
+    ///
+    /// Useful for displaying instruction index paths (ie. for the second CPI of the third top level
+    /// instruction, displaying 3.2).
+    ///
+    /// # Example
+    ///
+    /// Observe how the index resets every time a new top-level instruction is called.
+    ///
+    /// * #1 Program A (no index)
+    ///   * #1.1 CPI to Program B (index 0)
+    ///     * #1.2 CPI to Program C (index 1)
+    ///   * #1.3 CPI to Program D (index 2)
+    ///     * #1.4 CPI to Program E (index 3)
+    ///     * #1.5 CPI to Program F (index 4)
+    /// * #2 Program G (no index)
+    /// * #3 Program H (no index)
+    ///   * #3.1 Program I (index 0)
+    pub fn get_current_inner_instruction_index(&self) -> Option<usize> {
+        match self.instruction_stack.as_slice() {
+            [trace_index_of_nearest_outer_instruction, .., index_of_current_inner_instruction] => {
+                Some(
+                    index_of_current_inner_instruction
+                        .saturating_sub(*trace_index_of_nearest_outer_instruction)
+                        .saturating_sub(1),
+                )
+            }
+            _ => None,
+        }
+    }
+
     /// Pushes the next InstructionContext
     #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
@@ -1336,5 +1367,32 @@ mod tests {
             &solana_sdk_ids::sysvar::id(),
         );
         assert_eq!(build_transaction_context(account).push(), Ok(()),);
+    }
+
+    #[test]
+    fn test_get_current_inner_instruction_index_none_at_bottom_of_stack() {
+        let mut context = TransactionContext::new(vec![], Rent::default(), 1, 2);
+        context.push().unwrap(); // First outer instruction.
+        assert_eq!(context.get_current_inner_instruction_index(), None);
+        context.pop().unwrap();
+        context.push().unwrap(); // Second outer instruction
+        assert_eq!(context.get_current_inner_instruction_index(), None);
+    }
+
+    #[test]
+    fn test_get_current_inner_instruction_index() {
+        let mut context = TransactionContext::new(vec![], Rent::default(), 3, 5);
+        context.push().unwrap(); // First outer instruction
+        context.push().unwrap(); // First inner instruction (stack level 2)
+        assert_eq!(context.get_current_inner_instruction_index(), Some(0));
+        context.push().unwrap(); // Second inner instruction (stack level 3)
+        assert_eq!(context.get_current_inner_instruction_index(), Some(1));
+        context.pop().unwrap();
+        context.push().unwrap(); // Third inner instruction (stack level 3)
+        assert_eq!(context.get_current_inner_instruction_index(), Some(2));
+        context.pop().unwrap();
+        context.pop().unwrap();
+        context.push().unwrap(); // Fourth inner instruction (stack level 2)
+        assert_eq!(context.get_current_inner_instruction_index(), Some(3));
     }
 }
