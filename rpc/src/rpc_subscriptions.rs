@@ -2637,6 +2637,98 @@ pub(crate) mod tests {
 
     #[test]
     #[serial]
+    fn test_signature_subscribe_error_tx() {
+        fn make_signature_error(subscription_id: u64) -> serde_json::Value {
+            json!({
+                "jsonrpc": "2.0",
+                "method": "signatureNotification",
+                "params": {
+                    "result": {
+                        "context": {
+                            "slot": 0
+                        },
+                        "value": {
+                            "err": {
+                                "InstructionError": [0, { "Custom": 1 }, "11111111111111111111111111111111", null],
+                            },
+                        }
+                    },
+                    "subscription": subscription_id
+                }
+            })
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let blockhash = bank.last_blockhash();
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        let alice = Keypair::new();
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+            exit,
+            max_complete_transaction_status_slot,
+            max_complete_rewards_slot,
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
+            optimistically_confirmed_bank,
+        ));
+
+        let sub_config = RpcSignatureSubscribeConfig {
+            commitment: Some(CommitmentConfig::processed()),
+            enable_received_notification: None,
+        };
+
+        let bad_tx = system_transaction::create_account(
+            &mint_keypair,
+            &alice,
+            blockhash,
+            101, // Insufficient balance; will yield `TransactionError::Custom(1)`.
+            0,
+            &system_program::id(),
+        );
+
+        let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&subscriptions);
+        let sub_id = rpc
+            .signature_subscribe(bad_tx.signatures[0].to_string(), Some(sub_config.clone()))
+            .unwrap();
+        assert!(subscriptions
+            .control
+            .signature_subscribed(&bad_tx.signatures[0]));
+
+        assert!(bank_forks
+            .read()
+            .unwrap()
+            .get(0)
+            .unwrap()
+            .process_transaction_with_metadata(bad_tx.clone())
+            .is_ok());
+
+        subscriptions.notify_subscribers(CommitmentSlots::new_from_slot(0));
+
+        let expected_response_all = make_signature_error(u64::from(sub_id));
+        let response_all = receiver.recv();
+        assert_eq!(
+            expected_response_all,
+            serde_json::from_str::<serde_json::Value>(&response_all).unwrap(),
+        );
+
+        assert!(!subscriptions
+            .control
+            .signature_subscribed(&bad_tx.signatures[0]));
+    }
+
+    #[test]
+    #[serial]
     fn test_check_slot_subscribe() {
         let exit = Arc::new(AtomicBool::new(false));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
@@ -2918,32 +3010,32 @@ pub(crate) mod tests {
         assert!(!subscriptions.control.account_subscribed(&alice.pubkey()));
     }
 
-    fn make_logs_result(signature: &str, subscription_id: u64) -> serde_json::Value {
-        json!({
-            "jsonrpc": "2.0",
-            "method": "logsNotification",
-            "params": {
-                "result": {
-                    "context": {
-                        "slot": 0
-                    },
-                    "value": {
-                        "signature": signature,
-                        "err": null,
-                        "logs": [
-                            "Program 11111111111111111111111111111111 invoke [1]",
-                            "Program 11111111111111111111111111111111 success"
-                        ]
-                    }
-                },
-                "subscription": subscription_id
-            }
-        })
-    }
-
     #[test]
     #[serial]
-    fn test_logs_subscribe() {
+    fn test_logs_subscribe_success_tx() {
+        fn make_logs_result(signature: &str, subscription_id: u64) -> serde_json::Value {
+            json!({
+                "jsonrpc": "2.0",
+                "method": "logsNotification",
+                "params": {
+                    "result": {
+                        "context": {
+                            "slot": 0
+                        },
+                        "value": {
+                            "signature": signature,
+                            "err": null,
+                            "logs": [
+                                "Program 11111111111111111111111111111111 invoke [1]",
+                                "Program 11111111111111111111111111111111 success"
+                            ]
+                        }
+                    },
+                    "subscription": subscription_id
+                }
+            })
+        }
+
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -3017,6 +3109,122 @@ pub(crate) mod tests {
         );
         let expected_response_alice =
             make_logs_result(&tx.signatures[0].to_string(), u64::from(sub_id_for_alice));
+        let response_alice = receiver_alice.recv();
+        assert_eq!(
+            expected_response_alice,
+            serde_json::from_str::<serde_json::Value>(&response_alice).unwrap(),
+        );
+
+        rpc_all.logs_unsubscribe(sub_id_for_all).unwrap();
+        assert!(!subscriptions.control.logs_subscribed(None));
+        rpc_alice.logs_unsubscribe(sub_id_for_alice).unwrap();
+        assert!(!subscriptions.control.logs_subscribed(Some(&alice.pubkey())));
+    }
+
+    #[test]
+    #[serial]
+    fn test_logs_subscribe_error_tx() {
+        fn make_logs_error(signature: &str, subscription_id: u64) -> serde_json::Value {
+            json!({
+                "jsonrpc": "2.0",
+                "method": "logsNotification",
+                "params": {
+                    "result": {
+                        "context": {
+                            "slot": 0
+                        },
+                        "value": {
+                            "signature": signature,
+                            "err": {
+                                "InstructionError": [0, { "Custom": 1 }, "11111111111111111111111111111111", null],
+                            },
+                            "logs": [
+                                "Program 11111111111111111111111111111111 invoke [1]",
+                                "Transfer: insufficient lamports 100, need 1000000000",
+                                "Program 11111111111111111111111111111111 failed: custom program error: 0x1"
+                            ]
+                        }
+                    },
+                    "subscription": subscription_id
+                }
+            })
+        }
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(100);
+        let bank = Bank::new_for_tests(&genesis_config);
+        let blockhash = bank.last_blockhash();
+        let bank_forks = BankForks::new_rw_arc(bank);
+
+        let alice = Keypair::new();
+
+        let exit = Arc::new(AtomicBool::new(false));
+        let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
+        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
+        let optimistically_confirmed_bank =
+            OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+            exit,
+            max_complete_transaction_status_slot,
+            max_complete_rewards_slot,
+            bank_forks.clone(),
+            Arc::new(RwLock::new(BlockCommitmentCache::new_for_tests())),
+            optimistically_confirmed_bank,
+        ));
+
+        let sub_config = RpcTransactionLogsConfig {
+            commitment: Some(CommitmentConfig::processed()),
+        };
+
+        let (rpc_all, mut receiver_all) = rpc_pubsub_service::test_connection(&subscriptions);
+        let sub_id_for_all = rpc_all
+            .logs_subscribe(RpcTransactionLogsFilter::All, Some(sub_config.clone()))
+            .unwrap();
+        assert!(subscriptions.control.logs_subscribed(None));
+
+        let (rpc_alice, mut receiver_alice) = rpc_pubsub_service::test_connection(&subscriptions);
+        let sub_id_for_alice = rpc_alice
+            .logs_subscribe(
+                RpcTransactionLogsFilter::Mentions(vec![alice.pubkey().to_string()]),
+                Some(sub_config),
+            )
+            .unwrap();
+        assert!(subscriptions.control.logs_subscribed(Some(&alice.pubkey())));
+        rpc_alice.block_until_processed(&subscriptions);
+
+        let bad_tx = system_transaction::create_account(
+            &mint_keypair,
+            &alice,
+            blockhash,
+            101, // Insufficient balance; will yield `TransactionError::Custom(1)`.
+            0,
+            &system_program::id(),
+        );
+
+        assert!(bank_forks
+            .read()
+            .unwrap()
+            .get(0)
+            .unwrap()
+            .process_transaction_with_metadata(bad_tx.clone())
+            .is_ok());
+
+        subscriptions.notify_subscribers(CommitmentSlots::new_from_slot(0));
+
+        let expected_response_all =
+            make_logs_error(&bad_tx.signatures[0].to_string(), u64::from(sub_id_for_all));
+        let response_all = receiver_all.recv();
+        assert_eq!(
+            expected_response_all,
+            serde_json::from_str::<serde_json::Value>(&response_all).unwrap(),
+        );
+        let expected_response_alice = make_logs_error(
+            &bad_tx.signatures[0].to_string(),
+            u64::from(sub_id_for_alice),
+        );
         let response_alice = receiver_alice.recv();
         assert_eq!(
             expected_response_alice,

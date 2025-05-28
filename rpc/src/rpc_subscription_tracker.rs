@@ -289,6 +289,21 @@ impl SubscriptionControl {
     }
 
     #[cfg(test)]
+    pub fn block_subscribed(&self, pubkey: Option<&Pubkey>) -> bool {
+        self.0.subscriptions.iter().any(|item| {
+            if let SubscriptionParams::Block(params) = item.key() {
+                let subscribed_pubkey = match &params.kind {
+                    &BlockSubscriptionKind::All => None,
+                    BlockSubscriptionKind::MentionsAccountOrProgram(pubkey) => Some(pubkey),
+                };
+                subscribed_pubkey == pubkey
+            } else {
+                false
+            }
+        })
+    }
+
+    #[cfg(test)]
     pub fn logs_subscribed(&self, pubkey: Option<&Pubkey>) -> bool {
         self.0.subscriptions.iter().any(|item| {
             if let SubscriptionParams::Logs(params) = item.key() {
