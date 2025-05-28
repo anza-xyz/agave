@@ -7,11 +7,11 @@ use {
     solana_message::v0::LoadedAddresses,
     solana_serde::default_on_eof,
     solana_transaction_context::TransactionReturnData,
-    solana_transaction_error::TransactionResult as Result,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_transaction_status::{
         InnerInstructions, Reward, RewardType, TransactionStatusMeta, TransactionTokenBalance,
     },
-    std::str::FromStr,
+    std::{io::Cursor, str::FromStr},
 };
 
 pub mod convert;
@@ -106,6 +106,64 @@ impl From<UiTokenAmount> for StoredTokenAmount {
             decimals,
             amount,
         }
+    }
+}
+
+struct StoredTransactionError(Vec<u8>);
+
+impl From<StoredTransactionError> for TransactionError {
+    fn from(value: StoredTransactionError) -> Self {
+        let bytes = value.0;
+        match &bytes.as_slice() {
+            [8, 0, 0, 0, ..] => {
+                let mut cursor = Cursor::new(&bytes);
+                cursor.set_position(4); // Skip past the u32 that indicates the variant index
+
+                // Order is important here; this is the order in which `TransactionError` fields are
+                // serialized into storage, so forever must be the order in which they're read out.
+                let outer_instruction_index = bincode::deserialize_from(&mut cursor).unwrap();
+                let err = bincode::deserialize_from(&mut cursor).unwrap();
+                let responsible_program_address =
+                    // If we've reached the end of the buffer, this will materialize as `None`.
+                    // This exists for backward compatibility with old stored data.
+                    bincode::deserialize_from(&mut cursor).ok().flatten();
+                let inner_instruction_index =
+                    // If we've reached the end of the buffer, this will materialize as `None`
+                    // This exists for backward compatibility with old stored data.
+                    bincode::deserialize_from(&mut cursor).ok().flatten();
+
+                TransactionError::InstructionError {
+                    err,
+                    inner_instruction_index,
+                    outer_instruction_index,
+                    responsible_program_address,
+                }
+            }
+            _ => bincode::deserialize::<Self>(&bytes)
+                .expect("transaction error to deserialize from bytes"),
+        }
+    }
+}
+
+impl From<TransactionError> for StoredTransactionError {
+    fn from(value: TransactionError) -> Self {
+        let bytes = match value {
+            TransactionError::InstructionError {
+                err,
+                inner_instruction_index,
+                outer_instruction_index,
+                responsible_program_address,
+            } => bincode::serialize(&(
+                8_u32, /* Variant index of `TransactionError::InstructionError` */
+                outer_instruction_index,
+                err,
+                responsible_program_address,
+                inner_instruction_index,
+            )),
+            err => bincode::serialize(&err),
+        }
+        .expect("transaction error to serialize to bytes");
+        StoredTransactionError(bytes)
     }
 }
 
@@ -263,5 +321,50 @@ impl TryFrom<TransactionStatusMeta> for StoredTransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        crate::StoredTransactionError, solana_instruction::error::InstructionError,
+        solana_pubkey::Pubkey, solana_transaction_error::TransactionError, test_case::test_case,
+    };
+
+    #[test_case(TransactionError::InsufficientFundsForFee; "Typical")]
+    #[test_case(TransactionError::InstructionError {
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: Some(41),
+        outer_instruction_index: 42,
+        responsible_program_address: Some(Pubkey::new_unique()),
+    }; "Special case (InstructionError)")]
+    fn test_serialize_transaction_error_to_stored_transaction_error_round_trip(
+        err: TransactionError,
+    ) {
+        let serialized: StoredTransactionError = err.clone().into();
+        let deserialized: TransactionError = serialized.into();
+        assert_eq!(deserialized, err);
+    }
+
+    #[test]
+    fn test_deserialize_stored_transaction_error_instruction_error_from_legacy_data() {
+        let legacy_stored_transaction = StoredTransactionError(vec![
+            8, 0, 0, 0,  /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, /* InstructionError::Custom */
+            /* 0xdeadbeef */
+            239, 190, 173, 222,
+            /* Missing data that was introduced in Agave 2.3 */
+        ]);
+        let deserialized: TransactionError = legacy_stored_transaction.into();
+        assert_eq!(
+            deserialized,
+            TransactionError::InstructionError {
+                err: InstructionError::Custom(0xdeadbeef),
+                inner_instruction_index: None,
+                outer_instruction_index: 42,
+                responsible_program_address: None
+            }
+        );
     }
 }

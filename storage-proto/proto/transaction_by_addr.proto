@@ -70,6 +70,7 @@ message InstructionError {
     uint32 index = 1;
     InstructionErrorType error = 2;
     CustomError custom = 3;
+    optional bytes responsible_program_address_bytes = 4;
 }
 
 message TransactionDetails {

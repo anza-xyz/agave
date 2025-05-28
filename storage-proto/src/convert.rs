@@ -1,5 +1,5 @@
 use {
-    crate::{StoredExtendedRewards, StoredTransactionStatusMeta},
+    crate::{StoredExtendedRewards, StoredTransactionError, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
     solana_hash::{Hash, HASH_BYTES},
     solana_instruction::error::InstructionError,
@@ -286,6 +286,20 @@ impl From<generated::Transaction> for VersionedTransaction {
     }
 }
 
+impl From<TransactionError> for generated::TransactionError {
+    fn from(value: TransactionError) -> Self {
+        let stored_error = Into::<StoredTransactionError>::into(value).0;
+        Self { err: stored_error }
+    }
+}
+
+impl From<generated::TransactionError> for TransactionError {
+    fn from(value: generated::TransactionError) -> Self {
+        let stored_error = StoredTransactionError(value.err);
+        stored_error.into()
+    }
+}
+
 impl From<LegacyMessage> for generated::Message {
     fn from(message: LegacyMessage) -> Self {
         Self {
@@ -409,12 +423,7 @@ impl From<TransactionStatusMeta> for generated::TransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         } = value;
-        let err = match status {
-            Ok(()) => None,
-            Err(err) => Some(generated::TransactionError {
-                err: bincode::serialize(&err).expect("transaction error to serialize to bytes"),
-            }),
-        };
+        let err = status.err().map(Into::into);
         let inner_instructions_none = inner_instructions.is_none();
         let inner_instructions = inner_instructions
             .unwrap_or_default()
@@ -503,9 +512,9 @@ impl TryFrom<generated::TransactionStatusMeta> for TransactionStatusMeta {
             compute_units_consumed,
             cost_units,
         } = value;
-        let status = match &err {
+        let status = match err {
             None => Ok(()),
-            Some(tx_error) => Err(bincode::deserialize(&tx_error.err)?),
+            Some(tx_error) => Err(tx_error.into()),
         };
         let inner_instructions = if inner_instructions_none {
             None
@@ -728,11 +737,28 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
     fn try_from(transaction_error: tx_by_addr::TransactionError) -> Result<Self, Self::Error> {
         if transaction_error.transaction_error == 8 {
             if let Some(instruction_error) = transaction_error.instruction_error {
+                // Decode the index.
+                //
+                // Index values are 32-bit integers of the form:
+                // TTTTTTTT IIIIIIII xxxxxxxx xxxxxxxx
+                //
+                // * T - The top level index of the instruction that errored
+                // * I - The inner index of the instruction that errored; 0 if None, 1-indexed otherwise
+                let [outer_instruction_index, maybe_inner_instruction_index, _unused1, _unused2] =
+                    instruction_error.index.to_le_bytes();
+                let inner_instruction_index = maybe_inner_instruction_index.checked_sub(1);
+                let responsible_program_address = instruction_error
+                    .responsible_program_address_bytes
+                    .map(Pubkey::try_from)
+                    .transpose()
+                    .expect("Failed to parse `responsible_program_address_bytes` as a Pubkey");
                 if let Some(custom) = instruction_error.custom {
-                    return Ok(TransactionError::InstructionError(
-                        instruction_error.index as u8,
-                        InstructionError::Custom(custom.custom),
-                    ));
+                    return Ok(TransactionError::InstructionError {
+                        err: InstructionError::Custom(custom.custom),
+                        inner_instruction_index,
+                        outer_instruction_index,
+                        responsible_program_address,
+                    });
                 }
 
                 let ie = match instruction_error.error {
@@ -792,10 +818,12 @@ impl TryFrom<tx_by_addr::TransactionError> for TransactionError {
                     _ => return Err("Invalid InstructionError"),
                 };
 
-                return Ok(TransactionError::InstructionError(
-                    instruction_error.index as u8,
-                    ie,
-                ));
+                return Ok(TransactionError::InstructionError {
+                    err: ie,
+                    inner_instruction_index,
+                    outer_instruction_index,
+                    responsible_program_address,
+                });
             }
         }
 
@@ -909,7 +937,7 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 TransactionError::ClusterMaintenance => {
                     tx_by_addr::TransactionErrorType::ClusterMaintenance
                 }
-                TransactionError::InstructionError(_, _) => {
+                TransactionError::InstructionError { .. } => {
                     tx_by_addr::TransactionErrorType::InstructionError
                 }
                 TransactionError::AccountBorrowOutstanding => {
@@ -983,179 +1011,188 @@ impl From<TransactionError> for tx_by_addr::TransactionError {
                 }
             } as i32,
             instruction_error: match transaction_error {
-                TransactionError::InstructionError(index, ref instruction_error) => {
-                    Some(tx_by_addr::InstructionError {
-                        index: index as u32,
-                        error: match instruction_error {
-                            InstructionError::GenericError => {
-                                tx_by_addr::InstructionErrorType::GenericError
-                            }
-                            InstructionError::InvalidArgument => {
-                                tx_by_addr::InstructionErrorType::InvalidArgument
-                            }
-                            InstructionError::InvalidInstructionData => {
-                                tx_by_addr::InstructionErrorType::InvalidInstructionData
-                            }
-                            InstructionError::InvalidAccountData => {
-                                tx_by_addr::InstructionErrorType::InvalidAccountData
-                            }
-                            InstructionError::AccountDataTooSmall => {
-                                tx_by_addr::InstructionErrorType::AccountDataTooSmall
-                            }
-                            InstructionError::InsufficientFunds => {
-                                tx_by_addr::InstructionErrorType::InsufficientFunds
-                            }
-                            InstructionError::IncorrectProgramId => {
-                                tx_by_addr::InstructionErrorType::IncorrectProgramId
-                            }
-                            InstructionError::MissingRequiredSignature => {
-                                tx_by_addr::InstructionErrorType::MissingRequiredSignature
-                            }
-                            InstructionError::AccountAlreadyInitialized => {
-                                tx_by_addr::InstructionErrorType::AccountAlreadyInitialized
-                            }
-                            InstructionError::UninitializedAccount => {
-                                tx_by_addr::InstructionErrorType::UninitializedAccount
-                            }
-                            InstructionError::UnbalancedInstruction => {
-                                tx_by_addr::InstructionErrorType::UnbalancedInstruction
-                            }
-                            InstructionError::ModifiedProgramId => {
-                                tx_by_addr::InstructionErrorType::ModifiedProgramId
-                            }
-                            InstructionError::ExternalAccountLamportSpend => {
-                                tx_by_addr::InstructionErrorType::ExternalAccountLamportSpend
-                            }
-                            InstructionError::ExternalAccountDataModified => {
-                                tx_by_addr::InstructionErrorType::ExternalAccountDataModified
-                            }
-                            InstructionError::ReadonlyLamportChange => {
-                                tx_by_addr::InstructionErrorType::ReadonlyLamportChange
-                            }
-                            InstructionError::ReadonlyDataModified => {
-                                tx_by_addr::InstructionErrorType::ReadonlyDataModified
-                            }
-                            InstructionError::DuplicateAccountIndex => {
-                                tx_by_addr::InstructionErrorType::DuplicateAccountIndex
-                            }
-                            InstructionError::ExecutableModified => {
-                                tx_by_addr::InstructionErrorType::ExecutableModified
-                            }
-                            InstructionError::RentEpochModified => {
-                                tx_by_addr::InstructionErrorType::RentEpochModified
-                            }
-                            InstructionError::NotEnoughAccountKeys => {
-                                tx_by_addr::InstructionErrorType::NotEnoughAccountKeys
-                            }
-                            InstructionError::AccountDataSizeChanged => {
-                                tx_by_addr::InstructionErrorType::AccountDataSizeChanged
-                            }
-                            InstructionError::AccountNotExecutable => {
-                                tx_by_addr::InstructionErrorType::AccountNotExecutable
-                            }
-                            InstructionError::AccountBorrowFailed => {
-                                tx_by_addr::InstructionErrorType::AccountBorrowFailed
-                            }
-                            InstructionError::AccountBorrowOutstanding => {
-                                tx_by_addr::InstructionErrorType::AccountBorrowOutstanding
-                            }
-                            InstructionError::DuplicateAccountOutOfSync => {
-                                tx_by_addr::InstructionErrorType::DuplicateAccountOutOfSync
-                            }
-                            InstructionError::Custom(_) => tx_by_addr::InstructionErrorType::Custom,
-                            InstructionError::InvalidError => {
-                                tx_by_addr::InstructionErrorType::InvalidError
-                            }
-                            InstructionError::ExecutableDataModified => {
-                                tx_by_addr::InstructionErrorType::ExecutableDataModified
-                            }
-                            InstructionError::ExecutableLamportChange => {
-                                tx_by_addr::InstructionErrorType::ExecutableLamportChange
-                            }
-                            InstructionError::ExecutableAccountNotRentExempt => {
-                                tx_by_addr::InstructionErrorType::ExecutableAccountNotRentExempt
-                            }
-                            InstructionError::UnsupportedProgramId => {
-                                tx_by_addr::InstructionErrorType::UnsupportedProgramId
-                            }
-                            InstructionError::CallDepth => {
-                                tx_by_addr::InstructionErrorType::CallDepth
-                            }
-                            InstructionError::MissingAccount => {
-                                tx_by_addr::InstructionErrorType::MissingAccount
-                            }
-                            InstructionError::ReentrancyNotAllowed => {
-                                tx_by_addr::InstructionErrorType::ReentrancyNotAllowed
-                            }
-                            InstructionError::MaxSeedLengthExceeded => {
-                                tx_by_addr::InstructionErrorType::MaxSeedLengthExceeded
-                            }
-                            InstructionError::InvalidSeeds => {
-                                tx_by_addr::InstructionErrorType::InvalidSeeds
-                            }
-                            InstructionError::InvalidRealloc => {
-                                tx_by_addr::InstructionErrorType::InvalidRealloc
-                            }
-                            InstructionError::ComputationalBudgetExceeded => {
-                                tx_by_addr::InstructionErrorType::ComputationalBudgetExceeded
-                            }
-                            InstructionError::PrivilegeEscalation => {
-                                tx_by_addr::InstructionErrorType::PrivilegeEscalation
-                            }
-                            InstructionError::ProgramEnvironmentSetupFailure => {
-                                tx_by_addr::InstructionErrorType::ProgramEnvironmentSetupFailure
-                            }
-                            InstructionError::ProgramFailedToComplete => {
-                                tx_by_addr::InstructionErrorType::ProgramFailedToComplete
-                            }
-                            InstructionError::ProgramFailedToCompile => {
-                                tx_by_addr::InstructionErrorType::ProgramFailedToCompile
-                            }
-                            InstructionError::Immutable => {
-                                tx_by_addr::InstructionErrorType::Immutable
-                            }
-                            InstructionError::IncorrectAuthority => {
-                                tx_by_addr::InstructionErrorType::IncorrectAuthority
-                            }
-                            InstructionError::BorshIoError(_) => {
-                                tx_by_addr::InstructionErrorType::BorshIoError
-                            }
-                            InstructionError::AccountNotRentExempt => {
-                                tx_by_addr::InstructionErrorType::AccountNotRentExempt
-                            }
-                            InstructionError::InvalidAccountOwner => {
-                                tx_by_addr::InstructionErrorType::InvalidAccountOwner
-                            }
-                            InstructionError::ArithmeticOverflow => {
-                                tx_by_addr::InstructionErrorType::ArithmeticOverflow
-                            }
-                            InstructionError::UnsupportedSysvar => {
-                                tx_by_addr::InstructionErrorType::UnsupportedSysvar
-                            }
-                            InstructionError::IllegalOwner => {
-                                tx_by_addr::InstructionErrorType::IllegalOwner
-                            }
-                            InstructionError::MaxAccountsDataAllocationsExceeded => {
-                                tx_by_addr::InstructionErrorType::MaxAccountsDataAllocationsExceeded
-                            }
-                            InstructionError::MaxAccountsExceeded => {
-                                tx_by_addr::InstructionErrorType::MaxAccountsExceeded
-                            }
-                            InstructionError::MaxInstructionTraceLengthExceeded => {
-                                tx_by_addr::InstructionErrorType::MaxInstructionTraceLengthExceeded
-                            }
-                            InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
-                                tx_by_addr::InstructionErrorType::BuiltinProgramsMustConsumeComputeUnits
-                            }
-                        } as i32,
-                        custom: match instruction_error {
-                            InstructionError::Custom(custom) => {
-                                Some(tx_by_addr::CustomError { custom: *custom })
-                            }
-                            _ => None,
-                        },
-                    })
-                }
+                TransactionError::InstructionError {
+                    err: ref instruction_error,
+                    inner_instruction_index,
+                    outer_instruction_index,
+                    responsible_program_address,
+                } => Some(tx_by_addr::InstructionError {
+                    index: u32::from_le_bytes([
+                        outer_instruction_index,
+                        inner_instruction_index
+                            .map(|i| i.checked_add(1).unwrap())
+                            .unwrap_or(0),
+                        0, // unused
+                        0, // unused
+                    ]),
+                    error: match instruction_error {
+                        InstructionError::GenericError => {
+                            tx_by_addr::InstructionErrorType::GenericError
+                        }
+                        InstructionError::InvalidArgument => {
+                            tx_by_addr::InstructionErrorType::InvalidArgument
+                        }
+                        InstructionError::InvalidInstructionData => {
+                            tx_by_addr::InstructionErrorType::InvalidInstructionData
+                        }
+                        InstructionError::InvalidAccountData => {
+                            tx_by_addr::InstructionErrorType::InvalidAccountData
+                        }
+                        InstructionError::AccountDataTooSmall => {
+                            tx_by_addr::InstructionErrorType::AccountDataTooSmall
+                        }
+                        InstructionError::InsufficientFunds => {
+                            tx_by_addr::InstructionErrorType::InsufficientFunds
+                        }
+                        InstructionError::IncorrectProgramId => {
+                            tx_by_addr::InstructionErrorType::IncorrectProgramId
+                        }
+                        InstructionError::MissingRequiredSignature => {
+                            tx_by_addr::InstructionErrorType::MissingRequiredSignature
+                        }
+                        InstructionError::AccountAlreadyInitialized => {
+                            tx_by_addr::InstructionErrorType::AccountAlreadyInitialized
+                        }
+                        InstructionError::UninitializedAccount => {
+                            tx_by_addr::InstructionErrorType::UninitializedAccount
+                        }
+                        InstructionError::UnbalancedInstruction => {
+                            tx_by_addr::InstructionErrorType::UnbalancedInstruction
+                        }
+                        InstructionError::ModifiedProgramId => {
+                            tx_by_addr::InstructionErrorType::ModifiedProgramId
+                        }
+                        InstructionError::ExternalAccountLamportSpend => {
+                            tx_by_addr::InstructionErrorType::ExternalAccountLamportSpend
+                        }
+                        InstructionError::ExternalAccountDataModified => {
+                            tx_by_addr::InstructionErrorType::ExternalAccountDataModified
+                        }
+                        InstructionError::ReadonlyLamportChange => {
+                            tx_by_addr::InstructionErrorType::ReadonlyLamportChange
+                        }
+                        InstructionError::ReadonlyDataModified => {
+                            tx_by_addr::InstructionErrorType::ReadonlyDataModified
+                        }
+                        InstructionError::DuplicateAccountIndex => {
+                            tx_by_addr::InstructionErrorType::DuplicateAccountIndex
+                        }
+                        InstructionError::ExecutableModified => {
+                            tx_by_addr::InstructionErrorType::ExecutableModified
+                        }
+                        InstructionError::RentEpochModified => {
+                            tx_by_addr::InstructionErrorType::RentEpochModified
+                        }
+                        InstructionError::NotEnoughAccountKeys => {
+                            tx_by_addr::InstructionErrorType::NotEnoughAccountKeys
+                        }
+                        InstructionError::AccountDataSizeChanged => {
+                            tx_by_addr::InstructionErrorType::AccountDataSizeChanged
+                        }
+                        InstructionError::AccountNotExecutable => {
+                            tx_by_addr::InstructionErrorType::AccountNotExecutable
+                        }
+                        InstructionError::AccountBorrowFailed => {
+                            tx_by_addr::InstructionErrorType::AccountBorrowFailed
+                        }
+                        InstructionError::AccountBorrowOutstanding => {
+                            tx_by_addr::InstructionErrorType::AccountBorrowOutstanding
+                        }
+                        InstructionError::DuplicateAccountOutOfSync => {
+                            tx_by_addr::InstructionErrorType::DuplicateAccountOutOfSync
+                        }
+                        InstructionError::Custom(_) => tx_by_addr::InstructionErrorType::Custom,
+                        InstructionError::InvalidError => {
+                            tx_by_addr::InstructionErrorType::InvalidError
+                        }
+                        InstructionError::ExecutableDataModified => {
+                            tx_by_addr::InstructionErrorType::ExecutableDataModified
+                        }
+                        InstructionError::ExecutableLamportChange => {
+                            tx_by_addr::InstructionErrorType::ExecutableLamportChange
+                        }
+                        InstructionError::ExecutableAccountNotRentExempt => {
+                            tx_by_addr::InstructionErrorType::ExecutableAccountNotRentExempt
+                        }
+                        InstructionError::UnsupportedProgramId => {
+                            tx_by_addr::InstructionErrorType::UnsupportedProgramId
+                        }
+                        InstructionError::CallDepth => tx_by_addr::InstructionErrorType::CallDepth,
+                        InstructionError::MissingAccount => {
+                            tx_by_addr::InstructionErrorType::MissingAccount
+                        }
+                        InstructionError::ReentrancyNotAllowed => {
+                            tx_by_addr::InstructionErrorType::ReentrancyNotAllowed
+                        }
+                        InstructionError::MaxSeedLengthExceeded => {
+                            tx_by_addr::InstructionErrorType::MaxSeedLengthExceeded
+                        }
+                        InstructionError::InvalidSeeds => {
+                            tx_by_addr::InstructionErrorType::InvalidSeeds
+                        }
+                        InstructionError::InvalidRealloc => {
+                            tx_by_addr::InstructionErrorType::InvalidRealloc
+                        }
+                        InstructionError::ComputationalBudgetExceeded => {
+                            tx_by_addr::InstructionErrorType::ComputationalBudgetExceeded
+                        }
+                        InstructionError::PrivilegeEscalation => {
+                            tx_by_addr::InstructionErrorType::PrivilegeEscalation
+                        }
+                        InstructionError::ProgramEnvironmentSetupFailure => {
+                            tx_by_addr::InstructionErrorType::ProgramEnvironmentSetupFailure
+                        }
+                        InstructionError::ProgramFailedToComplete => {
+                            tx_by_addr::InstructionErrorType::ProgramFailedToComplete
+                        }
+                        InstructionError::ProgramFailedToCompile => {
+                            tx_by_addr::InstructionErrorType::ProgramFailedToCompile
+                        }
+                        InstructionError::Immutable => tx_by_addr::InstructionErrorType::Immutable,
+                        InstructionError::IncorrectAuthority => {
+                            tx_by_addr::InstructionErrorType::IncorrectAuthority
+                        }
+                        InstructionError::BorshIoError(_) => {
+                            tx_by_addr::InstructionErrorType::BorshIoError
+                        }
+                        InstructionError::AccountNotRentExempt => {
+                            tx_by_addr::InstructionErrorType::AccountNotRentExempt
+                        }
+                        InstructionError::InvalidAccountOwner => {
+                            tx_by_addr::InstructionErrorType::InvalidAccountOwner
+                        }
+                        InstructionError::ArithmeticOverflow => {
+                            tx_by_addr::InstructionErrorType::ArithmeticOverflow
+                        }
+                        InstructionError::UnsupportedSysvar => {
+                            tx_by_addr::InstructionErrorType::UnsupportedSysvar
+                        }
+                        InstructionError::IllegalOwner => {
+                            tx_by_addr::InstructionErrorType::IllegalOwner
+                        }
+                        InstructionError::MaxAccountsDataAllocationsExceeded => {
+                            tx_by_addr::InstructionErrorType::MaxAccountsDataAllocationsExceeded
+                        }
+                        InstructionError::MaxAccountsExceeded => {
+                            tx_by_addr::InstructionErrorType::MaxAccountsExceeded
+                        }
+                        InstructionError::MaxInstructionTraceLengthExceeded => {
+                            tx_by_addr::InstructionErrorType::MaxInstructionTraceLengthExceeded
+                        }
+                        InstructionError::BuiltinProgramsMustConsumeComputeUnits => {
+                            tx_by_addr::InstructionErrorType::BuiltinProgramsMustConsumeComputeUnits
+                        }
+                    } as i32,
+                    custom: match instruction_error {
+                        InstructionError::Custom(custom) => {
+                            Some(tx_by_addr::CustomError { custom: *custom })
+                        }
+                        _ => None,
+                    },
+                    responsible_program_address_bytes: responsible_program_address
+                        .map(|p| p.to_bytes())
+                        .map(Into::into),
+                }),
                 _ => None,
             },
             transaction_details: match transaction_error {
@@ -1266,7 +1303,7 @@ impl From<entries::Entry> for EntrySummary {
 
 #[cfg(test)]
 mod test {
-    use {super::*, enum_iterator::all};
+    use {super::*, bincode, enum_iterator::all, serde_derive::Deserialize, test_case::test_case};
 
     #[test]
     fn test_reward_type_encode() {
@@ -1477,8 +1514,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountAlreadyInitialized);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::AccountAlreadyInitialized,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1486,8 +1527,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountBorrowFailed);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::AccountBorrowFailed,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1495,8 +1540,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountBorrowOutstanding);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::AccountBorrowOutstanding,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1504,8 +1553,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountDataSizeChanged);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::AccountDataSizeChanged,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1513,8 +1566,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountDataTooSmall);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::AccountDataTooSmall,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1522,8 +1579,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::AccountNotExecutable);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::AccountNotExecutable,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1531,7 +1592,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error = TransactionError::InstructionError(10, InstructionError::CallDepth);
+        let transaction_error = TransactionError::InstructionError {
+            err: InstructionError::CallDepth,
+            inner_instruction_index: Some(42),
+            outer_instruction_index: 10,
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1539,8 +1605,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ComputationalBudgetExceeded);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ComputationalBudgetExceeded,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1548,8 +1618,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::DuplicateAccountIndex);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::DuplicateAccountIndex,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1557,8 +1631,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::DuplicateAccountOutOfSync);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::DuplicateAccountOutOfSync,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1566,10 +1644,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error = TransactionError::InstructionError(
-            10,
-            InstructionError::ExecutableAccountNotRentExempt,
-        );
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ExecutableAccountNotRentExempt,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1577,8 +1657,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExecutableDataModified);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ExecutableDataModified,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1586,8 +1670,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExecutableLamportChange);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ExecutableLamportChange,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1595,8 +1683,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExecutableModified);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ExecutableModified,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1604,8 +1696,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExternalAccountDataModified);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ExternalAccountDataModified,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1613,8 +1709,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ExternalAccountLamportSpend);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ExternalAccountLamportSpend,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1622,8 +1722,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::GenericError);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::GenericError,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1631,7 +1735,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error = TransactionError::InstructionError(10, InstructionError::Immutable);
+        let transaction_error = TransactionError::InstructionError {
+            err: InstructionError::Immutable,
+            inner_instruction_index: Some(42),
+            outer_instruction_index: 10,
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1639,8 +1748,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::IncorrectAuthority);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::IncorrectAuthority,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1648,8 +1761,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::IncorrectProgramId);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::IncorrectProgramId,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1657,8 +1774,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InsufficientFunds);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InsufficientFunds,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1666,8 +1787,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidAccountData);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InvalidAccountData,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1675,8 +1800,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidArgument);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InvalidArgument,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1684,8 +1813,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidError);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InvalidError,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1693,8 +1826,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidInstructionData);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InvalidInstructionData,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1702,8 +1839,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidRealloc);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InvalidRealloc,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1711,8 +1852,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::InvalidSeeds);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::InvalidSeeds,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1720,8 +1865,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::MaxSeedLengthExceeded);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::MaxSeedLengthExceeded,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1729,8 +1878,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::MissingAccount);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::MissingAccount,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1738,8 +1891,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::MissingRequiredSignature);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::MissingRequiredSignature,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1747,8 +1904,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ModifiedProgramId);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ModifiedProgramId,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1756,8 +1917,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::NotEnoughAccountKeys);
+        let transaction_error = TransactionError::InstructionError {
+            err: InstructionError::NotEnoughAccountKeys,
+            inner_instruction_index: None,
+            outer_instruction_index: 10,
+            responsible_program_address: None,
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1765,8 +1930,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::PrivilegeEscalation);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::PrivilegeEscalation,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1774,10 +1943,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error = TransactionError::InstructionError(
-            10,
-            InstructionError::ProgramEnvironmentSetupFailure,
-        );
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ProgramEnvironmentSetupFailure,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1785,8 +1956,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ProgramFailedToCompile);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ProgramFailedToCompile,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1794,8 +1969,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ProgramFailedToComplete);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ProgramFailedToComplete,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1803,8 +1982,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ReadonlyDataModified);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ReadonlyDataModified,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1812,8 +1995,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ReadonlyLamportChange);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ReadonlyLamportChange,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1821,8 +2008,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::ReentrancyNotAllowed);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::ReentrancyNotAllowed,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1830,8 +2021,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::RentEpochModified);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::RentEpochModified,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1839,8 +2034,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::UnbalancedInstruction);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::UnbalancedInstruction,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1848,8 +2047,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::UninitializedAccount);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::UninitializedAccount,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1857,8 +2060,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::UnsupportedProgramId);
+        let transaction_error = TransactionError::InstructionError {
+            outer_instruction_index: 10,
+            err: InstructionError::UnsupportedProgramId,
+            inner_instruction_index: Some(41),
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1866,8 +2073,12 @@ mod test {
             tx_by_addr_transaction_error.try_into().unwrap()
         );
 
-        let transaction_error =
-            TransactionError::InstructionError(10, InstructionError::Custom(10));
+        let transaction_error = TransactionError::InstructionError {
+            err: InstructionError::Custom(10),
+            inner_instruction_index: Some(42),
+            outer_instruction_index: 10,
+            responsible_program_address: Some(Pubkey::new_unique()),
+        };
         let tx_by_addr_transaction_error: tx_by_addr::TransactionError =
             transaction_error.clone().into();
         assert_eq!(
@@ -1902,7 +2113,7 @@ mod test {
 
     #[test]
     fn test_error_enums() {
-        let ix_index = 1;
+        let ix_index: u32 = 1;
         let custom_error = 42;
         for error in all::<tx_by_addr::TransactionErrorType>() {
             match error {
@@ -1931,6 +2142,9 @@ mod test {
                                     index: ix_index,
                                     error: ix_error as i32,
                                     custom: None,
+                                    responsible_program_address_bytes: Some(
+                                        Pubkey::new_unique().as_array().into(),
+                                    ),
                                 }),
                                 transaction_details: None,
                             };
@@ -1948,6 +2162,9 @@ mod test {
                                     custom: Some(tx_by_addr::CustomError {
                                         custom: custom_error,
                                     }),
+                                    responsible_program_address_bytes: Some(
+                                        Pubkey::new_unique().as_array().into(),
+                                    ),
                                 }),
                                 transaction_details: None,
                             };
@@ -1971,5 +2188,221 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test_case(TransactionError::InsufficientFundsForFee; "Typical")]
+    #[test_case(TransactionError::InstructionError{
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: Some(41),
+        outer_instruction_index: 42,
+        responsible_program_address: Some(Pubkey::new_unique()),
+    }; "Special case (InstructionError)")]
+    fn test_serialize_transaction_error_to_generated_transaction_error_round_trip(
+        err: TransactionError,
+    ) {
+        let serialized: generated::TransactionError = err.clone().into();
+        let deserialized: TransactionError = serialized.into();
+        assert_eq!(deserialized, err);
+    }
+
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            /* Missing data that was introduced in Agave 2.3 */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: None,
+            outer_instruction_index: 42,
+            responsible_program_address: None,
+        };
+        "Legacy error with only outer instruction index and error"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            0, /* Responsible program address - None */
+            0, /* Inner instruction index - None */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: None,
+            outer_instruction_index: 42,
+            responsible_program_address: None,
+        };
+        "Modern error with only outer instruction index and error"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            /* Responsible program address - Some(4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw) */
+            1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+            0, /* Inner instruction index - None */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: None,
+            outer_instruction_index: 42,
+            responsible_program_address: Some(Pubkey::from_str_const("4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw")),
+        };
+        "Modern error with outer instruction index, error, and responsible program address"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            0, /* Responsible program address - None */
+            1, 41, /* Inner instruction index - Some(41) */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: Some(41),
+            outer_instruction_index: 42,
+            responsible_program_address: None,
+        };
+        "Modern error with outer instruction index, error, and inner instruction index"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            /* Responsible program address - Some(4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw) */
+            1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+            1, 41, /* Inner instruction index - Some(41) */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: Some(41),
+            outer_instruction_index: 42,
+            responsible_program_address: Some(Pubkey::from_str_const("4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw")),
+        };
+        "Modern error with everything"
+    )]
+    fn test_deserialize_transaction_error_instruction_error_forward_compatibility(
+        stored_transaction_error_bytes: Vec<u8>,
+        expected_transaction_error: TransactionError,
+    ) {
+        let legacy_stored_transaction_error = generated::TransactionError {
+            err: stored_transaction_error_bytes,
+        };
+        let deserialized: TransactionError = legacy_stored_transaction_error.into();
+        assert_eq!(deserialized, expected_transaction_error,);
+    }
+
+    #[test]
+    /// This test exists to ensure that if we store data in blockstore in the modern format that it
+    /// can still be read by legacy software. The legacy software should simply ignore the new data
+    /// that comes after what it believes to be the EOF.
+    fn test_deserialize_transaction_error_instruction_error_backward_compatibility() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        enum LegacyTransactionError {
+            Placeholder0,
+            Placeholder1,
+            Placeholder2,
+            Placeholder3,
+            Placeholder4,
+            Placeholder5,
+            Placeholder6,
+            Placeholder7,
+            InstructionError(u8, InstructionError),
+        }
+        let modern_stored_transaction_error_bytes = vec![
+            8, 0, 0, 0,  /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            0, 0, /* Extra stuff the legacy enum does not expect */
+        ];
+        let deserialized: LegacyTransactionError =
+            bincode::deserialize(&modern_stored_transaction_error_bytes)
+                .expect("Failed to deserialize modern byte format to legacy transaction error");
+        assert_eq!(
+            deserialized,
+            LegacyTransactionError::InstructionError(42, InstructionError::Custom(0xdeadbeef)),
+        );
+    }
+
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            0, /* Responsible program address - None */
+            0, /* Inner instruction index - None */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: None,
+            outer_instruction_index: 42,
+            responsible_program_address: None,
+        };
+        "Outer instruction index and error"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            /* Responsible program address - Some(4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw) */
+            1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+            0, /* Inner instruction index - None */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: None,
+            outer_instruction_index: 42,
+            responsible_program_address: Some(Pubkey::from_str_const("4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw")),
+        };
+        "Outer instruction index, error, and responsible program address"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            0, /* Responsible program address - None */
+            1, 41, /* Inner instruction index - Some(41) */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: Some(41),
+            outer_instruction_index: 42,
+            responsible_program_address: None,
+        };
+        "Outer instruction index, error, and inner instruction index"
+    )]
+    #[test_case(
+        vec![
+            8, 0, 0, 0, /* Eighth enum variant - `InstructionError` */
+            42, /* Outer instruction index */
+            25, 0, 0, 0, 239, 190, 173, 222, /* InstructionError::Custom(0xdeadbeef) */
+            /* Responsible program address - Some(4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw) */
+            1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+            1, 41, /* Inner instruction index - Some(41) */
+        ],
+        TransactionError::InstructionError {
+            err: InstructionError::Custom(0xdeadbeef),
+            inner_instruction_index: Some(41),
+            outer_instruction_index: 42,
+            responsible_program_address: Some(Pubkey::from_str_const("4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw")),
+        };
+        "Error with everything"
+    )]
+    fn test_serialize_transaction_error_instruction_error_backward_compatibility(
+        expected_stored_transaction_error_bytes: Vec<u8>,
+        transaction_error: TransactionError,
+    ) {
+        let stored_transaction_error: StoredTransactionError = transaction_error.into();
+        assert_eq!(
+            stored_transaction_error.0,
+            expected_stored_transaction_error_bytes,
+        );
     }
 }
