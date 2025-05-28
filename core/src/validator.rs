@@ -146,6 +146,7 @@ use {
     strum_macros::{Display, EnumCount, EnumIter, EnumString, EnumVariantNames, IntoStaticStr},
     thiserror::Error,
     tokio::runtime::Runtime as TokioRuntime,
+    tokio_util::sync::CancellationToken,
 };
 
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
@@ -1585,6 +1586,15 @@ impl Validator {
         let forwarding_tpu_client = if let Some(connection_cache) = &connection_cache {
             ForwardingClientOption::ConnectionCache(connection_cache.clone())
         } else {
+            let cancel = CancellationToken::new();
+            {
+                let cancel = cancel.clone();
+                config
+                    .validator_exit
+                    .write()
+                    .unwrap()
+                    .register_exit(Box::new(move || cancel.cancel()));
+            }
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()
                 .map(TokioRuntime::handle)
@@ -1595,6 +1605,7 @@ impl Validator {
                     .take()
                     .expect("Socket should exist."),
                 runtime_handle.clone(),
+                cancel,
             ))
         };
         let tpu = Tpu::new_with_client(

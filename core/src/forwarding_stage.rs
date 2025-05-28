@@ -58,7 +58,7 @@ mod packet_container;
 /// * [`TpuClientNextClient`]: Relies on the `tpu-client-next` crate.
 pub enum ForwardingClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext((&'a Keypair, UdpSocket, RuntimeHandle)),
+    TpuClientNext((&'a Keypair, UdpSocket, RuntimeHandle, CancellationToken)),
 }
 
 /// Value chosen because it was used historically, at some point
@@ -153,12 +153,14 @@ pub(crate) fn spawn_forwarding_stage(
             stake_identity,
             tpu_client_socket,
             runtime_handle,
+            cancel,
         )) => {
             let non_vote_client = TpuClientNextClient::new(
                 runtime_handle,
                 forward_address_getter,
                 Some(stake_identity),
                 tpu_client_socket,
+                cancel,
             );
             let forwarding_stage = ForwardingStage::new(
                 receiver,
@@ -550,10 +552,10 @@ impl TpuClientNextClient {
         forward_address_getter: ForwardAddressGetter,
         stake_identity: Option<&Keypair>,
         bind_socket: UdpSocket,
+        cancel: CancellationToken,
     ) -> Self {
         // For now use large channel, the more suitable size to be found later.
         let (sender, receiver) = mpsc::channel(128);
-        let cancel = CancellationToken::new();
         let leader_updater = forward_address_getter.clone();
 
         let config = Self::create_config(bind_socket, stake_identity);
