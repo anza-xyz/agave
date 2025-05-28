@@ -383,7 +383,7 @@ pub fn bank_from_snapshot_dir(
         storage,
         next_append_vec_id,
     };
-    let ((bank, _info), measure_rebuild_bank) = measure_time!(
+    let ((bank, info), measure_rebuild_bank) = measure_time!(
         rebuild_bank_from_snapshot(
             bank_snapshot,
             account_paths,
@@ -402,9 +402,27 @@ pub fn bank_from_snapshot_dir(
     );
     info!("{}", measure_rebuild_bank);
 
-    // Skip bank.verify_snapshot_bank.  Subsequent snapshot requests/accounts hash verification requests
-    // will calculate and check the accounts hash, so we will still have safety/correctness there.
-    bank.set_initial_accounts_hash_verification_completed();
+    if bank
+        .feature_set
+        .is_active(&feature_set::accounts_lt_hash::id())
+    {
+        // Skip bank.verify_snapshot_bank.  Subsequent snapshot requests/accounts hash verification requests
+        // will calculate and check the accounts hash, so we will still have safety/correctness there.
+        bank.set_initial_accounts_hash_verification_completed();
+    } else {
+        // Until the accounts lattice hash feature is enabled, always do accounts verification
+        if !bank.verify_snapshot_bank(
+            false,     // do not test hash calculation
+            true,      // do not shrink
+            false,     // do not clean
+            Slot::MIN, // doesn't matter, only used for calling clean (which we are skipping)
+            None,      // not used for lt hash
+            info.duplicates_lt_hash,
+        ) && limit_load_slot_count_from_snapshot.is_none()
+        {
+            panic!("Snapshot bank for slot {} failed to verify", bank.slot());
+        }
+    }
 
     let timings = BankFromDirTimings {
         rebuild_storages_us: measure_rebuild_storages.as_us(),
