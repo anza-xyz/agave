@@ -1604,14 +1604,6 @@ pub mod tests {
         /// return how many accounts in the storage
         fn accounts_count(&self) -> usize {
             let mut count = 0;
-            self.scan_accounts_stored_meta(|_| {
-                count += 1;
-            });
-            count
-        }
-
-        fn store_accounts_no_data_count(&self) -> usize {
-            let mut count = 0;
             self.scan_stored_accounts_no_data(|_| {
                 count += 1;
             });
@@ -1726,13 +1718,12 @@ pub mod tests {
             assert_eq!(av.get_account_test(indexes[sample]).unwrap(), account);
         }
         trace!("random read time: {} ms", now.elapsed().as_millis());
-
-        let now = Instant::now();
         assert_eq!(indexes.len(), size);
         assert_eq!(indexes[0], 0);
-        let mut sample = 0;
         assert_eq!(av.accounts_count(), size);
-        assert_eq!(av.store_accounts_no_data_count(), size);
+
+        let mut sample = 0;
+        let now = Instant::now();
         av.scan_accounts_stored_meta(|v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();
