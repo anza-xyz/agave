@@ -584,8 +584,7 @@ impl Accounts {
                     .and_then(|_| validate_account_locks(tx.account_keys(), tx_account_lock_limit))
                     .map(|_| TransactionAccountLocksIterator::new(tx).accounts_with_is_writable())
             })
-            .collect::<Vec<_>>()
-            .into_iter();
+            .collect::<Vec<_>>();
 
         let account_locks = &mut self.account_locks.lock().unwrap();
 
@@ -593,6 +592,7 @@ impl Accounts {
             account_locks.try_lock_transaction_batch(validated_batch_keys)
         } else {
             validated_batch_keys
+                .into_iter()
                 .map(|result_validated_tx_keys| match result_validated_tx_keys {
                     Ok(validated_tx_keys) => account_locks.try_lock_accounts(validated_tx_keys),
                     Err(e) => Err(e),

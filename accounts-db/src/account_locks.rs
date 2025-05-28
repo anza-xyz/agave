@@ -38,21 +38,22 @@ impl AccountLocks {
     /// the only logic, and this note can be removed with the feature gate.
     pub fn try_lock_transaction_batch<'a>(
         &mut self,
-        validated_batch_keys: impl Iterator<
-            Item = TransactionResult<impl Iterator<Item = (&'a Pubkey, bool)> + Clone>,
+        mut validated_batch_keys: Vec<
+            TransactionResult<impl Iterator<Item = (&'a Pubkey, bool)> + Clone>,
         >,
     ) -> Vec<TransactionResult<()>> {
-        let available_batch_keys: Vec<_> = validated_batch_keys
-            .map(|validated_keys| match validated_keys {
+        validated_batch_keys.iter_mut().for_each(|validated_keys| {
+            let result = std::mem::replace(validated_keys, Err(TransactionError::AccountInUse));
+            *validated_keys = match result {
                 Ok(ref keys) => match self.can_lock_accounts(keys.clone()) {
-                    Ok(_) => validated_keys,
+                    Ok(_) => result,
                     Err(e) => Err(e),
                 },
                 Err(e) => Err(e),
-            })
-            .collect();
+            };
+        });
 
-        available_batch_keys
+        validated_batch_keys
             .into_iter()
             .map(|available_keys| available_keys.map(|keys| self.lock_accounts(keys)))
             .collect()
