@@ -7145,7 +7145,6 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk",
  "solana-sdk-ids",
- "solana-sdk-macro",
  "solana-signer",
  "solana-stable-layout",
  "solana-stake-interface",
