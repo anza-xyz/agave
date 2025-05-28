@@ -9,7 +9,7 @@ use qualifier_attr::qualifiers;
 use {
     agave_feature_set::{
         bpf_account_data_direct_mapping, enable_bpf_loader_set_authority_checked_ix,
-        enable_loader_v4, mask_out_rent_epoch_in_vm_serialization,
+        enable_extend_program_checked, enable_loader_v4, mask_out_rent_epoch_in_vm_serialization,
         remove_accounts_executable_flag_checks,
     },
     solana_bincode::limited_deserialize,
@@ -1162,160 +1162,26 @@ fn process_loader_upgradeable_instruction(
             }
         }
         UpgradeableLoaderInstruction::ExtendProgram { additional_bytes } => {
-            if additional_bytes == 0 {
-                ic_logger_msg!(log_collector, "Additional bytes must be greater than 0");
-                return Err(InstructionError::InvalidInstructionData);
-            }
-
-            const PROGRAM_DATA_ACCOUNT_INDEX: IndexOfAccount = 0;
-            const PROGRAM_ACCOUNT_INDEX: IndexOfAccount = 1;
-            #[allow(dead_code)]
-            // System program is only required when a CPI is performed
-            const OPTIONAL_SYSTEM_PROGRAM_ACCOUNT_INDEX: IndexOfAccount = 2;
-            const OPTIONAL_PAYER_ACCOUNT_INDEX: IndexOfAccount = 3;
-
-            let programdata_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, PROGRAM_DATA_ACCOUNT_INDEX)?;
-            let programdata_key = *programdata_account.get_key();
-
-            if program_id != programdata_account.get_owner() {
-                ic_logger_msg!(log_collector, "ProgramData owner is invalid");
-                return Err(InstructionError::InvalidAccountOwner);
-            }
-            if !programdata_account.is_writable() {
-                ic_logger_msg!(log_collector, "ProgramData is not writable");
-                return Err(InstructionError::InvalidArgument);
-            }
-
-            let program_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, PROGRAM_ACCOUNT_INDEX)?;
-            if !program_account.is_writable() {
-                ic_logger_msg!(log_collector, "Program account is not writable");
-                return Err(InstructionError::InvalidArgument);
-            }
-            if program_account.get_owner() != program_id {
-                ic_logger_msg!(log_collector, "Program account not owned by loader");
-                return Err(InstructionError::InvalidAccountOwner);
-            }
-            let program_key = *program_account.get_key();
-            match program_account.get_state()? {
-                UpgradeableLoaderState::Program {
-                    programdata_address,
-                } => {
-                    if programdata_address != programdata_key {
-                        ic_logger_msg!(
-                            log_collector,
-                            "Program account does not match ProgramData account"
-                        );
-                        return Err(InstructionError::InvalidArgument);
-                    }
-                }
-                _ => {
-                    ic_logger_msg!(log_collector, "Invalid Program account");
-                    return Err(InstructionError::InvalidAccountData);
-                }
-            }
-            drop(program_account);
-
-            let old_len = programdata_account.get_data().len();
-            let new_len = old_len.saturating_add(additional_bytes as usize);
-            if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+            if invoke_context
+                .get_feature_set()
+                .is_active(&enable_extend_program_checked::id())
+            {
                 ic_logger_msg!(
                     log_collector,
-                    "Extended ProgramData length of {} bytes exceeds max account data length of {} bytes",
-                    new_len,
-                    MAX_PERMITTED_DATA_LENGTH
+                    "ExtendProgram was superseded by ExtendProgramChecked"
                 );
-                return Err(InstructionError::InvalidRealloc);
+                return Err(InstructionError::InvalidInstructionData);
             }
-
-            let clock_slot = invoke_context
-                .get_sysvar_cache()
-                .get_clock()
-                .map(|clock| clock.slot)?;
-
-            let upgrade_authority_address = if let UpgradeableLoaderState::ProgramData {
-                slot,
-                upgrade_authority_address,
-            } = programdata_account.get_state()?
+            common_extend_program(invoke_context, additional_bytes, false)?;
+        }
+        UpgradeableLoaderInstruction::ExtendProgramChecked { additional_bytes } => {
+            if !invoke_context
+                .get_feature_set()
+                .is_active(&enable_extend_program_checked::id())
             {
-                if clock_slot == slot {
-                    ic_logger_msg!(log_collector, "Program was extended in this block already");
-                    return Err(InstructionError::InvalidArgument);
-                }
-
-                if upgrade_authority_address.is_none() {
-                    ic_logger_msg!(
-                        log_collector,
-                        "Cannot extend ProgramData accounts that are not upgradeable"
-                    );
-                    return Err(InstructionError::Immutable);
-                }
-                upgrade_authority_address
-            } else {
-                ic_logger_msg!(log_collector, "ProgramData state is invalid");
-                return Err(InstructionError::InvalidAccountData);
-            };
-
-            let required_payment = {
-                let balance = programdata_account.get_lamports();
-                let rent = invoke_context.get_sysvar_cache().get_rent()?;
-                let min_balance = rent.minimum_balance(new_len).max(1);
-                min_balance.saturating_sub(balance)
-            };
-
-            // Borrowed accounts need to be dropped before native_invoke
-            drop(programdata_account);
-
-            // Dereference the program ID to prevent overlapping mutable/immutable borrow of invoke context
-            let program_id = *program_id;
-            if required_payment > 0 {
-                let payer_key = *transaction_context.get_key_of_account_at_index(
-                    instruction_context.get_index_of_instruction_account_in_transaction(
-                        OPTIONAL_PAYER_ACCOUNT_INDEX,
-                    )?,
-                )?;
-
-                invoke_context.native_invoke(
-                    system_instruction::transfer(&payer_key, &programdata_key, required_payment)
-                        .into(),
-                    &[],
-                )?;
+                return Err(InstructionError::InvalidInstructionData);
             }
-
-            let transaction_context = &invoke_context.transaction_context;
-            let instruction_context = transaction_context.get_current_instruction_context()?;
-            let mut programdata_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, PROGRAM_DATA_ACCOUNT_INDEX)?;
-            programdata_account.set_data_length(new_len)?;
-
-            let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
-
-            deploy_program!(
-                invoke_context,
-                &program_key,
-                &program_id,
-                UpgradeableLoaderState::size_of_program().saturating_add(new_len),
-                programdata_account
-                    .get_data()
-                    .get(programdata_data_offset..)
-                    .ok_or(InstructionError::AccountDataTooSmall)?,
-                clock_slot,
-            );
-            drop(programdata_account);
-
-            let mut programdata_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, PROGRAM_DATA_ACCOUNT_INDEX)?;
-            programdata_account.set_state(&UpgradeableLoaderState::ProgramData {
-                slot: clock_slot,
-                upgrade_authority_address,
-            })?;
-
-            ic_logger_msg!(
-                log_collector,
-                "Extended ProgramData account by {} bytes",
-                additional_bytes
-            );
+            common_extend_program(invoke_context, additional_bytes, true)?;
         }
         UpgradeableLoaderInstruction::Migrate => {
             if !invoke_context
@@ -1494,6 +1360,189 @@ fn process_loader_upgradeable_instruction(
             ic_logger_msg!(log_collector, "Migrated program {:?}", &program_address);
         }
     }
+
+    Ok(())
+}
+
+fn common_extend_program(
+    invoke_context: &mut InvokeContext,
+    additional_bytes: u32,
+    check_authority: bool,
+) -> Result<(), InstructionError> {
+    let log_collector = invoke_context.get_log_collector();
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let program_id = instruction_context.get_last_program_key(transaction_context)?;
+
+    const PROGRAM_DATA_ACCOUNT_INDEX: IndexOfAccount = 0;
+    const PROGRAM_ACCOUNT_INDEX: IndexOfAccount = 1;
+    const AUTHORITY_ACCOUNT_INDEX: IndexOfAccount = 2;
+    // The unused `system_program_account_index` is 3 if `check_authority` and 2 otherwise.
+    let optional_payer_account_index = if check_authority { 4 } else { 3 };
+
+    if additional_bytes == 0 {
+        ic_logger_msg!(log_collector, "Additional bytes must be greater than 0");
+        return Err(InstructionError::InvalidInstructionData);
+    }
+
+    let programdata_account = instruction_context
+        .try_borrow_instruction_account(transaction_context, PROGRAM_DATA_ACCOUNT_INDEX)?;
+    let programdata_key = *programdata_account.get_key();
+
+    if program_id != programdata_account.get_owner() {
+        ic_logger_msg!(log_collector, "ProgramData owner is invalid");
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+    if !programdata_account.is_writable() {
+        ic_logger_msg!(log_collector, "ProgramData is not writable");
+        return Err(InstructionError::InvalidArgument);
+    }
+
+    let program_account = instruction_context
+        .try_borrow_instruction_account(transaction_context, PROGRAM_ACCOUNT_INDEX)?;
+    if !program_account.is_writable() {
+        ic_logger_msg!(log_collector, "Program account is not writable");
+        return Err(InstructionError::InvalidArgument);
+    }
+    if program_account.get_owner() != program_id {
+        ic_logger_msg!(log_collector, "Program account not owned by loader");
+        return Err(InstructionError::InvalidAccountOwner);
+    }
+    let program_key = *program_account.get_key();
+    match program_account.get_state()? {
+        UpgradeableLoaderState::Program {
+            programdata_address,
+        } => {
+            if programdata_address != programdata_key {
+                ic_logger_msg!(
+                    log_collector,
+                    "Program account does not match ProgramData account"
+                );
+                return Err(InstructionError::InvalidArgument);
+            }
+        }
+        _ => {
+            ic_logger_msg!(log_collector, "Invalid Program account");
+            return Err(InstructionError::InvalidAccountData);
+        }
+    }
+    drop(program_account);
+
+    let old_len = programdata_account.get_data().len();
+    let new_len = old_len.saturating_add(additional_bytes as usize);
+    if new_len > MAX_PERMITTED_DATA_LENGTH as usize {
+        ic_logger_msg!(
+            log_collector,
+            "Extended ProgramData length of {} bytes exceeds max account data length of {} bytes",
+            new_len,
+            MAX_PERMITTED_DATA_LENGTH
+        );
+        return Err(InstructionError::InvalidRealloc);
+    }
+
+    let clock_slot = invoke_context
+        .get_sysvar_cache()
+        .get_clock()
+        .map(|clock| clock.slot)?;
+
+    let upgrade_authority_address = if let UpgradeableLoaderState::ProgramData {
+        slot,
+        upgrade_authority_address,
+    } = programdata_account.get_state()?
+    {
+        if clock_slot == slot {
+            ic_logger_msg!(log_collector, "Program was extended in this block already");
+            return Err(InstructionError::InvalidArgument);
+        }
+
+        if upgrade_authority_address.is_none() {
+            ic_logger_msg!(
+                log_collector,
+                "Cannot extend ProgramData accounts that are not upgradeable"
+            );
+            return Err(InstructionError::Immutable);
+        }
+
+        if check_authority {
+            let authority_key = Some(
+                *transaction_context.get_key_of_account_at_index(
+                    instruction_context
+                        .get_index_of_instruction_account_in_transaction(AUTHORITY_ACCOUNT_INDEX)?,
+                )?,
+            );
+            if upgrade_authority_address != authority_key {
+                ic_logger_msg!(log_collector, "Incorrect upgrade authority provided");
+                return Err(InstructionError::IncorrectAuthority);
+            }
+            if !instruction_context.is_instruction_account_signer(AUTHORITY_ACCOUNT_INDEX)? {
+                ic_logger_msg!(log_collector, "Upgrade authority did not sign");
+                return Err(InstructionError::MissingRequiredSignature);
+            }
+        }
+
+        upgrade_authority_address
+    } else {
+        ic_logger_msg!(log_collector, "ProgramData state is invalid");
+        return Err(InstructionError::InvalidAccountData);
+    };
+
+    let required_payment = {
+        let balance = programdata_account.get_lamports();
+        let rent = invoke_context.get_sysvar_cache().get_rent()?;
+        let min_balance = rent.minimum_balance(new_len).max(1);
+        min_balance.saturating_sub(balance)
+    };
+
+    // Borrowed accounts need to be dropped before native_invoke
+    drop(programdata_account);
+
+    // Dereference the program ID to prevent overlapping mutable/immutable borrow of invoke context
+    let program_id = *program_id;
+    if required_payment > 0 {
+        let payer_key = *transaction_context.get_key_of_account_at_index(
+            instruction_context
+                .get_index_of_instruction_account_in_transaction(optional_payer_account_index)?,
+        )?;
+
+        invoke_context.native_invoke(
+            system_instruction::transfer(&payer_key, &programdata_key, required_payment).into(),
+            &[],
+        )?;
+    }
+
+    let transaction_context = &invoke_context.transaction_context;
+    let instruction_context = transaction_context.get_current_instruction_context()?;
+    let mut programdata_account = instruction_context
+        .try_borrow_instruction_account(transaction_context, PROGRAM_DATA_ACCOUNT_INDEX)?;
+    programdata_account.set_data_length(new_len)?;
+
+    let programdata_data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+
+    deploy_program!(
+        invoke_context,
+        &program_key,
+        &program_id,
+        UpgradeableLoaderState::size_of_program().saturating_add(new_len),
+        programdata_account
+            .get_data()
+            .get(programdata_data_offset..)
+            .ok_or(InstructionError::AccountDataTooSmall)?,
+        clock_slot,
+    );
+    drop(programdata_account);
+
+    let mut programdata_account = instruction_context
+        .try_borrow_instruction_account(transaction_context, PROGRAM_DATA_ACCOUNT_INDEX)?;
+    programdata_account.set_state(&UpgradeableLoaderState::ProgramData {
+        slot: clock_slot,
+        upgrade_authority_address,
+    })?;
+
+    ic_logger_msg!(
+        log_collector,
+        "Extended ProgramData account by {} bytes",
+        additional_bytes
+    );
 
     Ok(())
 }
