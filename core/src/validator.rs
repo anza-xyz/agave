@@ -732,6 +732,8 @@ impl Validator {
             }
         }
 
+        // token used to cancel tpu-client-next.
+        let cancel_tpu_client_next = CancellationToken::new();
         {
             let exit = exit.clone();
             config
@@ -739,6 +741,12 @@ impl Validator {
                 .write()
                 .unwrap()
                 .register_exit(Box::new(move || exit.store(true, Ordering::Relaxed)));
+            let cancel_tpu_client_next = cancel_tpu_client_next.clone();
+            config
+                .validator_exit
+                .write()
+                .unwrap()
+                .register_exit(Box::new(move || cancel_tpu_client_next.cancel()));
         }
 
         let accounts_update_notifier = geyser_plugin_service
@@ -1170,15 +1178,6 @@ impl Validator {
             };
 
             let client_option = if config.use_tpu_client_next {
-                let cancel = CancellationToken::new();
-                {
-                    let cancel = cancel.clone();
-                    config
-                        .validator_exit
-                        .write()
-                        .unwrap()
-                        .register_exit(Box::new(move || cancel.cancel()));
-                }
                 let runtime_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
@@ -1187,7 +1186,7 @@ impl Validator {
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
                     runtime_handle.clone(),
-                    cancel,
+                    cancel_tpu_client_next.clone(),
                 )
             } else {
                 let Some(connection_cache) = &connection_cache else {
@@ -1596,15 +1595,6 @@ impl Validator {
         let forwarding_tpu_client = if let Some(connection_cache) = &connection_cache {
             ForwardingClientOption::ConnectionCache(connection_cache.clone())
         } else {
-            let cancel = CancellationToken::new();
-            {
-                let cancel = cancel.clone();
-                config
-                    .validator_exit
-                    .write()
-                    .unwrap()
-                    .register_exit(Box::new(move || cancel.cancel()));
-            }
             let runtime_handle = tpu_client_next_runtime
                 .as_ref()
                 .map(TokioRuntime::handle)
@@ -1615,7 +1605,7 @@ impl Validator {
                     .take()
                     .expect("Socket should exist."),
                 runtime_handle.clone(),
-                cancel,
+                cancel_tpu_client_next,
             ))
         };
         let tpu = Tpu::new_with_client(
