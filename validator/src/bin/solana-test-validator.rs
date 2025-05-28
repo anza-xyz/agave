@@ -16,7 +16,7 @@ use {
     solana_clock::Slot,
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
-    solana_faucet::faucet::run_local_faucet_with_port,
+    solana_faucet_interface::faucet::run_local_faucet_with_port,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
     solana_native_token::sol_to_lamports,

@@ -36,7 +36,7 @@ use {
     solana_epoch_info::EpochInfo,
     solana_epoch_rewards_hasher::EpochRewardsHasher,
     solana_epoch_schedule::EpochSchedule,
-    solana_faucet::faucet::request_airdrop_transaction,
+    solana_faucet_interface::faucet::request_airdrop_transaction,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
     solana_keypair::Keypair,

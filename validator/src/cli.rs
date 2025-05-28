@@ -17,7 +17,7 @@ use {
     solana_clock::Slot,
     solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
-    solana_faucet::faucet::{self, FAUCET_PORT},
+    solana_faucet_interface::faucet::{self, FAUCET_PORT},
     solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
     solana_quic_definitions::QUIC_PORT_OFFSET,
