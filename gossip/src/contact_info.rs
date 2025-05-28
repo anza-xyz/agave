@@ -4,7 +4,7 @@ use {
         crds_data::MAX_WALLCLOCK,
         define_tlv_enum,
         legacy_contact_info::LegacyContactInfo,
-        tlv::{self, TlvRecord},
+        tlv::{self, TlvDecodeError, TlvRecord},
     },
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},

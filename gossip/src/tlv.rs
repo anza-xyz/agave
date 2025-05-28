@@ -45,14 +45,13 @@ macro_rules! define_tlv_enum {
 
         // define conversion from TLV wire format
         impl TryFrom<&TlvRecord> for $enum_name {
-            type Error = bincode::Error;
+            type Error = TlvDecodeError;
             fn try_from(value: &TlvRecord) -> Result<Self, Self::Error> {
-                use serde::de::Error;
                 match value.typ {
                     $(
                         $typ => Ok(Self::$variant(bincode::deserialize::<$inner>(&value.bytes)?)),
                     )*
-                    _ => Err(bincode::Error::custom("Invalid type")),
+                    _ => Err(TlvDecodeError::UnknownType(value.typ)),
                 }
             }
         }
@@ -76,6 +75,14 @@ macro_rules! define_tlv_enum {
     };
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum TlvDecodeError {
+    #[error("Unknown type: {0}")]
+    UnknownType(u8),
+    #[error("Malformed payload: {0}")]
+    MalformedPayload(#[from] bincode::Error),
+}
+
 /// Parses a slice of serialized TLV records into a provided type. Unsupported
 /// TLV records are ignored.
 pub(crate) fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> Vec<T> {
@@ -84,7 +91,10 @@ pub(crate) fn parse<'a, T: TryFrom<&'a TlvRecord>>(entries: &'a [TlvRecord]) -> 
 
 #[cfg(test)]
 mod tests {
-    use crate::{define_tlv_enum, tlv::TlvRecord};
+    use crate::{
+        define_tlv_enum,
+        tlv::{TlvDecodeError, TlvRecord},
+    };
 
     define_tlv_enum! (pub(crate) enum ExtensionNew {
         1=>Test(u64),
