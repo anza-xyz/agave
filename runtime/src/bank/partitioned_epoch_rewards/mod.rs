@@ -368,7 +368,7 @@ mod tests {
             epoch: Epoch,
             parent_slot: Slot,
         ) -> Option<PartitionedRewardsCalculation> {
-            self.epoch_reward_calculation_results
+            self.epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
                 .get(&epoch)
@@ -377,7 +377,7 @@ mod tests {
         }
 
         fn get_epoch_rewards_cache_size(&self) -> usize {
-            self.epoch_reward_calculation_results.lock().unwrap().len()
+            self.epoch_rewards_calculation_cache.lock().unwrap().len()
         }
     }
 
