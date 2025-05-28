@@ -1170,6 +1170,15 @@ impl Validator {
             };
 
             let client_option = if config.use_tpu_client_next {
+                let cancel = CancellationToken::new();
+                {
+                    let cancel = cancel.clone();
+                    config
+                        .validator_exit
+                        .write()
+                        .unwrap()
+                        .register_exit(Box::new(move || cancel.cancel()));
+                }
                 let runtime_handle = tpu_client_next_runtime
                     .as_ref()
                     .map(TokioRuntime::handle)
@@ -1178,6 +1187,7 @@ impl Validator {
                     Arc::as_ref(&identity_keypair),
                     node.sockets.rpc_sts_client,
                     runtime_handle.clone(),
+                    cancel,
                 )
             } else {
                 let Some(connection_cache) = &connection_cache else {
