@@ -21,6 +21,7 @@ use {
     solana_tpu_client::tpu_client::{Result, TpuSenderError},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
+    solana_transaction_status_client_types::UiTransactionError,
     std::{
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -289,7 +290,7 @@ async fn send_transaction_with_rpc_fallback(
                     data:
                         RpcResponseErrorData::SendTransactionPreflightFailure(
                             RpcSimulateTransactionResult {
-                                err: Some(TransactionError::BlockhashNotFound),
+                                err: Some(UiTransactionError(TransactionError::BlockhashNotFound)),
                                 ..
                             },
                         ),
@@ -302,7 +303,7 @@ async fn send_transaction_with_rpc_fallback(
                     data:
                         RpcResponseErrorData::SendTransactionPreflightFailure(
                             RpcSimulateTransactionResult {
-                                err: Some(transaction_error),
+                                err: Some(UiTransactionError(transaction_error)),
                                 ..
                             },
                         ),

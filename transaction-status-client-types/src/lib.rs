@@ -3,20 +3,28 @@ use {
     crate::option_serializer::OptionSerializer,
     base64::{prelude::BASE64_STANDARD, Engine},
     core::fmt,
+    serde::{
+        de::{self, Deserialize as DeserializeTrait},
+        ser::{Serialize as SerializeTrait, SerializeTupleVariant},
+        Deserializer,
+    },
     serde_derive::{Deserialize, Serialize},
     serde_json::Value,
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
+    solana_instruction::error::InstructionError,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         v0::{LoadedAddresses, MessageAddressTableLookup},
         MessageHeader,
     },
+    solana_pubkey::Pubkey,
     solana_reward_info::RewardType,
     solana_signature::Signature,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
+    std::ops::Deref,
     thiserror::Error,
 };
 pub mod option_serializer;
@@ -226,12 +234,122 @@ impl From<&MessageAddressTableLookup> for UiAddressTableLookup {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiTransactionError(pub TransactionError);
+
+impl Deref for UiTransactionError {
+    type Target = TransactionError;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<TransactionError> for UiTransactionError {
+    fn from(value: TransactionError) -> Self {
+        UiTransactionError(value)
+    }
+}
+
+impl From<UiTransactionError> for TransactionError {
+    fn from(value: UiTransactionError) -> Self {
+        value.0
+    }
+}
+
+impl SerializeTrait for UiTransactionError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match &self.0 {
+            TransactionError::InstructionError {
+                err,
+                inner_instruction_index,
+                outer_instruction_index,
+                responsible_program_address,
+            } => {
+                let mut state = serializer.serialize_tuple_variant(
+                    "TransactionError",
+                    8,
+                    "InstructionError",
+                    4,
+                )?;
+                state.serialize_field(outer_instruction_index)?;
+                state.serialize_field(err)?;
+                state.serialize_field(&responsible_program_address.map(|p| p.to_string()))?;
+                state.serialize_field(inner_instruction_index)?;
+                state.end()
+            }
+            err => TransactionError::serialize(err, serializer),
+        }
+    }
+}
+
+impl<'de> DeserializeTrait<'de> for UiTransactionError {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let Some(obj) = value.as_object() {
+            if let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array()) {
+                let outer_instruction_index: u8 = arr[0]
+                    .as_u64()
+                    .expect("Expected the first element to be the `outer_instruction_index`")
+                    as u8;
+                let err = InstructionError::deserialize(&arr[1])
+                    .expect("Expected the second element to deserialize as an `InstructionError`");
+                let responsible_program_address = arr.get(2).and_then(|v| {
+                    v.as_str().map(|s| {
+                        s.parse::<Pubkey>()
+                            .expect("Expected the third element to parse as a `Pubkey`")
+                    })
+                });
+                let inner_instruction_index: Option<u8> =
+                    arr.get(3).and_then(|v| v.as_u64().map(|i| i as u8));
+                return Ok(UiTransactionError(TransactionError::InstructionError {
+                    err,
+                    inner_instruction_index,
+                    outer_instruction_index,
+                    responsible_program_address,
+                }));
+            }
+        }
+        let err = TransactionError::deserialize(value).map_err(de::Error::custom)?;
+        Ok(UiTransactionError(err))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct UiTransactionResult<T>(Result<T, UiTransactionError>);
+
+impl<T> Deref for UiTransactionResult<T> {
+    type Target = Result<T, UiTransactionError>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> From<TransactionResult<T>> for UiTransactionResult<T> {
+    fn from(value: TransactionResult<T>) -> Self {
+        UiTransactionResult(value.map_err(Into::into))
+    }
+}
+
+impl<T> From<UiTransactionResult<T>> for TransactionResult<T> {
+    fn from(value: UiTransactionResult<T>) -> Self {
+        value.0.map_err(Into::into)
+    }
+}
+
 /// A duplicate representation of TransactionStatusMeta with `err` field
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiTransactionStatusMeta {
-    pub err: Option<TransactionError>,
-    pub status: TransactionResult<()>, // This field is deprecated.  See https://github.com/solana-labs/solana/issues/9302
+    pub err: Option<UiTransactionError>,
+    pub status: UiTransactionResult<()>, // This field is deprecated.  See https://github.com/solana-labs/solana/issues/9302
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
@@ -285,8 +403,8 @@ pub struct UiTransactionStatusMeta {
 impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
     fn from(meta: TransactionStatusMeta) -> Self {
         Self {
-            err: meta.status.clone().err(),
-            status: meta.status,
+            err: meta.status.clone().map_err(Into::into).err(),
+            status: meta.status.into(),
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
@@ -660,7 +778,12 @@ impl TransactionStatus {
 
 #[cfg(test)]
 mod test {
-    use {super::*, serde_json::json};
+    use {
+        super::*,
+        serde_json::{from_value, json, to_value},
+        solana_transaction_error::TransactionError,
+        test_case::test_case,
+    };
 
     #[test]
     fn test_decode_invalid_transaction() {
@@ -811,5 +934,85 @@ mod test {
             }\
         }";
         test_serde::<UiTransactionTokenBalance>(json_input, expected_json_output);
+    }
+
+    #[test_case(TransactionError::InstructionError {
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: Some(41),
+        outer_instruction_index: 42,
+        responsible_program_address: Some(Pubkey::from_str_const("11111111111111111111111111111111")),
+    }, json!({
+        "InstructionError": [42, { "Custom": 0xdeadbeef_u32 }, "11111111111111111111111111111111", 41],
+    }); "Custom `InstructionError`")]
+    #[test_case(TransactionError::InstructionError {
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: None,
+        outer_instruction_index: 42,
+        responsible_program_address: None,
+    }, json!({
+        "InstructionError": [42, { "Custom": 0xdeadbeef_u32 }, null, null],
+    }); "Custom `InstructionError` with only `outer_instruction_index` and `err`")]
+    #[test_case(TransactionError::InsufficientFundsForRent {
+        account_index: 42,
+    }, json!({
+        "InsufficientFundsForRent": { "account_index": 42 },
+    }); "Pass-through struct error")]
+    #[test_case(TransactionError::InsufficientFundsForFee, json!("InsufficientFundsForFee"); "Pass-through TransactionError")]
+    fn test_serialize_ui_transaction_error(
+        transaction_error: TransactionError,
+        expected_serialization: Value,
+    ) {
+        let actual_serialization = to_value(UiTransactionError(transaction_error))
+            .expect("Failed to serialize `UiTransactionError");
+        assert_eq!(actual_serialization, expected_serialization);
+    }
+
+    #[test_case(TransactionError::InstructionError {
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: Some(41),
+        outer_instruction_index: 42,
+        responsible_program_address: Some(Pubkey::from_str_const("11111111111111111111111111111111")),
+    }, json!({
+        "InstructionError": [42, { "Custom": 0xdeadbeef_u32 }, "11111111111111111111111111111111", 41],
+    }); "Custom `InstructionError`")]
+    #[test_case(TransactionError::InstructionError {
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: None,
+        outer_instruction_index: 42,
+        responsible_program_address: None,
+    }, json!({
+        "InstructionError": [42, { "Custom": 0xdeadbeef_u32 }, null, null],
+    }); "Custom `InstructionError` with only `outer_instruction_index` and `err`")]
+    #[test_case(TransactionError::InstructionError {
+        err: InstructionError::Custom(0xdeadbeef),
+        inner_instruction_index: None,
+        outer_instruction_index: 42,
+        responsible_program_address: None,
+    }, json!({
+        "InstructionError": [42, { "Custom": 0xdeadbeef_u32, /* Legacy instruction errors are serialized with only two elements in the tuple */ }],
+    }); "Custom `InstructionError` with only two elements")]
+    #[test_case(TransactionError::InsufficientFundsForRent {
+        account_index: 42,
+    }, json!({
+        "InsufficientFundsForRent": { "account_index": 42 },
+    }); "Pass-through struct error")]
+    #[test_case(TransactionError::InsufficientFundsForFee, json!("InsufficientFundsForFee"); "Pass-through TransactionError")]
+    fn test_deserialize_ui_transaction_error(
+        expected_transaction_error: TransactionError,
+        serialized_value: Value,
+    ) {
+        let UiTransactionError(actual_transaction_error) =
+            from_value::<UiTransactionError>(serialized_value)
+                .expect("Failed to deserialize `UiTransactionError");
+        assert_eq!(actual_transaction_error, expected_transaction_error);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected the third element to parse as a `Pubkey`")]
+    fn test_deserialize_ui_transaction_error_bad_address() {
+        from_value::<UiTransactionError>(json!({
+            "InstructionError": [0, "InsufficientFunds", "nOtApUbKeY1111111111111111111111", null],
+        }))
+        .expect("Failed to deserialize `UiTransactionError");
     }
 }
