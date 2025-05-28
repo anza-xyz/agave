@@ -532,7 +532,6 @@ solana-runtime-transaction = { path = "runtime-transaction", version = "=2.3.0" 
 solana-sbpf = "=0.11.1"
 solana-sdk = { version = "2.2.2", default-features = false }
 solana-sdk-ids = "2.2.1"
-solana-sdk-macro = "2.2.1"
 solana-secp256k1-program = "2.2.1"
 solana-secp256k1-recover = "2.2.1"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.3.0" }
