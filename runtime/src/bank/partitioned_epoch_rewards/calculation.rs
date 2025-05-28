@@ -94,15 +94,15 @@ impl Bank {
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> CalculateRewardsAndDistributeVoteRewardsResult {
-        let mut reward_calculation = self
-            .epoch_reward_calculation_results
+        let mut rewards_calculation = self
+            .epoch_rewards_calculation_cache
             .lock()
             .unwrap()
             .get(&self.epoch)
             .and_then(|m| m.get(&self.parent_slot))
             .cloned();
 
-        if reward_calculation.is_none() {
+        if rewards_calculation.is_none() {
             let calculation = self.calculate_rewards_for_partitioning(
                 prev_epoch,
                 reward_calc_tracer,
@@ -110,18 +110,25 @@ impl Bank {
                 metrics,
             );
 
-            self.epoch_reward_calculation_results
+            let existing = self
+                .epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
                 .entry(self.epoch)
                 .or_default()
                 .insert(self.parent_slot, calculation.clone());
 
+            assert!(
+                existing.is_none(),
+                "Rewards calculation already exists for epoch {} and parent_slot {}",
+                self.epoch,
+                self.parent_slot
+            );
             info!(
                 "calculated rewards for epoch {} and parent_slot {}",
                 self.epoch, self.parent_slot
             );
-            reward_calculation = Some(calculation);
+            rewards_calculation = Some(calculation);
         } else {
             info!(
                 "rewards calculation already exists for epoch {} and parent_slot {}",
@@ -137,7 +144,7 @@ impl Bank {
             prev_epoch_duration_in_years,
             capitalization,
             point_value,
-        } = reward_calculation.unwrap();
+        } = rewards_calculation.unwrap();
 
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
         self.store_vote_accounts_partitioned(&vote_account_rewards, metrics);

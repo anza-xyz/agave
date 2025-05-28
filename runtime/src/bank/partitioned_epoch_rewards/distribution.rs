@@ -130,12 +130,12 @@ impl Bank {
             ));
             self.epoch_reward_status = EpochRewardStatus::Inactive;
 
-            self.epoch_reward_calculation_results
+            self.epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
                 .remove(&self.epoch);
             info!(
-                "remove epoch reward calculation result for epoch {}",
+                "removed epoch rewards calculation result for epoch {}",
                 self.epoch
             );
 
