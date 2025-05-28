@@ -66,6 +66,18 @@ pub fn aligned_stored_size(data_len: usize) -> usize {
     u64_align!(STORE_META_OVERHEAD + data_len)
 }
 
+/// Checked variant of [`aligned_stored_size`].
+#[inline(always)]
+fn aligned_stored_size_checked(data_len: usize) -> Option<usize> {
+    Some(u64_align!(stored_size_checked(data_len)?))
+}
+
+/// Compute the (unaligned) stored size of an account.
+#[inline(always)]
+fn stored_size_checked(data_len: usize) -> Option<usize> {
+    STORE_META_OVERHEAD.checked_add(data_len)
+}
+
 pub const MAXIMUM_APPEND_VEC_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB
 
 #[derive(Error, Debug)]
@@ -288,8 +300,6 @@ pub struct AppendVec {
 }
 
 const PAGE_SIZE: usize = 4 * 1024;
-// 1MiB
-const SCAN_BUFFER_SIZE: usize = 1024 * 1024;
 
 pub struct AppendVecStat {
     pub open_as_mmap: AtomicU64,
@@ -1030,24 +1040,30 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                let mut reader = BufferedReader::new_heap(
-                    SCAN_BUFFER_SIZE,
-                    self.len(),
+                let self_len = self.len();
+                const BUFFER_SIZE: usize = PAGE_SIZE * 8;
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
+                    self_len,
                     file,
                     STORE_META_OVERHEAD,
                 );
+                // Buffer for account data that doesn't fit within the stack allocated buffer.
+                // This will be re-used for each account that doesn't fit within the stack allocated buffer.
+                let mut data_overflow_buffer = vec![];
                 while let Ok(BufferedReaderStatus::Success) = reader.read() {
                     let (offset, bytes_subset) = reader.get_offset_and_data();
-                    let (meta, next): (&StoredMeta, _) = Self::get_type(bytes_subset, 0).unwrap();
-                    let (account_meta, next): (&AccountMeta, _) =
-                        Self::get_type(bytes_subset, next).unwrap();
-                    let (hash, next): (&AccountHash, _) =
-                        Self::get_type(bytes_subset, next).unwrap();
+                    let (meta, next) = Self::get_type::<StoredMeta>(bytes_subset, 0).unwrap();
+                    let (account_meta, next) =
+                        Self::get_type::<AccountMeta>(bytes_subset, next).unwrap();
+                    let (hash, next) = Self::get_type::<AccountHash>(bytes_subset, next).unwrap();
                     let data_len = meta.data_len as usize;
-                    if bytes_subset.len() - next >= data_len {
+                    let Some(stored_size) = aligned_stored_size_checked(data_len) else {
+                        break;
+                    };
+                    let leftover = bytes_subset.len() - next;
+                    if leftover >= data_len {
                         // we already read enough data to load this account
                         let data = &bytes_subset.0[next..(next + data_len)];
-                        let stored_size = u64_align!(next + data_len);
                         let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
                             meta,
                             account_meta,
@@ -1058,11 +1074,52 @@ impl AppendVec {
                         });
                         callback(account);
                         reader.advance_offset(stored_size);
+                    } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
+                        reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
                     } else {
-                        // resize to worst case to avoid multiple reallocations
-                        reader.resize(STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize);
-                        // fall through and read the whole account again. we need refs for StoredMeta and data.
-                        reader.set_required_data_len(STORE_META_OVERHEAD.saturating_add(data_len))
+                        const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
+                        // 128KiB covers a reasonably large distribution of typical account sizes.
+                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                        const MIN_CAPACITY: usize = 1024 * 128;
+                        let capacity = data_overflow_buffer.capacity();
+                        if data_len > capacity {
+                            let next_cap = data_len
+                                .next_power_of_two()
+                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
+                            data_overflow_buffer.reserve_exact(next_cap - capacity);
+                            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
+                            // Later, we ensure we only read from the initialized portion of the buffer.
+                            unsafe {
+                                data_overflow_buffer.set_len(next_cap);
+                            }
+                        }
+
+                        // Copy already read data to overflow buffer.
+                        data_overflow_buffer[..leftover].copy_from_slice(&bytes_subset.0[next..]);
+
+                        // Read remaining data into overflow buffer.
+                        let Ok(bytes_read) = read_into_buffer(
+                            file,
+                            self_len,
+                            offset + next + leftover,
+                            &mut data_overflow_buffer[leftover..data_len],
+                        ) else {
+                            break;
+                        };
+                        if bytes_read + leftover < data_len {
+                            break;
+                        }
+                        let data = &data_overflow_buffer[..data_len];
+                        let account = StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
+                            meta,
+                            account_meta,
+                            data,
+                            offset,
+                            stored_size,
+                            hash,
+                        });
+                        callback(account);
+                        reader.advance_offset(stored_size);
                     }
                 }
             }
