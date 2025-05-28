@@ -12,10 +12,6 @@ edition = { workspace = true }
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
-[[bin]]
-name = "solana-gossip"
-path = "src/main.rs"
-
 [features]
 frozen-abi = [
     "dep:solana-frozen-abi",
@@ -29,6 +25,7 @@ frozen-abi = [
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",
 ]
+dev-context-only-utils =[]
 
 [dependencies]
 agave-feature-set = { workspace = true }
@@ -113,8 +110,6 @@ solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
-dev-context-only-utils=[]
-
 [[bench]]
 name = "crds"
 
@@ -131,10 +126,6 @@ harness = false
 [[bin]]
 name = "solana-gossip"
 path = "src/main.rs"
-
-[[bin]]
-name = "crds-node"
-path = "src/crds_node.rs"
 
 [lints]
 workspace = true
