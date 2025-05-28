@@ -20,7 +20,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 signal-hook = { workspace = true }
 solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
-solana-hash = { workspace = true, features = ["borsh", "dev-context-only-utils"] }
+solana-hash = { workspace = true, features = ["borsh"] }
 solana-instruction = { workspace = true, features = ["bincode", "borsh"] }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
