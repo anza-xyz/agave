@@ -21,8 +21,11 @@ impl AccountLocks {
     /// Returns an error if any of the accounts are already locked in a way
     /// that conflicts with the requested lock.
     /// NOTE this is the pre-SIMD83 logic and can be removed once SIMD83 is active.
-    pub fn try_lock_accounts(&mut self, keys: &[(&Pubkey, bool)]) -> TransactionResult<()> {
-        self.can_lock_accounts(keys)?;
+    pub fn try_lock_accounts<'a>(
+        &mut self,
+        keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
+    ) -> TransactionResult<()> {
+        self.can_lock_accounts(keys.clone())?;
         self.lock_accounts(keys);
 
         Ok(())
@@ -35,11 +38,13 @@ impl AccountLocks {
     /// the only logic, and this note can be removed with the feature gate.
     pub fn try_lock_transaction_batch<'a>(
         &mut self,
-        validated_batch_keys: impl Iterator<Item = TransactionResult<Vec<(&'a Pubkey, bool)>>>,
+        validated_batch_keys: impl Iterator<
+            Item = TransactionResult<impl Iterator<Item = (&'a Pubkey, bool)> + Clone>,
+        >,
     ) -> Vec<TransactionResult<()>> {
         let available_batch_keys: Vec<_> = validated_batch_keys
             .map(|validated_keys| match validated_keys {
-                Ok(ref keys) => match self.can_lock_accounts(keys) {
+                Ok(ref keys) => match self.can_lock_accounts(keys.clone()) {
                     Ok(_) => validated_keys,
                     Err(e) => Err(e),
                 },
@@ -49,7 +54,7 @@ impl AccountLocks {
 
         available_batch_keys
             .into_iter()
-            .map(|available_keys| available_keys.map(|keys| self.lock_accounts(&keys)))
+            .map(|available_keys| available_keys.map(|keys| self.lock_accounts(keys)))
             .collect()
     }
 
@@ -67,9 +72,12 @@ impl AccountLocks {
         }
     }
 
-    fn can_lock_accounts(&self, keys: &[(&Pubkey, bool)]) -> TransactionResult<()> {
+    fn can_lock_accounts<'a>(
+        &self,
+        keys: impl Iterator<Item = (&'a Pubkey, bool)>,
+    ) -> TransactionResult<()> {
         for (key, writable) in keys {
-            if *writable {
+            if writable {
                 if !self.can_write_lock(key) {
                     return Err(TransactionError::AccountInUse);
                 }
@@ -81,9 +89,9 @@ impl AccountLocks {
         Ok(())
     }
 
-    fn lock_accounts(&mut self, keys: &[(&Pubkey, bool)]) {
+    fn lock_accounts<'a>(&mut self, keys: impl Iterator<Item = (&'a Pubkey, bool)>) {
         for (key, writable) in keys {
-            if *writable {
+            if writable {
                 self.lock_write(key);
             } else {
                 self.lock_readonly(key);
@@ -204,23 +212,23 @@ mod tests {
         let key2 = Pubkey::new_unique();
 
         // Add write and read-lock.
-        let result = account_locks.try_lock_accounts(&[(&key1, true), (&key2, false)]);
+        let result = account_locks.try_lock_accounts([(&key1, true), (&key2, false)].into_iter());
         assert!(result.is_ok());
 
         // Try to add duplicate write-lock.
-        let result = account_locks.try_lock_accounts(&[(&key1, true)]);
+        let result = account_locks.try_lock_accounts([(&key1, true)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Try to add write lock on read-locked account.
-        let result = account_locks.try_lock_accounts(&[(&key2, true)]);
+        let result = account_locks.try_lock_accounts([(&key2, true)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Try to add read lock on write-locked account.
-        let result = account_locks.try_lock_accounts(&[(&key1, false)]);
+        let result = account_locks.try_lock_accounts([(&key1, false)].into_iter());
         assert_eq!(result, Err(TransactionError::AccountInUse));
 
         // Add read lock on read-locked account.
-        let result = account_locks.try_lock_accounts(&[(&key2, false)]);
+        let result = account_locks.try_lock_accounts([(&key2, false)].into_iter());
         assert!(result.is_ok());
 
         // Unlock write and read locks.

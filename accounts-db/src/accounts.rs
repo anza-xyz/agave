@@ -582,11 +582,7 @@ impl Accounts {
             .map(|(tx, result)| {
                 result
                     .and_then(|_| validate_account_locks(tx.account_keys(), tx_account_lock_limit))
-                    .map(|_| {
-                        TransactionAccountLocksIterator::new(tx)
-                            .accounts_with_is_writable()
-                            .collect::<Vec<_>>()
-                    })
+                    .map(|_| TransactionAccountLocksIterator::new(tx).accounts_with_is_writable())
             })
             .collect::<Vec<_>>()
             .into_iter();
@@ -598,7 +594,7 @@ impl Accounts {
         } else {
             validated_batch_keys
                 .map(|result_validated_tx_keys| match result_validated_tx_keys {
-                    Ok(validated_tx_keys) => account_locks.try_lock_accounts(&validated_tx_keys),
+                    Ok(validated_tx_keys) => account_locks.try_lock_accounts(validated_tx_keys),
                     Err(e) => Err(e),
                 })
                 .collect()
