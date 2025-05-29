@@ -15,11 +15,7 @@ const MIN_NUM_STAKED_NODES: usize = 500;
 
 /// Minimum stake that a node should have so that all its CRDS values are
 /// propagated through gossip (below this only subset of CRDS is propagated).
-const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
-
-/// Minimum stake that a node should have so that we skip pinging it when
-/// joining the cluster
-pub(crate) const MIN_STAKE_TO_SKIP_PING: u64 = 100 * MIN_STAKE_FOR_GOSSIP;
+pub(crate) const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
 
 /// Returns false if the CRDS value should be discarded.
 /// `direction` controls whether we are looking at
@@ -41,29 +37,35 @@ pub(crate) fn should_retain_crds_value(
 
     use GossipFilterDirection::*;
     match value.data() {
+        // All nodes can send ContactInfo
         CrdsData::ContactInfo(_) => true,
         // Unstaked nodes can still serve snapshots.
         CrdsData::SnapshotHashes(_) => true,
         // Consensus related messages only allowed for staked nodes
         CrdsData::DuplicateShred(_, _)
-        | CrdsData::LowestSlot(_, _)
+        | CrdsData::LowestSlot(0, _)
         | CrdsData::RestartHeaviestFork(_)
         | CrdsData::RestartLastVotedForkSlots(_) => retain_if_staked(),
-        // Legacy unstaked nodes can still send EpochSlots
-        CrdsData::EpochSlots(_, _) | CrdsData::Vote(_, _) => match direction {
+        // Unstaked nodes can technically send EpochSlots, but we do not want them
+        // eating gossip bandwidth
+        CrdsData::EpochSlots(_, _) => match direction {
             // always store if we have received them
             // to avoid getting them again in PullResponses
             Ingress => true,
             // only forward if the origin is staked
             EgressPush | EgressPullResponse => retain_if_staked(),
         },
-        // Deprecated messages we still see in the mainnet.
-        // We want to store them to avoid getting them again
-        // in PullResponses.
-CrdsData::NodeInstance(_) | CrdsData::LegacyContactInfo(_) | CrdsData::Version(_) => false,
+        CrdsData::Vote(_, _) => match direction {
+            Ingress | EgressPush => true,
+            EgressPullResponse => retain_if_staked(),
+        },
         // Fully deprecated messages
+        CrdsData::AccountsHashes(_) => false,
+        CrdsData::LegacyContactInfo(_) => false,
         CrdsData::LegacySnapshotHashes(_) => false,
         CrdsData::LegacyVersion(_) => false,
-        CrdsData::AccountsHashes(_) => false,
+        CrdsData::LowestSlot(1.., _) => false,
+        CrdsData::NodeInstance(_) => false,
+        CrdsData::Version(_) => false,
     }
 }
