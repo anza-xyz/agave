@@ -98,8 +98,7 @@ impl Bank {
             .epoch_rewards_calculation_cache
             .lock()
             .unwrap()
-            .get(&self.epoch)
-            .and_then(|m| m.get(&self.parent_slot))
+            .get(&self.parent_hash)
             .cloned();
 
         if rewards_calculation.is_none() {
@@ -109,30 +108,29 @@ impl Bank {
                 thread_pool,
                 metrics,
             );
+            info!(
+                "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
+                self.epoch, self.parent_slot, self.parent_hash
+            );
 
             let existing = self
                 .epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
-                .entry(self.epoch)
-                .or_default()
-                .insert(self.parent_slot, calculation.clone());
+                .insert(self.parent_hash, calculation.clone());
 
             assert!(
                 existing.is_none(),
-                "Rewards calculation already exists for epoch {} and parent_slot {}",
+                "Rewards calculation already exists for epoch: {}, parent_slot: {}, parent_hash: {}",
                 self.epoch,
-                self.parent_slot
-            );
-            info!(
-                "calculated rewards for epoch {} and parent_slot {}",
-                self.epoch, self.parent_slot
-            );
+                self.parent_slot,
+                self.parent_hash);
+
             rewards_calculation = Some(calculation);
         } else {
             info!(
-                "rewards calculation already exists for epoch {} and parent_slot {}",
-                self.epoch, self.parent_slot
+                "rewards calculation already exists for epoch: {}, parent_slot: {}, parent_hash: {}",
+                self.epoch, self.parent_slot, self.parent_hash
             );
         }
 
@@ -663,7 +661,9 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 100;
-        let bank = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).bank;
+        let bank = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH)
+            .0
+            .bank;
 
         // Calculate rewards
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -706,7 +706,7 @@ mod tests {
 
         let expected_num_delegations = 100;
         let RewardBank { bank, .. } =
-            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH);
+            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let rewards_metrics = RewardsMetrics::default();
@@ -760,7 +760,7 @@ mod tests {
             bank,
             voters,
             stakers,
-        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH);
+        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
 
         let vote_pubkey = voters.first().unwrap();
         let stake_pubkey = *stakers.first().unwrap();
@@ -853,7 +853,7 @@ mod tests {
         let expected_num_delegations = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let RewardBank { bank, .. } = create_reward_bank(
+        let (RewardBank { bank, .. }, _) = create_reward_bank(
             expected_num_delegations,
             num_rewards_per_block,
             SLOTS_PER_EPOCH,
@@ -948,7 +948,7 @@ mod tests {
         let expected_num_delegations = 2;
         let num_rewards_per_block = 2;
         // Distribute 2 rewards over 1 block
-        let RewardBank { bank, .. } = create_reward_bank(
+        let (RewardBank { bank, .. }, _) = create_reward_bank(
             expected_num_delegations,
             num_rewards_per_block,
             SLOTS_PER_EPOCH,
@@ -1007,7 +1007,7 @@ mod tests {
         let mut stakes = vec![2_000_000_000; expected_num_delegations];
         // Add stake large enough to be affected by total-rewards discrepancy
         stakes.push(40_000_000_000);
-        let RewardBank { bank, .. } = create_reward_bank_with_specific_stakes(
+        let (RewardBank { bank, .. }, _) = create_reward_bank_with_specific_stakes(
             stakes,
             num_rewards_per_block,
             SLOTS_PER_EPOCH - 1,

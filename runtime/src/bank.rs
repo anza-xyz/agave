@@ -946,9 +946,8 @@ pub struct Bank {
 
     /// The cache of epoch rewards calculation results
     /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
-    /// The outer hashmap is keyed by current epoch, and the inner hashmap is keyed by the parent slot in previous epoch.
-    epoch_rewards_calculation_cache:
-        Arc<Mutex<HashMap<Epoch, HashMap<Slot, PartitionedRewardsCalculation>>>>,
+    /// The hashmap is keyed by parent_hash.
+    epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, PartitionedRewardsCalculation>>>,
 }
 
 #[derive(Debug)]
@@ -6891,6 +6890,10 @@ impl Bank {
 
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
         self.bank_hash_stats.load()
+    }
+
+    pub fn clear_epoch_rewards_cache(&self) {
+        self.epoch_rewards_calculation_cache.lock().unwrap().clear();
     }
 }
 

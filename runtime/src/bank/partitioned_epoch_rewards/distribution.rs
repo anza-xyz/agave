@@ -10,7 +10,7 @@ use {
         },
         stake_account::StakeAccount,
     },
-    log::{error, info},
+    log::error,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::stake_rewards::StakeReward,
     solana_measure::measure_us,
@@ -129,16 +129,6 @@ impl Bank {
                 EpochRewardStatus::Active(EpochRewardPhase::Distribution(_))
             ));
             self.epoch_reward_status = EpochRewardStatus::Inactive;
-
-            self.epoch_rewards_calculation_cache
-                .lock()
-                .unwrap()
-                .remove(&self.epoch);
-            info!(
-                "removed epoch rewards calculation result for epoch {}",
-                self.epoch
-            );
-
             self.set_epoch_rewards_sysvar_to_inactive();
         }
     }
