@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - master
-    paths:
-      - "**/Cargo.toml"
-      - ".github/workflows/crate-check.yml"
-      - "./ci/check-crates.sh"
-      - "./ci/buildkite-crates.yml"
   pull_request:
     branches:
       - master
@@ -16,26 +11,8 @@ on:
       - "**/Cargo.toml"
       - ".github/workflows/crate-check.yml"
       - "./ci/check-crates.sh"
-      - "./ci/buildkite-crates.yml"
 
 jobs:
-  crate-publish-test:
-    if: github.repository == 'anza-xyz/agave'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Test crate publishing
-        uses: "buildkite/trigger-pipeline-action@v2.2.0"
-        with:
-          buildkite_api_access_token: ${{ secrets.TRIGGER_BK_BUILD_TOKEN }}
-          pipeline: "anza/agave-crates"
-          branch: "${{ github.ref_name }}"
-          build_env_vars: '{
-              "TRIGGERED_BUILDKITE_TAG": "${{ github.ref_name }}",
-              "CRATE_PUBLISH_TEST": "true"
-            }'
-          commit: "HEAD"
-          message: ":github: Triggered from crate-check GitHub Action"
-
   check:
     name: crate check
     if: github.repository == 'anza-xyz/agave'

@@ -191,6 +191,23 @@ all_test_steps() {
   # Full test suite
   .buildkite/scripts/build-stable.sh >> "$output_file"
 
+  # crate publish simulation
+  if affects \
+              Cargo.lock$ \
+              Cargo.toml$ \
+              ^ci/publish-crate.sh \
+      ; then
+    cat >> "$output_file" <<"EOF"
+   - command: "ci/publish-crate.sh --dry-run"
+     name: "publish-crate-simulation"
+     timeout_in_minutes: 20
+     env:
+      CRATE_PUBLISH_TEST: "true"
+     agents:
+       queue: "check"
+EOF
+  fi
+
   # Docs tests
   if affects \
              .rs$ \
