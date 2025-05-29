@@ -1,3 +1,9 @@
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::{bank::BankFieldsToDeserialize, serde_snapshot::fields_from_streams},
+    solana_accounts_db::accounts_file::StorageAccess,
+    tempfile::TempDir,
+};
 use {
     crate::{
         bank::{Bank, BankSlotDelta},
@@ -73,6 +79,74 @@ pub struct BankFromArchivesTimings {
 pub struct BankFromDirTimings {
     pub rebuild_storages_us: u64,
     pub rebuild_bank_us: u64,
+}
+
+/// Parses out bank specific information from a snapshot archivem including the leader schedule,
+/// epoch schedule, etc.
+#[cfg(feature = "dev-context-only-utils")]
+pub fn bank_fields_from_snapshot_archives(
+    full_snapshot_archives_dir: impl AsRef<Path>,
+    incremental_snapshot_archives_dir: impl AsRef<Path>,
+    storage_access: StorageAccess,
+) -> snapshot_utils::Result<BankFieldsToDeserialize> {
+    let full_snapshot_archive_info =
+        get_highest_full_snapshot_archive_info(&full_snapshot_archives_dir).ok_or_else(|| {
+            SnapshotError::NoSnapshotArchives(full_snapshot_archives_dir.as_ref().to_path_buf())
+        })?;
+
+    let incremental_snapshot_archive_info = get_highest_incremental_snapshot_archive_info(
+        &incremental_snapshot_archives_dir,
+        full_snapshot_archive_info.slot(),
+    );
+
+    let temp_unpack_dir = TempDir::new()?;
+    let temp_accounts_dir = TempDir::new()?;
+
+    let account_paths = vec![temp_accounts_dir.path().to_path_buf()];
+
+    let (unarchived_full_snapshot, unarchived_incremental_snapshot, _next_append_vec_id) =
+        verify_and_unarchive_snapshots(
+            &temp_unpack_dir,
+            &full_snapshot_archive_info,
+            incremental_snapshot_archive_info.as_ref(),
+            &account_paths,
+            storage_access,
+        )?;
+
+    bank_fields_from_snapshots(
+        &unarchived_full_snapshot.unpacked_snapshots_dir_and_version,
+        unarchived_incremental_snapshot
+            .as_ref()
+            .map(|unarchive_preparation_result| {
+                &unarchive_preparation_result.unpacked_snapshots_dir_and_version
+            }),
+    )
+}
+
+#[cfg(feature = "dev-context-only-utils")]
+fn bank_fields_from_snapshots(
+    full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
+    incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
+        &UnpackedSnapshotsDirAndVersion,
+    >,
+) -> snapshot_utils::Result<BankFieldsToDeserialize> {
+    let (snapshot_version, snapshot_root_paths) = snapshot_version_and_root_paths(
+        full_snapshot_unpacked_snapshots_dir_and_version,
+        incremental_snapshot_unpacked_snapshots_dir_and_version,
+    )?;
+
+    info!(
+        "Loading bank from full snapshot {} and incremental snapshot {:?}",
+        snapshot_root_paths.full_snapshot_root_file_path.display(),
+        snapshot_root_paths.incremental_snapshot_root_file_path,
+    );
+
+    deserialize_snapshot_data_files(&snapshot_root_paths, |snapshot_streams| {
+        Ok(match snapshot_version {
+            SnapshotVersion::V1_2_0 => fields_from_streams(snapshot_streams)
+                .map(|(bank_fields, _accountsdb_fields)| bank_fields.collapse_into()),
+        }?)
+    })
 }
 
 /// Rebuild bank from snapshot archives.  Handles either just a full snapshot, or both a full
@@ -1057,7 +1131,6 @@ mod tests {
         agave_feature_set as feature_set,
         solana_accounts_db::{
             accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
-            accounts_file::StorageAccess,
             accounts_hash::{CalcAccountsHashConfig, HashStats},
             sorted_storages::SortedStorages,
         },
@@ -1071,7 +1144,6 @@ mod tests {
             fs,
             sync::{atomic::Ordering, Arc, RwLock},
         },
-        tempfile::TempDir,
         test_case::test_case,
     };
 
@@ -1131,73 +1203,6 @@ mod tests {
             .clone_without_scheduler()
     }
 
-    /// Utility for parsing out bank specific information from a snapshot archive. This utility can be used
-    /// to parse out bank specific information like the leader schedule, epoch schedule, etc.
-    fn bank_fields_from_snapshot_archives(
-        full_snapshot_archives_dir: impl AsRef<Path>,
-        incremental_snapshot_archives_dir: impl AsRef<Path>,
-        storage_access: StorageAccess,
-    ) -> snapshot_utils::Result<BankFieldsToDeserialize> {
-        let full_snapshot_archive_info = get_highest_full_snapshot_archive_info(
-            &full_snapshot_archives_dir,
-        )
-        .ok_or_else(|| {
-            SnapshotError::NoSnapshotArchives(full_snapshot_archives_dir.as_ref().to_path_buf())
-        })?;
-
-        let incremental_snapshot_archive_info = get_highest_incremental_snapshot_archive_info(
-            &incremental_snapshot_archives_dir,
-            full_snapshot_archive_info.slot(),
-        );
-
-        let temp_unpack_dir = TempDir::new()?;
-        let temp_accounts_dir = TempDir::new()?;
-
-        let account_paths = vec![temp_accounts_dir.path().to_path_buf()];
-
-        let (unarchived_full_snapshot, unarchived_incremental_snapshot, _next_append_vec_id) =
-            verify_and_unarchive_snapshots(
-                &temp_unpack_dir,
-                &full_snapshot_archive_info,
-                incremental_snapshot_archive_info.as_ref(),
-                &account_paths,
-                storage_access,
-            )?;
-
-        bank_fields_from_snapshots(
-            &unarchived_full_snapshot.unpacked_snapshots_dir_and_version,
-            unarchived_incremental_snapshot
-                .as_ref()
-                .map(|unarchive_preparation_result| {
-                    &unarchive_preparation_result.unpacked_snapshots_dir_and_version
-                }),
-        )
-    }
-
-    fn bank_fields_from_snapshots(
-        full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
-        incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
-            &UnpackedSnapshotsDirAndVersion,
-        >,
-    ) -> snapshot_utils::Result<BankFieldsToDeserialize> {
-        let (snapshot_version, snapshot_root_paths) = snapshot_version_and_root_paths(
-            full_snapshot_unpacked_snapshots_dir_and_version,
-            incremental_snapshot_unpacked_snapshots_dir_and_version,
-        )?;
-
-        info!(
-            "Loading bank from full snapshot {} and incremental snapshot {:?}",
-            snapshot_root_paths.full_snapshot_root_file_path.display(),
-            snapshot_root_paths.incremental_snapshot_root_file_path,
-        );
-
-        deserialize_snapshot_data_files(&snapshot_root_paths, |snapshot_streams| {
-            Ok(match snapshot_version {
-                SnapshotVersion::V1_2_0 => fields_from_streams(snapshot_streams)
-                    .map(|(bank_fields, _accountsdb_fields)| bank_fields.collapse_into()),
-            }?)
-        })
-    }
     /// Test roundtrip of bank to a full snapshot, then back again.  This test creates the simplest
     /// bank possible, so the contents of the snapshot archive will be quite minimal.
     #[test]
