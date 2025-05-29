@@ -362,6 +362,12 @@ impl BankForks {
                     .unwrap()
                     .node_id_to_vote_accounts()
             );
+            // Now we have rooted a bank in a new epoch, there are no needs to
+            // keep the epoch rewards cache for current epoch any longer.
+            info!(
+                "Clearing epoch rewards cache for epoch {old_epoch} after setting root to slot {root}"
+            );
+            root_bank.clear_epoch_rewards_cache();
         }
         let root_tx_count = root_bank
             .parents()
