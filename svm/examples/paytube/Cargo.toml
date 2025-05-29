@@ -30,7 +30,7 @@ solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-program = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["blake3"] }
 solana-transaction-error = { workspace = true }
 spl-associated-token-account = { workspace = true }
 spl-token = { workspace = true }
