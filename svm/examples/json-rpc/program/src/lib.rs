@@ -1,10 +1,8 @@
 use {
     borsh::{BorshDeserialize, BorshSerialize},
-    solana_program::{
-        account_info::{next_account_info, AccountInfo},
-        entrypoint, msg,
-        pubkey::Pubkey,
-    },
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_program_entrypoint::entrypoint, solana_msg::msg,
+    solana_pubkey::Pubkey,
 };
 
 /// The type of state managed by this program. The type defined here

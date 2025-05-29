@@ -20,7 +20,6 @@ use {
     solana_instruction::error::InstructionError,
     solana_keypair::{read_keypair_file, Keypair},
     solana_offchain_message::OffchainMessage,
-    solana_program::stake::{instruction::LockupArgs, state::Lockup},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -31,6 +30,7 @@ use {
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_signature::Signature,
     solana_signer::{Signer, SignerError},
+    solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_tps_client::{utils::create_connection_cache, TpsClient},
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,

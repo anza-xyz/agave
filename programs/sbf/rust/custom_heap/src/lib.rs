@@ -2,17 +2,20 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(target_os = "solana")]
 use {
-    solana_program::entrypoint::{HEAP_LENGTH, HEAP_START_ADDRESS},
-    std::{mem::size_of, ptr::null_mut},
-};
-use {
-    solana_program::{account_info::AccountInfo, entrypoint::ProgramResult, msg, pubkey::Pubkey},
+    solana_account_info::AccountInfo,
+    solana_msg::msg,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
     std::{
         alloc::{alloc, Layout},
         mem::align_of,
     },
+};
+#[cfg(target_os = "solana")]
+use {
+    solana_program_entrypoint::{HEAP_LENGTH, HEAP_START_ADDRESS},
+    std::{mem::size_of, ptr::null_mut},
 };
 
 /// Developers can implement their own heap by defining their own
@@ -55,7 +58,7 @@ unsafe impl std::alloc::GlobalAlloc for BumpAllocator {
 #[global_allocator]
 static A: BumpAllocator = BumpAllocator;
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 pub fn process_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],

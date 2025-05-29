@@ -4,25 +4,25 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 #[cfg(target_feature = "dynamic-frames")]
-use solana_program::program_memory::sol_memcmp;
+use solana_program_memory::sol_memcmp;
 use {
+    solana_account_info::AccountInfo,
+    solana_instruction::Instruction,
+    solana_msg::msg,
     solana_program::{
-        account_info::AccountInfo,
-        bpf_loader_deprecated,
-        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
-        instruction::Instruction,
-        msg,
         program::{get_return_data, invoke, invoke_signed, set_return_data},
-        program_error::ProgramError,
-        pubkey::{Pubkey, PubkeyError},
         syscalls::{
             MAX_CPI_ACCOUNT_INFOS, MAX_CPI_INSTRUCTION_ACCOUNTS, MAX_CPI_INSTRUCTION_DATA_LEN,
         },
-        system_instruction, system_program,
     },
+    solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
+    solana_program_error::ProgramError,
+    solana_pubkey::{Pubkey, PubkeyError},
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_invoked_dep::*,
     solana_sbf_rust_realloc_dep::*,
+    solana_sdk_ids::bpf_loader_deprecated,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
     std::{cell::RefCell, mem, rc::Rc, slice},
 };
 
@@ -67,7 +67,7 @@ fn do_nested_invokes(num_nested_invokes: u64, accounts: &[AccountInfo]) -> Progr
     Ok(())
 }
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction<'a>(
     program_id: &Pubkey,
     accounts: &[AccountInfo<'a>],
@@ -86,7 +86,7 @@ fn process_instruction<'a>(
                 let from_lamports = accounts[FROM_INDEX].lamports();
                 let to_lamports = accounts[DERIVED_KEY1_INDEX].lamports();
                 assert_eq!(accounts[DERIVED_KEY1_INDEX].data_len(), 0);
-                assert!(solana_program::system_program::check_id(
+                assert!(solana_system_interface::program::check_id(
                     accounts[DERIVED_KEY1_INDEX].owner
                 ));
 

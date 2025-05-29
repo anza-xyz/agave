@@ -1,6 +1,10 @@
-use solana_program::{
-    account_info::{AccountInfo, next_account_info}, entrypoint, entrypoint::ProgramResult, pubkey::Pubkey,
-    program::invoke, system_instruction,
+use {
+    solana_account_info::{AccountInfo, next_account_info},
+    solana_program_entrypoint::entrypoint,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
+    solana_program::program::invoke,
+    solana_system_interface::instruction as system_instruction,
 };
 
 entrypoint!(process_instruction);

@@ -184,9 +184,10 @@ mod tests {
             heaviest_fork_aggregate::{HeaviestForkAggregate, HeaviestForkAggregateResult},
             solana::wen_restart_proto::HeaviestForkRecord,
         },
+        solana_clock::Slot,
         solana_gossip::restart_crds_values::RestartHeaviestFork,
         solana_hash::Hash,
-        solana_program::{clock::Slot, pubkey::Pubkey},
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{

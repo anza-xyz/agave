@@ -31,6 +31,7 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = "=2.2.1"
 solana-account-decoder = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
 solana-borsh = "=2.2.1"
 solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
@@ -61,7 +62,6 @@ solana-native-token = "=2.2.2"
 solana-nonce = "=2.2.1"
 solana-offchain-message = { version = "=2.2.1", features = ["verify"] }
 solana-packet = "=2.2.1"
-solana-program = { version = "=2.2.1", default-features = false }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { version = "=2.4.0", default-features = false }
 solana-pubsub-client = { workspace = true }

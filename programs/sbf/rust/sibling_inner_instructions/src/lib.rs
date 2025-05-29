@@ -2,18 +2,16 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{
-        get_processed_sibling_instruction, get_stack_height, AccountMeta, Instruction,
-        TRANSACTION_LEVEL_STACK_HEIGHT,
-    },
-    msg,
-    pubkey::Pubkey,
+use {
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction, TRANSACTION_LEVEL_STACK_HEIGHT},
+    solana_msg::msg,
+    solana_program::instruction::{get_processed_sibling_instruction, get_stack_height},
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],

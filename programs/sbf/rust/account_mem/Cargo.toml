@@ -9,7 +9,11 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-solana-program = { workspace = true }
+solana-account-info = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-error = { workspace = true }
+solana-program-memory = { workspace = true }
+solana-pubkey = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

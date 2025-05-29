@@ -1,17 +1,13 @@
 //! Example Rust-based SBF program that exercises error handling
 
-extern crate solana_program;
 use {
     num_derive::FromPrimitive,
     num_traits::FromPrimitive,
+    solana_account_info::AccountInfo,
     solana_decode_error::DecodeError,
-    solana_program::{
-        account_info::AccountInfo,
-        entrypoint::ProgramResult,
-        msg,
-        program_error::{PrintProgramError, ProgramError},
-        pubkey::{Pubkey, PubkeyError},
-    },
+    solana_msg::msg,
+    solana_program_error::{PrintProgramError, ProgramError, ProgramResult},
+    solana_pubkey::{Pubkey, PubkeyError},
     thiserror::Error,
 };
 
@@ -45,7 +41,7 @@ impl PrintProgramError for MyError {
     }
 }
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],

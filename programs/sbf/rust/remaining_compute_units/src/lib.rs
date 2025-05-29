@@ -1,11 +1,11 @@
 //! @brief Example Rust-based BPF program that exercises the sol_remaining_compute_units syscall
 
-extern crate solana_program;
-use solana_program::{
-    account_info::AccountInfo, compute_units::sol_remaining_compute_units,
-    entrypoint::ProgramResult, msg, pubkey::Pubkey,
+use {
+    solana_account_info::AccountInfo, solana_msg::msg,
+    solana_program::compute_units::sol_remaining_compute_units,
+    solana_program_error::ProgramResult, solana_pubkey::Pubkey,
 };
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 pub fn process_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
