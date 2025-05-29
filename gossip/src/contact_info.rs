@@ -44,8 +44,9 @@ const SOCKET_TAG_TPU_VOTE: u8 = 9;
 const SOCKET_TAG_TPU_VOTE_QUIC: u8 = 12;
 const SOCKET_TAG_TVU: u8 = 10;
 const SOCKET_TAG_TVU_QUIC: u8 = 11;
-const_assert_eq!(SOCKET_CACHE_SIZE, 13);
-const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_TPU_VOTE_QUIC as usize + 1usize;
+const SOCKET_TAG_ALPENGLOW: u8 = 13;
+const_assert_eq!(SOCKET_CACHE_SIZE, 14);
+const SOCKET_CACHE_SIZE: usize = SOCKET_TAG_ALPENGLOW as usize + 1usize;
 
 // An alias for a function that reads data from a ContactInfo entry stored in
 // the gossip CRDS table.
