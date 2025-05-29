@@ -21,13 +21,13 @@ solana-entry = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-ledger = { workspace = true }
-solana-program = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true }
 solana-shred-version = { workspace = true }
 solana-time-utils = { workspace = true }
 solana-timings = { workspace = true }
 solana-vote = { workspace = true }
+solana-vote-interface = { workspace = true }
 solana-vote-program = { workspace = true }
 
 [dev-dependencies]

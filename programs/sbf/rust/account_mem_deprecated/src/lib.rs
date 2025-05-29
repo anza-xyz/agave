@@ -1,11 +1,10 @@
 //! Test mem functions
 
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    program_error::ProgramError,
-    program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
-    pubkey::Pubkey,
+use {
+    solana_account_info::AccountInfo,
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_program_memory::{sol_memcmp, sol_memcpy, sol_memmove, sol_memset},
+    solana_pubkey::Pubkey,
 };
 
 solana_program::entrypoint_deprecated!(process_instruction);

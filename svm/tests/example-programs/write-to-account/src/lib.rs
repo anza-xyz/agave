@@ -1,10 +1,10 @@
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint,
-    entrypoint::ProgramResult,
-    incinerator, msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
+use {
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_program_entrypoint::entrypoint,
+    solana_program_error::ProgramResult,
+    solana_sdk_ids::incinerator, solana_msg::msg,
+    solana_program_error::ProgramError,
+    solana_pubkey::Pubkey,
 };
 
 entrypoint!(process_instruction);

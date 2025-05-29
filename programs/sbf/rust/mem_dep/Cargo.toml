@@ -9,7 +9,6 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-solana-program = { workspace = true }
 
 [lib]
 crate-type = ["lib"]

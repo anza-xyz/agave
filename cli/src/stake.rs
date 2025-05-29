@@ -37,12 +37,6 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_message::Message,
     solana_native_token::Sol,
-    solana_program::stake::{
-        self,
-        instruction::{self as stake_instruction, LockupArgs, StakeError},
-        state::{Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2},
-        tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
-    },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -55,6 +49,13 @@ use {
     solana_sdk_ids::{
         system_program,
         sysvar::{clock, stake_history},
+    },
+    solana_stake_interface::{
+        self as stake,
+        error::StakeError,
+        instruction::{self as stake_instruction, LockupArgs},
+        state::{Authorized, Lockup, Meta, StakeActivationStatus, StakeAuthorize, StakeStateV2},
+        tools::{acceptable_reference_epoch_credits, eligible_for_deactivate_delinquent},
     },
     solana_system_interface::{error::SystemError, instruction as system_instruction},
     solana_sysvar::stake_history::StakeHistory,

@@ -1,7 +1,9 @@
 //! Example Rust-based SBF program that tests call depth and stack usage
 
-use solana_program::{
-    custom_heap_default, custom_panic_default, entrypoint::SUCCESS, log::sol_log_64, msg,
+use {
+    solana_msg::msg,
+    solana_program::log::sol_log_64,
+    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
 };
 
 #[inline(never)]

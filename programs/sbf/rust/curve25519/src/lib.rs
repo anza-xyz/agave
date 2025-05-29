@@ -1,9 +1,9 @@
 //! @brief curve25519 syscall tests
 
-extern crate solana_program;
 use {
     solana_curve25519::{edwards, ristretto, scalar},
-    solana_program::{custom_heap_default, custom_panic_default, msg},
+    solana_msg::msg,
+    solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
 #[no_mangle]
