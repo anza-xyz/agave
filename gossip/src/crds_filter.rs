@@ -60,12 +60,7 @@ pub(crate) fn should_retain_crds_value(
         // Deprecated messages we still see in the mainnet.
         // We want to store them to avoid getting them again
         // in PullResponses.
-        CrdsData::NodeInstance(_) | CrdsData::LegacyContactInfo(_) | CrdsData::Version(_) => {
-            match direction {
-                Ingress => true,
-                EgressPush | EgressPullResponse => false,
-            }
-        }
+CrdsData::NodeInstance(_) | CrdsData::LegacyContactInfo(_) | CrdsData::Version(_) => false,
         // Fully deprecated messages
         CrdsData::LegacySnapshotHashes(_) => false,
         CrdsData::LegacyVersion(_) => false,
