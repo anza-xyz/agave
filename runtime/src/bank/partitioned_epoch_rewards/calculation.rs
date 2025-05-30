@@ -122,7 +122,7 @@ impl Bank {
             prev_epoch_duration_in_years,
             capitalization,
             point_value,
-        } = rewards_calculation.unwrap();
+        } = rewards_calculation;
 
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
         self.store_vote_accounts_partitioned(&vote_account_rewards, metrics);
