@@ -36,7 +36,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         hashes_per_tick: Some(solana_clock::DEFAULT_HASHES_PER_TICK),
     };
     let exit = Arc::new(AtomicBool::new(false));
-    let bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
+    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
     let ledger_path = get_tmp_ledger_path_auto_delete!();
     let blockstore = Arc::new(
         Blockstore::open(ledger_path.path()).expect("Expected to be able to open database ledger"),
@@ -86,6 +86,7 @@ fn bench_record_transactions(c: &mut Criterion) {
     group.throughput(criterion::Throughput::Elements(
         NUM_TRANSACTIONS * NUM_BATCHES,
     ));
+    let mut index = 0;
     group.bench_function("record_transactions", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
@@ -93,6 +94,11 @@ fn bench_record_transactions(c: &mut Criterion) {
             for _ in 0..iters {
                 let tx_batches: Vec<_> = (0..NUM_BATCHES).map(|_| txs.clone()).collect();
                 poh_recorder.write().unwrap().clear_bank_for_test();
+                bank = Arc::new(Bank::new_from_parent(
+                    bank.clone(),
+                    &Pubkey::default(),
+                    bank.slot() + 1,
+                ));
                 poh_recorder.write().unwrap().set_bank(
                     BankWithScheduler::new_without_scheduler(bank.clone()),
                     false,
@@ -100,6 +106,7 @@ fn bench_record_transactions(c: &mut Criterion) {
 
                 let start = Instant::now();
                 for txs in tx_batches {
+                    index += 1;
                     let summary = transaction_recorder.record_transactions(bank.slot(), txs);
                     assert!(summary.result.is_ok());
                 }
