@@ -91,7 +91,7 @@ fn bench_record_transactions(c: &mut Criterion) {
             let mut total = Duration::ZERO;
 
             for _ in 0..iters {
-                let txs: Vec<_> = (0..NUM_BATCHES).map(|_| txs.clone()).collect();
+                let tx_batches: Vec<_> = (0..NUM_BATCHES).map(|_| txs.clone()).collect();
                 poh_recorder.write().unwrap().clear_bank_for_test();
                 poh_recorder.write().unwrap().set_bank(
                     BankWithScheduler::new_without_scheduler(bank.clone()),
@@ -99,7 +99,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                 );
 
                 let start = Instant::now();
-                for txs in txs {
+                for txs in tx_batches {
                     let summary = transaction_recorder.record_transactions(bank.slot(), txs);
                     assert!(summary.result.is_ok());
                 }
