@@ -1,7 +1,7 @@
-/// The interface for Geyser plugins. A plugin must implement
-/// the GeyserPlugin trait to work with the runtime.
-/// In addition, the dynamic library must export a "C" function _create_plugin which
-/// creates the implementation of the plugin.
+//! The interface for Geyser plugins. A plugin must implement
+//! the GeyserPlugin trait to work with the runtime.
+//! In addition, the dynamic library must export a "C" function _create_plugin which
+//! creates the implementation of the plugin.
 use {
     solana_clock::{Slot, UnixTimestamp},
     solana_signature::Signature,
@@ -10,7 +10,6 @@ use {
     std::{any::Any, error, io},
     thiserror::Error,
 };
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(C)]
 /// Information about an account being updated
