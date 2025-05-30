@@ -453,7 +453,7 @@ solana-gossip = { path = "gossip", version = "=2.3.0" }
 solana-hard-forks = "2.2.1"
 solana-hash = "2.3.0"
 solana-inflation = "2.2.1"
-solana-instruction = "2.2.1"
+solana-instruction = "2.3.0"
 solana-instructions-sysvar = "2.2.2"
 solana-keccak-hasher = "2.2.1"
 solana-keypair = "2.2.1"
