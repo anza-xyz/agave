@@ -29,7 +29,9 @@ fn bench_record_transactions(c: &mut Criterion) {
     let mut genesis_config_info = create_genesis_config(2);
     genesis_config_info.genesis_config.ticks_per_slot = 64;
     genesis_config_info.genesis_config.poh_config = PohConfig {
-        target_tick_duration: Duration::from_millis(400),
+        target_tick_duration: Duration::from_micros(
+            solana_clock::DEFAULT_MS_PER_SLOT * 1_000 / solana_clock::DEFAULT_TICKS_PER_SLOT,
+        ),
         target_tick_count: None,
         hashes_per_tick: Some(solana_clock::DEFAULT_HASHES_PER_TICK),
     };
