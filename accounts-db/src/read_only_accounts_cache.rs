@@ -380,12 +380,11 @@ impl ReadOnlyAccountsCache {
             }
 
             let key = key_to_evict.expect("eviction sample should not be empty");
-            #[cfg(not(feature = "dev-context-only-utils"))]
-            Self::do_remove(&key, cache, data_size);
+            let _entry = Self::do_remove(&key, cache, data_size);
             #[cfg(feature = "dev-context-only-utils")]
             {
-                let entry = Self::do_remove(&key, cache, data_size);
-                callback(&key, entry.unwrap());
+                #[allow(clippy::used_underscore_binding)]
+                callback(&key, _entry.unwrap());
             }
             num_evicts = num_evicts.saturating_add(1);
         }
