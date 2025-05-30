@@ -19,8 +19,23 @@ case "$os_name" in
   export LIBCLANG_PATH
   ;;
 "Linux")
-  sudo apt update
-  sudo apt install -y libclang-dev
+  if grep "Alpine" /etc/os-release ; then
+    sudo apk update
+    sudo apk add \
+      build-base \
+      clang19-libclang \
+      clang19-static \
+      eudev-dev \
+      hidapi-dev \
+      linux-headers \
+      musl-dev \
+      perl
+    LIBCLANG_PATH="/usr/lib/llvm19/lib"
+    export LIBCLANG_PATH
+  else
+    sudo apt update
+    sudo apt install -y libclang-dev
+  fi
   ;;
 *)
   echo "Unknown Operating System"
