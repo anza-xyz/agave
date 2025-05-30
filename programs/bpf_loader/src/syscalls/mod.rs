@@ -878,17 +878,21 @@ declare_builtin_function!(
             .create_program_address_units;
         consume_compute_meter(invoke_context, cost)?;
 
-        let (seeds, program_id) = translate_and_check_program_address_inputs(
-            seeds_addr,
-            seeds_len,
-            program_id_addr,
-            memory_mapping,
-            invoke_context.get_check_aligned(),
-        )?;
+        let new_address = {
+            let (seeds, program_id) = translate_and_check_program_address_inputs(
+                seeds_addr,
+                seeds_len,
+                program_id_addr,
+                memory_mapping,
+                invoke_context.get_check_aligned(),
+            )?;
 
-        let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
-            return Ok(1);
+            let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
+                return Ok(1);
+            };
+            new_address
         };
+
         let address = translate_slice_mut::<u8>(
             memory_mapping,
             address_addr,
@@ -1110,18 +1114,18 @@ declare_builtin_function!(
                         .curve25519_edwards_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let left_point = *translate_type::<edwards::PodEdwardsPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let right_point = *translate_type::<edwards::PodEdwardsPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
-                    if let Some(result_point) = edwards::add_edwards(left_point, right_point) {
+                    if let Some(result_point) = edwards::add_edwards(&left_point, &right_point) {
                         *translate_type_mut::<edwards::PodEdwardsPoint>(
                             memory_mapping,
                             result_point_addr,
@@ -1138,18 +1142,19 @@ declare_builtin_function!(
                         .curve25519_edwards_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let left_point = *translate_type::<edwards::PodEdwardsPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let right_point = *translate_type::<edwards::PodEdwardsPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
-                    if let Some(result_point) = edwards::subtract_edwards(left_point, right_point) {
+                    if let Some(result_point) = edwards::subtract_edwards(&left_point, &right_point)
+                    {
                         *translate_type_mut::<edwards::PodEdwardsPoint>(
                             memory_mapping,
                             result_point_addr,
@@ -1166,18 +1171,18 @@ declare_builtin_function!(
                         .curve25519_edwards_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let scalar = translate_type::<scalar::PodScalar>(
+                    let scalar = *translate_type::<scalar::PodScalar>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let input_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let input_point = *translate_type::<edwards::PodEdwardsPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
-                    if let Some(result_point) = edwards::multiply_edwards(scalar, input_point) {
+                    if let Some(result_point) = edwards::multiply_edwards(&scalar, &input_point) {
                         *translate_type_mut::<edwards::PodEdwardsPoint>(
                             memory_mapping,
                             result_point_addr,
@@ -1204,18 +1209,19 @@ declare_builtin_function!(
                         .curve25519_ristretto_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let left_point = *translate_type::<ristretto::PodRistrettoPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let right_point = *translate_type::<ristretto::PodRistrettoPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
-                    if let Some(result_point) = ristretto::add_ristretto(left_point, right_point) {
+                    if let Some(result_point) = ristretto::add_ristretto(&left_point, &right_point)
+                    {
                         *translate_type_mut::<ristretto::PodRistrettoPoint>(
                             memory_mapping,
                             result_point_addr,
@@ -1232,19 +1238,19 @@ declare_builtin_function!(
                         .curve25519_ristretto_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let left_point = *translate_type::<ristretto::PodRistrettoPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let right_point = *translate_type::<ristretto::PodRistrettoPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
                     if let Some(result_point) =
-                        ristretto::subtract_ristretto(left_point, right_point)
+                        ristretto::subtract_ristretto(&left_point, &right_point)
                     {
                         *translate_type_mut::<ristretto::PodRistrettoPoint>(
                             memory_mapping,
@@ -1262,18 +1268,19 @@ declare_builtin_function!(
                         .curve25519_ristretto_multiply_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let scalar = translate_type::<scalar::PodScalar>(
+                    let scalar = *translate_type::<scalar::PodScalar>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let input_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let input_point = *translate_type::<ristretto::PodRistrettoPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
-                    if let Some(result_point) = ristretto::multiply_ristretto(scalar, input_point) {
+                    if let Some(result_point) = ristretto::multiply_ristretto(&scalar, &input_point)
+                    {
                         *translate_type_mut::<ristretto::PodRistrettoPoint>(
                             memory_mapping,
                             result_point_addr,
@@ -1337,21 +1344,24 @@ declare_builtin_function!(
                     );
                 consume_compute_meter(invoke_context, cost)?;
 
-                let scalars = translate_slice::<scalar::PodScalar>(
-                    memory_mapping,
-                    scalars_addr,
-                    points_len,
-                    invoke_context.get_check_aligned(),
-                )?;
+                let result_point = {
+                    let scalars = translate_slice::<scalar::PodScalar>(
+                        memory_mapping,
+                        scalars_addr,
+                        points_len,
+                        invoke_context.get_check_aligned(),
+                    )?;
 
-                let points = translate_slice::<edwards::PodEdwardsPoint>(
-                    memory_mapping,
-                    points_addr,
-                    points_len,
-                    invoke_context.get_check_aligned(),
-                )?;
+                    let points = translate_slice::<edwards::PodEdwardsPoint>(
+                        memory_mapping,
+                        points_addr,
+                        points_len,
+                        invoke_context.get_check_aligned(),
+                    )?;
+                    edwards::multiscalar_multiply_edwards(scalars, points)
+                };
 
-                if let Some(result_point) = edwards::multiscalar_multiply_edwards(scalars, points) {
+                if let Some(result_point) = result_point {
                     *translate_type_mut::<edwards::PodEdwardsPoint>(
                         memory_mapping,
                         result_point_addr,
@@ -1375,23 +1385,24 @@ declare_builtin_function!(
                     );
                 consume_compute_meter(invoke_context, cost)?;
 
-                let scalars = translate_slice::<scalar::PodScalar>(
-                    memory_mapping,
-                    scalars_addr,
-                    points_len,
-                    invoke_context.get_check_aligned(),
-                )?;
+                let result_point = {
+                    let scalars = translate_slice::<scalar::PodScalar>(
+                        memory_mapping,
+                        scalars_addr,
+                        points_len,
+                        invoke_context.get_check_aligned(),
+                    )?;
 
-                let points = translate_slice::<ristretto::PodRistrettoPoint>(
-                    memory_mapping,
-                    points_addr,
-                    points_len,
-                    invoke_context.get_check_aligned(),
-                )?;
-
-                if let Some(result_point) =
+                    let points = translate_slice::<ristretto::PodRistrettoPoint>(
+                        memory_mapping,
+                        points_addr,
+                        points_len,
+                        invoke_context.get_check_aligned(),
+                    )?;
                     ristretto::multiscalar_multiply_ristretto(scalars, points)
-                {
+                };
+
+                if let Some(result_point) = result_point {
                     *translate_type_mut::<ristretto::PodRistrettoPoint>(
                         memory_mapping,
                         result_point_addr,
@@ -1487,14 +1498,13 @@ declare_builtin_function!(
                 .unwrap_or(u64::MAX);
             consume_compute_meter(invoke_context, cost)?;
 
-            let return_data_result = translate_slice_mut::<u8>(
+            let to_slice = translate_slice_mut::<u8>(
                 memory_mapping,
                 return_data_addr,
                 length,
                 invoke_context.get_check_aligned(),
             )?;
 
-            let to_slice = return_data_result;
             let from_slice = return_data
                 .get(..length as usize)
                 .ok_or(SyscallError::InvokeContextBorrowFailed)?;
@@ -1829,28 +1839,30 @@ declare_builtin_function!(
             ),
         )?;
 
-        let base = translate_slice::<u8>(
-            memory_mapping,
-            params.base as *const _ as u64,
-            params.base_len,
-            invoke_context.get_check_aligned(),
-        )?;
+        let value = {
+            let base = translate_slice::<u8>(
+                memory_mapping,
+                params.base as *const _ as u64,
+                params.base_len,
+                invoke_context.get_check_aligned(),
+            )?;
 
-        let exponent = translate_slice::<u8>(
-            memory_mapping,
-            params.exponent as *const _ as u64,
-            params.exponent_len,
-            invoke_context.get_check_aligned(),
-        )?;
+            let exponent = translate_slice::<u8>(
+                memory_mapping,
+                params.exponent as *const _ as u64,
+                params.exponent_len,
+                invoke_context.get_check_aligned(),
+            )?;
 
-        let modulus = translate_slice::<u8>(
-            memory_mapping,
-            params.modulus as *const _ as u64,
-            params.modulus_len,
-            invoke_context.get_check_aligned(),
-        )?;
+            let modulus = translate_slice::<u8>(
+                memory_mapping,
+                params.modulus as *const _ as u64,
+                params.modulus_len,
+                invoke_context.get_check_aligned(),
+            )?;
 
-        let value = big_mod_exp(base, exponent, modulus);
+            big_mod_exp(base, exponent, modulus)
+        };
 
         let return_value = translate_slice_mut::<u8>(
             memory_mapping,
