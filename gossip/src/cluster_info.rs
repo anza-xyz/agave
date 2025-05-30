@@ -1229,7 +1229,10 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
         let now = timestamp();
-        let self_info = CrdsValue::new(CrdsData::from(self.my_contact_info()), &self.keypair());
+        let self_info = CrdsValue::new(
+            CrdsData::from(self.my_contact_info_with_current_wallclock(now)),
+            &self.keypair(),
+        );
         let max_bloom_filter_bytes = get_max_bloom_filter_bytes(&self_info);
         let mut pings = Vec::new();
         let pulls = {
@@ -2344,6 +2347,13 @@ impl ClusterInfo {
             shred_version,
         );
         (contact_info, gossip_socket, None)
+    }
+
+    #[inline]
+    fn my_contact_info_with_current_wallclock(&self, wallclock: u64) -> ContactInfo {
+        let mut contact_info = self.my_contact_info();
+        contact_info.set_wallclock(wallclock);
+        contact_info
     }
 }
 
