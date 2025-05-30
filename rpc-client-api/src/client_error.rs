@@ -76,14 +76,14 @@ pub struct Error {
     pub request: Option<request::RpcRequest>,
 
     #[source]
-    pub kind: ErrorKind,
+    pub kind: Box<ErrorKind>,
 }
 
 impl Error {
     pub fn new_with_request(kind: ErrorKind, request: request::RpcRequest) -> Self {
         Self {
             request: Some(request),
-            kind,
+            kind: Box::new(kind),
         }
     }
 
@@ -99,7 +99,7 @@ impl Error {
     }
 
     pub fn kind(&self) -> &ErrorKind {
-        &self.kind
+        self.kind.as_ref()
     }
 
     pub fn get_transaction_error(&self) -> Option<TransactionError> {
@@ -111,7 +111,7 @@ impl From<ErrorKind> for Error {
     fn from(kind: ErrorKind) -> Self {
         Self {
             request: None,
-            kind,
+            kind: Box::new(kind),
         }
     }
 }
@@ -120,14 +120,14 @@ impl From<TransportError> for Error {
     fn from(err: TransportError) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
 
 impl From<Error> for TransportError {
     fn from(client_error: Error) -> Self {
-        client_error.kind.into()
+        (*client_error.kind).into()
     }
 }
 
@@ -135,7 +135,7 @@ impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
@@ -144,7 +144,7 @@ impl From<reqwest::Error> for Error {
     fn from(err: reqwest::Error) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
@@ -157,7 +157,7 @@ impl From<reqwest_middleware::Error> for Error {
         };
         Self {
             request: None,
-            kind,
+            kind: Box::new(kind),
         }
     }
 }
@@ -166,7 +166,7 @@ impl From<request::RpcError> for Error {
     fn from(err: request::RpcError) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
@@ -175,7 +175,7 @@ impl From<serde_json::error::Error> for Error {
     fn from(err: serde_json::error::Error) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
@@ -184,7 +184,7 @@ impl From<SignerError> for Error {
     fn from(err: SignerError) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
@@ -193,7 +193,7 @@ impl From<TransactionError> for Error {
     fn from(err: TransactionError) -> Self {
         Self {
             request: None,
-            kind: err.into(),
+            kind: Box::new(err.into()),
         }
     }
 }
