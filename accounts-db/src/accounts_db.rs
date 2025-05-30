@@ -1197,6 +1197,19 @@ impl AccountStorageEntry {
             .collect()
     }
 
+    /// Returns whether the account at a given offset is obsolete at a given slot
+    /// or earlier. If the passed in slot is None, then slot will be assumed to
+    /// be the max root and any obsolete accounts will be returned regardless of slot
+    pub fn is_account_obsolete(&self, offset: Offset, slot: Option<Slot>) -> bool {
+        self.obsolete_accounts
+            .read()
+            .unwrap()
+            .iter()
+            .any(|(stored_offset, _, stored_slot)| {
+                *stored_offset == offset && (slot.is_none_or(|s| *stored_slot <= s))
+            })
+    }
+
     /// Returns the number of bytes that were marked obsolete as of the passed
     /// in slot or earlier. If slot is None, then slot will be assumed to be the
     /// max root, and all obsolete bytes will be returned.

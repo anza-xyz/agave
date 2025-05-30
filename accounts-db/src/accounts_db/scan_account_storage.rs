@@ -37,6 +37,8 @@ trait AppendVecScan: Send + Sync + Clone {
     fn scanning_complete(self) -> BinnedHashData;
     /// initialize accumulator
     fn init_accum(&mut self, count: usize);
+    /// The slot at which the scan is being performed
+    fn scan_slot(&self) -> Slot;
 }
 
 #[derive(Clone)]
@@ -56,6 +58,7 @@ struct ScanState<'a> {
     pubkey_to_bin_index: usize,
     is_ancient: bool,
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
+    scan_slot: Slot,
 }
 
 impl AppendVecScan for ScanState<'_> {
@@ -71,6 +74,9 @@ impl AppendVecScan for ScanState<'_> {
         if self.accum.is_empty() {
             self.accum.append(&mut vec![Vec::new(); count]);
         }
+    }
+    fn scan_slot(&self) -> Slot {
+        self.scan_slot
     }
     fn found_account(&mut self, loaded_account: &LoadedAccount) {
         let pubkey = loaded_account.pubkey();
@@ -151,6 +157,7 @@ impl AccountsDb {
             stats_num_zero_lamport_accounts_ancient: Arc::clone(
                 &stats.num_zero_lamport_accounts_ancient,
             ),
+            scan_slot: storages.max_slot_inclusive(),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -349,9 +356,17 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts(|account| {
-            if scanner.filter(account.pubkey()) {
-                scanner.found_account(&LoadedAccount::Stored(account))
+        storage.accounts.scan_index(|index_info| {
+            let pubkey = &index_info.index_info.pubkey;
+            let offset = index_info.index_info.offset;
+            if scanner.filter(pubkey)
+                && !storage.is_account_obsolete(offset, Some(scanner.scan_slot()))
+            {
+                storage
+                    .accounts
+                    .get_stored_account_callback(offset, |account| {
+                        scanner.found_account(&LoadedAccount::Stored(account));
+                    });
             }
         });
     }
@@ -376,6 +391,7 @@ mod tests {
             cache_hash_data::{CacheHashDataFile, DeletionPolicy as CacheHashDeletionPolicy},
         },
         solana_account::AccountSharedData,
+        std::iter,
         tempfile::TempDir,
         test_case::test_case,
     };
@@ -422,6 +438,9 @@ mod tests {
         fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
             self.current_slot = slot;
         }
+        fn scan_slot(&self) -> Slot {
+            self.current_slot
+        }
         fn init_accum(&mut self, _count: usize) {}
         fn found_account(&mut self, loaded_account: &LoadedAccount) {
             self.calls.fetch_add(1, Ordering::Relaxed);
@@ -454,6 +473,9 @@ mod tests {
         }
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {
             true
+        }
+        fn scan_slot(&self) -> Slot {
+            self.current_slot
         }
         fn init_accum(&mut self, _count: usize) {}
         fn found_account(&mut self, loaded_account: &LoadedAccount) {
@@ -1013,5 +1035,85 @@ mod tests {
             .iter()
             .map(|v| v.iter().map(|v| &v[..]).collect::<Vec<_>>())
             .collect::<Vec<_>>()
+    }
+
+    #[derive(Clone)]
+    struct TestScanObsolete {
+        current_slot: Slot,
+        _slot_expected: Slot,
+        calls: Arc<AtomicU64>,
+        accum: BinnedHashData,
+    }
+
+    impl AppendVecScan for TestScanObsolete {
+        fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
+            self.current_slot = slot;
+        }
+        fn filter(&mut self, _pubkey: &Pubkey) -> bool {
+            true
+        }
+        fn scan_slot(&self) -> Slot {
+            self.current_slot
+        }
+        fn init_accum(&mut self, _count: usize) {}
+        fn found_account(&mut self, _loaded_account: &LoadedAccount) {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+        fn scanning_complete(self) -> BinnedHashData {
+            self.accum
+        }
+    }
+
+    #[test]
+    fn test_accountsdb_scan_multiple_account_storage_with_obsolete_accounts() {
+        solana_logger::setup();
+
+        let slot: Slot = 0;
+        let num_accounts = 5;
+        let tf = crate::append_vec::test_utils::get_append_vec_path(
+            "test_accountsdb_scan_account_storage_with_obsolete_accounts",
+        );
+
+        let pubkey = solana_pubkey::new_rand();
+        let mark_alive = false;
+
+        let storage = sample_storage_with_entries(&tf, slot, &pubkey, mark_alive);
+
+        // Create a bunch of accounts and add them to the storage
+        let accounts: Vec<_> =
+            iter::repeat_with(|| AccountSharedData::new(1, 10, &Pubkey::default()))
+                .take(num_accounts)
+                .collect();
+
+        let accounts_to_append: Vec<_> = accounts
+            .into_iter()
+            .map(|account| (Pubkey::new_unique(), account))
+            .collect();
+
+        let offsets = storage
+            .accounts
+            .append_accounts(&(slot, &accounts_to_append[..]), 0);
+
+        // Mark each account obsolete at a different slot
+        for (i, offsets) in offsets.unwrap().offsets.iter().enumerate() {
+            storage.mark_account_obsolete(*offsets, 0, i as Slot);
+        }
+
+        // Perform scans of the storage assuming a different slot and verify the number of accounts found matches
+        for scan_slot in 0..=(num_accounts - 1) {
+            let calls = Arc::new(AtomicU64::new(0));
+            let expected_count = num_accounts - scan_slot;
+
+            let mut scanner = TestScanObsolete {
+                current_slot: scan_slot as u64,
+                _slot_expected: slot,
+                accum: Vec::default(),
+                calls: calls.clone(),
+            };
+
+            AccountsDb::scan_single_account_storage(&storage, &mut scanner);
+            scanner.scanning_complete();
+            assert_eq!(calls.load(Ordering::Relaxed), expected_count as u64);
+        }
     }
 }
