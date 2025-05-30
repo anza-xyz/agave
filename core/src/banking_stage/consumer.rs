@@ -1290,8 +1290,14 @@ mod tests {
                 processed_with_successful_result_count: 1,
             }
         );
-        assert_eq!(retryable_transaction_indexes, vec![1]);
         assert!(commit_transactions_result.is_ok());
+
+        // with simd3, duplicate transactions are not retryable
+        if relax_intrabatch_account_locks && use_duplicate_transaction {
+            assert_eq!(retryable_transaction_indexes, Vec::<usize>::new());
+        } else {
+            assert_eq!(retryable_transaction_indexes, vec![1]);
+        }
     }
 
     #[test]
@@ -1350,30 +1356,48 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_process_transactions_account_in_use() {
+    #[test_case(false, false; "old::locked")]
+    #[test_case(false, true; "old::duplicate")]
+    #[test_case(true, false; "simd83::locked")]
+    #[test_case(true, true; "simd83::duplicate")]
+    fn test_process_transactions_account_in_use(
+        relax_intrabatch_account_locks: bool,
+        use_duplicate_transaction: bool,
+    ) {
         solana_logger::setup();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_slow_genesis_config(10_000);
-        let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        bank.ns_per_slot = u128::MAX;
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         // set cost tracker limits to MAX so it will not filter out TXs
         bank.write_cost_tracker()
             .unwrap()
             .set_limits(u64::MAX, u64::MAX, u64::MAX);
 
-        // Make all repetitive transactions that conflict on the `mint_keypair`, so only 1 should be executed
-        let transactions = vec![
-            system_transaction::transfer(
+        let mut transactions = vec![];
+        let destination = Pubkey::new_unique();
+        let mut amount = 1;
+
+        // Make distinct, or identical, transactions that conflict on the `mint_keypair`
+        for _ in 0..TARGET_NUM_TRANSACTIONS_PER_BATCH {
+            transactions.push(system_transaction::transfer(
                 &mint_keypair,
-                &Pubkey::new_unique(),
-                1,
-                genesis_config.hash()
-            );
-            TARGET_NUM_TRANSACTIONS_PER_BATCH
-        ];
+                &destination,
+                amount,
+                genesis_config.hash(),
+            ));
+
+            if !use_duplicate_transaction {
+                amount += 1;
+            }
+        }
 
         let transactions_len = transactions.len();
         let ProcessTransactionBatchOutput {
@@ -1381,7 +1405,14 @@ mod tests {
             ..
         } = execute_transactions_with_dummy_poh_service(bank, transactions);
 
-        // All the transactions should have been replayed, but only 2 committed (first and last)
+        // If SIMD-83 is enabled *and* the transactions are distinct, all are executed.
+        // In the three other cases, only one is executed. In all four cases, all are attempted.
+        let execution_count = if relax_intrabatch_account_locks && !use_duplicate_transaction {
+            transactions_len
+        } else {
+            1
+        } as u64;
+
         assert_eq!(
             execute_and_commit_transactions_output
                 .transaction_counts
@@ -1392,20 +1423,29 @@ mod tests {
             execute_and_commit_transactions_output
                 .transaction_counts
                 .processed_count,
-            1
+            execution_count
         );
         assert_eq!(
             execute_and_commit_transactions_output
                 .transaction_counts
                 .processed_with_successful_result_count,
-            1
+            execution_count
         );
 
-        // Everything except first of the transactions failed and are retryable
-        assert_eq!(
-            execute_and_commit_transactions_output.retryable_transaction_indexes,
-            (1..transactions_len).collect::<Vec<usize>>()
-        );
+        // If SIMD-83 is enabled and the transactions are distinct, there are zero retryable (all executed).
+        // If SIMD-83 is enabled and the transactions are identical, there are zero retryable (marked AlreadyProcessed).
+        // If SIMD-83 is not enabled, all but the first are retryable (marked AccountInUse).
+        if relax_intrabatch_account_locks {
+            assert_eq!(
+                execute_and_commit_transactions_output.retryable_transaction_indexes,
+                Vec::<usize>::new()
+            );
+        } else {
+            assert_eq!(
+                execute_and_commit_transactions_output.retryable_transaction_indexes,
+                (1..transactions_len).collect::<Vec<usize>>()
+            );
+        }
     }
 
     #[test]
