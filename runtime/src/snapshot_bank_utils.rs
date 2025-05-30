@@ -81,7 +81,7 @@ pub struct BankFromDirTimings {
     pub rebuild_bank_us: u64,
 }
 
-/// Parses out bank specific information from a snapshot archivem including the leader schedule,
+/// Parses out bank specific information from a snapshot archive including the leader schedule.
 /// epoch schedule, etc.
 #[cfg(feature = "dev-context-only-utils")]
 pub fn bank_fields_from_snapshot_archives(
@@ -545,8 +545,7 @@ fn verify_bank_against_expected_slot_hash(
     }
 }
 
-/// Returns the validated versions and root paths for the given full and incremental snapshot
-/// versions.
+/// Returns the validated version and root paths for the given snapshots.
 fn snapshot_version_and_root_paths(
     full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
@@ -1110,10 +1109,9 @@ mod tests {
     use {
         super::*,
         crate::{
-            bank::{tests::create_simple_test_bank, BankFieldsToDeserialize, BankTestConfig},
+            bank::{tests::create_simple_test_bank, BankTestConfig},
             bank_forks::BankForks,
             genesis_utils,
-            serde_snapshot::fields_from_streams,
             snapshot_config::SnapshotConfig,
             snapshot_utils::{
                 clean_orphaned_account_snapshot_dirs, create_tmp_accounts_dir_for_tests,
