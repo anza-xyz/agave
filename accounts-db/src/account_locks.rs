@@ -43,14 +43,11 @@ impl AccountLocks {
         >,
     ) -> Vec<TransactionResult<()>> {
         validated_batch_keys.iter_mut().for_each(|validated_keys| {
-            let result = std::mem::replace(validated_keys, Err(TransactionError::AccountInUse));
-            *validated_keys = match result {
-                Ok(ref keys) => match self.can_lock_accounts(keys.clone()) {
-                    Ok(_) => result,
-                    Err(e) => Err(e),
-                },
-                Err(e) => Err(e),
-            };
+            if let Ok(ref keys) = validated_keys {
+                if let Err(e) = self.can_lock_accounts(keys.clone()) {
+                    *validated_keys = Err(e);
+                }
+            }
         });
 
         validated_batch_keys
