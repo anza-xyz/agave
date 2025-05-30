@@ -3750,6 +3750,65 @@ pub mod tests {
         }
     }
 
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_process_entry_duplicate_transaction(relax_intrabatch_account_locks: bool) {
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(1000);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+
+        // fund: put some money in each of 1 and 2
+        assert_matches!(bank.transfer(5, &mint_keypair, &keypair1.pubkey()), Ok(_));
+        assert_matches!(bank.transfer(5, &mint_keypair, &keypair2.pubkey()), Ok(_));
+
+        // one entry, two instances of the same transaction. this entry is invalid
+        // without simd83: due to lock conflicts
+        // with simd83: due to message hash duplication
+        let entry_1_to_2_twice = next_entry(
+            &bank.last_blockhash(),
+            1,
+            vec![
+                system_transaction::transfer(
+                    &keypair1,
+                    &keypair2.pubkey(),
+                    1,
+                    bank.last_blockhash(),
+                ),
+                system_transaction::transfer(
+                    &keypair1,
+                    &keypair2.pubkey(),
+                    1,
+                    bank.last_blockhash(),
+                ),
+            ],
+        );
+        // should now be:
+        // keypair1=5
+        // keypair2=5
+
+        // succeeds following simd83 locking, fails otherwise
+        let result = process_entries_for_tests_without_scheduler(&bank, vec![entry_1_to_2_twice]);
+
+        let balances = [
+            bank.get_balance(&keypair1.pubkey()),
+            bank.get_balance(&keypair2.pubkey()),
+        ];
+
+        assert!(result.is_err());
+        assert_eq!(balances, [5, 5]);
+    }
+
     #[test]
     fn test_process_entries_2_entries_par() {
         let GenesisConfigInfo {

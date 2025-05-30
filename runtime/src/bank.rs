@@ -3183,7 +3183,7 @@ impl Bank {
     }
 
     /// Attempt to take locks on the accounts in a transaction batch
-    pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
+    pub fn try_lock_accounts(&self, txs: &[impl TransactionWithMeta]) -> Vec<Result<()>> {
         self.try_lock_accounts_with_results(txs, txs.iter().map(|_| Ok(())))
     }
 
@@ -3191,13 +3191,32 @@ impl Bank {
     /// limited packing status and duplicate transaction conflict status
     pub fn try_lock_accounts_with_results(
         &self,
-        txs: &[impl SVMMessage],
+        txs: &[impl TransactionWithMeta],
         tx_results: impl Iterator<Item = Result<()>>,
     ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
         let relax_intrabatch_account_locks = self
             .feature_set
             .is_active(&feature_set::relax_intrabatch_account_locks::id());
+
+        // with simd83 enabled, we must fail transactions that duplicate a prior message hash
+        // previously, conflicting account locks would fail such transactions as a side effect
+        let mut batch_message_hashes = AHashSet::with_capacity(txs.len());
+        let tx_results = tx_results
+            .enumerate()
+            .map(|(i, tx_result)| match tx_result {
+                Ok(()) if relax_intrabatch_account_locks => {
+                    // `HashSet::insert()` returns `true` when the value does *not* already exist
+                    if batch_message_hashes.insert(txs[i].message_hash()) {
+                        Ok(())
+                    } else {
+                        Err(TransactionError::AlreadyProcessed)
+                    }
+                }
+                Ok(()) => Ok(()),
+                Err(e) => Err(e),
+            });
+
         self.rc.accounts.lock_accounts(
             txs.iter(),
             tx_results,
@@ -3222,30 +3241,6 @@ impl Bank {
         transaction_results: impl Iterator<Item = Result<()>>,
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
-
-        let relax_intrabatch_account_locks = self
-            .feature_set
-            .is_active(&feature_set::relax_intrabatch_account_locks::id());
-
-        // with simd83 enabled, we must deduplicate transactions by message hash
-        // previously, conflicting account locks would dedupe transactions as a side effect
-        let mut batch_message_hashes = AHashSet::with_capacity(transactions.len());
-        let transaction_results =
-            transaction_results
-                .enumerate()
-                .map(|(i, tx_result)| match tx_result {
-                    Ok(()) if relax_intrabatch_account_locks => {
-                        // `HashSet::insert()` returns `true` when the value does *not* already exist
-                        if batch_message_hashes.insert(transactions[i].message_hash()) {
-                            Ok(())
-                        } else {
-                            Err(TransactionError::AccountInUse)
-                        }
-                    }
-                    Ok(()) => Ok(()),
-                    Err(e) => Err(e),
-                });
-
         TransactionBatch::new(
             self.try_lock_accounts_with_results(transactions, transaction_results),
             self,
