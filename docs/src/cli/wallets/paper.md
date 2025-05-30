@@ -172,10 +172,10 @@ To verify you control the private key of a paper wallet address, use
 `solana-keygen verify`:
 
 ```bash
-solana-keygen verify <PUBKEY> prompt://
+solana-keygen verify <PUBKEY> ASK
 ```
 
-where `<PUBKEY>` is replaced with the wallet address and the keyword `prompt://`
+where `<PUBKEY>` is replaced with the wallet address and the keyword `ASK`
 tells the command to prompt you for the keypair's seed phrase; `key` and
 `full-path` query-strings accepted. Note that for security reasons, your seed
 phrase will not be displayed as you type. After entering your seed phrase, the
