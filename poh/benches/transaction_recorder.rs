@@ -27,7 +27,7 @@ fn bench_record_transactions(c: &mut Criterion) {
 
     // Setup the PohService.
     let mut genesis_config_info = create_genesis_config(2);
-    genesis_config_info.genesis_config.ticks_per_slot = 64;
+    genesis_config_info.genesis_config.ticks_per_slot = solana_clock::DEFAULT_TICKS_PER_SLOT;
     genesis_config_info.genesis_config.poh_config = PohConfig {
         target_tick_duration: Duration::from_micros(
             solana_clock::DEFAULT_MS_PER_SLOT * 1_000 / solana_clock::DEFAULT_TICKS_PER_SLOT,
@@ -45,7 +45,7 @@ fn bench_record_transactions(c: &mut Criterion) {
         bank.tick_height(),
         bank.last_blockhash(),
         bank.clone(),
-        Some((0, 0)),
+        None,
         bank.ticks_per_slot(),
         blockstore,
         &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
