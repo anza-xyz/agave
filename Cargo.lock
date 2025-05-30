@@ -9941,6 +9941,7 @@ dependencies = [
 name = "solana-rpc-test"
 version = "2.3.0"
 dependencies = [
+ "base64 0.22.1",
  "bincode",
  "bs58",
  "crossbeam-channel",

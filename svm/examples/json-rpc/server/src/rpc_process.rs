@@ -94,7 +94,6 @@ pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 
 const EXECUTION_SLOT: u64 = 5; // The execution slot must be greater than the deployment slot
 const EXECUTION_EPOCH: u64 = 2; // The execution epoch must be greater than the deployment epoch
-const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
 
 fn new_response<T>(slot: Slot, value: T) -> RpcResponse<T> {
@@ -671,7 +670,7 @@ pub mod rpc {
                 min_context_slot: _,
                 inner_instructions: enable_cpi_recording,
             } = config.unwrap_or_default();
-            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base64);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
                 Error::invalid_params(format!(
                     "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
@@ -826,20 +825,6 @@ where
     T: serde::de::DeserializeOwned,
 {
     let wire_output = match encoding {
-        TransactionBinaryEncoding::Base58 => {
-            if encoded.len() > MAX_BASE58_SIZE {
-                return Err(Error::invalid_params(format!(
-                    "base58 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
-                    type_name::<T>(),
-                    encoded.len(),
-                    MAX_BASE58_SIZE,
-                    PACKET_DATA_SIZE,
-                )));
-            }
-            bs58::decode(encoded)
-                .into_vec()
-                .map_err(|e| Error::invalid_params(format!("invalid base58 encoding: {e:?}")))?
-        }
         TransactionBinaryEncoding::Base64 => {
             if encoded.len() > MAX_BASE64_SIZE {
                 return Err(Error::invalid_params(format!(
