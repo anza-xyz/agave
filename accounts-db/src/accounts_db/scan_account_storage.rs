@@ -100,7 +100,6 @@ impl AppendVecScan for ScanState<'_> {
             self.accum.append(&mut vec![Vec::new(); count]);
         }
     }
-
     fn found_account(&mut self, loaded_account: &LoadedAccount) {
         let pubkey = loaded_account.pubkey();
         assert!(self.bin_range.contains(&self.pubkey_to_bin_index)); // get rid of this once we have confidence
