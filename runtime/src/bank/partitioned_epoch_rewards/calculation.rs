@@ -94,45 +94,25 @@ impl Bank {
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> CalculateRewardsAndDistributeVoteRewardsResult {
-        let mut rewards_calculation = self
-            .epoch_rewards_calculation_cache
-            .lock()
-            .unwrap()
-            .get(&self.parent_hash)
-            .cloned();
-
-        if rewards_calculation.is_none() {
-            let calculation = self.calculate_rewards_for_partitioning(
-                prev_epoch,
-                reward_calc_tracer,
-                thread_pool,
-                metrics,
-            );
-            info!(
-                "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
-                self.epoch, self.parent_slot, self.parent_hash
-            );
-
-            let existing = self
-                .epoch_rewards_calculation_cache
-                .lock()
-                .unwrap()
-                .insert(self.parent_hash, calculation.clone());
-
-            assert!(
-                existing.is_none(),
-                "Rewards calculation already exists for epoch: {}, parent_slot: {}, parent_hash: {}",
-                self.epoch,
-                self.parent_slot,
-                self.parent_hash);
-
-            rewards_calculation = Some(calculation);
-        } else {
-            info!(
-                "rewards calculation already exists for epoch: {}, parent_slot: {}, parent_hash: {}",
-                self.epoch, self.parent_slot, self.parent_hash
-            );
-        }
+        let mut epoch_rewards_calculation_cache =
+            self.epoch_rewards_calculation_cache.lock().unwrap();
+        let rewards_calculation = epoch_rewards_calculation_cache
+            .entry(self.parent_hash)
+            .or_insert_with(|| {
+                let calculation = self.calculate_rewards_for_partitioning(
+                    prev_epoch,
+                    reward_calc_tracer,
+                    thread_pool,
+                    metrics,
+                );
+                info!(
+                    "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
+                    self.epoch, self.parent_slot, self.parent_hash
+                );
+                calculation
+            })
+            .clone();
+        drop(epoch_rewards_calculation_cache);
 
         let PartitionedRewardsCalculation {
             vote_account_rewards,
