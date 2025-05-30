@@ -693,7 +693,6 @@ mod tests {
                     curr_bank.get_balance(&solana_sysvar::epoch_rewards::id());
                 assert!(epoch_rewards_lamports > 0);
             }
-            // previous_bank = Arc::new(curr_bank);
             previous_bank = curr_bank;
         }
     }
