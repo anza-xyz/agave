@@ -374,7 +374,7 @@ mod tests {
                 .cloned()
         }
 
-        fn get_epoch_rewards_cache_size(&self) -> usize {
+        fn get_epoch_rewards_cache_len(&self) -> usize {
             self.epoch_rewards_calculation_cache.lock().unwrap().len()
         }
     }
@@ -656,7 +656,7 @@ mod tests {
                 // Make a root the bank, which is the first bank in the epoch.
                 // This will clear the cache.
                 let _ = bank_forks.write().unwrap().set_root(slot, None, None);
-                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 0);
+                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
             } else if slot == SLOTS_PER_EPOCH + 1 {
                 // 1. when curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
                 // epoch 1, reward distribution should happen in this block.
@@ -745,7 +745,7 @@ mod tests {
                 assert!(curr_bank
                     .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
                     .is_some());
-                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 1);
+                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
 
                 // cap should increase because of new epoch rewards
                 assert!(post_cap > pre_cap);
@@ -764,7 +764,7 @@ mod tests {
                 assert!(curr_bank
                     .get_epoch_rewards_from_cache(&starting_hash.unwrap())
                     .is_some());
-                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 1);
+                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
 
                 // 1st reward distribution block, state should be partitioned.
                 assert!(curr_bank.is_partitioned());
@@ -782,7 +782,7 @@ mod tests {
                 // Now make a root the  first bank in the epoch.
                 // This should clear the cache.
                 let _ = bank_forks.write().unwrap().set_root(slot - 1, None, None);
-                assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 0);
+                assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 0);
             } else if slot == SLOTS_PER_EPOCH + 2 {
                 // When curr_slot == SLOTS_PER_EPOCH + 2, the 3nd block of
                 // epoch 1, reward distribution should happen in this block.
