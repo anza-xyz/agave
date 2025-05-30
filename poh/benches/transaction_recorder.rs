@@ -1,6 +1,5 @@
 use {
     criterion::{criterion_group, criterion_main, Criterion},
-    solana_clock::UPDATED_HASHES_PER_TICK6,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -32,7 +31,7 @@ fn bench_record_transactions(c: &mut Criterion) {
     genesis_config_info.genesis_config.poh_config = PohConfig {
         target_tick_duration: Duration::from_millis(400),
         target_tick_count: None,
-        hashes_per_tick: Some(UPDATED_HASHES_PER_TICK6),
+        hashes_per_tick: Some(solana_clock::DEFAULT_HASHES_PER_TICK),
     };
     let exit = Arc::new(AtomicBool::new(false));
     let bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
