@@ -22,7 +22,12 @@ use {
 };
 
 fn bench_record_transactions(c: &mut Criterion) {
+    // Relatively small non-zero number of transactions to use for the benchmark.
+    // Ensures we spend some time doing the hash work for entry recording.
     const NUM_TRANSACTIONS: u64 = 16;
+    // Number of batches to process in each benchmark iteration.
+    // Each batch contains NUM_TRANSACTIONS transactions.
+    // This emulates a burst of work coming in from the scheduler.
     const NUM_BATCHES: u64 = 32;
 
     // Setup the PohService.
