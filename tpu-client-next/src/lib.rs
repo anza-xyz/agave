@@ -9,6 +9,7 @@ pub use crate::{
 pub(crate) mod quic_networking;
 pub(crate) use crate::quic_networking::QuicError;
 pub mod leader_updater;
+pub(crate) mod tpu_feedback;
 pub mod transaction_batch;
 
 #[cfg(feature = "metrics")]
