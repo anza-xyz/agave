@@ -192,7 +192,7 @@ impl Bank {
         self.epoch_reward_status =
             EpochRewardStatus::Active(EpochRewardPhase::Calculation(StartBlockHeightAndRewards {
                 distribution_starting_block_height,
-                all_stake_rewards: Arc::clone(&stake_rewards),
+                all_stake_rewards: stake_rewards,
             }));
     }
 
@@ -365,12 +365,12 @@ mod tests {
 
         fn get_epoch_rewards_from_cache(
             &self,
-            parent_hash: Hash,
+            parent_hash: &Hash,
         ) -> Option<PartitionedRewardsCalculation> {
             self.epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
-                .get(&parent_hash)
+                .get(parent_hash)
                 .cloned()
         }
 
@@ -624,12 +624,12 @@ mod tests {
         // simulate block progress
         for slot in starting_slot..=(2 * SLOTS_PER_EPOCH) + 2 {
             let pre_cap = previous_bank.capitalization();
-            bank_forks.write().unwrap().insert(Bank::new_from_parent(
-                previous_bank,
+            let curr_bank = new_bank_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                previous_bank.clone(),
                 &Pubkey::default(),
                 slot,
-            ));
-            let curr_bank = bank_forks.write().unwrap().get(slot).unwrap();
+            );
             let post_cap = curr_bank.capitalization();
 
             if slot % SLOTS_PER_EPOCH == 0 {
@@ -644,7 +644,7 @@ mod tests {
 
                 // after reward calculation, the cache should be filled.
                 assert!(curr_bank
-                    .get_epoch_rewards_from_cache(curr_bank.parent_hash)
+                    .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
                     .is_some());
 
                 if slot == SLOTS_PER_EPOCH {
@@ -722,13 +722,12 @@ mod tests {
             let pre_epoch_rewards: solana_sysvar::epoch_rewards::EpochRewards =
                 solana_account::from_account(&pre_sysvar_account).unwrap_or_default();
             let pre_distributed_rewards = pre_epoch_rewards.distributed_rewards;
-
-            bank_forks.write().unwrap().insert(Bank::new_from_parent(
-                previous_bank,
+            let curr_bank = new_bank_from_parent_with_bank_forks(
+                bank_forks.as_ref(),
+                previous_bank.clone(),
                 &Pubkey::default(),
                 slot,
-            ));
-            let curr_bank = bank_forks.write().unwrap().get(slot).unwrap();
+            );
             let post_cap = curr_bank.capitalization();
 
             if slot == SLOTS_PER_EPOCH {
@@ -744,7 +743,7 @@ mod tests {
 
                 // after reward calculation, the cache should be filled.
                 assert!(curr_bank
-                    .get_epoch_rewards_from_cache(curr_bank.parent_hash)
+                    .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
                     .is_some());
                 assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 1);
 
@@ -763,7 +762,7 @@ mod tests {
                 // The first block of the epoch has not rooted yet, so the cache
                 // should still have the results.
                 assert!(curr_bank
-                    .get_epoch_rewards_from_cache(starting_hash.unwrap())
+                    .get_epoch_rewards_from_cache(&starting_hash.unwrap())
                     .is_some());
                 assert_eq!(curr_bank.get_epoch_rewards_cache_size(), 1);
 
