@@ -3060,6 +3060,13 @@ mod tests {
         }
 
         let mut all_accounts = mock_bank.accounts_map.keys().copied().collect::<Vec<_>>();
+
+        // append some to-be-created accounts
+        // this is to test that their size is 0 rather than 64
+        for _ in 0..32 {
+            all_accounts.push(Pubkey::new_unique());
+        }
+
         let mut account_loader = (&mock_bank).into();
 
         // now generate arbitrary transactions using this accounts
@@ -3112,8 +3119,9 @@ mod tests {
                 .collect::<AHashSet<_>>();
 
             for pubkey in transaction.account_keys().iter() {
-                let account = mock_bank.accounts_map.get(pubkey).unwrap();
-                expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + account.data().len();
+                if let Some(account) = mock_bank.accounts_map.get(pubkey) {
+                    expected_size += TRANSACTION_ACCOUNT_BASE_SIZE + account.data().len();
+                };
 
                 if let Some((programdata_address, programdata_size)) =
                     programdata_tracker.get(pubkey)
