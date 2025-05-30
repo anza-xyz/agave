@@ -86,7 +86,6 @@ fn bench_record_transactions(c: &mut Criterion) {
     group.throughput(criterion::Throughput::Elements(
         NUM_TRANSACTIONS * NUM_BATCHES,
     ));
-    let mut index = 0;
     group.bench_function("record_transactions", |b| {
         b.iter_custom(|iters| {
             let mut total = Duration::ZERO;
@@ -97,7 +96,7 @@ fn bench_record_transactions(c: &mut Criterion) {
                 bank = Arc::new(Bank::new_from_parent(
                     bank.clone(),
                     &Pubkey::default(),
-                    bank.slot() + 1,
+                    bank.slot().wrapping_add(1),
                 ));
                 poh_recorder.write().unwrap().set_bank(
                     BankWithScheduler::new_without_scheduler(bank.clone()),
@@ -106,7 +105,6 @@ fn bench_record_transactions(c: &mut Criterion) {
 
                 let start = Instant::now();
                 for txs in tx_batches {
-                    index += 1;
                     let summary = transaction_recorder.record_transactions(bank.slot(), txs);
                     assert!(summary.result.is_ok());
                 }
