@@ -1,3 +1,8 @@
+//! The `TransactionStatusService` receives executed transactions and creates
+//! transaction metadata objects to persist into the Blockstore and optionally
+//! broadcast over geyser. The service also records block metadata for any
+//! frozen banks it receives.
+
 use {
     crate::transaction_notifier_interface::TransactionNotifierArc,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -6,9 +11,11 @@ use {
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
+    solana_runtime::bank::{Bank, KeyedRewardsAndNumPartitions},
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
-        extract_and_fmt_memos, map_inner_instructions, Reward, TransactionStatusMeta,
+        extract_and_fmt_memos, map_inner_instructions, Reward, RewardsAndNumPartitions,
+        TransactionStatusMeta,
     },
     std::{
         sync::{
@@ -33,6 +40,8 @@ pub struct TransactionStatusService {
 }
 
 impl TransactionStatusService {
+    const SERVICE_NAME: &str = "TransactionStatusService";
+
     pub fn new(
         write_transaction_status_receiver: Receiver<TransactionStatusMessage>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -48,7 +57,7 @@ impl TransactionStatusService {
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
-                info!("TransactionStatusService has started");
+                info!("{} has started", Self::SERVICE_NAME);
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
@@ -58,7 +67,8 @@ impl TransactionStatusService {
                         .recv_timeout(Duration::from_secs(1))
                     {
                         Ok(message) => message,
-                        Err(RecvTimeoutError::Disconnected) => {
+                        Err(err @ RecvTimeoutError::Disconnected) => {
+                            info!("{} is stopping because: {err}", Self::SERVICE_NAME);
                             break;
                         }
                         Err(RecvTimeoutError::Timeout) => {
@@ -76,13 +86,13 @@ impl TransactionStatusService {
                     ) {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("TransactionStatusService stopping due to error: {err}");
+                            error!("{} is stopping because: {err}", Self::SERVICE_NAME);
                             exit.store(true, Ordering::Relaxed);
                             break;
                         }
                     }
                 }
-                info!("TransactionStatusService has stopped");
+                info!("{} has stopped", Self::SERVICE_NAME);
             })
             .unwrap();
         Self {
@@ -230,10 +240,44 @@ impl TransactionStatusService {
                     blockstore.write_batch(status_and_memos_batch)?;
                 }
             }
-            TransactionStatusMessage::Freeze(slot) => {
-                max_complete_transaction_status_slot.fetch_max(slot, Ordering::SeqCst);
+            TransactionStatusMessage::Freeze(bank) => {
+                Self::write_block_meta(&bank, blockstore)?;
+                max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
         }
+        Ok(())
+    }
+
+    fn write_block_meta(bank: &Bank, blockstore: &Blockstore) -> Result<(), BlockstoreError> {
+        let slot = bank.slot();
+
+        blockstore.set_block_time(slot, bank.clock().unix_timestamp)?;
+        blockstore.set_block_height(slot, bank.block_height())?;
+
+        let rewards = bank.get_rewards_and_num_partitions();
+        if rewards.should_record() {
+            let KeyedRewardsAndNumPartitions {
+                keyed_rewards,
+                num_partitions,
+            } = rewards;
+            let rewards = keyed_rewards
+                .into_iter()
+                .map(|(pubkey, reward_info)| Reward {
+                    pubkey: pubkey.to_string(),
+                    lamports: reward_info.lamports,
+                    post_balance: reward_info.post_balance,
+                    reward_type: Some(reward_info.reward_type),
+                    commission: reward_info.commission,
+                })
+                .collect();
+            let blockstore_rewards = RewardsAndNumPartitions {
+                rewards,
+                num_partitions,
+            };
+
+            blockstore.write_rewards(slot, blockstore_rewards)?;
+        }
+
         Ok(())
     }
 
