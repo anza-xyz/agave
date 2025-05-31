@@ -1,0 +1,15 @@
+[package]
+name = "solana-shred"
+description = "Solana shred wire parser and serializer"
+documentation = "https://docs.rs/solana-shred"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+
+[lints]
+workspace = true
