@@ -82,7 +82,7 @@ def is_path_dev_dep(dependency):
     )
 
 def should_add(package, dependency, wrong_self_dev_dependencies):
-    related_to_solana = dependency['name'].startswith('solana')
+    related_to_solana = dependency['name'].startswith(('solana','agave'))
     self_dev_dep_with_dev_context_only_utils = is_self_dev_dep_with_dev_context_only_utils(
         package, dependency, wrong_self_dev_dependencies
     )
