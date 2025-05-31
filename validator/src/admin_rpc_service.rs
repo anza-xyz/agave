@@ -257,7 +257,7 @@ pub struct AdminRpcImpl;
 impl AdminRpc for AdminRpcImpl {
     type Metadata = AdminRpcRequestMetadata;
 
-     fn exit(&self, meta: Self::Metadata) -> Result<u32> {
+    fn exit(&self, meta: Self::Metadata) -> Result<u32> {
         debug!("exit admin rpc request received");
 
         thread::Builder::new()
