@@ -1,3 +1,8 @@
+//! The `TransactionStatusService` receives executed transactions and creates
+//! transaction metadata objects to persist into the Blockstore and optionally
+//! broadcast over geyser. The service also records block metadata for any
+//! frozen banks it receives.
+
 use {
     crate::transaction_notifier_interface::TransactionNotifierArc,
     crossbeam_channel::{Receiver, RecvTimeoutError},
@@ -35,6 +40,8 @@ pub struct TransactionStatusService {
 }
 
 impl TransactionStatusService {
+    const SERVICE_NAME: &str = "TransactionStatusService";
+
     pub fn new(
         write_transaction_status_receiver: Receiver<TransactionStatusMessage>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
@@ -50,7 +57,7 @@ impl TransactionStatusService {
         let thread_hdl = Builder::new()
             .name("solTxStatusWrtr".to_string())
             .spawn(move || {
-                info!("TransactionStatusService has started");
+                info!("{} has started", Self::SERVICE_NAME);
                 loop {
                     if exit.load(Ordering::Relaxed) {
                         break;
@@ -60,7 +67,8 @@ impl TransactionStatusService {
                         .recv_timeout(Duration::from_secs(1))
                     {
                         Ok(message) => message,
-                        Err(RecvTimeoutError::Disconnected) => {
+                        Err(err @ RecvTimeoutError::Disconnected) => {
+                            info!("{} is stopping because: {err}", Self::SERVICE_NAME);
                             break;
                         }
                         Err(RecvTimeoutError::Timeout) => {
@@ -78,13 +86,13 @@ impl TransactionStatusService {
                     ) {
                         Ok(_) => {}
                         Err(err) => {
-                            error!("TransactionStatusService stopping due to error: {err}");
+                            error!("{} is stopping because: {err}", Self::SERVICE_NAME);
                             exit.store(true, Ordering::Relaxed);
                             break;
                         }
                     }
                 }
-                info!("TransactionStatusService has stopped");
+                info!("{} has stopped", Self::SERVICE_NAME);
             })
             .unwrap();
         Self {
