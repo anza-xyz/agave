@@ -40,7 +40,7 @@ use {
         self,
         convert::TryFrom,
         fs::{remove_file, File, OpenOptions},
-        io::{Seek, SeekFrom, Write},
+        io::{copy, Read, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
@@ -441,6 +441,21 @@ impl AppendVec {
         }
 
         Ok((new, num_accounts))
+    }
+
+    /// Used to open append vec from a stream of bytes
+    pub fn new_from_reader<R: Read>(reader: &mut R, current_len: usize) -> Result<Self> {
+        let mut mmap = MmapMut::map_anon(current_len)?;
+        copy(&mut reader.take(current_len as u64), &mut mmap.as_mut())?;
+        Ok(AppendVec {
+            path: PathBuf::default(),
+            backing: AppendVecFileBacking::Mmap(mmap),
+            append_lock: Mutex::new(()),
+            current_len: AtomicUsize::new(current_len),
+            file_size: current_len as u64,
+            remove_file_on_drop: AtomicBool::new(false),
+            is_dirty: AtomicBool::new(false),
+        })
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
