@@ -332,24 +332,19 @@ fn clone_regions(regions: &[MemoryRegion]) -> Vec<MemoryRegion> {
         regions
             .iter()
             .map(|region| {
-                let mut new_region = if region.writable.get() {
+                let mut new_region = if region.writable {
                     MemoryRegion::new_writable(
-                        slice::from_raw_parts_mut(
-                            region.host_addr.get() as *mut _,
-                            region.len as usize,
-                        ),
+                        slice::from_raw_parts_mut(region.host_addr as *mut _, region.len as usize),
                         region.vm_addr,
                     )
                 } else {
                     MemoryRegion::new_readonly(
-                        slice::from_raw_parts(
-                            region.host_addr.get() as *const _,
-                            region.len as usize,
-                        ),
+                        slice::from_raw_parts(region.host_addr as *const _, region.len as usize),
                         region.vm_addr,
                     )
                 };
-                new_region.cow_callback_payload = region.cow_callback_payload;
+                new_region.access_violation_handler_payload =
+                    region.access_violation_handler_payload;
                 new_region
             })
             .collect()
