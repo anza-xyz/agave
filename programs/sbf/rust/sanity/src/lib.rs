@@ -3,10 +3,16 @@
 #![allow(unreachable_code)]
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate solana_program;
-use solana_program::{
-    account_info::AccountInfo, bpf_loader, entrypoint::ProgramResult, log::*, msg,
-    program::check_type_assumptions, pubkey::Pubkey,
+use {
+    solana_account_info::AccountInfo,
+    solana_msg::msg,
+    solana_program::{
+        log::{sol_log_compute_units, sol_log_params},
+        program::check_type_assumptions,
+    },
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader,
 };
 
 #[derive(Debug, PartialEq)]
@@ -36,7 +42,7 @@ fn return_sstruct() -> SStruct {
     SStruct { x: 1, y: 2, z: 3 }
 }
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],

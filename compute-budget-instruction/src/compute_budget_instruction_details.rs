@@ -516,7 +516,7 @@ mod test {
     fn test_builtin_program_migration() {
         let tx = build_sanitized_transaction(&[
             Instruction::new_with_bincode(Pubkey::new_unique(), &(), vec![]),
-            solana_program::stake::instruction::delegate_stake(
+            solana_stake_interface::instruction::delegate_stake(
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),
                 &Pubkey::new_unique(),

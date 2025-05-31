@@ -1,12 +1,12 @@
 //! Alt_bn128 compression Syscalls tests
 
-extern crate solana_program;
 use {
     solana_bn254::compression::prelude::{
         alt_bn128_g1_compress, alt_bn128_g1_decompress, alt_bn128_g2_compress,
         alt_bn128_g2_decompress,
     },
-    solana_program::{custom_heap_default, custom_panic_default, msg},
+    solana_msg::msg,
+    solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
 fn alt_bn128_compression_g1() {

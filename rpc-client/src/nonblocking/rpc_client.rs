@@ -56,12 +56,12 @@ use {
     },
     tokio::time::sleep,
 };
-// inlined to avoid a solana_program dep
+// inlined to avoid a solana_vote_interface dep
 const MAX_LOCKOUT_HISTORY: usize = 31;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MAX_LOCKOUT_HISTORY,
-    solana_program::vote::state::MAX_LOCKOUT_HISTORY
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY
 );
 
 /// A client of a remote Solana node.

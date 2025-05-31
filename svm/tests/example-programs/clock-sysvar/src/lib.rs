@@ -1,6 +1,7 @@
-use solana_program::{
-    account_info::AccountInfo, entrypoint, entrypoint::ProgramResult, pubkey::Pubkey,
-    sysvar::{clock::Clock, Sysvar}, program::set_return_data
+use {
+    solana_account_info::AccountInfo, solana_program_entrypoint::entrypoint,
+    solana_program_error::ProgramResult, solana_pubkey::Pubkey,
+    solana_sysvar::{clock::Clock, Sysvar}, solana_program::program::set_return_data
 };
 
 entrypoint!(process_instruction);

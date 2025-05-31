@@ -164,10 +164,10 @@ mod tests {
         solana_instruction::Instruction,
         solana_keypair::Keypair,
         solana_message::{Message, SimpleAddressLoader},
-        solana_program::vote::{self, state::Vote},
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{versioned::VersionedTransaction, Transaction},
+        solana_vote_interface::{self as vote, state::Vote},
     };
 
     fn vote_sanitized_versioned_transaction() -> SanitizedVersionedTransaction {

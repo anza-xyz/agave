@@ -10,7 +10,7 @@ edition = { workspace = true }
 
 [dependencies]
 byteorder = { workspace = true }
-solana-program = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

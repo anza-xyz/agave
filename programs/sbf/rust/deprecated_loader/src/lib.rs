@@ -3,20 +3,16 @@
 #![allow(unreachable_code)]
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate solana_program;
 use {
-    solana_program::{
-        account_info::AccountInfo,
-        bpf_loader,
-        entrypoint_deprecated::ProgramResult,
-        instruction::{AccountMeta, Instruction},
-        log::*,
-        msg,
-        program::invoke,
-        pubkey::Pubkey,
-    },
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_msg::msg,
+    solana_program::{log::sol_log_params, program::invoke},
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
     solana_sbf_rust_invoke_dep::*,
     solana_sbf_rust_realloc_dep::*,
+    solana_sdk_ids::bpf_loader,
 };
 
 #[derive(Debug, PartialEq)]
@@ -135,7 +131,7 @@ fn process_instruction(
             )
             .unwrap();
 
-            if !solana_program::bpf_loader_deprecated::check_id(realloc_program_owner) {
+            if !solana_sdk_ids::bpf_loader_deprecated::check_id(realloc_program_owner) {
                 assert_eq!(&*account.data.borrow(), &expected);
             }
         }
@@ -169,7 +165,7 @@ fn process_instruction(
 
             // deserialize_parameters_unaligned predates realloc support, and
             // hardcodes the account data length to the original length.
-            if !solana_program::bpf_loader_deprecated::check_id(realloc_program_owner) {
+            if !solana_sdk_ids::bpf_loader_deprecated::check_id(realloc_program_owner) {
                 assert_eq!(&*account.data.borrow(), &expected);
                 assert_eq!(
                     unsafe {

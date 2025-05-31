@@ -3222,6 +3222,7 @@ dependencies = [
  "libsecp256k1-gen-genmult 0.3.0",
  "rand 0.8.5",
  "serde",
+ "sha2 0.9.9",
 ]
 
 [[package]]
@@ -5494,10 +5495,15 @@ dependencies = [
  "futures 0.3.31",
  "solana-account",
  "solana-banks-interface",
+ "solana-clock",
  "solana-commitment-config",
+ "solana-hash",
  "solana-message",
- "solana-program",
+ "solana-program-pack",
+ "solana-pubkey",
+ "solana-rent",
  "solana-signature",
+ "solana-sysvar",
  "solana-transaction",
  "solana-transaction-context",
  "solana-transaction-error",
@@ -5791,11 +5797,11 @@ dependencies = [
  "solana-message",
  "solana-native-token",
  "solana-packet",
- "solana-program",
  "solana-pubkey",
  "solana-rpc-client-api",
  "solana-sdk-ids",
  "solana-signature",
+ "solana-stake-interface",
  "solana-system-interface",
  "solana-sysvar",
  "solana-transaction",
@@ -5926,8 +5932,10 @@ dependencies = [
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
+ "solana-stake-interface",
  "solana-svm-transaction",
  "solana-transaction-error",
+ "solana-vote-interface",
  "thiserror 2.0.12",
 ]
 
@@ -7314,7 +7322,6 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-compute-budget",
- "solana-cpi",
  "solana-epoch-rewards",
  "solana-epoch-schedule",
  "solana-fee-calculator",
@@ -7636,10 +7643,12 @@ dependencies = [
  "solana-pubkey",
  "solana-rpc-client-api",
  "solana-signature",
+ "solana-stake-interface",
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-version",
+ "solana-vote-interface",
  "tokio",
 ]
 
@@ -7788,7 +7797,6 @@ dependencies = [
  "solana-perf",
  "solana-poh-config",
  "solana-precompile-error",
- "solana-program",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rayon-threadlimit",
@@ -7855,6 +7863,7 @@ dependencies = [
  "solana-svm-transaction",
  "solana-transaction",
  "solana-transaction-error",
+ "solana-vote-interface",
  "thiserror 2.0.12",
 ]
 
@@ -7938,36 +7947,45 @@ dependencies = [
 name = "solana-sbf-rust-128bit"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-program-entrypoint",
  "solana-sbf-rust-128bit-dep",
 ]
 
 [[package]]
 name = "solana-sbf-rust-128bit-dep"
 version = "2.3.0"
-dependencies = [
- "solana-program",
-]
 
 [[package]]
 name = "solana-sbf-rust-account-mem"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-account-mem-deprecated"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-alloc"
 version = "2.3.0"
 dependencies = [
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-sysvar",
 ]
 
 [[package]]
@@ -7976,7 +7994,8 @@ version = "2.3.0"
 dependencies = [
  "array-bytes",
  "solana-bn254",
- "solana-program",
+ "solana-msg",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
@@ -7985,7 +8004,8 @@ version = "2.3.0"
 dependencies = [
  "array-bytes",
  "solana-bn254",
- "solana-program",
+ "solana-msg",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
@@ -7996,7 +8016,9 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "solana-program",
+ "solana-big-mod-exp",
+ "solana-msg",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
@@ -8004,21 +8026,34 @@ name = "solana-sbf-rust-call-args"
 version = "2.3.0"
 dependencies = [
  "borsh 1.5.7",
+ "solana-account-info",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-call-depth"
 version = "2.3.0"
 dependencies = [
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-caller-access"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8026,14 +8061,19 @@ name = "solana-sbf-rust-curve25519"
 version = "2.3.0"
 dependencies = [
  "solana-curve25519",
- "solana-program",
+ "solana-msg",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
 name = "solana-sbf-rust-custom-heap"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8041,30 +8081,46 @@ name = "solana-sbf-rust-dep-crate"
 version = "2.3.0"
 dependencies = [
  "byteorder 1.5.0",
- "solana-program",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
 name = "solana-sbf-rust-deprecated-loader"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-realloc-dep",
+ "solana-sdk-ids",
 ]
 
 [[package]]
 name = "solana-sbf-rust-divide-by-zero"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-dup-accounts"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8073,8 +8129,12 @@ version = "2.3.0"
 dependencies = [
  "num-derive",
  "num-traits",
+ "solana-account-info",
  "solana-decode-error",
- "solana-program",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
  "thiserror 1.0.69",
 ]
 
@@ -8082,59 +8142,104 @@ dependencies = [
 name = "solana-sbf-rust-external-spend"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-get-minimum-delegation"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-stake-interface",
 ]
 
 [[package]]
 name = "solana-sbf-rust-inner_instruction_alignment_check"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-instruction-introspection"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-instructions-sysvar",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-invoke"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
  "solana-sbf-rust-invoke-dep",
  "solana-sbf-rust-invoked-dep",
  "solana-sbf-rust-realloc-dep",
+ "solana-sdk-ids",
+ "solana-system-interface",
 ]
 
 [[package]]
 name = "solana-sbf-rust-invoke-and-error"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-invoke-and-ok"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-invoke-and-return"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8145,15 +8250,24 @@ version = "2.3.0"
 name = "solana-sbf-rust-invoked"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
  "solana-sbf-rust-invoked-dep",
+ "solana-sdk-ids",
+ "solana-system-interface",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-invoked-dep"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-instruction",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8161,50 +8275,63 @@ name = "solana-sbf-rust-iter"
 version = "2.3.0"
 dependencies = [
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-log-data"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-many-args"
 version = "2.3.0"
 dependencies = [
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
  "solana-sbf-rust-many-args-dep",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-many-args-dep"
 version = "2.3.0"
 dependencies = [
+ "solana-msg",
  "solana-program",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-mem"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-program-memory",
+ "solana-pubkey",
  "solana-sbf-rust-mem-dep",
 ]
 
 [[package]]
 name = "solana-sbf-rust-mem-dep"
 version = "2.3.0"
-dependencies = [
- "solana-program",
-]
 
 [[package]]
 name = "solana-sbf-rust-membuiltins"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-program-entrypoint",
  "solana-sbf-rust-mem-dep",
 ]
 
@@ -8212,14 +8339,21 @@ dependencies = [
 name = "solana-sbf-rust-noop"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-panic"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8227,23 +8361,23 @@ name = "solana-sbf-rust-param-passing"
 version = "2.3.0"
 dependencies = [
  "solana-program",
+ "solana-program-entrypoint",
  "solana-sbf-rust-param-passing-dep",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-param-passing-dep"
 version = "2.3.0"
-dependencies = [
- "solana-program",
-]
 
 [[package]]
 name = "solana-sbf-rust-poseidon"
 version = "2.3.0"
 dependencies = [
  "array-bytes",
+ "solana-msg",
  "solana-poseidon",
- "solana-program",
+ "solana-program-entrypoint",
 ]
 
 [[package]]
@@ -8252,31 +8386,49 @@ version = "2.3.0"
 dependencies = [
  "getrandom 0.2.10",
  "rand 0.8.5",
- "solana-program",
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-realloc"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
  "solana-sbf-rust-realloc-dep",
+ "solana-system-interface",
 ]
 
 [[package]]
 name = "solana-sbf-rust-realloc-dep"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-instruction",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-realloc-invoke"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
  "solana-sbf-rust-realloc-dep",
  "solana-sbf-rust-realloc-invoke-dep",
+ "solana-system-interface",
 ]
 
 [[package]]
@@ -8287,28 +8439,52 @@ version = "2.3.0"
 name = "solana-sbf-rust-remaining-compute-units"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-ro-account_modify"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-ro-modify"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-system-interface",
 ]
 
 [[package]]
 name = "solana-sbf-rust-sanity"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-sysvar",
 ]
 
 [[package]]
@@ -8316,7 +8492,9 @@ name = "solana-sbf-rust-secp256k1-recover"
 version = "2.3.0"
 dependencies = [
  "libsecp256k1 0.7.0",
- "solana-program",
+ "solana-keccak-hasher",
+ "solana-msg",
+ "solana-program-entrypoint",
  "solana-secp256k1-recover",
 ]
 
@@ -8325,42 +8503,74 @@ name = "solana-sbf-rust-sha"
 version = "2.3.0"
 dependencies = [
  "blake3",
- "solana-program",
+ "solana-blake3-hasher",
+ "solana-keccak-hasher",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-sha256-hasher",
 ]
 
 [[package]]
 name = "solana-sbf-rust-sibling-inner-instructions"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-sibling-instructions"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
 name = "solana-sbf-rust-simulation"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-clock",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-spoof1"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-instruction",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-system-interface",
 ]
 
 [[package]]
 name = "solana-sbf-rust-spoof1-system"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -8368,28 +8578,53 @@ name = "solana-sbf-rust-sysvar"
 version = "2.3.0"
 dependencies = [
  "bincode",
+ "solana-account-info",
+ "solana-define-syscall",
+ "solana-instruction",
+ "solana-instructions-sysvar",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sdk-ids",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-upgradeable"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-rust-upgraded"
 version = "2.3.0"
 dependencies = [
- "solana-program",
+ "solana-account-info",
+ "solana-msg",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
+ "solana-sysvar",
 ]
 
 [[package]]
 name = "solana-sbf-syscall-get-epoch-stake"
 version = "2.3.0"
 dependencies = [
+ "solana-account-info",
+ "solana-msg",
  "solana-program",
+ "solana-program-entrypoint",
+ "solana-program-error",
+ "solana-pubkey",
 ]
 
 [[package]]
@@ -9518,13 +9753,13 @@ dependencies = [
  "solana-gossip",
  "solana-hash",
  "solana-ledger",
- "solana-program",
  "solana-pubkey",
  "solana-runtime",
  "solana-shred-version",
  "solana-time-utils",
  "solana-timings",
  "solana-vote",
+ "solana-vote-interface",
  "solana-vote-program",
 ]
 

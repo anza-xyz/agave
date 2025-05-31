@@ -10,8 +10,9 @@ edition = { workspace = true }
 
 [dependencies]
 array-bytes = { workspace = true }
+solana-msg = { workspace = true }
 solana-poseidon = { workspace = true }
-solana-program = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

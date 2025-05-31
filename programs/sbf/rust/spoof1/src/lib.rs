@@ -1,15 +1,14 @@
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    msg,
-    program::invoke,
-    pubkey::Pubkey,
-    system_instruction::SystemInstruction,
-    system_program,
+use {
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_msg::msg,
+    solana_program::program::invoke,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
+    solana_system_interface::{instruction::SystemInstruction, program as system_program},
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],

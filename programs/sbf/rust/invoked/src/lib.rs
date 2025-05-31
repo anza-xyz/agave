@@ -3,21 +3,20 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE},
+    solana_msg::msg,
     solana_program::{
-        account_info::AccountInfo,
-        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
-        loader_v4,
         log::sol_log_64,
-        msg,
         program::{get_return_data, invoke, invoke_signed, set_return_data},
-        program_error::ProgramError,
-        pubkey::Pubkey,
-        system_instruction,
     },
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_pubkey::Pubkey,
     solana_sbf_rust_invoked_dep::*,
+    solana_sdk_ids::loader_v4,
+    solana_system_interface::instruction as system_instruction,
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 #[allow(clippy::cognitive_complexity)]
 fn process_instruction(
     program_id: &Pubkey,
@@ -254,7 +253,7 @@ fn process_instruction(
                 let from_lamports = accounts[FROM_INDEX].lamports();
                 let to_lamports = accounts[DERIVED_KEY2_INDEX].lamports();
                 assert_eq!(accounts[DERIVED_KEY2_INDEX].data_len(), 0);
-                assert!(solana_program::system_program::check_id(
+                assert!(solana_system_interface::program::check_id(
                     accounts[DERIVED_KEY2_INDEX].owner
                 ));
 

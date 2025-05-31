@@ -9,8 +9,11 @@ license = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
+solana-msg = { workspace = true }
 solana-program = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 solana-sbf-rust-many-args-dep = { workspace = true }
+solana-sysvar = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

@@ -11,9 +11,9 @@ use {
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup},
     solana_native_token::lamports_to_sol,
-    solana_program::stake,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
+    solana_stake_interface as stake,
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_error::TransactionError,
     solana_transaction_status::{

@@ -2,21 +2,18 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate solana_program;
 use {
-    solana_program::{
-        account_info::AccountInfo,
-        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
-        msg,
-        program::invoke,
-        pubkey::Pubkey,
-        system_instruction, system_program,
-    },
+    solana_account_info::{AccountInfo, MAX_PERMITTED_DATA_INCREASE},
+    solana_msg::msg,
+    solana_program::program::invoke,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
     solana_sbf_rust_realloc_dep::*,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
     std::{convert::TryInto, mem},
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
