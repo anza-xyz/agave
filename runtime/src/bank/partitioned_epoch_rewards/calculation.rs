@@ -28,7 +28,6 @@ use {
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
-    solana_reward_info::RewardInfo,
     solana_stake_interface::state::Delegation,
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
@@ -95,6 +94,26 @@ impl Bank {
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> CalculateRewardsAndDistributeVoteRewardsResult {
+        let mut epoch_rewards_calculation_cache =
+            self.epoch_rewards_calculation_cache.lock().unwrap();
+        let rewards_calculation = epoch_rewards_calculation_cache
+            .entry(self.parent_hash)
+            .or_insert_with(|| {
+                let calculation = self.calculate_rewards_for_partitioning(
+                    prev_epoch,
+                    reward_calc_tracer,
+                    thread_pool,
+                    metrics,
+                );
+                info!(
+                    "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
+                    self.epoch, self.parent_slot, self.parent_hash
+                );
+                calculation
+            })
+            .clone();
+        drop(epoch_rewards_calculation_cache);
+
         let PartitionedRewardsCalculation {
             vote_account_rewards,
             stake_rewards,
@@ -103,17 +122,13 @@ impl Bank {
             prev_epoch_duration_in_years,
             capitalization,
             point_value,
-        } = self.calculate_rewards_for_partitioning(
-            prev_epoch,
-            reward_calc_tracer,
-            thread_pool,
-            metrics,
-        );
+        } = rewards_calculation;
+
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
-        let vote_rewards = self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
+        self.store_vote_accounts_partitioned(&vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
-        self.update_reward_history(vec![], vote_rewards);
+        self.update_reward_history(vec![], &vote_account_rewards.rewards[..]);
 
         let StakeRewardCalculation {
             stake_rewards,
@@ -168,9 +183,9 @@ impl Bank {
 
     fn store_vote_accounts_partitioned(
         &self,
-        vote_account_rewards: VoteRewardsAccounts,
+        vote_account_rewards: &VoteRewardsAccounts,
         metrics: &RewardsMetrics,
-    ) -> Vec<(Pubkey, RewardInfo)> {
+    ) {
         let (_, measure_us) = measure_us!({
             self.store_accounts((self.slot(), &vote_account_rewards.accounts_to_store[..]));
         });
@@ -178,8 +193,6 @@ impl Bank {
         metrics
             .store_vote_accounts_us
             .fetch_add(measure_us, Relaxed);
-
-        vote_account_rewards.rewards
     }
 
     /// Calculate rewards from previous epoch to prepare for partitioned distribution.
@@ -213,7 +226,7 @@ impl Bank {
             .unwrap_or_default();
 
         PartitionedRewardsCalculation {
-            vote_account_rewards,
+            vote_account_rewards: Arc::new(vote_account_rewards),
             stake_rewards,
             validator_rate,
             foundation_rate,
@@ -398,7 +411,7 @@ impl Bank {
         (
             vote_rewards,
             StakeRewardCalculation {
-                stake_rewards,
+                stake_rewards: Arc::new(stake_rewards),
                 total_stake_rewards_lamports: total_stake_rewards.load(Relaxed),
             },
         )
@@ -467,7 +480,7 @@ impl Bank {
             );
             self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
-                Arc::new(stake_rewards),
+                stake_rewards,
                 partition_indices,
             );
         }
@@ -481,7 +494,7 @@ impl Bank {
         epoch_rewards_sysvar: &EpochRewards,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         thread_pool: &ThreadPool,
-    ) -> (Vec<PartitionedStakeReward>, Vec<Vec<usize>>) {
+    ) -> (Arc<Vec<PartitionedStakeReward>>, Vec<Vec<usize>>) {
         assert!(epoch_rewards_sysvar.active);
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.
@@ -535,7 +548,7 @@ mod tests {
                     StartBlockHeightAndPartitionedRewards,
                 },
                 tests::create_genesis_config,
-                VoteReward,
+                RewardInfo, VoteReward,
             },
             stake_account::StakeAccount,
             stakes::Stakes,
@@ -580,9 +593,11 @@ mod tests {
         let metrics = RewardsMetrics::default();
 
         let total_vote_rewards = vote_rewards_account.total_vote_rewards_lamports;
-        let stored_vote_accounts =
-            bank.store_vote_accounts_partitioned(vote_rewards_account, &metrics);
-        assert_eq!(expected_vote_rewards_num, stored_vote_accounts.len());
+        bank.store_vote_accounts_partitioned(&vote_rewards_account, &metrics);
+        assert_eq!(
+            expected_vote_rewards_num,
+            vote_rewards_account.accounts_to_store.len()
+        );
         assert_eq!(
             vote_rewards
                 .iter()
@@ -615,8 +630,8 @@ mod tests {
         let metrics = RewardsMetrics::default();
         let total_vote_rewards = vote_rewards.total_vote_rewards_lamports;
 
-        let stored_vote_accounts = bank.store_vote_accounts_partitioned(vote_rewards, &metrics);
-        assert_eq!(expected, stored_vote_accounts.len());
+        bank.store_vote_accounts_partitioned(&vote_rewards, &metrics);
+        assert_eq!(expected, vote_rewards.accounts_to_store.len());
         assert_eq!(0, total_vote_rewards);
     }
 
@@ -626,7 +641,9 @@ mod tests {
         solana_logger::setup();
 
         let expected_num_delegations = 100;
-        let bank = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).bank;
+        let bank = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH)
+            .0
+            .bank;
 
         // Calculate rewards
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
@@ -669,7 +686,7 @@ mod tests {
 
         let expected_num_delegations = 100;
         let RewardBank { bank, .. } =
-            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH);
+            create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let rewards_metrics = RewardsMetrics::default();
@@ -723,7 +740,7 @@ mod tests {
             bank,
             voters,
             stakers,
-        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH);
+        } = create_default_reward_bank(expected_num_delegations, SLOTS_PER_EPOCH).0;
 
         let vote_pubkey = voters.first().unwrap();
         let stake_pubkey = *stakers.first().unwrap();
@@ -816,7 +833,7 @@ mod tests {
         let expected_num_delegations = 4;
         let num_rewards_per_block = 2;
         // Distribute 4 rewards over 2 blocks
-        let RewardBank { bank, .. } = create_reward_bank(
+        let (RewardBank { bank, .. }, _) = create_reward_bank(
             expected_num_delegations,
             num_rewards_per_block,
             SLOTS_PER_EPOCH,
@@ -911,7 +928,7 @@ mod tests {
         let expected_num_delegations = 2;
         let num_rewards_per_block = 2;
         // Distribute 2 rewards over 1 block
-        let RewardBank { bank, .. } = create_reward_bank(
+        let (RewardBank { bank, .. }, _) = create_reward_bank(
             expected_num_delegations,
             num_rewards_per_block,
             SLOTS_PER_EPOCH,
@@ -970,7 +987,7 @@ mod tests {
         let mut stakes = vec![2_000_000_000; expected_num_delegations];
         // Add stake large enough to be affected by total-rewards discrepancy
         stakes.push(40_000_000_000);
-        let RewardBank { bank, .. } = create_reward_bank_with_specific_stakes(
+        let (RewardBank { bank, .. }, _) = create_reward_bank_with_specific_stakes(
             stakes,
             num_rewards_per_block,
             SLOTS_PER_EPOCH - 1,
