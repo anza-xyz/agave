@@ -1664,12 +1664,12 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
     )
     .arg(
-        Arg::with_name("use_tpu_client_next")
-            .long("use-tpu-client-next")
+        Arg::with_name("use_connection_cache")
+            .long("use-connection-cache")
             .takes_value(false)
             .help(
-                "Use tpu-client-next crate to send transactions over TPU ports. If not set,\
-                ConnectionCache is used instead.",
+                "Use connection-cache crate to send transactions over TPU ports. If not set,\
+                tpu-client-next is used by default.",
             ),
     )
 }

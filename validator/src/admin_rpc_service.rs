@@ -1449,6 +1449,7 @@ mod tests {
                     KeyUpdaterType::TpuForwards,
                     KeyUpdaterType::TpuVote,
                     KeyUpdaterType::Forward,
+                    KeyUpdaterType::RpcService
                 ])
             );
             let mut io = MetaIoHandler::default();
