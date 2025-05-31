@@ -11992,7 +11992,7 @@ fn test_accounts_data_size_from_genesis() {
             &solana_system_interface::program::id(),
         );
         bank.process_transaction(&transaction).unwrap();
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
 
         assert_eq!(
             bank.load_accounts_data_size() as usize,
@@ -12341,7 +12341,7 @@ fn test_bank_verify_accounts_hash_with_base() {
         bank.transfer(amount + fee, &key2, &key3.pubkey()).unwrap();
         assert_eq!(bank.get_balance(&key2.pubkey()), 0);
 
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
     };
 
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
@@ -12952,7 +12952,7 @@ fn test_rebuild_skipped_rewrites() {
     assert_eq!(calculated_skipped_rewrites, actual_skipped_rewrites);
 
     // required in order to snapshot the bank
-    bank.fill_bank_with_ticks_for_tests();
+    bank.fill_bank_with_ticks();
 
     // Now take a snapshot!
     let (_tmp_dir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();

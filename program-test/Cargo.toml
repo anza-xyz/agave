@@ -47,7 +47,7 @@ solana-program-error = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
-solana-runtime = { workspace = true }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sbpf = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }

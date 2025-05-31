@@ -221,7 +221,7 @@ fn run_bank_forks_snapshot_n<F>(
         // kick in
         if slot % set_root_interval == 0 || slot == last_slot {
             if !bank.is_complete() {
-                bank.fill_bank_with_ticks_for_tests();
+                bank.fill_bank_with_ticks();
             }
             bank_forks.read().unwrap().prune_program_cache(bank.slot());
             // set_root should send a snapshot request
@@ -496,7 +496,7 @@ fn test_bank_forks_incremental_snapshot(
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
 
             bank_scheduler
         };
@@ -781,7 +781,7 @@ fn test_snapshots_with_background_services(
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken

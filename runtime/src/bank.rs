@@ -6428,11 +6428,12 @@ impl Bank {
         self.feature_set = Arc::new(feature_set);
     }
 
-    pub fn fill_bank_with_ticks_for_tests(&self) {
-        self.do_fill_bank_with_ticks_for_tests(&BankWithScheduler::no_scheduler_available())
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn fill_bank_with_ticks(&self) {
+        self.do_fill_bank_with_ticks(&BankWithScheduler::no_scheduler_available())
     }
-
-    pub(crate) fn do_fill_bank_with_ticks_for_tests(&self, scheduler: &InstalledSchedulerRwLock) {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub(crate) fn do_fill_bank_with_ticks(&self, scheduler: &InstalledSchedulerRwLock) {
         if self.tick_height.load(Relaxed) < self.max_tick_height {
             let last_blockhash = self.last_blockhash();
             while self.last_blockhash() == last_blockhash {

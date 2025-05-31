@@ -7635,7 +7635,7 @@ pub(crate) mod tests {
             &Pubkey::default(),
             1,
         );
-        bank1.fill_bank_with_ticks_for_tests();
+        bank1.fill_bank_with_ticks();
         progress.insert(
             bank1.slot(),
             ForkProgress::new_from_bank(
@@ -7706,7 +7706,7 @@ pub(crate) mod tests {
             &Pubkey::default(),
             2,
         );
-        bank2.fill_bank_with_ticks_for_tests();
+        bank2.fill_bank_with_ticks();
         bank2.freeze();
         progress.insert(
             bank2.slot(),
@@ -7848,7 +7848,7 @@ pub(crate) mod tests {
                     &Pubkey::default(),
                     slot,
                 );
-                parent_bank.fill_bank_with_ticks_for_tests();
+                parent_bank.fill_bank_with_ticks();
                 parent_bank.freeze();
             }
             parent_bank
@@ -7952,7 +7952,7 @@ pub(crate) mod tests {
                 .collect_vec(),
             vec![0, 1]
         );
-        expired_bank_child.fill_bank_with_ticks_for_tests();
+        expired_bank_child.fill_bank_with_ticks();
         expired_bank_child.freeze();
 
         // Trying to refresh the vote on a sibling bank where:
@@ -7969,7 +7969,7 @@ pub(crate) mod tests {
                     &Pubkey::default(),
                     slot,
                 );
-                parent_bank.fill_bank_with_ticks_for_tests();
+                parent_bank.fill_bank_with_ticks();
                 parent_bank.freeze();
             }
             parent_bank
@@ -8078,7 +8078,7 @@ pub(crate) mod tests {
             &Pubkey::default(),
             my_slot,
         );
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
         if make_it_landing {
             bank.process_transaction(vote_tx).unwrap();
         }
@@ -8139,7 +8139,7 @@ pub(crate) mod tests {
             &Pubkey::default(),
             other_fork_slot,
         );
-        other_fork_bank.fill_bank_with_ticks_for_tests();
+        other_fork_bank.fill_bank_with_ticks();
         other_fork_bank.freeze();
         progress.entry(other_fork_slot).or_insert_with(|| {
             ForkProgress::new_from_bank(
@@ -8202,7 +8202,7 @@ pub(crate) mod tests {
                 &Pubkey::default(),
                 new_slot,
             );
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             bank.freeze();
             progress.entry(new_slot).or_insert_with(|| {
                 ForkProgress::new_from_bank(

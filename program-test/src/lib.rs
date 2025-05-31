@@ -901,7 +901,7 @@ impl ProgramTest {
         // Advance beyond slot 0 for a slightly more realistic test environment
         let bank = {
             let bank = Arc::new(bank);
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             let bank = Bank::new_from_parent(bank.clone(), bank.collector_id(), bank.slot() + 1);
             debug!("Bank slot: {}", bank.slot());
             bank
@@ -1145,7 +1145,7 @@ impl ProgramTestContext {
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
 
         // Ensure that we are actually progressing forward
         let working_slot = bank.slot();
@@ -1244,7 +1244,7 @@ impl ProgramTestContext {
 
         // Fill ticks until a new blockhash is recorded, otherwise retried transactions will have
         // the same signature
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
         let pre_warp_slot = bank.slot();
 
         bank_forks

@@ -2682,7 +2682,7 @@ mod tests {
 
         // This calls register_recent_blockhash() internally, which in turn calls
         // BankWithScheduler::wait_for_paused_scheduler().
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
         let (result, _timings) = bank.wait_for_completed_scheduler().unwrap();
         assert_matches!(result, Ok(()));
     }
@@ -3898,7 +3898,7 @@ mod tests {
             ));
         let mut bank = Bank::new_for_tests(&genesis_config);
         for _ in 0..MAX_PROCESSING_AGE {
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             bank.freeze();
             let slot = bank.slot();
             bank = Bank::new_from_parent(
@@ -3928,7 +3928,7 @@ mod tests {
         bank.schedule_transaction_executions([(very_old_valid_tx, 0)].into_iter())
             .unwrap();
         // this calls register_recent_blockhash internally
-        bank.fill_bank_with_ticks_for_tests();
+        bank.fill_bank_with_ticks();
 
         if TRIGGER_RACE_CONDITION {
             // very_old_valid_tx is wrongly handled as expired!

@@ -7625,6 +7625,7 @@ dependencies = [
  "solana-svm-rent-collector",
  "solana-svm-transaction",
  "solana-system-interface",
+ "solana-system-program",
  "solana-system-transaction",
  "solana-sysvar",
  "solana-sysvar-id",
@@ -8088,6 +8089,7 @@ dependencies = [
  "itertools 0.12.1",
  "log",
  "percentage",
+ "qualifier_attr",
  "serde",
  "serde_derive",
  "solana-account",
@@ -8740,8 +8742,10 @@ dependencies = [
 name = "solana-vote"
 version = "2.3.0"
 dependencies = [
+ "bincode",
  "itertools 0.12.1",
  "log",
+ "rand 0.8.5",
  "serde",
  "serde_derive",
  "solana-account",
