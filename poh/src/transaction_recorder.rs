@@ -70,7 +70,8 @@ impl TransactionRecorder {
             let (hash, hash_us) = measure_us!(hash_transactions(&transactions));
             record_transactions_timings.hash_us = Saturating(hash_us);
 
-            let (res, poh_record_us) = measure_us!(self.record(bank_slot, hash, transactions));
+            let (res, poh_record_us) =
+                measure_us!(self.record(bank_slot, vec![hash], vec![transactions]));
             record_transactions_timings.poh_record_us = Saturating(poh_record_us);
 
             match res {
@@ -106,14 +107,17 @@ impl TransactionRecorder {
     pub fn record(
         &self,
         bank_slot: Slot,
-        mixin: Hash,
-        transactions: Vec<VersionedTransaction>,
+        mixins: Vec<Hash>,
+        transaction_batches: Vec<Vec<VersionedTransaction>>,
     ) -> Result<Option<usize>> {
         // create a new channel so that there is only 1 sender and when it goes out of scope, the receiver fails
         let (result_sender, result_receiver) = bounded(1);
-        let res =
-            self.record_sender
-                .send(Record::new(mixin, transactions, bank_slot, result_sender));
+        let res = self.record_sender.send(Record::new(
+            mixins,
+            transaction_batches,
+            bank_slot,
+            result_sender,
+        ));
         if res.is_err() {
             // If the channel is dropped, then the validator is shutting down so return that we are hitting
             //  the max tick height to stop transaction processing and flush any transactions in the pipeline.
