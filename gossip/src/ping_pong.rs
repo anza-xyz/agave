@@ -12,7 +12,7 @@ use {
     std::{
         borrow::Cow,
         hash::{Hash as _, Hasher},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         time::{Duration, Instant},
     },
 };
@@ -60,6 +60,8 @@ pub struct PingCache<const N: usize> {
     pings: LruCache<(Pubkey, SocketAddr), Instant>,
     // Verified pong responses from remote nodes.
     pongs: LruCache<(Pubkey, SocketAddr), Instant>,
+    // Timestamp of last ping message sent to a remote IP.
+    ping_times: LruCache<IpAddr, Instant>,
 }
 
 impl<const N: usize> Ping<N> {
@@ -161,6 +163,7 @@ impl<const N: usize> PingCache<N> {
             key_refresh: now,
             pings: LruCache::new(cap),
             pongs: LruCache::new(cap),
+            ping_times: LruCache::new(cap),
         }
     }
 
@@ -177,6 +180,14 @@ impl<const N: usize> PingCache<N> {
             return false;
         };
         self.pongs.put(remote_node, now);
+        if let Some(sent_time) = self.ping_times.pop(&socket.ip()) {
+            let rtt = now.saturating_duration_since(sent_time);
+            datapoint_info!(
+                "ping_rtt",
+                ("peer_ip", socket.ip().to_string(), String),
+                ("rtt_us", rtt.as_micros() as i64, i64),
+            );
+        }
         true
     }
 
@@ -199,6 +210,7 @@ impl<const N: usize> PingCache<N> {
         self.pings.put(remote_node, now);
         self.maybe_refresh_key(rng, now);
         let token = make_ping_token::<N>(self.hashers[0], &remote_node);
+        self.ping_times.put(remote_node.1.ip(), Instant::now());
         Some(Ping::new(token, keypair))
     }
 
