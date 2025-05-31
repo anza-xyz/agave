@@ -4258,7 +4258,9 @@ impl ReplayStage {
                 .unwrap()
                 .notify_created_bank(slot, parent.slot());
         }
-        Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options)
+        let bank = Bank::new_from_parent_with_options(parent, leader, slot, new_bank_options);
+        blockstore_processor::set_alpenglow_ticks(&bank);
+        bank
     }
 
     fn log_heaviest_fork_failures(
