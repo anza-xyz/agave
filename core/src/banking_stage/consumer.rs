@@ -1214,7 +1214,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            transactions[0].signature() == transactions[1].signature(),
+            transactions[0].message_hash() == transactions[1].message_hash(),
             use_duplicate_transaction
         );
 
@@ -1252,7 +1252,7 @@ mod tests {
         let consumer = Consumer::new(committer, recorder, QosService::new(1), None);
 
         // with simd83 and no duplicate, we take a cross-batch lock on an account to create a conflict
-        // with a duplicate transaction and simd83 it comes from signature equality in the batch
+        // with a duplicate transaction and simd83 it comes from message hash equality in the batch
         // without simd83 the conflict comes from locks in batch
         if relax_intrabatch_account_locks && !use_duplicate_transaction {
             let conflicting_transaction =

@@ -3805,8 +3805,12 @@ pub mod tests {
             bank.get_balance(&keypair2.pubkey()),
         ];
 
-        assert!(result.is_err());
         assert_eq!(balances, [5, 5]);
+        if relax_intrabatch_account_locks {
+            assert_eq!(result, Err(TransactionError::AlreadyProcessed));
+        } else {
+            assert_eq!(result, Err(TransactionError::AccountInUse));
+        }
     }
 
     #[test]
