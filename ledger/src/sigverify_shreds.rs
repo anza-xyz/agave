@@ -846,7 +846,7 @@ mod tests {
                     rng.gen(),              // version
                 )
                 .unwrap()
-                .entries_to_shreds(
+                .entries_to_merkle_shreds_for_tests(
                     keypair,
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
@@ -854,7 +854,6 @@ mod tests {
                     chained.then(|| Hash::new_from_array(rng.gen())),
                     rng.gen_range(0..2671), // next_shred_index
                     rng.gen_range(0..2781), // next_code_index
-                    rng.gen(),              // merkle_variant,
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
