@@ -37,6 +37,7 @@ trait AppendVecScan: Send + Sync + Clone {
     fn scanning_complete(self) -> BinnedHashData;
     /// initialize accumulator
     fn init_accum(&mut self, count: usize);
+    fn max_slot(&self) -> Slot;
 }
 
 #[derive(Clone)]
@@ -56,6 +57,7 @@ struct ScanState<'a> {
     pubkey_to_bin_index: usize,
     is_ancient: bool,
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
+    max_slot: Slot,
 }
 
 impl AppendVecScan for ScanState<'_> {
@@ -71,6 +73,9 @@ impl AppendVecScan for ScanState<'_> {
         if self.accum.is_empty() {
             self.accum.append(&mut vec![Vec::new(); count]);
         }
+    }
+    fn max_slot(&self) -> Slot {
+        self.max_slot
     }
     fn found_account(&mut self, loaded_account: &LoadedAccount) {
         let pubkey = loaded_account.pubkey();
@@ -151,6 +156,7 @@ impl AccountsDb {
             stats_num_zero_lamport_accounts_ancient: Arc::clone(
                 &stats.num_zero_lamport_accounts_ancient,
             ),
+            max_slot: storages.max_slot_inclusive(),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -223,6 +229,12 @@ impl AccountsDb {
                     if is_first_scan_pass && slot < one_epoch_old {
                         self.update_old_slot_stats(stats, storage);
                     }
+
+                    if self.mark_obsolete_accounts {
+                        load_from_cache = false;
+                        break;
+                    }
+
                     if let Some(storage) = storage {
                         let ok = Self::hash_storage_info(&mut hasher, storage, slot);
                         if !ok {
@@ -349,9 +361,17 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts(|account| {
-            if scanner.filter(account.pubkey()) {
-                scanner.found_account(&LoadedAccount::Stored(account))
+        storage.accounts.scan_index(|index_info| {
+            if scanner.filter(&index_info.index_info.pubkey)
+                && !storage
+                    .is_account_obsolete(index_info.index_info.offset, Some(scanner.max_slot()))
+            {
+                storage.accounts.get_stored_account_callback(
+                    index_info.index_info.offset,
+                    |account| {
+                        scanner.found_account(&LoadedAccount::Stored(account));
+                    },
+                );
             }
         });
     }
@@ -422,6 +442,9 @@ mod tests {
         fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
             self.current_slot = slot;
         }
+        fn max_slot(&self) -> Slot {
+            self.current_slot
+        }
         fn init_accum(&mut self, _count: usize) {}
         fn found_account(&mut self, loaded_account: &LoadedAccount) {
             self.calls.fetch_add(1, Ordering::Relaxed);
@@ -454,6 +477,9 @@ mod tests {
         }
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {
             true
+        }
+        fn max_slot(&self) -> Slot {
+            self.current_slot
         }
         fn init_accum(&mut self, _count: usize) {}
         fn found_account(&mut self, loaded_account: &LoadedAccount) {
