@@ -102,7 +102,9 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     }
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+    let _validator_pid =
+        admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+
     println!("Exit request sent");
 
     if exit_args.monitor {
