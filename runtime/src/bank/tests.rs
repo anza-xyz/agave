@@ -3053,34 +3053,39 @@ fn test_debits_before_credits() {
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let keypair = Keypair::new();
     let tx0 = system_transaction::transfer(
-        &mint_keypair,
-        &keypair.pubkey(),
-        sol_to_lamports(2.),
-        genesis_config.hash(),
-    );
-    let tx1 = system_transaction::transfer(
         &keypair,
         &mint_keypair.pubkey(),
         sol_to_lamports(1.),
         genesis_config.hash(),
     );
+    let tx1 = system_transaction::transfer(
+        &mint_keypair,
+        &keypair.pubkey(),
+        sol_to_lamports(2.),
+        genesis_config.hash(),
+    );
     let txs = vec![tx0, tx1];
     let results = bank.process_transactions(txs.iter());
-    assert!(results[1].is_err());
+    assert!(results[0].is_err());
 
     // Assert bad transactions aren't counted.
     assert_eq!(bank.transaction_count(), 1);
     assert_eq!(bank.non_vote_transaction_count_since_restart(), 1);
 }
 
-#[test]
-fn test_readonly_accounts() {
+#[test_case(false; "old")]
+#[test_case(true; "simd83")]
+fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(500, &solana_pubkey::new_rand(), 0);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !relax_intrabatch_account_locks {
+        bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let vote_pubkey0 = solana_pubkey::new_rand();
     let vote_pubkey1 = solana_pubkey::new_rand();
@@ -3144,9 +3149,16 @@ fn test_readonly_accounts() {
     );
     let txs = vec![tx0, tx1];
     let results = bank.process_transactions(txs.iter());
-    // However, an account may not be locked as read-only and writable at the same time.
+    // Whether an account can be locked as read-only and writable at the same time depends on features.
     assert_eq!(results[0], Ok(()));
-    assert_eq!(results[1], Err(TransactionError::AccountInUse));
+    assert_eq!(
+        results[1],
+        if relax_intrabatch_account_locks {
+            Ok(())
+        } else {
+            Err(TransactionError::AccountInUse)
+        }
+    );
 }
 
 #[test]
@@ -9429,8 +9441,9 @@ fn test_vote_epoch_panic() {
     );
 }
 
-#[test]
-fn test_tx_log_order() {
+#[test_case(false; "old")]
+#[test_case(true; "simd83")]
+fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -9440,7 +9453,11 @@ fn test_tx_log_order() {
         &Pubkey::new_unique(),
         bootstrap_validator_stake_lamports(),
     );
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !relax_intrabatch_account_locks {
+        bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     *bank.transaction_log_collector_config.write().unwrap() = TransactionLogCollectorConfig {
         mentioned_addresses: HashSet::new(),
         filter: TransactionLogCollectorFilter::All,
@@ -9497,7 +9514,11 @@ fn test_tx_log_order() {
         .as_ref()
         .unwrap()[2]
         .contains(&"failed".to_string()));
-    assert!(commit_results[2].is_err());
+    if relax_intrabatch_account_locks {
+        assert!(commit_results[2].is_ok());
+    } else {
+        assert!(commit_results[2].is_err());
+    }
 
     let stored_logs = &bank.transaction_log_collector.read().unwrap().logs;
     let success_log_info = stored_logs

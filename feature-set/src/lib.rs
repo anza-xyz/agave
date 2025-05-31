@@ -1060,7 +1060,7 @@ pub mod drop_unchained_merkle_shreds {
 }
 
 pub mod relax_intrabatch_account_locks {
-    solana_pubkey::declare_id!("EbAhnReKK8Sf88CvAfAXbgKji8DV48rsp4q2sgHqgWef");
+    solana_pubkey::declare_id!("ENTRYnPAoT5Swwx73YDGzMp3XnNH1kxacyvLosRHza1i");
 }
 
 pub mod create_slashing_program {

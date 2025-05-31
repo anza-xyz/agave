@@ -85,6 +85,7 @@ crate-type = ["lib"]
 name = "solana_accounts_db"
 
 [dev-dependencies]
+agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 criterion = { workspace = true }
 libsecp256k1 = { workspace = true }
@@ -97,6 +98,7 @@ solana-compute-budget = { workspace = true }
 solana-instruction = { workspace = true }
 solana-logger = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-slot-history = { workspace = true }
 static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }

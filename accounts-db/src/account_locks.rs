@@ -5,13 +5,13 @@ use {
     solana_message::AccountKeys,
     solana_pubkey::Pubkey,
     solana_transaction::sanitized::MAX_TX_ACCOUNT_LOCKS,
-    solana_transaction_error::TransactionError,
+    solana_transaction_error::{TransactionError, TransactionResult},
     std::{cell::RefCell, collections::hash_map},
 };
 
 #[derive(Debug, Default)]
 pub struct AccountLocks {
-    write_locks: AHashSet<Pubkey>,
+    write_locks: AHashMap<Pubkey, u64>,
     readonly_locks: AHashMap<Pubkey, u64>,
 }
 
@@ -20,29 +20,40 @@ impl AccountLocks {
     /// The bool in the tuple indicates if the account is writable.
     /// Returns an error if any of the accounts are already locked in a way
     /// that conflicts with the requested lock.
+    /// NOTE this is the pre-SIMD83 logic and can be removed once SIMD83 is active.
     pub fn try_lock_accounts<'a>(
         &mut self,
         keys: impl Iterator<Item = (&'a Pubkey, bool)> + Clone,
-    ) -> Result<(), TransactionError> {
-        for (key, writable) in keys.clone() {
-            if writable {
-                if !self.can_write_lock(key) {
-                    return Err(TransactionError::AccountInUse);
-                }
-            } else if !self.can_read_lock(key) {
-                return Err(TransactionError::AccountInUse);
-            }
-        }
-
-        for (key, writable) in keys {
-            if writable {
-                self.lock_write(key);
-            } else {
-                self.lock_readonly(key);
-            }
-        }
+    ) -> TransactionResult<()> {
+        self.can_lock_accounts(keys.clone())?;
+        self.lock_accounts(keys);
 
         Ok(())
+    }
+
+    /// Lock accounts for all transactions in a batch which don't conflict
+    /// with existing locks. Returns a vector of `TransactionResult` indicating
+    /// success or failure for each transaction in the batch.
+    /// NOTE this is the SIMD83 logic; after the feature is active, it becomes
+    /// the only logic, and this note can be removed with the feature gate.
+    pub fn try_lock_transaction_batch<'a>(
+        &mut self,
+        mut validated_batch_keys: Vec<
+            TransactionResult<impl Iterator<Item = (&'a Pubkey, bool)> + Clone>,
+        >,
+    ) -> Vec<TransactionResult<()>> {
+        validated_batch_keys.iter_mut().for_each(|validated_keys| {
+            if let Ok(ref keys) = validated_keys {
+                if let Err(e) = self.can_lock_accounts(keys.clone()) {
+                    *validated_keys = Err(e);
+                }
+            }
+        });
+
+        validated_batch_keys
+            .into_iter()
+            .map(|available_keys| available_keys.map(|keys| self.lock_accounts(keys)))
+            .collect()
     }
 
     /// Unlock the account keys in `keys` after a transaction.
@@ -59,6 +70,33 @@ impl AccountLocks {
         }
     }
 
+    fn can_lock_accounts<'a>(
+        &self,
+        keys: impl Iterator<Item = (&'a Pubkey, bool)>,
+    ) -> TransactionResult<()> {
+        for (key, writable) in keys {
+            if writable {
+                if !self.can_write_lock(key) {
+                    return Err(TransactionError::AccountInUse);
+                }
+            } else if !self.can_read_lock(key) {
+                return Err(TransactionError::AccountInUse);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn lock_accounts<'a>(&mut self, keys: impl Iterator<Item = (&'a Pubkey, bool)>) {
+        for (key, writable) in keys {
+            if writable {
+                self.lock_write(key);
+            } else {
+                self.lock_readonly(key);
+            }
+        }
+    }
+
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn is_locked_readonly(&self, key: &Pubkey) -> bool {
         self.readonly_locks.get(key).is_some_and(|count| *count > 0)
@@ -66,7 +104,7 @@ impl AccountLocks {
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn is_locked_write(&self, key: &Pubkey) -> bool {
-        self.write_locks.contains(key)
+        self.write_locks.get(key).is_some_and(|count| *count > 0)
     }
 
     fn can_read_lock(&self, key: &Pubkey) -> bool {
@@ -84,7 +122,7 @@ impl AccountLocks {
     }
 
     fn lock_write(&mut self, key: &Pubkey) {
-        self.write_locks.insert(*key);
+        *self.write_locks.entry(*key).or_default() += 1;
     }
 
     fn unlock_readonly(&mut self, key: &Pubkey) {
@@ -103,11 +141,18 @@ impl AccountLocks {
     }
 
     fn unlock_write(&mut self, key: &Pubkey) {
-        let removed = self.write_locks.remove(key);
-        debug_assert!(
-            removed,
-            "Attempted to remove a write-lock for a key that wasn't write-locked"
-        );
+        if let hash_map::Entry::Occupied(mut occupied_entry) = self.write_locks.entry(*key) {
+            let count = occupied_entry.get_mut();
+            *count -= 1;
+            if *count == 0 {
+                occupied_entry.remove_entry();
+            }
+        } else {
+            debug_assert!(
+                false,
+                "Attempted to remove a write-lock for a key that wasn't write-locked"
+            );
+        }
     }
 }
 
@@ -115,7 +160,7 @@ impl AccountLocks {
 pub fn validate_account_locks(
     account_keys: AccountKeys,
     tx_account_lock_limit: usize,
-) -> Result<(), TransactionError> {
+) -> TransactionResult<()> {
     if account_keys.len() > tx_account_lock_limit {
         Err(TransactionError::TooManyAccountLocks)
     } else if has_duplicates(account_keys) {
