@@ -134,16 +134,14 @@ fn poll_until_pid_terminates(pid: u32) -> Result<()> {
             libc::kill(pid, /*sig:*/ 0)
         };
         if result >= 0 {
-            Err(Error::Dynamic(
-                "unexpected result for kill({pid}, 0)".into(),
-            ))?;
+            println!("Waiting for {pid} to terminate ...");
         } else {
             let errno = io::Error::last_os_error()
                 .raw_os_error()
                 .ok_or(Error::Dynamic("unable to read raw os error".into()))?;
             match errno {
                 libc::ESRCH => {
-                    // The process doesn't exist, we're done
+                    println!("Process {pid} has terminated");
                     break;
                 }
                 libc::EINVAL => {
