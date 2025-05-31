@@ -142,6 +142,7 @@ use {
         account_loader::{collect_rent_from_account, LoadedTransaction},
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
+        rollback_accounts::RollbackAccounts,
         transaction_balances::BalanceCollector,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -3844,21 +3845,47 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
+                            post_accounts_states: loaded_accounts,
                         })
                     }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                        status: Err(fees_only_tx.load_error),
-                        log_messages: None,
-                        inner_instructions: None,
-                        return_data: None,
-                        executed_units,
-                        rent_debits: RentDebits::default(),
-                        fee_details: fees_only_tx.fee_details,
-                        loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
-                            loaded_accounts_data_size,
-                        },
-                    }),
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                        let loaded_accounts_count = fees_only_tx.rollback_accounts.count();
+                        let post_accounts_states = {
+                            match fees_only_tx.rollback_accounts {
+                                RollbackAccounts::FeePayerOnly {
+                                    fee_payer_account,
+                                    fee_payer_address,
+                                } => {
+                                    vec![(fee_payer_address, fee_payer_account)]
+                                }
+                                RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+                                    vec![(nonce.address, nonce.account)]
+                                }
+                                RollbackAccounts::SeparateNonceAndFeePayer {
+                                    nonce,
+                                    fee_payer_account,
+                                    fee_payer_address,
+                                } => vec![
+                                    (fee_payer_address, fee_payer_account),
+                                    (nonce.address, nonce.account),
+                                ],
+                            }
+                        };
+                        Ok(CommittedTransaction {
+                            status: Err(fees_only_tx.load_error),
+                            log_messages: None,
+                            inner_instructions: None,
+                            return_data: None,
+                            executed_units,
+                            rent_debits: RentDebits::default(),
+                            fee_details: fees_only_tx.fee_details,
+                            loaded_account_stats: TransactionLoadedAccountsStats {
+                                loaded_accounts_count,
+                                loaded_accounts_data_size,
+                            },
+                            post_accounts_states,
+                        })
+                    }
                 }
             })
             .collect()
