@@ -401,6 +401,7 @@ pub struct RpcSimulateTransactionResult {
     pub logs: Option<Vec<String>>,
     pub accounts: Option<Vec<Option<UiAccount>>>,
     pub units_consumed: Option<u64>,
+    pub loaded_accounts_data_size: Option<u32>,
     pub return_data: Option<UiTransactionReturnData>,
     pub inner_instructions: Option<Vec<UiInnerInstructions>>,
     pub replacement_blockhash: Option<RpcBlockhash>,

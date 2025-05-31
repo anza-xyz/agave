@@ -3904,6 +3904,7 @@ pub mod rpc_full {
                     logs,
                     post_simulation_accounts: _,
                     units_consumed,
+                    loaded_accounts_data_size,
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
                 } = preflight_bank.simulate_transaction(&transaction, false)
@@ -3923,6 +3924,7 @@ pub mod rpc_full {
                             logs: Some(logs),
                             accounts: None,
                             units_consumed: Some(units_consumed),
+                            loaded_accounts_data_size: Some(loaded_accounts_data_size),
                             return_data: return_data.map(|return_data| return_data.into()),
                             inner_instructions: None,
                             replacement_blockhash: None,
@@ -4002,6 +4004,7 @@ pub mod rpc_full {
                 logs,
                 post_simulation_accounts,
                 units_consumed,
+                loaded_accounts_data_size,
                 return_data,
                 inner_instructions,
             } = bank.simulate_transaction(&transaction, enable_cpi_recording);
@@ -4068,6 +4071,7 @@ pub mod rpc_full {
                     logs: Some(logs),
                     accounts,
                     units_consumed: Some(units_consumed),
+                    loaded_accounts_data_size: Some(loaded_accounts_data_size),
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
                     replacement_blockhash: blockhash,
@@ -5978,6 +5982,12 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
+        let loaded_account_data_size = bank
+            .get_account(&system_program::id())
+            .unwrap()
+            .data()
+            .len() as u32;
+
         // Good signature with sigVerify=true
         let req = format!(
             r#"{{"jsonrpc":"2.0",
@@ -6017,6 +6027,7 @@ pub mod tests {
                     ],
                     "err":null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_account_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6103,6 +6114,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize": loaded_account_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6133,6 +6145,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize": loaded_account_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6187,6 +6200,7 @@ pub mod tests {
                     "err":"BlockhashNotFound",
                     "accounts":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize":0,
                     "logs":[],
                     "replacementBlockhash": null,
                     "returnData": null,
@@ -6220,6 +6234,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize": loaded_account_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6312,6 +6327,17 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
+        let loaded_accounts_data_size = bank
+            .get_account(&token_account_pubkey)
+            .unwrap()
+            .data()
+            .len() as u32
+            + bank
+                .get_account(&system_program::id())
+                .unwrap()
+                .data()
+                .len() as u32;
+
         let req = format!(
             r#"{{"jsonrpc":"2.0",
                  "id":1,
@@ -6368,6 +6394,7 @@ pub mod tests {
                     ],
                     "err": null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6424,6 +6451,17 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
+        let loaded_accounts_data_size = bank
+            .get_account(&TestBuiltinEntrypoint::PROGRAM_ID)
+            .unwrap()
+            .data()
+            .len() as u32
+            + bank
+                .get_account(&system_program::id())
+                .unwrap()
+                .data()
+                .len() as u32;
+
         // `innerInstructions` not provided, should not be in response
         let req = format!(
             r#"{{"jsonrpc":"2.0",
@@ -6445,6 +6483,7 @@ pub mod tests {
                     "accounts": null,
                     "err":null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6488,6 +6527,7 @@ pub mod tests {
                     "accounts": null,
                     "err":null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6552,6 +6592,7 @@ pub mod tests {
                         ]
                         }
                     ],
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6813,7 +6854,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"loadedAccountsDataSize":0,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
             )
         );
 

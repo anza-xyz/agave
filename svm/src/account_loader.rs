@@ -123,11 +123,7 @@ pub(crate) struct LoadedTransactionAccount {
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default))]
 #[cfg_attr(
     feature = "dev-context-only-utils",
-    field_qualifiers(
-        program_indices(pub),
-        loaded_accounts_data_size(pub),
-        compute_budget(pub)
-    )
+    field_qualifiers(program_indices(pub), compute_budget(pub))
 )]
 pub struct LoadedTransaction {
     pub accounts: Vec<TransactionAccount>,
@@ -137,7 +133,7 @@ pub struct LoadedTransaction {
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
     pub rent: TransactionRent,
     pub rent_debits: RentDebits,
-    pub(crate) loaded_accounts_data_size: u32,
+    pub loaded_accounts_data_size: u32,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
