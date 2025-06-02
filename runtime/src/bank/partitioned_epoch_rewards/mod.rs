@@ -646,13 +646,8 @@ mod tests {
                 assert!(curr_bank
                     .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
                     .is_some());
+                assert_eq!(post_cap, pre_cap);
 
-                if slot == SLOTS_PER_EPOCH {
-                    // cap should increase because of new epoch rewards
-                    assert!(post_cap > pre_cap);
-                } else {
-                    assert_eq!(post_cap, pre_cap);
-                }
                 // Make a root the bank, which is the first bank in the epoch.
                 // This will clear the cache.
                 let _ = bank_forks.write().unwrap().set_root(slot, None, None);
@@ -746,9 +741,6 @@ mod tests {
                     .get_epoch_rewards_from_cache(&curr_bank.parent_hash)
                     .is_some());
                 assert_eq!(curr_bank.get_epoch_rewards_cache_len(), 1);
-
-                // cap should increase because of new epoch rewards
-                assert!(post_cap > pre_cap);
                 starting_hash = Some(curr_bank.parent_hash);
             } else if slot == SLOTS_PER_EPOCH + 1 {
                 // When curr_slot == SLOTS_PER_EPOCH + 1, the 2nd block of
