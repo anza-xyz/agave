@@ -14,7 +14,7 @@ solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-epoch-schedule = { workspace = true }
-solana-fee-structure = "=2.2.1"
+solana-fee-structure = "=2.3.0"
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
