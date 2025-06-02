@@ -373,7 +373,7 @@ impl TestValidatorGenesis {
         )
     }
 
-    pub fn clone_alt_accounts<T>(
+    pub fn deep_clone_address_lookup_table_accounts<T>(
         &mut self,
         addresses: T,
         rpc_client: &RpcClient,
@@ -402,22 +402,13 @@ impl TestValidatorGenesis {
                             return Err(format!("Invalid alt account data length for {address}"));
                         }
 
-                        let num_addresses =
-                            raw_addresses_data.len() / std::mem::size_of::<Pubkey>();
-
-                        for i in 0..num_addresses {
-                            let start_index = i * std::mem::size_of::<Pubkey>();
-                            let end_index = start_index + std::mem::size_of::<Pubkey>();
-                            let address_slice = account
-                                .data()
-                                .get(start_index..end_index)
-                                .ok_or(format!("Failed to get address at index {i}"))?;
-                            let address = Pubkey::try_from(address_slice)
-                                .map_err(|_| format!("Failed to convert address at index {i}"))?;
-
+                        for address_slice in
+                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        {
+                            // safe because size was checked earlier
+                            let address = Pubkey::try_from(address_slice).unwrap();
                             alt_entries.push(address);
                         }
-
                         self.add_account(*address, AccountSharedData::from(account));
                     } else {
                         return Err(format!("Account {address} is not an address lookup table"));

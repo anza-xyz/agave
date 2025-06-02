@@ -494,7 +494,7 @@ fn main() {
     }
 
     if !alt_accounts_to_clone.is_empty() {
-        if let Err(e) = genesis.clone_alt_accounts(
+        if let Err(e) = genesis.deep_clone_address_lookup_table_accounts(
             alt_accounts_to_clone,
             cluster_rpc_client
                 .as_ref()
