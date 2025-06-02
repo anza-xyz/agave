@@ -439,7 +439,7 @@ solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "2.2.2"
 solana-fee-calculator = "2.2.1"
 solana-fee = { path = "fee", version = "=2.3.0" }
-solana-fee-structure = "2.2.1"
+solana-fee-structure = "2.3.0"
 solana-frozen-abi = "2.2.2"
 solana-frozen-abi-macro = "2.2.1"
 solana-tps-client = { path = "tps-client", version = "=2.3.0" }
