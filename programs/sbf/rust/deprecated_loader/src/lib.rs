@@ -57,7 +57,7 @@ fn process_instruction(
             let new_len = usize::from_le_bytes(bytes.try_into().unwrap());
             msg!("realloc to {}", new_len);
             let account = &accounts[0];
-            account.realloc(new_len, false)?;
+            account.realloc(new_len, true)?;
             assert_eq!(new_len, account.data_len());
         }
         Some(&REALLOC_EXTEND_FROM_SLICE) => {
@@ -65,7 +65,7 @@ fn process_instruction(
             let data = &instruction_data[1..];
             let account = &accounts[0];
             let prev_len = account.data_len();
-            account.realloc(prev_len + data.len(), false)?;
+            account.realloc(prev_len + data.len(), true)?;
             account.data.borrow_mut()[prev_len..].copy_from_slice(data);
         }
         Some(&TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS) => {
@@ -82,7 +82,7 @@ fn process_instruction(
                 // whatever comes after the data slice (owner, executable, rent
                 // epoch etc). When direct mapping is on, you get an
                 // InvalidRealloc error.
-                account.realloc(prev_len + data.len(), false)?;
+                account.realloc(prev_len + data.len(), true)?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
                 account.data.borrow().to_vec()
             };
@@ -193,7 +193,7 @@ fn process_instruction(
             let prev_data = {
                 let data = &instruction_data[9..];
                 let prev_len = account.data_len();
-                account.realloc(prev_len + data.len(), false)?;
+                account.realloc(prev_len + data.len(), true)?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
                 unsafe {
                     // write a sentinel value just outside the account data to
@@ -247,7 +247,7 @@ fn process_instruction(
             const ARGUMENT_INDEX: usize = 0;
             let account = &accounts[ARGUMENT_INDEX];
             let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            account.realloc(new_len, false).unwrap();
+            account.realloc(new_len, true).unwrap();
         }
         _ => {
             {
