@@ -265,13 +265,12 @@ mod tests {
             runtime_config::RuntimeConfig,
         },
         assert_matches::assert_matches,
-        solana_account::{state_traits::StateMut, Account, WritableAccount},
+        solana_account::{state_traits::StateMut, Account},
         solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
         solana_epoch_schedule::EpochSchedule,
         solana_keypair::Keypair,
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
-        solana_sdk_ids::sysvar::epoch_rewards,
         solana_signer::Signer,
         solana_stake_interface::{error::StakeError, state::StakeStateV2},
         solana_system_transaction as system_transaction,
@@ -406,11 +405,6 @@ mod tests {
             mut genesis_config, ..
         } = create_genesis_config_with_vote_accounts(1_000_000_000, &validator_keypairs, stakes);
         genesis_config.epoch_schedule = EpochSchedule::new(SLOTS_PER_EPOCH);
-        genesis_config
-            .accounts
-            .get_mut(&epoch_rewards::id())
-            .unwrap()
-            .set_lamports(1);
 
         let mut accounts_db_config: AccountsDbConfig = ACCOUNTS_DB_CONFIG_FOR_TESTING.clone();
         accounts_db_config.partitioned_epoch_rewards_config =
