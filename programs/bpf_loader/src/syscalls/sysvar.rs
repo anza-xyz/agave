@@ -196,11 +196,11 @@ declare_builtin_function!(
                 .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
         )?;
 
-        // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
-        let sysvar_id = translate_type::<Pubkey>(memory_mapping, sysvar_id_addr, check_aligned)?;
-
         // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
         let var = translate_slice_mut::<u8>(memory_mapping, var_addr, length, check_aligned)?;
+
+        // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
+        let sysvar_id = translate_type::<Pubkey>(memory_mapping, sysvar_id_addr, check_aligned)?;
 
         // Abort: "`offset + length` is not in `[0, 2^64)`."
         let offset_length = offset
