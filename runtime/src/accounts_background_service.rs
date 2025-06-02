@@ -647,6 +647,7 @@ impl AccountsBackgroundService {
                     // slots >= bank.slot()
                     bank.flush_accounts_cache_if_needed();
 
+<<<<<<< HEAD
                     if let Some(snapshot_handle_result) = snapshot_handle_result {
                         // Safe, see proof above
 
@@ -654,6 +655,34 @@ impl AccountsBackgroundService {
                             Ok(snapshot_block_height) => {
                                 assert!(last_cleaned_block_height <= snapshot_block_height);
                                 last_cleaned_block_height = snapshot_block_height;
+=======
+                            last_snapshot_end_time = Some(Instant::now());
+                            match snapshot_handle_result {
+                                Ok(snapshot_block_height) => {
+                                    assert!(
+                                        last_cleaned_block_height <= snapshot_block_height,
+                                        "last cleaned block height: {last_cleaned_block_height}, \
+                                         snapshot request block height: {snapshot_block_height}, \
+                                         is startup verification complete: {}, \
+                                         enqueued snapshot requests: {:?}",
+                                        bank.is_startup_verification_complete(),
+                                        request_handlers
+                                            .snapshot_request_handler
+                                            .snapshot_request_receiver
+                                            .try_iter()
+                                            .collect::<Vec<_>>(),
+                                    );
+                                    last_cleaned_block_height = snapshot_block_height;
+                                }
+                                Err(err) => {
+                                    error!(
+                                        "Stopping AccountsBackgroundService! \
+                                         Fatal error while handling snapshot requests: {err}",
+                                    );
+                                    exit.store(true, Ordering::Relaxed);
+                                    break;
+                                }
+>>>>>>> 1b4efc20e (Adds information to the last_cleaned_block_height assert message (#6381))
                             }
                             Err(err) => {
                                 error!("Stopping AccountsBackgroundService! Fatal error while handling snapshot requests: {err}");
