@@ -284,6 +284,10 @@ fn main() {
             .map(|v| v.into_iter().collect())
             .unwrap_or_default();
 
+    let alt_accounts_to_clone: HashSet<_> = pubkeys_of(&matches, "clone_alt")
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default();
+
     let clone_feature_set = matches.is_present("clone_feature_set");
 
     let warp_slot = if matches.is_present("warp_slot") {
@@ -485,6 +489,18 @@ fn main() {
             false,
         ) {
             println!("Error: clone_accounts failed: {e}");
+            exit(1);
+        }
+    }
+
+    if !alt_accounts_to_clone.is_empty() {
+        if let Err(e) = genesis.clone_alt_accounts(
+            alt_accounts_to_clone,
+            cluster_rpc_client
+                .as_ref()
+                .expect("--clone-alt requires --json-rpc-url argument"),
+        ) {
+            println!("Error: alt_accounts_to_clone failed: {e}");
             exit(1);
         }
     }

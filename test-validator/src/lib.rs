@@ -50,6 +50,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
     },
+    solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
@@ -370,6 +371,62 @@ impl TestValidatorGenesis {
                 Ok(account_shared_data)
             },
         )
+    }
+
+    pub fn clone_alt_accounts<T>(
+        &mut self,
+        addresses: T,
+        rpc_client: &RpcClient,
+    ) -> Result<&mut Self, String>
+    where
+        T: IntoIterator<Item = Pubkey>,
+    {
+        const LOOKUP_TABLE_META_SIZE: usize = 56;
+        let addresses: Vec<Pubkey> = addresses.into_iter().collect();
+        let mut alt_entries: Vec<Pubkey> = Vec::new();
+
+        for chunk in addresses.chunks(MAX_MULTIPLE_ACCOUNTS) {
+            info!("Fetching {:?} over RPC...", chunk);
+            let responses = rpc_client
+                .get_multiple_accounts(chunk)
+                .map_err(|err| format!("Failed to fetch: {err}"))?;
+            for (address, res) in chunk.iter().zip(responses) {
+                if let Some(account) = res {
+                    if address_lookup_table::check_id(account.owner()) {
+                        let raw_addresses_data = account
+                            .data()
+                            .get(LOOKUP_TABLE_META_SIZE..)
+                            .ok_or(format!("Failed to get addresses data from {address}"))?;
+
+                        if raw_addresses_data.len() % std::mem::size_of::<Pubkey>() != 0 {
+                            return Err(format!("Invalid alt account data length for {address}"));
+                        }
+
+                        let num_addresses =
+                            raw_addresses_data.len() / std::mem::size_of::<Pubkey>();
+
+                        for i in 0..num_addresses {
+                            let start_index = i * std::mem::size_of::<Pubkey>();
+                            let end_index = start_index + std::mem::size_of::<Pubkey>();
+                            let address_slice = account
+                                .data()
+                                .get(start_index..end_index)
+                                .ok_or(format!("Failed to get address at index {i}"))?;
+                            let address = Pubkey::try_from(address_slice)
+                                .map_err(|_| format!("Failed to convert address at index {i}"))?;
+
+                            alt_entries.push(address);
+                        }
+                    } else {
+                        return Err(format!("Account {address} is not an address lookup table"));
+                    }
+                } else {
+                    return Err(format!("Failed to fetch {address}"));
+                }
+            }
+        }
+
+        self.clone_accounts(alt_entries, rpc_client, false)
     }
 
     pub fn clone_programdata_accounts<T>(
