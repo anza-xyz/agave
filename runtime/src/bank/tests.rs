@@ -8400,13 +8400,16 @@ fn test_program_is_native_loader(formalize_loaded_transaction_data_size: bool) {
         &[&mint_keypair],
         bank.last_blockhash(),
     );
-    assert_eq!(
-        bank.process_transaction(&tx),
-        Err(TransactionError::InstructionError(
-            0,
-            InstructionError::UnsupportedProgramId
-        ))
-    );
+
+    let err = bank.process_transaction(&tx).unwrap_err();
+    if formalize_loaded_transaction_data_size {
+        assert_eq!(err, TransactionError::InvalidProgramForExecution,);
+    } else {
+        assert_eq!(
+            err,
+            TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
+        );
+    }
 }
 
 #[test_case(false; "informal_loaded_size")]
@@ -10577,8 +10580,9 @@ fn test_calculate_fee_secp256k1() {
     assert_eq!(calculate_test_fee(&message, 1, &fee_structure,), 11);
 }
 
-#[test]
-fn test_an_empty_instruction_without_program() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_an_empty_instruction_without_program(formalize_loaded_transaction_data_size: bool) {
     let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(1);
     let destination = solana_pubkey::new_rand();
     let mut ix = system_instruction::transfer(&mint_keypair.pubkey(), &destination, 0);
@@ -10586,11 +10590,21 @@ fn test_an_empty_instruction_without_program() {
     let message = Message::new(&[ix], Some(&mint_keypair.pubkey()));
     let tx = Transaction::new(&[&mint_keypair], message, genesis_config.hash());
 
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    assert_eq!(
-        bank.process_transaction(&tx).unwrap_err(),
-        TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId),
-    );
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !formalize_loaded_transaction_data_size {
+        bank.deactivate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+
+    let err = bank.process_transaction(&tx).unwrap_err();
+    if formalize_loaded_transaction_data_size {
+        assert_eq!(err, TransactionError::InvalidProgramForExecution,);
+    } else {
+        assert_eq!(
+            err,
+            TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId)
+        );
+    }
 }
 
 #[test]

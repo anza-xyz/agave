@@ -664,8 +664,8 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
 
     for (program_id, instruction) in message.program_instructions_iter() {
         if native_loader::check_id(program_id) {
-            loaded_transaction_accounts.program_indices.push(vec![]);
-            continue;
+            error_metrics.invalid_program_for_execution += 1;
+            return Err(TransactionError::InvalidProgramForExecution);
         }
 
         let Some(program_account) = account_loader.load_account(program_id) else {
@@ -1144,14 +1144,25 @@ mod tests {
 
         assert_eq!(error_metrics.account_not_found.0, 0);
         match &loaded_accounts {
-            TransactionLoadResult::Loaded(loaded_transaction) => {
+            TransactionLoadResult::Loaded(loaded_transaction)
+                if !formalize_loaded_transaction_data_size =>
+            {
+                assert_eq!(error_metrics.invalid_program_for_execution.0, 0);
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 1);
                 assert_eq!(loaded_transaction.program_indices[0].len(), 0);
             }
-            TransactionLoadResult::FeesOnly(fees_only_tx) => panic!("{}", fees_only_tx.load_error),
-            TransactionLoadResult::NotLoaded(e) => panic!("{e}"),
+            TransactionLoadResult::FeesOnly(fees_only_tx)
+                if formalize_loaded_transaction_data_size =>
+            {
+                assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
+                assert_eq!(
+                    fees_only_tx.load_error,
+                    TransactionError::InvalidProgramForExecution
+                );
+            }
+            result => panic!("unexpected result: {:?}", result),
         }
     }
 
@@ -1391,17 +1402,28 @@ mod tests {
         let keypair = Keypair::new();
         let account = AccountSharedData::new(1_000_000, 0, &Pubkey::default());
 
+        let mut program_account = AccountSharedData::default();
+        program_account.set_lamports(1);
+        program_account.set_executable(true);
+        program_account.set_owner(native_loader::id());
+
         let instructions = vec![CompiledInstruction::new(2, &(), vec![0])];
         let tx = Transaction::new_with_compiled_instructions(
             &[&keypair],
             &[slot_history_id],
             Hash::default(),
-            vec![native_loader::id()],
+            vec![bpf_loader::id()],
             instructions,
         );
 
-        let loaded_accounts =
-            load_accounts_no_store(&[(keypair.pubkey(), account)], tx, Some(&account_overrides));
+        let loaded_accounts = load_accounts_no_store(
+            &[
+                (keypair.pubkey(), account),
+                (bpf_loader::id(), program_account),
+            ],
+            tx,
+            Some(&account_overrides),
+        );
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction) => {
                 assert_eq!(loaded_transaction.accounts[0].0, keypair.pubkey());
@@ -1718,24 +1740,30 @@ mod tests {
             &RentCollector::default(),
         );
 
-        let loaded_accounts_data_size = base_account_size as u32 * 2;
-
-        assert_eq!(
-            result.unwrap(),
-            LoadedTransactionAccounts {
-                accounts: vec![
-                    (key1.pubkey(), fee_payer_account),
-                    (
-                        native_loader::id(),
-                        mock_bank.accounts_map[&native_loader::id()].clone()
-                    )
-                ],
-                program_indices: vec![vec![]],
-                rent: 0,
-                rent_debits: RentDebits::default(),
-                loaded_accounts_data_size,
-            }
-        );
+        if formalize_loaded_transaction_data_size {
+            assert_eq!(
+                result.unwrap_err(),
+                TransactionError::InvalidProgramForExecution
+            );
+        } else {
+            let loaded_accounts_data_size = base_account_size as u32 * 2;
+            assert_eq!(
+                result.unwrap(),
+                LoadedTransactionAccounts {
+                    accounts: vec![
+                        (key1.pubkey(), fee_payer_account),
+                        (
+                            native_loader::id(),
+                            mock_bank.accounts_map[&native_loader::id()].clone()
+                        )
+                    ],
+                    program_indices: vec![vec![]],
+                    rent: 0,
+                    rent_debits: RentDebits::default(),
+                    loaded_accounts_data_size,
+                }
+            );
+        }
     }
 
     #[test]
