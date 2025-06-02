@@ -628,22 +628,6 @@ macro_rules! translate_slice_inner {
         Ok(unsafe { from_raw_parts_mut(host_addr as *mut $T, $len as usize) })
     }};
 }
-macro_rules! translate_slice_of_slices_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
-        if $len == 0 {
-            return Ok(&mut []);
-        }
-        let total_size = $len.saturating_mul(size_of::<VmSlice<$T>>() as u64);
-        if isize::try_from(total_size).is_err() {
-            return Err(SyscallError::InvalidLength.into());
-        }
-        let host_addr = translate_inner!($memory_mapping, $access_type, $vm_addr, total_size)?;
-        if $check_aligned && !address_is_aligned::<VmSlice<$T>>(host_addr) {
-            return Err(SyscallError::UnalignedPointer.into());
-        }
-        Ok(unsafe { from_raw_parts_mut(host_addr as *mut VmSlice<$T>, $len as usize) })
-    }};
-}
 
 fn translate_type_mut<'a, T>(
     memory_mapping: &MemoryMapping,
@@ -683,40 +667,6 @@ fn translate_slice<'a, T>(
     check_aligned: bool,
 ) -> Result<&'a [T], Error> {
     translate_slice_inner!(
-        memory_mapping,
-        AccessType::Load,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
-    .map(|value| &*value)
-}
-
-#[allow(dead_code)]
-fn translate_slice_of_slices_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [VmSlice<T>], Error> {
-    translate_slice_of_slices_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
-}
-
-fn translate_slice_of_slices<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a [VmSlice<T>], Error> {
-    translate_slice_of_slices_inner!(
         memory_mapping,
         AccessType::Load,
         vm_addr,
@@ -833,7 +783,7 @@ fn translate_and_check_program_address_inputs<'a>(
     check_aligned: bool,
 ) -> Result<(Vec<&'a [u8]>, &'a Pubkey), Error> {
     let untranslated_seeds =
-        translate_slice_of_slices::<u8>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
+        translate_slice::<VmSlice<u8>>(memory_mapping, seeds_addr, seeds_len, check_aligned)?;
     if untranslated_seeds.len() > MAX_SEEDS {
         return Err(SyscallError::BadSeeds(PubkeyError::MaxSeedLengthExceeded).into());
     }
@@ -1893,7 +1843,7 @@ declare_builtin_function!(
             poseidon::HASH_BYTES as u64,
             invoke_context.get_check_aligned(),
         )?;
-        let inputs = translate_slice_of_slices::<u8>(
+        let inputs = translate_slice::<VmSlice<u8>>(
             memory_mapping,
             vals_addr,
             vals_len,
@@ -2103,7 +2053,7 @@ declare_builtin_function!(
         )?;
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
-            let vals = translate_slice_of_slices::<u8>(
+            let vals = translate_slice::<VmSlice<u8>>(
                 memory_mapping,
                 vals_addr,
                 vals_len,
