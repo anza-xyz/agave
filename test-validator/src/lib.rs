@@ -428,7 +428,7 @@ impl TestValidatorGenesis {
             }
         }
 
-        self.clone_accounts(alt_entries, rpc_client, false)
+        self.clone_accounts(alt_entries, rpc_client, true)
     }
 
     pub fn clone_programdata_accounts<T>(
