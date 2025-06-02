@@ -94,6 +94,24 @@ impl Bank {
         thread_pool: &ThreadPool,
         metrics: &mut RewardsMetrics,
     ) -> CalculateRewardsAndDistributeVoteRewardsResult {
+        // We hold the lock here for the epoch rewards calculation cache to prevent
+        // rewards computation across multiple forks simultaneously. This aligns with
+        // how bank replay currently operates—all banks are replayed sequentially.
+        // As such, this lock does not actually block fork replays under the current model.
+        //
+        // However, if we plan to support parallel bank replays in the future, this logic
+        // would need to change to allow rewards computation on multiple forks concurrently.
+        // That said, there's still a compelling reason to keep this lock even in a parallel
+        // replay model: we want to avoid calculating rewards multiple times for the same
+        // parent bank hash. This lock ensures that.
+        //
+        // Processing forks in parallel would also introduce contention for compute resources,
+        // potentially slowing down the performance of both forks. This, in turn, could delay
+        // vote propagation and consensus for the leading fork—the one most likely to become rooted.
+        //
+        // Therefore, it seems beneficial to continue processing forks sequentially at epoch
+        // boundaries: acquire the lock for the first fork, compute rewards, and let other forks
+        // wait until the computation is complete.
         let mut epoch_rewards_calculation_cache =
             self.epoch_rewards_calculation_cache.lock().unwrap();
         let rewards_calculation = epoch_rewards_calculation_cache
