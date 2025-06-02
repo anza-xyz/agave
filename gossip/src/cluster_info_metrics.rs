@@ -4,6 +4,7 @@ use {
     solana_clock::Slot,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
+    solana_signature::Signature,
     std::{
         cmp::Reverse,
         collections::HashMap,
@@ -703,4 +704,13 @@ where
     for (slot, num_votes) in votes.into_iter().take(NUM_SLOTS) {
         datapoint_trace!(name, ("slot", slot, i64), ("num_votes", num_votes, i64));
     }
+}
+
+/// check if first leading_zeros bits of signature are 0
+#[inline]
+pub(crate) fn should_report_message_signature(signature: &Signature, leading_zeros: u32) -> bool {
+    let Some(Ok(bytes)) = signature.as_ref().get(..8).map(<[u8; 8]>::try_from) else {
+        return false;
+    };
+    u64::from_le_bytes(bytes).trailing_zeros() >= leading_zeros
 }
