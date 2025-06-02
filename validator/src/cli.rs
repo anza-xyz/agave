@@ -882,7 +882,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
-            Arg::with_name("clone_address_lookup_table")
+            Arg::with_name("clone_alt")
                 .long("clone-alt")
                 .takes_value(true)
                 .validator(is_pubkey_or_keypair)
