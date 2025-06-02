@@ -11,9 +11,9 @@ frozen-abi = []
 [dependencies]
 borsh = "0.9"
 solana-account-info = "2.2.1"
-solana-program-entrypoint = "=2.2.1"
+solana-program-entrypoint = "2.2.1"
 solana-msg = "2.2.1"
-solana-pubkey = "=2.2.1"
+solana-pubkey = "2.3.0"
 
 [lib]
 name = "program"
