@@ -54,7 +54,6 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        num::Saturating,
         ops::DerefMut,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
@@ -1849,13 +1848,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     loop {
                         if discard_on_reset {
                             discard_on_reset = false;
-                            let mut count = Saturating(0);
-                            while let Some(task) = state_machine.schedule_next_unblocked_task() {
-                                state_machine.deschedule_task(&task);
-                                count += 1;
-                            }
-                            state_machine.reinitialize();
-                            sleepless_testing::at(CheckPoint::Discarded(count.0));
+                            // Gracefully clear all buffered tasks to discard all outstanding stale
+                            // tasks; we're not aborting scheduler here. So, `state_machine` needs
+                            // to be reusable after this.
+                            //
+                            // As for panic safety of .clear_and_reinitialize(), it's safe because
+                            // there should be _no scheduled tasks (i.e. owned by us, not by
+                            // state_machine) on the call stack by now.
+                            let count = state_machine.clear_and_reinitialize();
+                            sleepless_testing::at(CheckPoint::Discarded(count));
                         }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
