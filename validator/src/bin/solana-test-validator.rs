@@ -498,7 +498,7 @@ fn main() {
             alt_accounts_to_clone,
             cluster_rpc_client
                 .as_ref()
-                .expect("--clone-alt requires --json-rpc-url argument"),
+                .expect("--deep-clone-address-lookup-table requires --json-rpc-url argument"),
         ) {
             println!("Error: alt_accounts_to_clone failed: {e}");
             exit(1);
