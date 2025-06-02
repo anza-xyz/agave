@@ -284,7 +284,7 @@ fn main() {
             .map(|v| v.into_iter().collect())
             .unwrap_or_default();
 
-    let alt_accounts_to_clone: HashSet<_> = pubkeys_of(&matches, "clone_alt")
+    let alt_accounts_to_clone: HashSet<_> = pubkeys_of(&matches, "deep_clone_address_lookup_table")
         .map(|v| v.into_iter().collect())
         .unwrap_or_default();
 
