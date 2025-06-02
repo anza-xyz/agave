@@ -417,6 +417,8 @@ impl TestValidatorGenesis {
 
                             alt_entries.push(address);
                         }
+
+                        self.add_account(*address, AccountSharedData::from(account));
                     } else {
                         return Err(format!("Account {address} is not an address lookup table"));
                     }
