@@ -35,6 +35,12 @@ pub struct RuntimeTransaction<T> {
     meta: TransactionMeta,
 }
 
+impl<T> RuntimeTransaction<T> {
+    pub fn into_inner_transaction(self) -> T {
+        self.transaction
+    }
+}
+
 impl<T> StaticMeta for RuntimeTransaction<T> {
     fn message_hash(&self) -> &Hash {
         &self.meta.message_hash
