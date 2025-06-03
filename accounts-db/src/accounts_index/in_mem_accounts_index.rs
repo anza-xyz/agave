@@ -536,6 +536,27 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         })
     }
 
+    /// call `user_fn` with a write lock of the slot list.
+    /// Note that whether `user_fn` modifies the slot list or not, the entry in the in-mem index will always
+    /// be marked as dirty. So, callers to this should ideally know they will be modifying the slot list.
+    pub fn slot_list_mut_set_ref_one<RT>(
+        &self,
+        pubkey: &Pubkey,
+        user_fn: impl FnOnce(&mut SlotList<T>) -> RT,
+    ) -> Option<RT> {
+        self.get_internal_inner(pubkey, |entry| {
+            (
+                true,
+                entry.map(|entry| {
+                    let result = user_fn(&mut entry.slot_list.write().unwrap());
+                    // note that to be safe here, we ALWAYS mark the entry as dirty
+                    entry.setref_to_one();
+                    result
+                }),
+            )
+        })
+    }
+
     /// update 'entry' with 'new_value'
     fn update_slot_list_entry(
         &self,
