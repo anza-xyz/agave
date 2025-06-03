@@ -39,6 +39,7 @@ jobs:
           - os: ubuntu-latest
             container: docker.io/rust:1-alpine
             rustflags: -C target-feature=-crt-static
+          - os: windows-latest
     runs-on: ${{ matrix.os.os }}
     container:
       image: ${{ matrix.os.container }}
