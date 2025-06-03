@@ -614,6 +614,7 @@ impl AccountsBackgroundService {
                                             .collect::<Vec<_>>(),
                                     );
                                     last_cleaned_block_height = snapshot_block_height;
+                                    previous_shrink_time = Instant::now();
                                 }
                                 Err(err) => {
                                     error!(
@@ -644,6 +645,7 @@ impl AccountsBackgroundService {
                             if bank.is_startup_verification_complete() {
                                 bank.shrink_ancient_slots();
                                 bank.shrink_candidate_slots();
+                                previous_shrink_time = Instant::now();
                             }
                         } else {
                             // Note that the flush will do an internal clean of the
@@ -656,8 +658,8 @@ impl AccountsBackgroundService {
                             if bank.is_startup_verification_complete() {
                                 let duration_since_previous_shrink = previous_shrink_time.elapsed();
                                 if duration_since_previous_shrink > SHRINK_INTERVAL {
-                                    previous_shrink_time = Instant::now();
                                     bank.shrink_candidate_slots();
+                                    previous_shrink_time = Instant::now();
                                 }
                             }
                         }
