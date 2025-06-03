@@ -1,9 +1,11 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 use {
     crate::{
-        recvmmsg::{recv_mmsg, NUM_RCVMMSGS},
+        recvmmsg::{recv_mmsg, RecvMetas},
         socket::SocketAddrSpace,
+        streamer::RecvBuffer,
     },
+    solana_perf::packet::{BytesPacket, BytesPacketBatch},
     std::{
         io::{ErrorKind, Result},
         net::UdpSocket,
@@ -19,14 +21,17 @@ pub use {
 };
 
 pub(crate) fn recv_from(
-    batch: &mut PinnedPacketBatch,
     socket: &UdpSocket,
+    buffer: &mut RecvBuffer,
+    metas: &mut RecvMetas,
     // If max_wait is None, reads from the socket until either:
     //   * 64 packets are read (NUM_RCVMMSGS == PACKETS_PER_BATCH == 64), or
     //   * There are no more data available to read from the socket.
     max_wait: Option<Duration>,
-) -> Result<usize> {
+    is_staked_service: bool,
+) -> Result<BytesPacketBatch> {
     let mut i = 0;
+    let mut buffers = buffer.chunk_bufs();
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
     //  * block on the socket until it's readable
@@ -38,11 +43,7 @@ pub(crate) fn recv_from(
     let should_wait = max_wait.is_some();
     let start = should_wait.then(Instant::now);
     loop {
-        batch.resize(
-            std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
-            Packet::default(),
-        );
-        match recv_mmsg(socket, &mut batch[i..]) {
+        match recv_mmsg(socket, &mut buffers[i..], metas) {
             Err(err) if i > 0 => {
                 if !should_wait && err.kind() == ErrorKind::WouldBlock {
                     break;
@@ -69,12 +70,34 @@ pub(crate) fn recv_from(
             break;
         }
     }
-    batch.truncate(i);
-    Ok(i)
+
+    drop(buffers);
+    let packet_batch: BytesPacketBatch = metas
+        .iter()
+        .map(|recv_meta| {
+            // Split off a chunk with the full packet capacity.
+            let mut chunk = buffer.split_to(PACKET_DATA_SIZE).freeze();
+            // Truncate it to the length of the received message.
+            chunk.truncate(recv_meta.size());
+
+            let mut meta = Meta {
+                size: chunk.len(),
+                ..Default::default()
+            };
+            if let Some(socket_addr) = recv_meta.socket_addr() {
+                meta.set_socket_addr(&socket_addr);
+            }
+            meta.set_from_staked_node(is_staked_service);
+
+            BytesPacket::new(chunk, meta)
+        })
+        .collect();
+
+    Ok(packet_batch)
 }
 
 pub fn send_to(
-    batch: &PinnedPacketBatch,
+    batch: &PacketBatch,
     socket: &UdpSocket,
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
@@ -93,8 +116,13 @@ pub fn send_to(
 mod tests {
     use {
         super::*,
+        bytes::Bytes,
         solana_net_utils::bind_to_localhost,
-        std::{io, io::Write, net::SocketAddr},
+        solana_perf::packet::{BytesPacket, BytesPacketBatch},
+        std::{
+            io::{self, Write},
+            net::SocketAddr,
+        },
     };
 
     #[test]
@@ -115,28 +143,29 @@ mod tests {
         let send_socket = bind_to_localhost().expect("bind");
         let saddr = send_socket.local_addr().unwrap();
 
-        let packet_batch_size = 10;
-        let mut batch = PinnedPacketBatch::with_capacity(packet_batch_size);
-        batch.resize(packet_batch_size, Packet::default());
+        const PACKET_BATCH_SIZE: usize = 10;
+        let buf = Bytes::from(vec![0; PACKET_DATA_SIZE]);
+        let mut meta = Meta::default();
+        meta.set_socket_addr(&addr);
+        let batch = vec![BytesPacket::new(buf, meta); PACKET_BATCH_SIZE];
+        let batch = PacketBatch::from(BytesPacketBatch::from(batch));
 
-        for m in batch.iter_mut() {
-            m.meta_mut().set_socket_addr(&addr);
-            m.meta_mut().size = PACKET_DATA_SIZE;
-        }
         send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
 
-        batch
-            .iter_mut()
-            .for_each(|pkt| *pkt.meta_mut() = Meta::default());
+        let mut buffer = RecvBuffer::new(PACKET_BATCH_SIZE);
+        let mut metas = RecvMetas::new();
         let recvd = recv_from(
-            &mut batch,
             &recv_socket,
+            &mut buffer,
+            &mut metas,
             Some(Duration::from_millis(1)), // max_wait
+            true,
         )
         .unwrap();
-        assert_eq!(recvd, batch.len());
+        assert_eq!(recvd.len(), batch.len());
 
-        for m in batch.iter() {
+        for m in recvd.iter() {
+            assert_eq!(m.data(..).unwrap().len(), PACKET_DATA_SIZE);
             assert_eq!(m.meta().size, PACKET_DATA_SIZE);
             assert_eq!(m.meta().socket_addr(), saddr);
         }
@@ -171,29 +200,28 @@ mod tests {
         let recv_socket = bind_to_localhost().expect("bind");
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost().expect("bind");
-        let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
-        batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size
         for _ in 0..2 * PACKETS_PER_BATCH {
-            let batch_size = 1;
-            let mut batch = PinnedPacketBatch::with_capacity(batch_size);
-            batch.resize(batch_size, Packet::default());
-            for p in batch.iter_mut() {
-                p.meta_mut().set_socket_addr(&addr);
-                p.meta_mut().size = 1;
-            }
+            let buf = Bytes::from(vec![0; 1]);
+            let mut meta = Meta::default();
+            meta.set_socket_addr(&addr);
+            let batch = vec![BytesPacket::new(buf, meta); PACKETS_PER_BATCH];
+            let batch = PacketBatch::from(BytesPacketBatch::from(batch));
             send_to(&batch, &send_socket, &SocketAddrSpace::Unspecified).unwrap();
         }
+        let mut buffer = RecvBuffer::new(PACKETS_PER_BATCH);
+        let mut metas = RecvMetas::new();
         let recvd = recv_from(
-            &mut batch,
             &recv_socket,
+            &mut buffer,
+            &mut metas,
             Some(Duration::from_millis(100)), // max_wait
+            true,
         )
         .unwrap();
         // Check we only got PACKETS_PER_BATCH packets
-        assert_eq!(recvd, PACKETS_PER_BATCH);
-        assert_eq!(batch.capacity(), PACKETS_PER_BATCH);
+        assert_eq!(recvd.len(), PACKETS_PER_BATCH);
     }
 }
