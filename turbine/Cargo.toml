@@ -72,3 +72,6 @@ name = "cluster_info"
 
 [[bench]]
 name = "cluster_nodes"
+
+[lints]
+workspace = true
