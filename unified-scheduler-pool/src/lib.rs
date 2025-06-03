@@ -242,12 +242,12 @@ pub struct HandlerContext {
 }
 
 impl HandlerContext {
-    fn new_task_creator(&self) -> TaskCreator {
+    fn new_task_manager(&self) -> TaskManager {
         match &self.banking_stage_helper {
-            None => TaskCreator::ForBlockVerification {
+            None => TaskManager::ForBlockVerification {
                 usage_queue_loader: UsageQueueLoader::default(),
             },
-            Some(helper) => TaskCreator::ForBlockProduction {
+            Some(helper) => TaskManager::ForBlockProduction {
                 banking_stage_helper: helper.clone(),
             },
         }
@@ -331,6 +331,10 @@ impl BankingStageHelper {
 
     pub fn generate_task_ids(&self, count: usize) -> usize {
         self.next_task_id.fetch_add(count, Relaxed)
+    }
+
+    pub fn is_task_id_overgrown(&self) -> bool {
+        self.next_task_id.load(Relaxed) > usize::MAX / 2
     }
 
     pub fn create_new_task(
@@ -680,7 +684,7 @@ where
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
             // thread. Dropping it could take long time (in fact,
-            // TaskCreator::usage_queue_loader() can contain many entries to drop).
+            // TaskManager::usage_queue_loader() can contain many entries to drop).
             self.trashed_scheduler_inners
                 .lock()
                 .expect("not poisoned")
@@ -1367,7 +1371,7 @@ pub struct PooledScheduler<TH: TaskHandler> {
 }
 
 #[derive(Debug)]
-enum TaskCreator {
+enum TaskManager {
     ForBlockVerification {
         usage_queue_loader: UsageQueueLoader,
     },
@@ -1376,27 +1380,37 @@ enum TaskCreator {
     },
 }
 
-impl TaskCreator {
+impl TaskManager {
     fn usage_queue_loader(&self) -> &UsageQueueLoader {
-        use TaskCreator::*;
-
         match self {
-            ForBlockVerification { usage_queue_loader } => usage_queue_loader,
-            ForBlockProduction {
+            Self::ForBlockVerification { usage_queue_loader } => usage_queue_loader,
+            Self::ForBlockProduction {
                 banking_stage_helper,
             } => &banking_stage_helper.usage_queue_loader,
         }
     }
 
+    fn load_usage_queue(&self, pubkey: Pubkey) -> UsageQueue {
+        self.usage_queue_loader().load(pubkey)
+    }
+
     fn is_overgrown(&self, max_usage_queue_count: usize) -> bool {
-        self.usage_queue_loader().count() > max_usage_queue_count
+        if self.usage_queue_loader().count() > max_usage_queue_count {
+            return true;
+        }
+        match self {
+            Self::ForBlockVerification { .. } => false,
+            Self::ForBlockProduction {
+                banking_stage_helper,
+            } => banking_stage_helper.is_task_id_overgrown(),
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct PooledSchedulerInner<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     thread_manager: ThreadManager<S, TH>,
-    task_creator: TaskCreator,
+    task_manager: TaskManager,
 }
 
 impl<S, TH> Drop for ThreadManager<S, TH>
@@ -2437,11 +2451,11 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         let mut thread_manager = ThreadManager::new(pool.clone());
         let handler_context =
             pool.create_handler_context(context.mode(), &thread_manager.new_task_sender);
-        let task_creator = handler_context.new_task_creator();
+        let task_manager = handler_context.new_task_manager();
         thread_manager.start_threads(context.clone(), result_with_timings, handler_context);
         let inner = Self::Inner {
             thread_manager,
-            task_creator,
+            task_manager,
         };
         Self { inner, context }
     }
@@ -2474,7 +2488,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
     ) -> ScheduleResult {
         //assert_matches!(self.context().mode(), BlockVerification);
         let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
-            self.inner.task_creator.usage_queue_loader().load(pubkey)
+            self.inner.task_manager.load_usage_queue(pubkey)
         });
         self.inner.thread_manager.send_task(task)
     }
@@ -2536,7 +2550,7 @@ where
     }
 
     fn is_overgrown(&self) -> bool {
-        self.task_creator
+        self.task_manager
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
@@ -2814,17 +2828,15 @@ mod tests {
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT {
             small_scheduler
                 .inner
-                .task_creator
-                .usage_queue_loader()
-                .load(Pubkey::new_unique());
+                .task_manager
+                .load_usage_queue(Pubkey::new_unique());
         }
         let big_scheduler = pool.do_take_scheduler(context2);
         for _ in 0..REDUCED_MAX_USAGE_QUEUE_COUNT + 1 {
             big_scheduler
                 .inner
-                .task_creator
-                .usage_queue_loader()
-                .load(Pubkey::new_unique());
+                .task_manager
+                .load_usage_queue(Pubkey::new_unique());
         }
 
         assert_eq!(pool_raw.scheduler_inners.lock().unwrap().len(), 0);
@@ -4907,9 +4919,8 @@ mod tests {
         // Make scheduler overgrown and trash it by returning
         scheduler
             .inner
-            .task_creator
-            .usage_queue_loader()
-            .load(Pubkey::new_unique());
+            .task_manager
+            .load_usage_queue(Pubkey::new_unique());
         Box::new(scheduler.into_inner().1).return_to_pool();
 
         // Re-take a brand-new one
