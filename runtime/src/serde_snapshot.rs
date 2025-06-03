@@ -898,6 +898,8 @@ where
         additional_builtins,
         debug_do_not_add_builtins,
         reconstructed_accounts_db_info.accounts_data_len,
+        #[cfg(feature = "dev-context-only-utils")]
+        None,
     );
 
     info!("rent_collector: {:?}", bank.rent_collector());
