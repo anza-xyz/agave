@@ -106,7 +106,15 @@ fn process_instruction(
         REALLOC_AND_ASSIGN_TO_SELF_VIA_SYSTEM_PROGRAM => {
             msg!("realloc and assign to self via system program");
             let pre_len = account.data_len();
-            account.realloc(pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE), false)?;
+            let new_len = pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE);
+            unsafe {
+                let mut data = account.data.borrow_mut();
+                let data_ptr = data.as_mut_ptr();
+                // First set new length in the serialized data
+                *(data_ptr.offset(-8) as *mut u64) = new_len as u64;
+                // Then recreate the local slice with the new length
+                *data = std::slice::from_raw_parts_mut(data_ptr, new_len)
+            }
             assert_eq!(
                 pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE),
                 account.data_len()
