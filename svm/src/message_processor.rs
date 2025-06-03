@@ -127,7 +127,7 @@ mod tests {
         solana_rent::Rent,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
         solana_secp256k1_program::new_secp256k1_instruction,
-        solana_secp256r1_program::new_secp256r1_instruction,
+        solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::TransactionContext,
@@ -612,7 +612,17 @@ mod tests {
     fn secp256r1_instruction_for_test() -> Instruction {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let secret_key = EcKey::generate(&group).unwrap();
-        new_secp256r1_instruction(b"hello", secret_key).unwrap()
+        let signature = sign_message(b"hello", &secret_key.private_key_to_der().unwrap()).unwrap();
+        let mut ctx = openssl::bn::BigNumContext::new().unwrap();
+        let pubkey = secret_key
+            .public_key()
+            .to_bytes(
+                &group,
+                openssl::ec::PointConversionForm::COMPRESSED,
+                &mut ctx,
+            )
+            .unwrap();
+        new_secp256r1_instruction_with_signature(b"hello", &signature, &pubkey.try_into().unwrap())
     }
 
     #[test]

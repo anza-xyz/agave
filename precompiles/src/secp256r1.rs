@@ -171,7 +171,9 @@ mod tests {
         super::*,
         crate::test_verify_with_alignment,
         bytemuck::bytes_of,
-        solana_secp256r1_program::{new_secp256r1_instruction, DATA_START, SECP256R1_ORDER},
+        solana_secp256r1_program::{
+            new_secp256r1_instruction_with_signature, sign_message, DATA_START, SECP256R1_ORDER,
+        },
     };
 
     fn test_case(
@@ -360,7 +362,22 @@ mod tests {
         let message_arr = b"hello";
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let signing_key = EcKey::generate(&group).unwrap();
-        let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
+        let signature =
+            sign_message(message_arr, &signing_key.private_key_to_der().unwrap()).unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+        let pubkey = signing_key
+            .public_key()
+            .to_bytes(
+                &group,
+                openssl::ec::PointConversionForm::COMPRESSED,
+                &mut ctx,
+            )
+            .unwrap();
+        let mut instruction = new_secp256r1_instruction_with_signature(
+            message_arr,
+            &signature,
+            &pubkey.try_into().unwrap(),
+        );
         let feature_set = FeatureSet::all_enabled();
 
         assert!(test_verify_with_alignment(
@@ -392,7 +409,22 @@ mod tests {
         let message_arr = b"hello";
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let signing_key = EcKey::generate(&group).unwrap();
-        let mut instruction = new_secp256r1_instruction(message_arr, signing_key).unwrap();
+        let signature =
+            sign_message(message_arr, &signing_key.private_key_to_der().unwrap()).unwrap();
+        let mut ctx = BigNumContext::new().unwrap();
+        let pubkey = signing_key
+            .public_key()
+            .to_bytes(
+                &group,
+                openssl::ec::PointConversionForm::COMPRESSED,
+                &mut ctx,
+            )
+            .unwrap();
+        let mut instruction = new_secp256r1_instruction_with_signature(
+            message_arr,
+            &signature,
+            &pubkey.try_into().unwrap(),
+        );
 
         // To double check that the untampered low-S value signature passes
         let feature_set = FeatureSet::all_enabled();
@@ -436,7 +468,22 @@ mod tests {
 
         // Keep generating signatures until we get one with a 31-byte component
         loop {
-            let instruction = new_secp256r1_instruction(message_arr, signing_key.clone()).unwrap();
+            let signature =
+                sign_message(message_arr, &signing_key.private_key_to_der().unwrap()).unwrap();
+            let mut ctx = BigNumContext::new().unwrap();
+            let pubkey = signing_key
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .unwrap();
+            let instruction = new_secp256r1_instruction_with_signature(
+                message_arr,
+                &signature,
+                &pubkey.try_into().unwrap(),
+            );
 
             // Extract r and s from the signature
             let signature_offset = DATA_START + COMPRESSED_PUBKEY_SERIALIZED_SIZE;
@@ -465,18 +512,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_new_secp256r1_instruction_signing_key() {
-        solana_logger::setup();
-        let message_arr = b"hello";
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
-        let signing_key = EcKey::generate(&group).unwrap();
-        assert!(new_secp256r1_instruction(message_arr, signing_key).is_ok());
-
-        let incorrect_group = EcGroup::from_curve_name(Nid::X9_62_PRIME192V1).unwrap();
-        let incorrect_key = EcKey::generate(&incorrect_group).unwrap();
-        assert!(new_secp256r1_instruction(message_arr, incorrect_key).is_err());
-    }
     #[test]
     fn test_secp256r1_order() {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
