@@ -38,7 +38,7 @@ use {
 };
 
 const INTERVAL_MS: u64 = 100;
-const CLEAN_INTERVAL_BLOCKS: u64 = 100;
+const CLEAN_INTERVAL_SLOTS: Slot = 100;
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
@@ -148,7 +148,7 @@ impl SnapshotRequestHandler {
         test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
-    ) -> Option<Result<u64, SnapshotError>> {
+    ) -> Option<Result<Slot, SnapshotError>> {
         let (snapshot_request, num_outstanding_requests, num_re_enqueued_requests) =
             self.get_next_snapshot_request()?;
 
@@ -273,7 +273,7 @@ impl SnapshotRequestHandler {
         snapshot_request: SnapshotRequest,
         accounts_package_kind: AccountsPackageKind,
         exit: &AtomicBool,
-    ) -> Result<u64, SnapshotError> {
+    ) -> Result<Slot, SnapshotError> {
         info!("handling snapshot request: {snapshot_request:?}, {accounts_package_kind:?}");
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
         let SnapshotRequest {
@@ -414,7 +414,7 @@ impl SnapshotRequestHandler {
             ("non_snapshot_time_us", non_snapshot_time_us, i64),
             ("shrink_ancient_time_us", shrink_ancient_time_us, i64),
         );
-        Ok(snapshot_root_bank.block_height())
+        Ok(snapshot_root_bank.slot())
     }
 }
 
@@ -497,7 +497,7 @@ impl AbsRequestHandlers {
         test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
-    ) -> Option<Result<u64, SnapshotError>> {
+    ) -> Option<Result<Slot, SnapshotError>> {
         self.snapshot_request_handler.handle_snapshot_requests(
             test_hash_calculation,
             non_snapshot_time_us,
@@ -520,7 +520,7 @@ impl AccountsBackgroundService {
     ) -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let stop = Arc::new(AtomicBool::new(false));
-        let mut last_cleaned_block_height = 0;
+        let mut last_cleaned_slot = 0;
         let mut removed_slots_count = 0;
         let mut total_remove_slots_time = 0;
         let t_background = Builder::new()
@@ -599,11 +599,11 @@ impl AccountsBackgroundService {
 
                             last_snapshot_end_time = Some(Instant::now());
                             match snapshot_handle_result {
-                                Ok(snapshot_block_height) => {
+                                Ok(snapshot_slot) => {
                                     assert!(
-                                        last_cleaned_block_height <= snapshot_block_height,
-                                        "last cleaned block height: {last_cleaned_block_height}, \
-                                         snapshot request block height: {snapshot_block_height}, \
+                                        last_cleaned_slot <= snapshot_slot,
+                                        "last cleaned slot: {last_cleaned_slot}, \
+                                         snapshot request slot: {snapshot_slot}, \
                                          is startup verification complete: {}, \
                                          enqueued snapshot requests: {:?}",
                                         bank.is_startup_verification_complete(),
@@ -613,7 +613,7 @@ impl AccountsBackgroundService {
                                             .try_iter()
                                             .collect::<Vec<_>>(),
                                     );
-                                    last_cleaned_block_height = snapshot_block_height;
+                                    last_cleaned_slot = snapshot_slot;
                                     previous_shrink_time = Instant::now();
                                 }
                                 Err(err) => {
@@ -625,8 +625,8 @@ impl AccountsBackgroundService {
                                     break;
                                 }
                             }
-                        } else if bank.block_height() - last_cleaned_block_height
-                            > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10))
+                        } else if bank.slot() - last_cleaned_slot
+                            > (CLEAN_INTERVAL_SLOTS + thread_rng().gen_range(0..10))
                         {
                             // Note that the flush will do an internal clean of the
                             // cache up to bank.slot(), so should be safe as long
@@ -634,7 +634,7 @@ impl AccountsBackgroundService {
                             // slots >= bank.slot()
                             bank.force_flush_accounts_cache();
                             bank.clean_accounts();
-                            last_cleaned_block_height = bank.block_height();
+                            last_cleaned_slot = bank.slot();
                             // Do not 'shrink' until *after* the startup verification is complete.
                             // This is because startup verification needs to get the snapshot
                             // storages *as they existed at startup* (to calculate the accounts
