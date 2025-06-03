@@ -54,10 +54,10 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
         &keypair,
         &entries,
         is_last_in_slot,
-        None,  // chained_merkle_root
-        0,     // next_shred_index
-        0,     // next_code_index
-        false, // merkle_variant
+        None, // chained_merkle_root
+        0,    // next_shred_index
+        0,    // next_code_index
+        false,
         &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
@@ -234,7 +234,7 @@ fn setup_different_sized_fec_blocks(
             None, // chained_merkle_root
             next_shred_index,
             next_code_index,
-            false, // merkle_variant
+            false,
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
