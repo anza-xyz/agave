@@ -29,8 +29,7 @@ case "$os_name" in
       linux-headers \
       llvm-dev \
       musl-dev \
-      perl \
-      zlib-static
+      perl
   else
     sudo apt update
     sudo apt install -y libclang-dev
