@@ -23,18 +23,14 @@ case "$os_name" in
     apk update
     apk add \
       build-base \
-      clang19-libclang \
+      clang-libclang \
       eudev-dev \
       hidapi-dev \
       linux-headers \
-      llvm19-dev \
+      llvm-dev \
       musl-dev \
       perl \
       zlib-static
-    LIBCLANG_PATH="/usr/lib/llvm19/lib"
-    export LIBCLANG_PATH
-    PATH="/usr/lib/llvm19/bin:$PATH"
-    export PATH
   else
     sudo apt update
     sudo apt install -y libclang-dev
