@@ -299,7 +299,7 @@ impl TpuClientNextClient {
             num_connections: MAX_CONNECTIONS,
             skip_check_transaction_age: true,
             // experimentally found parameter values
-            worker_channel_size: 64,
+            worker_channel_size: 8,
             max_reconnect_attempts: 4,
             leaders_fanout: Fanout {
                 connect: leader_forward_count,
