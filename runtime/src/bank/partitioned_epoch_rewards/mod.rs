@@ -366,7 +366,7 @@ mod tests {
         fn get_epoch_rewards_from_cache(
             &self,
             parent_hash: &Hash,
-        ) -> Option<PartitionedRewardsCalculation> {
+        ) -> Option<Arc<PartitionedRewardsCalculation>> {
             self.epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
