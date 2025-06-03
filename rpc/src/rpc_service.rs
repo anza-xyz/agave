@@ -61,6 +61,7 @@ use {
     tokio_util::{
         bytes::Bytes,
         codec::{BytesCodec, FramedRead},
+        sync::CancellationToken,
     },
 };
 
@@ -286,9 +287,7 @@ impl RpcRequestMiddleware {
                 let computed = if slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
                     Duration::ZERO
                 } else {
-                    Duration::from_millis(
-                        slots.saturating_mul(solana_sdk::clock::DEFAULT_MS_PER_SLOT),
-                    )
+                    Duration::from_millis(slots.saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT))
                 };
                 let fallback = match st {
                     SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
@@ -498,7 +497,7 @@ pub struct JsonRpcServiceConfig<'a> {
 ///   requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle),
+    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle, CancellationToken),
 }
 
 impl JsonRpcService {
@@ -555,7 +554,12 @@ impl JsonRpcService {
                 )?;
                 Ok(json_rpc_service)
             }
-            ClientOption::TpuClientNext(identity_keypair, tpu_client_socket, client_runtime) => {
+            ClientOption::TpuClientNext(
+                identity_keypair,
+                tpu_client_socket,
+                client_runtime,
+                cancel,
+            ) => {
                 let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
@@ -572,6 +576,7 @@ impl JsonRpcService {
                     config.send_transaction_service_config.leader_forward_count,
                     Some(identity_keypair),
                     tpu_client_socket,
+                    cancel,
                 );
 
                 let json_rpc_service = Self::new_with_client(

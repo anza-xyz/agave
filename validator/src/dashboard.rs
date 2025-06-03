@@ -278,7 +278,7 @@ fn get_validator_stats(
                     request::RpcResponseErrorData::NodeUnhealthy {
                         num_slots_behind: Some(num_slots_behind),
                     },
-            }) = &err.kind
+            }) = err.kind()
             {
                 format!("{num_slots_behind} slots behind")
             } else {

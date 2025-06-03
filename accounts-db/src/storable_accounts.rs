@@ -86,9 +86,8 @@ impl ReadableAccount for AccountForStorage<'_> {
     }
 }
 
-lazy_static! {
-    static ref DEFAULT_ACCOUNT_SHARED_DATA: AccountSharedData = AccountSharedData::default();
-}
+static DEFAULT_ACCOUNT_SHARED_DATA: std::sync::LazyLock<AccountSharedData> =
+    std::sync::LazyLock::new(AccountSharedData::default);
 
 #[derive(Default, Debug)]
 pub struct StorableAccountsCacher {

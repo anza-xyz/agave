@@ -1077,15 +1077,11 @@ pub fn process_blockstore_from_root(
     };
 
     let processing_time = now.elapsed();
-
+    let num_frozen_banks = bank_forks.read().unwrap().frozen_banks().count();
     datapoint_info!(
         "process_blockstore_from_root",
         ("total_time_us", processing_time.as_micros(), i64),
-        (
-            "frozen_banks",
-            bank_forks.read().unwrap().frozen_banks().len(),
-            i64
-        ),
+        ("frozen_banks", num_frozen_banks, i64),
         ("slot", bank_forks.read().unwrap().root(), i64),
         ("num_slots_processed", num_slots_processed, i64),
         ("num_new_roots_found", num_new_roots_found, i64),
@@ -3639,8 +3635,11 @@ pub mod tests {
         });
     }
 
-    #[test]
-    fn test_process_entries_2nd_entry_collision_with_self_and_error() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_process_entries_2nd_entry_collision_with_self_and_error(
+        relax_intrabatch_account_locks: bool,
+    ) {
         solana_logger::setup();
 
         let GenesisConfigInfo {
@@ -3648,7 +3647,11 @@ pub mod tests {
             mint_keypair,
             ..
         } = create_genesis_config(1000);
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let keypair3 = Keypair::new();
@@ -3688,7 +3691,7 @@ pub mod tests {
                     &mint_keypair.pubkey(),
                     2,
                     bank.last_blockhash(),
-                ), // will collide with predecessor
+                ), // will collide with preceding entry
             ],
         );
         // should now be:
@@ -3711,28 +3714,100 @@ pub mod tests {
                     &keypair2.pubkey(),
                     1,
                     bank.last_blockhash(),
-                ), // should be fine
+                ), // will collide with preceding transaction
             ],
         );
-        // would now be:
+        // if successful, becomes:
         // keypair1=0
         // keypair2=3
         // keypair3=3
 
-        assert!(process_entries_for_tests_without_scheduler(
+        // succeeds following simd83 locking, fails otherwise
+        let result = process_entries_for_tests_without_scheduler(
             &bank,
             vec![
                 entry_1_to_mint,
                 entry_2_to_3_and_1_to_mint,
                 entry_conflict_itself,
             ],
-        )
-        .is_err());
+        );
 
-        // last entry should have been aborted before par_execute_entries
-        assert_eq!(bank.get_balance(&keypair1.pubkey()), 2);
-        assert_eq!(bank.get_balance(&keypair2.pubkey()), 2);
-        assert_eq!(bank.get_balance(&keypair3.pubkey()), 2);
+        let balances = [
+            bank.get_balance(&keypair1.pubkey()),
+            bank.get_balance(&keypair2.pubkey()),
+            bank.get_balance(&keypair3.pubkey()),
+        ];
+
+        if relax_intrabatch_account_locks {
+            assert!(result.is_ok());
+            assert_eq!(balances, [0, 3, 3]);
+        } else {
+            assert!(result.is_err());
+            assert_eq!(balances, [2, 2, 2]);
+        }
+    }
+
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_process_entry_duplicate_transaction(relax_intrabatch_account_locks: bool) {
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config(1000);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let keypair1 = Keypair::new();
+        let keypair2 = Keypair::new();
+
+        // fund: put some money in each of 1 and 2
+        assert_matches!(bank.transfer(5, &mint_keypair, &keypair1.pubkey()), Ok(_));
+        assert_matches!(bank.transfer(5, &mint_keypair, &keypair2.pubkey()), Ok(_));
+
+        // one entry, two instances of the same transaction. this entry is invalid
+        // without simd83: due to lock conflicts
+        // with simd83: due to message hash duplication
+        let entry_1_to_2_twice = next_entry(
+            &bank.last_blockhash(),
+            1,
+            vec![
+                system_transaction::transfer(
+                    &keypair1,
+                    &keypair2.pubkey(),
+                    1,
+                    bank.last_blockhash(),
+                ),
+                system_transaction::transfer(
+                    &keypair1,
+                    &keypair2.pubkey(),
+                    1,
+                    bank.last_blockhash(),
+                ),
+            ],
+        );
+        // should now be:
+        // keypair1=5
+        // keypair2=5
+
+        // succeeds following simd83 locking, fails otherwise
+        let result = process_entries_for_tests_without_scheduler(&bank, vec![entry_1_to_2_twice]);
+
+        let balances = [
+            bank.get_balance(&keypair1.pubkey()),
+            bank.get_balance(&keypair2.pubkey()),
+        ];
+
+        assert_eq!(balances, [5, 5]);
+        if relax_intrabatch_account_locks {
+            assert_eq!(result, Err(TransactionError::AlreadyProcessed));
+        } else {
+            assert_eq!(result, Err(TransactionError::AccountInUse));
+        }
     }
 
     #[test]
@@ -4042,14 +4117,19 @@ pub mod tests {
         );
     }
 
-    #[test]
-    fn test_update_transaction_statuses_fail() {
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_update_transaction_statuses_fail(relax_intrabatch_account_locks: bool) {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config(11_000);
-        let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
+        let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let keypair1 = Keypair::new();
         let keypair2 = Keypair::new();
         let success_tx = system_transaction::transfer(
@@ -4058,7 +4138,7 @@ pub mod tests {
             1,
             bank.last_blockhash(),
         );
-        let fail_tx = system_transaction::transfer(
+        let test_tx = system_transaction::transfer(
             &mint_keypair,
             &keypair2.pubkey(),
             2,
@@ -4070,17 +4150,29 @@ pub mod tests {
             1,
             vec![
                 success_tx,
-                fail_tx.clone(), // will collide
+                test_tx.clone(), // will collide
             ],
         );
 
+        // succeeds with simd83, fails because of account locking conflict otherwise
         assert_eq!(
             process_entries_for_tests_without_scheduler(&bank, vec![entry_1_to_mint]),
-            Err(TransactionError::AccountInUse)
+            if relax_intrabatch_account_locks {
+                Ok(())
+            } else {
+                Err(TransactionError::AccountInUse)
+            }
         );
 
-        // Should not see duplicate signature error
-        assert_eq!(bank.process_transaction(&fail_tx), Ok(()));
+        // fails with simd83 as already processed, succeeds otherwise
+        assert_eq!(
+            bank.process_transaction(&test_tx),
+            if relax_intrabatch_account_locks {
+                Err(TransactionError::AlreadyProcessed)
+            } else {
+                Ok(())
+            }
+        );
     }
 
     #[test]
@@ -4368,7 +4460,10 @@ pub mod tests {
     }
 
     fn frozen_bank_slots(bank_forks: &BankForks) -> Vec<Slot> {
-        let mut slots: Vec<_> = bank_forks.frozen_banks().keys().cloned().collect();
+        let mut slots: Vec<_> = bank_forks
+            .frozen_banks()
+            .map(|(slot, _bank)| slot)
+            .collect();
         slots.sort_unstable();
         slots
     }
@@ -4666,7 +4761,7 @@ pub mod tests {
 
         assert_eq!(bank_forks.root(), expected_root_slot);
         assert_eq!(
-            bank_forks.frozen_banks().len() as u64,
+            bank_forks.frozen_banks().count() as u64,
             last_minor_fork_slot - really_expected_root_slot + 1
         );
 

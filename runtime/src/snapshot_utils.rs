@@ -19,15 +19,14 @@ use {
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     flate2::read::GzDecoder,
-    lazy_static::lazy_static,
     log::*,
     regex::Regex,
     solana_accounts_db::{
         account_storage::AccountStorageMap,
+        account_storage_reader::AccountStorageReader,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
-        accounts_file::{AccountsFile, AccountsFileError, InternalsForArchive, StorageAccess},
+        accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
-        append_vec::StoredMetaWriteVersion,
         epoch_accounts_hash::EpochAccountsHash,
         hardened_unpack::{self, ParallelSelector, UnpackError},
         shared_buffer_reader::{SharedBuffer, SharedBufferReader},
@@ -518,6 +517,9 @@ pub enum ArchiveSnapshotPackageError {
 
     #[error("failed to move archive from '{1}' to '{2}': {0}")]
     MoveArchive(#[source] IoError, PathBuf, PathBuf),
+
+    #[error("failed to create account storage reader '{1}': {0}")]
+    AccountStorageReaderError(#[source] IoError, PathBuf),
 }
 
 /// Errors that can happen in `hard_link_storages_to_snapshot()`
@@ -568,12 +570,16 @@ pub fn clean_orphaned_account_snapshot_dirs(
     for snapshot in snapshots {
         let account_hardlinks_dir = snapshot.snapshot_dir.join(SNAPSHOT_ACCOUNTS_HARDLINKS);
         // loop through entries in the snapshot_hardlink_dir, read the symlinks, add the target to the HashSet
-        let read_dir = fs::read_dir(&account_hardlinks_dir).map_err(|err| {
-            IoError::other(format!(
-                "failed to read account hardlinks dir '{}': {err}",
+        let Ok(read_dir) = fs::read_dir(&account_hardlinks_dir) else {
+            // The bank snapshot may not have a hard links dir with the storages.
+            // This is fine, and happens for bank snapshots we do *not* fastboot from.
+            // In this case, log it and go to the next bank snapshot.
+            debug!(
+                "failed to read account hardlinks dir '{}'",
                 account_hardlinks_dir.display(),
-            ))
-        })?;
+            );
+            continue;
+        };
         for entry in read_dir {
             let path = entry?.path();
             let target = fs::read_link(&path).map_err(|err| {
@@ -788,7 +794,7 @@ pub fn remove_tmp_snapshot_archives(snapshot_archives_dir: impl AsRef<Path>) {
 pub fn serialize_and_archive_snapshot_package(
     snapshot_package: SnapshotPackage,
     snapshot_config: &SnapshotConfig,
-    should_flush_storages: bool,
+    should_flush_and_hard_link_storages: bool,
 ) -> Result<SnapshotArchiveInfo> {
     let SnapshotPackage {
         snapshot_kind,
@@ -819,7 +825,7 @@ pub fn serialize_and_archive_snapshot_package(
         epoch_accounts_hash,
         bank_incremental_snapshot_persistence.as_ref(),
         write_version,
-        should_flush_storages,
+        should_flush_and_hard_link_storages,
     )?;
 
     // now write the full snapshot slot file after serializing so this bank snapshot is loadable
@@ -881,8 +887,8 @@ fn serialize_snapshot(
     accounts_hash: AccountsHash,
     epoch_accounts_hash: Option<EpochAccountsHash>,
     bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
-    write_version: StoredMetaWriteVersion,
-    should_flush_storages: bool,
+    write_version: u64,
+    should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
     let slot = bank_fields.slot;
 
@@ -907,31 +913,27 @@ fn serialize_snapshot(
             bank_snapshot_path.display(),
         );
 
-        let flush_storages_us = if should_flush_storages {
-            let measure = Measure::start("");
+        let (flush_storages_us, hard_link_storages_us) = if should_flush_and_hard_link_storages {
+            let flush_measure = Measure::start("");
             for storage in snapshot_storages {
                 storage.flush().map_err(|err| {
                     AddBankSnapshotError::FlushStorage(err, storage.path().to_path_buf())
                 })?;
             }
-            let measure_us = measure.end_as_us();
+            let flush_us = flush_measure.end_as_us();
+            let (_, hard_link_us) = measure_us!(hard_link_storages_to_snapshot(
+                &bank_snapshot_dir,
+                slot,
+                snapshot_storages
+            )
+            .map_err(AddBankSnapshotError::HardLinkStorages)?);
             write_storages_flushed_file(&bank_snapshot_dir)
                 .map_err(AddBankSnapshotError::MarkStoragesFlushed)?;
-            Some(measure_us)
+            Some((flush_us, hard_link_us))
         } else {
             None
-        };
-
-        // We are constructing the snapshot directory to contain the full snapshot state information to allow
-        // constructing a bank from this directory.  It acts like an archive to include the full state.
-        // The set of the account storages files is the necessary part of this snapshot state.  Hard-link them
-        // from the operational accounts/ directory to here.
-        let (_, hard_link_storages_us) = measure_us!(hard_link_storages_to_snapshot(
-            &bank_snapshot_dir,
-            slot,
-            snapshot_storages
-        )
-        .map_err(AddBankSnapshotError::HardLinkStorages)?);
+        }
+        .unzip();
 
         let bank_snapshot_serializer = move |stream: &mut BufWriter<fs::File>| -> Result<()> {
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
@@ -988,7 +990,7 @@ fn serialize_snapshot(
             ("bank_size", bank_snapshot_consumed_size, i64),
             ("status_cache_size", status_cache_consumed_size, i64),
             ("flush_storages_us", flush_storages_us, Option<i64>),
-            ("hard_link_storages_us", hard_link_storages_us, i64),
+            ("hard_link_storages_us", hard_link_storages_us, Option<i64>),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
             ("status_cache_serialize_us", status_cache_serialize_us, i64),
             ("write_version_file_us", write_version_file_us, i64),
@@ -1087,7 +1089,7 @@ fn archive_snapshot(
     ));
 
     {
-        let mut archive_file = fs::File::create(&staging_archive_path)
+        let archive_file = fs::File::create(&staging_archive_path)
             .map_err(|err| E::CreateArchiveFile(err, staging_archive_path.clone()))?;
 
         let do_archive_files = |encoder: &mut dyn Write| -> std::result::Result<(), E> {
@@ -1113,21 +1115,20 @@ fn archive_snapshot(
             for storage in snapshot_storages {
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
-                match storage.accounts.internals_for_archive() {
-                    InternalsForArchive::Mmap(data) => {
-                        let mut header = tar::Header::new_gnu();
-                        header.set_path(path_in_archive).map_err(|err| {
-                            E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
-                        })?;
-                        header.set_size(storage.capacity());
-                        header.set_cksum();
-                        archive.append(&header, data)
-                    }
-                    InternalsForArchive::FileIo(path) => {
-                        archive.append_path_with_name(path, path_in_archive)
-                    }
-                }
-                .map_err(|err| E::ArchiveAccountStorageFile(err, storage.path().to_path_buf()))?;
+
+                let reader =
+                    AccountStorageReader::new(storage, Some(snapshot_slot)).map_err(|err| {
+                        E::AccountStorageReaderError(err, storage.path().to_path_buf())
+                    })?;
+                let mut header = tar::Header::new_gnu();
+                header.set_path(path_in_archive).map_err(|err| {
+                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                })?;
+                header.set_size(reader.len() as u64);
+                header.set_cksum();
+                archive.append(&header, reader).map_err(|err| {
+                    E::ArchiveAccountStorageFile(err, storage.path().to_path_buf())
+                })?;
             }
 
             archive.into_inner().map_err(E::FinishArchive)?;
@@ -1135,18 +1136,6 @@ fn archive_snapshot(
         };
 
         match archive_format {
-            ArchiveFormat::TarBzip2 => {
-                let mut encoder =
-                    bzip2::write::BzEncoder::new(archive_file, bzip2::Compression::best());
-                do_archive_files(&mut encoder)?;
-                encoder.finish().map_err(E::FinishEncoder)?;
-            }
-            ArchiveFormat::TarGzip => {
-                let mut encoder =
-                    flate2::write::GzEncoder::new(archive_file, flate2::Compression::default());
-                do_archive_files(&mut encoder)?;
-                encoder.finish().map_err(E::FinishEncoder)?;
-            }
             ArchiveFormat::TarZstd { config } => {
                 let mut encoder =
                     zstd::stream::Encoder::new(archive_file, config.compression_level)
@@ -1163,9 +1152,7 @@ fn archive_snapshot(
                 let (_output, result) = encoder.finish();
                 result.map_err(E::FinishEncoder)?;
             }
-            ArchiveFormat::Tar => {
-                do_archive_files(&mut archive_file)?;
-            }
+            _ => panic!("archiving snapshot with '{archive_format}' is not supported"),
         };
     }
 
@@ -2015,9 +2002,8 @@ pub fn build_incremental_snapshot_archive_path(
 pub(crate) fn parse_full_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, SnapshotHash, ArchiveFormat)> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap();
-    }
+    static RE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap());
 
     let do_parse = || {
         RE.captures(archive_filename).and_then(|captures| {
@@ -2047,9 +2033,9 @@ pub(crate) fn parse_full_snapshot_archive_filename(
 pub(crate) fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Slot, SnapshotHash, ArchiveFormat)> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap();
-    }
+    static RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX).unwrap()
+    });
 
     let do_parse = || {
         RE.captures(archive_filename).and_then(|captures| {

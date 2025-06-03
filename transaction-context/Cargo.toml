@@ -25,6 +25,7 @@ rustdoc-args = ["--cfg=docsrs"]
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 bincode = { workspace = true, optional = true }
 solana-rent = { workspace = true }
+solana-sdk-ids = { workspace = true }
 solana-signature = { workspace = true, optional = true }
 
 [dev-dependencies]

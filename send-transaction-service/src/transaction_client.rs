@@ -246,6 +246,7 @@ impl TpuClientNextClient {
         leader_forward_count: u64,
         identity: Option<&Keypair>,
         bind_socket: UdpSocket,
+        cancel: CancellationToken,
     ) -> Self
     where
         T: TpuInfoWithSendStatic + Clone,
@@ -255,8 +256,6 @@ impl TpuClientNextClient {
         let (sender, receiver) = mpsc::channel(128);
 
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
-
-        let cancel = CancellationToken::new();
 
         let leader_info_provider = CurrentLeaderInfo::new(leader_info);
         let leader_updater: SendTransactionServiceLeaderUpdater<T> =

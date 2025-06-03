@@ -666,7 +666,8 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             let target_db = PathBuf::from(value_t_or_exit!(arg_matches, "target_db", String));
 
             let source = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
-            let target = crate::open_blockstore(&target_db, arg_matches, AccessType::Primary);
+            let target =
+                crate::open_blockstore(&target_db, arg_matches, AccessType::PrimaryForMaintenance);
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
@@ -926,7 +927,11 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("remove-dead-slot", Some(arg_matches)) => {
             let slots = values_t_or_exit!(arg_matches, "slots", Slot);
-            let blockstore = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Primary);
+            let blockstore = crate::open_blockstore(
+                &ledger_path,
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            );
             for slot in slots {
                 blockstore
                     .remove_dead_slot(slot)
@@ -934,7 +939,11 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
             }
         }
         ("repair-roots", Some(arg_matches)) => {
-            let blockstore = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Primary);
+            let blockstore = crate::open_blockstore(
+                &ledger_path,
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            );
 
             let start_root =
                 value_t!(arg_matches, "start_root", Slot).unwrap_or_else(|_| blockstore.max_root());
@@ -960,7 +969,11 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         }
         ("set-dead-slot", Some(arg_matches)) => {
             let slots = values_t_or_exit!(arg_matches, "slots", Slot);
-            let blockstore = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Primary);
+            let blockstore = crate::open_blockstore(
+                &ledger_path,
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            );
             for slot in slots {
                 blockstore
                     .set_dead_slot(slot)

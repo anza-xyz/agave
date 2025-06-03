@@ -1060,7 +1060,7 @@ pub mod drop_unchained_merkle_shreds {
 }
 
 pub mod relax_intrabatch_account_locks {
-    solana_pubkey::declare_id!("EbAhnReKK8Sf88CvAfAXbgKji8DV48rsp4q2sgHqgWef");
+    solana_pubkey::declare_id!("ENTRYnPAoT5Swwx73YDGzMp3XnNH1kxacyvLosRHza1i");
 }
 
 pub mod create_slashing_program {
@@ -1092,7 +1092,7 @@ pub mod enshrine_slashing_program {
 }
 
 pub mod enable_extend_program_checked {
-    solana_pubkey::declare_id!("97QCmR4QtfeQsAti9srfHFk5uMRFP95CvXG8EGr615HM");
+    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {

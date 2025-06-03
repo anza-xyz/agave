@@ -10,7 +10,7 @@
 //!      dedicated [`context-state`] account.
 //!
 //! In step 1, the zero-knowledge proof can either be included directly as the instruction data or
-//! pre-written to an account. The progrma determines whether the proof is provided as instruction
+//! pre-written to an account. The program determines whether the proof is provided as instruction
 //! data or pre-written to an account by inspecting the length of the data. If the instruction data
 //! is exactly 5 bytes (instruction discriminator + unsigned 32-bit integer), then the program
 //! assumes that the first account provided with the instruction contains the zero-knowledge proof

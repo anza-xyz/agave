@@ -35,7 +35,6 @@ etcd-client = { workspace = true, features = ["tls"] }
 futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 min-max-heap = { workspace = true }
@@ -106,7 +105,6 @@ solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sanitize = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
 solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
 solana-sha256-hasher = { workspace = true }
@@ -155,6 +153,7 @@ criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-bpf-loader-program = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
@@ -168,7 +167,6 @@ solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true, features = [
@@ -198,13 +196,15 @@ frozen-abi = [
     "solana-bloom/frozen-abi",
     "solana-compute-budget/frozen-abi",
     "solana-cost-model/frozen-abi",
+    "solana-frozen-abi/frozen-abi",
     "solana-gossip/frozen-abi",
     "solana-ledger/frozen-abi",
+    "solana-packet/frozen-abi",
     "solana-perf/frozen-abi",
     "solana-program-runtime/frozen-abi",
     "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
     "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
     "solana-svm/frozen-abi",
     "solana-vote/frozen-abi",
     "solana-vote-program/frozen-abi",

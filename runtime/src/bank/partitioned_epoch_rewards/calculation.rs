@@ -24,12 +24,13 @@ use {
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool,
     },
+    solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
-    solana_sdk::{
-        account::ReadableAccount, pubkey::Pubkey, reward_info::RewardInfo,
-        stake::state::Delegation, sysvar::epoch_rewards::EpochRewards,
-    },
+    solana_pubkey::Pubkey,
+    solana_reward_info::RewardInfo,
+    solana_stake_interface::state::Delegation,
+    solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
     std::sync::{

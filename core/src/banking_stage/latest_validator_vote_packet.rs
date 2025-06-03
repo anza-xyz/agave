@@ -2,10 +2,11 @@
 use solana_perf::packet::PacketRef;
 use {
     super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
+    solana_bincode::limited_deserialize,
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
-    solana_sdk::program_utils::limited_deserialize,
     solana_vote_program::vote_instruction::VoteInstruction,
     std::sync::Arc,
 };
@@ -50,7 +51,7 @@ impl LatestValidatorVotePacket {
             }
         };
 
-        match limited_deserialize::<VoteInstruction>(&instruction.data) {
+        match limited_deserialize::<VoteInstruction>(&instruction.data, PACKET_DATA_SIZE as u64) {
             Ok(vote_state_update_instruction)
                 if instruction_filter(&vote_state_update_instruction) =>
             {

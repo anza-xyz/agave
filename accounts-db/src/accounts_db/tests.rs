@@ -6,7 +6,7 @@ use {
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
         accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
-        ancient_append_vecs::{self, is_ancient},
+        ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
             StoredMeta,
@@ -2114,10 +2114,11 @@ fn test_hash_stored_account() {
 }
 
 // something we can get a ref to
-lazy_static! {
-    pub static ref EPOCH_SCHEDULE: EpochSchedule = EpochSchedule::default();
-    pub static ref RENT_COLLECTOR: RentCollector = RentCollector::default();
-}
+
+pub static EPOCH_SCHEDULE: std::sync::LazyLock<EpochSchedule> =
+    std::sync::LazyLock::new(EpochSchedule::default);
+pub static RENT_COLLECTOR: std::sync::LazyLock<RentCollector> =
+    std::sync::LazyLock::new(RentCollector::default);
 
 impl CalcAccountsHashConfig<'_> {
     pub(crate) fn default() -> Self {
@@ -6766,7 +6767,6 @@ fn test_shrink_ancient_overflow_with_min_size() {
         .storage
         .get_slot_storage_entry(max_slot_inclusive - 1)
         .unwrap();
-    assert!(is_ancient(&ancient2.accounts));
     assert!(ancient2.capacity() > ideal_av_size); // min_size kicked in, which cause the appendvec to be larger than the ideal_av_size
 
     // Combine normal append vec(s) into existing ancient append vec this
@@ -6785,21 +6785,18 @@ fn test_shrink_ancient_overflow_with_min_size() {
     // Nothing should be combined because the append vec are oversized.
     // min_size kicked in, which cause the appendvecs to be larger than the ideal_av_size.
     let ancient = db.storage.get_slot_storage_entry(ancient_slot).unwrap();
-    assert!(is_ancient(&ancient.accounts));
     assert!(ancient.capacity() > ideal_av_size);
 
     let ancient2 = db
         .storage
         .get_slot_storage_entry(max_slot_inclusive - 1)
         .unwrap();
-    assert!(is_ancient(&ancient2.accounts));
     assert!(ancient2.capacity() > ideal_av_size);
 
     let ancient3 = db
         .storage
         .get_slot_storage_entry(max_slot_inclusive)
         .unwrap();
-    assert!(is_ancient(&ancient3.accounts));
     assert!(ancient3.capacity() > ideal_av_size);
 }
 

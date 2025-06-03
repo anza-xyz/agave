@@ -101,6 +101,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
+        ed25519_dalek::ed25519::signature::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
@@ -110,7 +111,7 @@ mod tests {
             Account, AccountSharedData, ReadableAccount, WritableAccount,
             DUMMY_INHERITABLE_ACCOUNT_FIELDS,
         },
-        solana_ed25519_program::new_ed25519_instruction,
+        solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, AccountMeta, Instruction},
         solana_message::{AccountKeys, Message, SanitizedMessage},
@@ -603,7 +604,9 @@ mod tests {
 
     fn ed25519_instruction_for_test() -> Instruction {
         let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
-        new_ed25519_instruction(&secret_key, b"hello")
+        let signature = secret_key.sign(b"hello").to_bytes();
+        let pubkey = secret_key.public.to_bytes();
+        new_ed25519_instruction_with_signature(b"hello", &signature, &pubkey)
     }
 
     fn secp256r1_instruction_for_test() -> Instruction {

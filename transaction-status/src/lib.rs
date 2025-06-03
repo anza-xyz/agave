@@ -26,6 +26,7 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     solana_clock::{Slot, UnixTimestamp},
     solana_hash::Hash,
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_message::{
         compiled_instruction::CompiledInstruction,
         v0::{self, LoadedAddresses, LoadedMessage},
@@ -42,8 +43,6 @@ use {
     thiserror::Error,
 };
 
-#[macro_use]
-extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;
 
@@ -743,7 +742,13 @@ impl Encodable for Message {
                 instructions: self
                     .instructions
                     .iter()
-                    .map(|instruction| parse_ui_instruction(instruction, &account_keys, None))
+                    .map(|instruction| {
+                        parse_ui_instruction(
+                            instruction,
+                            &account_keys,
+                            Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                        )
+                    })
                     .collect(),
                 address_table_lookups: None,
             })
@@ -755,7 +760,9 @@ impl Encodable for Message {
                 instructions: self
                     .instructions
                     .iter()
-                    .map(|ix| UiCompiledInstruction::from(ix, None))
+                    .map(|ix| {
+                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                    })
                     .collect(),
                 address_table_lookups: None,
             })
@@ -777,7 +784,13 @@ impl Encodable for v0::Message {
                 instructions: self
                     .instructions
                     .iter()
-                    .map(|instruction| parse_ui_instruction(instruction, &account_keys, None))
+                    .map(|instruction| {
+                        parse_ui_instruction(
+                            instruction,
+                            &account_keys,
+                            Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                        )
+                    })
                     .collect(),
                 address_table_lookups: None,
             })
@@ -789,7 +802,9 @@ impl Encodable for v0::Message {
                 instructions: self
                     .instructions
                     .iter()
-                    .map(|ix| UiCompiledInstruction::from(ix, None))
+                    .map(|ix| {
+                        UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                    })
                     .collect(),
                 address_table_lookups: None,
             })
@@ -818,7 +833,13 @@ impl EncodableWithMeta for v0::Message {
                 instructions: self
                     .instructions
                     .iter()
-                    .map(|instruction| parse_ui_instruction(instruction, &account_keys, None))
+                    .map(|instruction| {
+                        parse_ui_instruction(
+                            instruction,
+                            &account_keys,
+                            Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                        )
+                    })
                     .collect(),
                 address_table_lookups: Some(
                     self.address_table_lookups.iter().map(Into::into).collect(),
@@ -836,7 +857,9 @@ impl EncodableWithMeta for v0::Message {
             instructions: self
                 .instructions
                 .iter()
-                .map(|ix| UiCompiledInstruction::from(ix, None))
+                .map(|ix| {
+                    UiCompiledInstruction::from(ix, Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32))
+                })
                 .collect(),
             address_table_lookups: Some(
                 self.address_table_lookups.iter().map(Into::into).collect(),

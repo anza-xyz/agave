@@ -1,6 +1,6 @@
 use {
     crate::{consensus::Stake, replay_stage::DUPLICATE_THRESHOLD},
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::{
         collections::HashMap,
         hash::RandomState,

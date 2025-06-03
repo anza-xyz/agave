@@ -13,7 +13,9 @@ use {
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
             genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
-        snapshot_bank_utils, snapshot_utils,
+        snapshot_bank_utils,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils,
         stake_history::StakeHistory,
         stakes::InvalidCacheEntryReason,
         status_cache::MAX_CACHE_ENTRIES,
@@ -22,6 +24,7 @@ use {
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
+    ed25519_dalek::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -43,10 +46,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        BankId, Epoch, Slot, UnixTimestamp, DEFAULT_HASHES_PER_TICK, DEFAULT_SLOTS_PER_EPOCH,
-        DEFAULT_TICKS_PER_SLOT, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
-        UPDATED_HASHES_PER_TICK2, UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4,
-        UPDATED_HASHES_PER_TICK5, UPDATED_HASHES_PER_TICK6,
+        BankId, Epoch, Slot, UnixTimestamp, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT,
+        INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
@@ -3052,34 +3053,39 @@ fn test_debits_before_credits() {
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let keypair = Keypair::new();
     let tx0 = system_transaction::transfer(
-        &mint_keypair,
-        &keypair.pubkey(),
-        sol_to_lamports(2.),
-        genesis_config.hash(),
-    );
-    let tx1 = system_transaction::transfer(
         &keypair,
         &mint_keypair.pubkey(),
         sol_to_lamports(1.),
         genesis_config.hash(),
     );
+    let tx1 = system_transaction::transfer(
+        &mint_keypair,
+        &keypair.pubkey(),
+        sol_to_lamports(2.),
+        genesis_config.hash(),
+    );
     let txs = vec![tx0, tx1];
     let results = bank.process_transactions(txs.iter());
-    assert!(results[1].is_err());
+    assert!(results[0].is_err());
 
     // Assert bad transactions aren't counted.
     assert_eq!(bank.transaction_count(), 1);
     assert_eq!(bank.non_vote_transaction_count_since_restart(), 1);
 }
 
-#[test]
-fn test_readonly_accounts() {
+#[test_case(false; "old")]
+#[test_case(true; "simd83")]
+fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
         ..
     } = create_genesis_config_with_leader(500, &solana_pubkey::new_rand(), 0);
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !relax_intrabatch_account_locks {
+        bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let vote_pubkey0 = solana_pubkey::new_rand();
     let vote_pubkey1 = solana_pubkey::new_rand();
@@ -3143,9 +3149,16 @@ fn test_readonly_accounts() {
     );
     let txs = vec![tx0, tx1];
     let results = bank.process_transactions(txs.iter());
-    // However, an account may not be locked as read-only and writable at the same time.
+    // Whether an account can be locked as read-only and writable at the same time depends on features.
     assert_eq!(results[0], Ok(()));
-    assert_eq!(results[1], Err(TransactionError::AccountInUse));
+    assert_eq!(
+        results[1],
+        if relax_intrabatch_account_locks {
+            Ok(())
+        } else {
+            Err(TransactionError::AccountInUse)
+        }
+    );
 }
 
 #[test]
@@ -9428,8 +9441,9 @@ fn test_vote_epoch_panic() {
     );
 }
 
-#[test]
-fn test_tx_log_order() {
+#[test_case(false; "old")]
+#[test_case(true; "simd83")]
+fn test_tx_log_order(relax_intrabatch_account_locks: bool) {
     let GenesisConfigInfo {
         genesis_config,
         mint_keypair,
@@ -9439,7 +9453,11 @@ fn test_tx_log_order() {
         &Pubkey::new_unique(),
         bootstrap_validator_stake_lamports(),
     );
-    let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+    let mut bank = Bank::new_for_tests(&genesis_config);
+    if !relax_intrabatch_account_locks {
+        bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
+    }
+    let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
     *bank.transaction_log_collector_config.write().unwrap() = TransactionLogCollectorConfig {
         mentioned_addresses: HashSet::new(),
         filter: TransactionLogCollectorFilter::All,
@@ -9496,7 +9514,11 @@ fn test_tx_log_order() {
         .as_ref()
         .unwrap()[2]
         .contains(&"failed".to_string()));
-    assert!(commit_results[2].is_err());
+    if relax_intrabatch_account_locks {
+        assert!(commit_results[2].is_ok());
+    } else {
+        assert!(commit_results[2].is_err());
+    }
 
     let stored_logs = &bank.transaction_log_collector.read().unwrap().logs;
     let success_log_info = stored_logs
@@ -10342,7 +10364,13 @@ fn test_call_precomiled_program() {
         ed25519_dalek::Keypair { secret, public }
     };
     let message_arr = b"hello";
-    let instruction = solana_ed25519_program::new_ed25519_instruction(&privkey, message_arr);
+    let signature = privkey.sign(message_arr).to_bytes();
+    let pubkey = privkey.public.to_bytes();
+    let instruction = solana_ed25519_program::new_ed25519_instruction_with_signature(
+        message_arr,
+        &signature,
+        &pubkey,
+    );
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
@@ -12041,108 +12069,6 @@ fn test_cap_accounts_data_allocations_per_transaction() {
 }
 
 #[test]
-fn test_feature_activation_idempotent() {
-    let mut genesis_config = GenesisConfig::default();
-    const HASHES_PER_TICK_START: u64 = 3;
-    genesis_config.poh_config.hashes_per_tick = Some(HASHES_PER_TICK_START);
-
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    assert_eq!(bank.hashes_per_tick, Some(HASHES_PER_TICK_START));
-
-    // Don't activate feature
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(HASHES_PER_TICK_START));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(DEFAULT_HASHES_PER_TICK));
-
-    // Activate feature "again"
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(DEFAULT_HASHES_PER_TICK));
-}
-
-#[test]
-fn test_feature_hashes_per_tick() {
-    let mut genesis_config = GenesisConfig::default();
-    const HASHES_PER_TICK_START: u64 = 3;
-    genesis_config.poh_config.hashes_per_tick = Some(HASHES_PER_TICK_START);
-
-    let mut bank = Bank::new_for_tests(&genesis_config);
-    assert_eq!(bank.hashes_per_tick, Some(HASHES_PER_TICK_START));
-
-    // Don't activate feature
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(HASHES_PER_TICK_START));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(DEFAULT_HASHES_PER_TICK));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick2::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(UPDATED_HASHES_PER_TICK2));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick3::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(UPDATED_HASHES_PER_TICK3));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick4::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(UPDATED_HASHES_PER_TICK4));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick5::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(UPDATED_HASHES_PER_TICK5));
-
-    // Activate feature
-    let feature_account_balance =
-        std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
-    bank.store_account(
-        &feature_set::update_hashes_per_tick6::id(),
-        &feature::create_account(&Feature { activated_at: None }, feature_account_balance),
-    );
-    bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, false);
-    assert_eq!(bank.hashes_per_tick, Some(UPDATED_HASHES_PER_TICK6));
-}
-
-#[test]
 fn test_calculate_fee_with_congestion_multiplier() {
     let lamports_scale: u64 = 5;
     let base_lamports_per_signature: u64 = 5_000;
@@ -13060,7 +12986,7 @@ fn test_rebuild_skipped_rewrites() {
         None,
         full_snapshot_archives_dir.path(),
         incremental_snapshot_archives_dir.path(),
-        snapshot_utils::ArchiveFormat::Tar,
+        SnapshotConfig::default().archive_format,
     )
     .unwrap();
 

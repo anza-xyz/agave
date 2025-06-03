@@ -26,13 +26,13 @@ use {
 // Empirically derived to constrain max verify latency to ~8ms at lower packet counts
 pub const VERIFY_PACKET_CHUNK_SIZE: usize = 128;
 
-lazy_static! {
-    static ref PAR_THREAD_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
+static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
         .num_threads(get_thread_count())
         .thread_name(|i| format!("solSigVerify{i:02}"))
         .build()
-        .unwrap();
-}
+        .unwrap()
+});
 
 pub type TxOffset = PinnedVec<u32>;
 

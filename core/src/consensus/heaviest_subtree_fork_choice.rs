@@ -254,11 +254,18 @@ impl HeaviestSubtreeForkChoice {
     }
 
     pub fn new_from_bank_forks(bank_forks: Arc<RwLock<BankForks>>) -> Self {
-        let bank_forks = bank_forks.read().unwrap();
-        let mut frozen_banks: Vec<_> = bank_forks.frozen_banks().values().cloned().collect();
+        let (frozen_banks, root_bank) = {
+            let bank_forks = bank_forks.read().unwrap();
+            let mut frozen_banks: Vec<_> = bank_forks
+                .frozen_banks()
+                .map(|(_slot, bank)| bank)
+                .collect();
+            frozen_banks.sort_by_key(|bank| bank.slot());
+            let root_bank = bank_forks.root_bank();
 
-        frozen_banks.sort_by_key(|bank| bank.slot());
-        let root_bank = bank_forks.root_bank();
+            (frozen_banks, root_bank)
+        };
+
         Self::new_from_frozen_banks((root_bank.slot(), root_bank.hash()), &frozen_banks)
     }
 
@@ -1599,8 +1606,7 @@ mod test {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
         frozen_banks.sort_by_key(|bank| bank.slot());
 

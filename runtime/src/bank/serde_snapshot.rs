@@ -15,8 +15,9 @@ mod tests {
                 SerdeAccountsHash, SerdeIncrementalAccountsHash, SnapshotStreams,
             },
             snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
             snapshot_utils::{
-                create_tmp_accounts_dir_for_tests, get_storages_to_serialize, ArchiveFormat,
+                create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
             stakes::{SerdeStakesToStakeFormat, Stakes, StakesEnum},
@@ -408,7 +409,7 @@ mod tests {
             None,
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
-            ArchiveFormat::Tar,
+            SnapshotConfig::default().archive_format,
         )
         .unwrap();
 
@@ -516,14 +517,9 @@ mod tests {
     #[cfg(feature = "frozen-abi")]
     mod test_bank_serialize {
         use {
-            super::*,
-            crate::bank::BankHashStats,
-            solana_accounts_db::{
-                accounts_hash::AccountsLtHash, append_vec::StoredMetaWriteVersion,
-            },
-            solana_clock::Slot,
-            solana_frozen_abi::abi_example::AbiExample,
-            solana_lattice_hash::lt_hash::LtHash,
+            super::*, crate::bank::BankHashStats,
+            solana_accounts_db::accounts_hash::AccountsLtHash, solana_clock::Slot,
+            solana_frozen_abi::abi_example::AbiExample, solana_lattice_hash::lt_hash::LtHash,
             std::marker::PhantomData,
         };
 
@@ -589,7 +585,7 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
-                StoredMetaWriteVersion::default(),
+                u64::default(), // obsolete, formerly write_version
             )
         }
     }

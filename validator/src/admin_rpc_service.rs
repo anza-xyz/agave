@@ -750,9 +750,9 @@ impl AdminRpcImpl {
                     })?;
             }
 
-            for n in post_init.notifies.iter() {
-                if let Err(err) = n.update_key(&identity_keypair) {
-                    error!("Error updating network layer keypair: {err}");
+            for (key, notifier) in &*post_init.notifies.read().unwrap() {
+                if let Err(err) = notifier.update_key(&identity_keypair) {
+                    error!("Error updating network layer keypair: {err} on {key:?}");
                 }
             }
 
@@ -903,6 +903,7 @@ mod tests {
             accounts_index::AccountSecondaryIndexes,
         },
         solana_core::{
+            admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
             consensus::tower_storage::NullTowerStorage,
             validator::{Validator, ValidatorConfig, ValidatorTpuConfig},
         },
@@ -981,7 +982,7 @@ mod tests {
                     bank_forks: bank_forks.clone(),
                     vote_account,
                     repair_whitelist,
-                    notifies: Vec::new(),
+                    notifies: Arc::new(RwLock::new(KeyUpdaters::default())),
                     repair_socket: Arc::new(bind_to_unspecified().unwrap()),
                     outstanding_repair_requests: Arc::<
                         RwLock<repair_service::OutstandingShredRepairs>,
@@ -1427,12 +1428,29 @@ mod tests {
                 start_progress.clone(),
                 SocketAddrSpace::Unspecified,
                 ValidatorTpuConfig::new_for_tests(DEFAULT_TPU_ENABLE_UDP),
-                post_init,
+                post_init.clone(),
             )
             .expect("assume successful validator start");
             assert_eq!(
                 *start_progress.read().unwrap(),
                 ValidatorStartProgress::Running
+            );
+            let post_init = post_init.read().unwrap();
+
+            assert!(post_init.is_some());
+            let post_init = post_init.as_ref().unwrap();
+            let notifies = post_init.notifies.read().unwrap();
+            let updater_keys: HashSet<KeyUpdaterType> =
+                notifies.into_iter().map(|(key, _)| key.clone()).collect();
+            assert_eq!(
+                updater_keys,
+                HashSet::from_iter(vec![
+                    KeyUpdaterType::Tpu,
+                    KeyUpdaterType::TpuForwards,
+                    KeyUpdaterType::TpuVote,
+                    KeyUpdaterType::Forward,
+                    KeyUpdaterType::RpcService
+                ])
             );
             let mut io = MetaIoHandler::default();
             io.extend_with(AdminRpcImpl.to_delegate());

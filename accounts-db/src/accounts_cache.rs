@@ -23,16 +23,24 @@ pub struct SlotCache {
     same_account_writes: AtomicU64,
     same_account_writes_size: AtomicU64,
     unique_account_writes_size: AtomicU64,
+    /// The size of account data stored in `cache` (just this slot), in bytes
     size: AtomicU64,
+    /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
     is_frozen: AtomicBool,
+    /// The number of accounts stored in `cache` (just this slot)
+    accounts_count: AtomicU64,
+    /// The number of accounts stored in the whole AccountsCache
+    total_accounts_count: Arc<AtomicU64>,
 }
 
 impl Drop for SlotCache {
     fn drop(&mut self) {
-        // broader cache no longer holds our size in memory
+        // broader cache no longer holds our size/counts in memory
         self.total_size
-            .fetch_sub(self.size.load(Ordering::Relaxed), Ordering::Relaxed);
+            .fetch_sub(*self.size.get_mut(), Ordering::Relaxed);
+        self.total_accounts_count
+            .fetch_sub(*self.accounts_count.get_mut(), Ordering::Relaxed);
     }
 }
 
@@ -55,7 +63,12 @@ impl SlotCache {
                 self.unique_account_writes_size.load(Ordering::Relaxed),
                 i64
             ),
-            ("size", self.size.load(Ordering::Relaxed), i64)
+            ("size", self.size.load(Ordering::Relaxed), i64),
+            (
+                "accounts_count",
+                self.accounts_count.load(Ordering::Relaxed),
+                i64
+            )
         );
     }
 
@@ -88,6 +101,8 @@ impl SlotCache {
             self.total_size.fetch_add(data_len, Ordering::Relaxed);
             self.unique_account_writes_size
                 .fetch_add(data_len, Ordering::Relaxed);
+            self.accounts_count.fetch_add(1, Ordering::Relaxed);
+            self.total_accounts_count.fetch_add(1, Ordering::Relaxed);
         }
         item
     }
@@ -153,7 +168,10 @@ pub struct AccountsCache {
     // could have triggered a flush of this slot already
     maybe_unflushed_roots: RwLock<BTreeSet<Slot>>,
     max_flushed_root: AtomicU64,
+    /// The size of account data stored in the whole AccountsCache, in bytes
     total_size: Arc<AtomicU64>,
+    /// The number of accounts stored in the whole AccountsCache
+    total_accounts_counts: Arc<AtomicU64>,
 }
 
 impl AccountsCache {
@@ -166,18 +184,9 @@ impl AccountsCache {
             size: AtomicU64::default(),
             total_size: Arc::clone(&self.total_size),
             is_frozen: AtomicBool::default(),
+            accounts_count: AtomicU64::new(0),
+            total_accounts_count: Arc::clone(&self.total_accounts_counts),
         })
-    }
-    fn unique_account_writes_size(&self) -> u64 {
-        self.cache
-            .iter()
-            .map(|item| {
-                let slot_cache = item.value();
-                slot_cache
-                    .unique_account_writes_size
-                    .load(Ordering::Relaxed)
-            })
-            .sum()
     }
     pub fn size(&self) -> u64 {
         self.total_size.load(Ordering::Relaxed)
@@ -191,12 +200,12 @@ impl AccountsCache {
                 i64
             ),
             ("num_slots", self.cache.len(), i64),
+            ("total_size", self.size(), i64),
             (
-                "total_unique_writes_size",
-                self.unique_account_writes_size(),
+                "total_accounts_count",
+                self.total_accounts_counts.load(Ordering::Relaxed),
                 i64
             ),
-            ("total_size", self.size(), i64),
         );
     }
 

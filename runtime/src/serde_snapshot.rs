@@ -22,7 +22,6 @@ use {
         accounts_hash::{AccountsDeltaHash, AccountsHash},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
-        append_vec::StoredMetaWriteVersion,
         blockhash_queue::BlockhashQueue,
         epoch_accounts_hash::EpochAccountsHash,
     },
@@ -73,7 +72,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AccountsDbFields<T>(
     HashMap<Slot, Vec<T>>,
-    StoredMetaWriteVersion,
+    u64, // obsolete, formerly write_version
     Slot,
     BankHashInfo,
     /// all slots that were roots within the last epoch
@@ -637,7 +636,7 @@ pub fn serialize_bank_snapshot_into<W>(
     accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
-    write_version: StoredMetaWriteVersion,
+    write_version: u64,
 ) -> Result<(), Error>
 where
     W: Write,
@@ -667,7 +666,7 @@ pub fn serialize_bank_snapshot_with<S>(
     accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
-    write_version: StoredMetaWriteVersion,
+    write_version: u64,
 ) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -783,7 +782,7 @@ struct SerializableAccountsDb<'a> {
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
-    write_version: StoredMetaWriteVersion,
+    write_version: u64,
 }
 
 impl Serialize for SerializableAccountsDb<'_> {
@@ -799,7 +798,7 @@ impl Serialize for SerializableAccountsDb<'_> {
                 x.first().unwrap().slot(),
                 utils::serialize_iter_as_seq(
                     x.iter()
-                        .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
+                        .map(|x| SerializableAccountStorageEntry::new(x.as_ref(), self.slot)),
                 ),
             )
         }));

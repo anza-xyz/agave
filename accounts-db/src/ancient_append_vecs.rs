@@ -4,8 +4,6 @@
 //! 2. multiple 'slots' squashed into a single older (ie. ancient) slot for convenience and performance
 //!
 //! Otherwise, an ancient append vec is the same as any other append vec
-#[cfg(test)]
-use crate::accounts_file::AccountsFile;
 use {
     crate::{
         account_storage::ShrinkInProgress,
@@ -1072,99 +1070,6 @@ impl<'a> PackedAncientStorage<'a> {
     }
 }
 
-/// a set of accounts need to be stored.
-/// If there are too many to fit in 'Primary', the rest are put in 'Overflow'
-//
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum StorageSelector {
-    Primary,
-    Overflow,
-}
-
-/// reference a set of accounts to store
-/// The accounts may have to be split between 2 storages (primary and overflow) if there is not enough room in the primary storage.
-/// The 'store' functions need data stored in a slice of specific type.
-/// We need 1-2 of these slices constructed based on available bytes and individual account sizes.
-/// The slice arithmetic across both hashes and account data gets messy. So, this struct abstracts that.
-//
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-pub struct AccountsToStore<'a> {
-    accounts: &'a [&'a AccountFromStorage],
-    /// if 'accounts' contains more items than can be contained in the primary storage, then we have to split these accounts.
-    /// 'index_first_item_overflow' specifies the index of the first item in 'accounts' that will go into the overflow storage
-    index_first_item_overflow: usize,
-    /// bytes required to store primary accounts
-    bytes_primary: usize,
-    /// bytes required to store overflow accounts
-    bytes_overflow: usize,
-}
-
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-impl<'a> AccountsToStore<'a> {
-    /// break 'stored_accounts' into primary and overflow
-    /// available_bytes: how many bytes remain in the primary storage. Excess accounts will be directed to an overflow storage
-    pub fn new(
-        mut available_bytes: u64,
-        accounts: &'a [&'a AccountFromStorage],
-        alive_total_bytes: usize,
-    ) -> Self {
-        let num_accounts = accounts.len();
-        let mut bytes_primary = alive_total_bytes;
-        let mut bytes_overflow = 0;
-        // index of the first account that doesn't fit in the current append vec
-        let mut index_first_item_overflow = num_accounts; // assume all fit
-        let initial_available_bytes = available_bytes as usize;
-        if alive_total_bytes > available_bytes as usize {
-            // not all the alive bytes fit, so we have to find how many accounts fit within available_bytes
-            for (i, account) in accounts.iter().enumerate() {
-                let account_size = account.stored_size() as u64;
-                if available_bytes >= account_size {
-                    available_bytes = available_bytes.saturating_sub(account_size);
-                } else if index_first_item_overflow == num_accounts {
-                    // the # of accounts we have so far seen is the most that will fit in the current ancient append vec
-                    index_first_item_overflow = i;
-                    bytes_primary =
-                        initial_available_bytes.saturating_sub(available_bytes as usize);
-                    bytes_overflow = alive_total_bytes.saturating_sub(bytes_primary);
-                    break;
-                }
-            }
-        }
-        Self {
-            accounts,
-            index_first_item_overflow,
-            bytes_primary,
-            bytes_overflow,
-        }
-    }
-
-    /// true if a request to 'get' 'Overflow' would return accounts & hashes
-    pub fn has_overflow(&self) -> bool {
-        self.index_first_item_overflow < self.accounts.len()
-    }
-
-    /// return # required bytes for the given selector
-    pub fn get_bytes(&self, selector: StorageSelector) -> usize {
-        match selector {
-            StorageSelector::Primary => self.bytes_primary,
-            StorageSelector::Overflow => self.bytes_overflow,
-        }
-    }
-
-    /// get the accounts to store in the given 'storage'
-    pub fn get(&self, storage: StorageSelector) -> &[&'a AccountFromStorage] {
-        let range = match storage {
-            StorageSelector::Primary => 0..self.index_first_item_overflow,
-            StorageSelector::Overflow => self.index_first_item_overflow..self.accounts.len(),
-        };
-        &self.accounts[range]
-    }
-}
-
 /// capacity of an ancient append vec
 #[allow(clippy::assertions_on_constants, dead_code)]
 pub const fn get_ancient_append_vec_capacity() -> u64 {
@@ -1188,14 +1093,6 @@ pub const fn get_ancient_append_vec_capacity() -> u64 {
     RESULT
 }
 
-/// is this a max-size append vec designed to be used as an ancient append vec?
-//
-// NOTE: Only used by ancient append vecs "append" method, which is test-only now.
-#[cfg(test)]
-pub fn is_ancient(storage: &AccountsFile) -> bool {
-    storage.capacity() >= get_ancient_append_vec_capacity()
-}
-
 #[cfg(test)]
 pub mod tests {
     use {
@@ -1203,7 +1100,6 @@ pub mod tests {
         crate::{
             account_info::{AccountInfo, StorageLocation},
             accounts_db::{
-                get_temp_accounts_paths,
                 tests::{
                     append_single_account_with_default_hash, compare_all_accounts,
                     create_db_with_storages_and_index, create_storages_and_update_index,
@@ -1213,16 +1109,12 @@ pub mod tests {
                 ShrinkCollectRefs,
             },
             accounts_file::StorageAccess,
-            accounts_hash::AccountHash,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
-            append_vec::{
-                aligned_stored_size, AccountMeta, AppendVec, StoredAccountMeta, StoredMeta,
-            },
-            storable_accounts::{tests::build_accounts_from_storage, StorableAccountsBySlot},
+            append_vec::aligned_stored_size,
+            storable_accounts::StorableAccountsBySlot,
         },
         rand::seq::SliceRandom as _,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_hash::Hash,
         solana_pubkey::Pubkey,
         std::{collections::HashSet, ops::Range},
         strum::IntoEnumIterator,
@@ -2412,99 +2304,8 @@ pub mod tests {
     }
 
     #[test]
-    fn test_accounts_to_store_simple() {
-        let map = vec![];
-        let accounts_to_store = AccountsToStore::new(0, &map, 0);
-        for selector in [StorageSelector::Primary, StorageSelector::Overflow] {
-            let accounts = accounts_to_store.get(selector);
-            assert!(accounts.is_empty());
-        }
-        assert!(!accounts_to_store.has_overflow());
-    }
-
-    #[test]
-    fn test_accounts_to_store_more() {
-        let pubkey = Pubkey::from([1; 32]);
-        let account_size = 3;
-
-        let account = AccountSharedData::default();
-
-        let account_meta = AccountMeta {
-            lamports: 1,
-            owner: Pubkey::from([2; 32]),
-            executable: false,
-            rent_epoch: 0,
-        };
-        let offset = 3 * std::mem::size_of::<u64>();
-        let hash = AccountHash(Hash::new_from_array([2; 32]));
-        let stored_meta = StoredMeta {
-            // global write version
-            write_version_obsolete: 0,
-            // key for the account
-            pubkey,
-            data_len: 43,
-        };
-        let account = StoredAccountMeta {
-            meta: &stored_meta,
-            // account data
-            account_meta: &account_meta,
-            data: account.data(),
-            offset,
-            stored_size: account_size,
-            hash: &hash,
-        };
-        let map = [&account];
-        let map_accounts_from_storage = build_accounts_from_storage(map.iter().copied());
-        for (selector, available_bytes) in [
-            (StorageSelector::Primary, account_size),
-            (StorageSelector::Overflow, account_size - 1),
-        ] {
-            let alive_total_bytes = account_size;
-            let temp = map_accounts_from_storage.iter().collect::<Vec<_>>();
-            let accounts_to_store =
-                AccountsToStore::new(available_bytes as u64, &temp, alive_total_bytes);
-            let accounts = accounts_to_store.get(selector);
-            assert_eq!(
-                accounts.to_vec(),
-                map_accounts_from_storage.iter().collect::<Vec<_>>(),
-                "mismatch"
-            );
-            let accounts = accounts_to_store.get(get_opposite(&selector));
-            assert_eq!(
-                selector == StorageSelector::Overflow,
-                accounts_to_store.has_overflow()
-            );
-            assert!(accounts.is_empty());
-
-            assert_eq!(accounts_to_store.get_bytes(selector), account_size);
-            assert_eq!(accounts_to_store.get_bytes(get_opposite(&selector)), 0);
-        }
-    }
-    fn get_opposite(selector: &StorageSelector) -> StorageSelector {
-        match selector {
-            StorageSelector::Overflow => StorageSelector::Primary,
-            StorageSelector::Primary => StorageSelector::Overflow,
-        }
-    }
-
-    #[test]
     fn test_get_ancient_append_vec_capacity() {
         assert_eq!(get_ancient_append_vec_capacity(), 128 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_is_ancient() {
-        for (size, expected_ancient) in [
-            (get_ancient_append_vec_capacity() + 1, true),
-            (get_ancient_append_vec_capacity(), true),
-            (get_ancient_append_vec_capacity() - 1, false),
-        ] {
-            let tf = crate::append_vec::test_utils::get_append_vec_path("test_is_ancient");
-            let (_temp_dirs, _paths) = get_temp_accounts_paths(1).unwrap();
-            let av = AccountsFile::AppendVec(AppendVec::new(&tf.path, true, size as usize));
-
-            assert_eq!(expected_ancient, is_ancient(&av));
-        }
     }
 
     fn get_one_packed_ancient_append_vec_and_others(

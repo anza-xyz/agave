@@ -340,15 +340,24 @@ impl<'a> PacketRef<'a> {
         }
     }
 
-    pub fn to_packet(&self) -> Packet {
-        let size = self.meta().size;
-        let mut packet = Packet::default();
-        if let Some(data) = self.data(..) {
-            packet.buffer_mut()[..size].copy_from_slice(data);
+    pub fn to_bytes_packet(&self) -> BytesPacket {
+        match self {
+            // In case of the legacy `Packet` variant, we unfortunately need to
+            // make a copy.
+            Self::Packet(packet) => {
+                let buffer = packet
+                    .data(..)
+                    .map(|data| Bytes::from(data.to_vec()))
+                    .unwrap_or_else(Bytes::new);
+                BytesPacket::new(buffer, self.meta().clone())
+            }
+            // Cheap clone of `Bytes`.
+            // We call `to_owned()` twice, because `packet` is `&&BytesPacket`
+            // at this point. This will become less annoying once we switch to
+            // `BytesPacket` entirely and deal just with `Vec<BytesPacket>`
+            // everywhere.
+            Self::Bytes(packet) => packet.to_owned().to_owned(),
         }
-        *packet.meta_mut() = self.meta().clone();
-        packet.meta_mut().size = size;
-        packet
     }
 }
 

@@ -9,8 +9,6 @@ pub mod test_utils;
 
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
-// Used by the snapshot code in the runtime crate
-pub use meta::StoredMetaWriteVersion;
 // Some tests/benches use AccountMeta/StoredMeta
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
@@ -219,14 +217,12 @@ pub struct AppendVecStat {
     pub files_dirty: AtomicU64,
 }
 
-lazy_static! {
-    pub static ref APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
-        open_as_mmap: AtomicU64::new(0),
-        open_as_file_io: AtomicU64::new(0),
-        files_open: AtomicU64::new(0),
-        files_dirty: AtomicU64::new(0),
-    };
-}
+pub static APPEND_VEC_STATS: AppendVecStat = AppendVecStat {
+    open_as_mmap: AtomicU64::new(0),
+    open_as_file_io: AtomicU64::new(0),
+    files_open: AtomicU64::new(0),
+    files_dirty: AtomicU64::new(0),
+};
 
 impl Drop for AppendVec {
     fn drop(&mut self) {
@@ -1051,16 +1047,21 @@ impl AppendVec {
                     } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
                         reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
                     } else {
-                        const MAX_CAPACITY: usize =
-                            STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-                        if data_overflow_buffer.is_empty() {
-                            // Reserve to worst case to avoid multiple reallocations.
-                            data_overflow_buffer.reserve_exact(MAX_CAPACITY);
-                            // SAFETY: we only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
+                        const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
+                        // 128KiB covers a reasonably large distribution of typical account sizes.
+                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                        const MIN_CAPACITY: usize = 1024 * 128;
+                        let capacity = data_overflow_buffer.capacity();
+                        if data_len > capacity {
+                            let next_cap = data_len
+                                .next_power_of_two()
+                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
+                            data_overflow_buffer.reserve_exact(next_cap - capacity);
+                            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
                             // Later, we ensure we only read from the initialized portion of the buffer.
                             unsafe {
-                                data_overflow_buffer.set_len(MAX_CAPACITY);
-                            };
+                                data_overflow_buffer.set_len(next_cap);
+                            }
                         }
 
                         // Copy already read data to overflow buffer.
@@ -1608,14 +1609,6 @@ pub mod tests {
         /// return how many accounts in the storage
         fn accounts_count(&self) -> usize {
             let mut count = 0;
-            self.scan_accounts_stored_meta(|_| {
-                count += 1;
-            });
-            count
-        }
-
-        fn store_accounts_no_data_count(&self) -> usize {
-            let mut count = 0;
             self.scan_stored_accounts_no_data(|_| {
                 count += 1;
             });
@@ -1730,13 +1723,12 @@ pub mod tests {
             assert_eq!(av.get_account_test(indexes[sample]).unwrap(), account);
         }
         trace!("random read time: {} ms", now.elapsed().as_millis());
-
-        let now = Instant::now();
         assert_eq!(indexes.len(), size);
         assert_eq!(indexes[0], 0);
-        let mut sample = 0;
         assert_eq!(av.accounts_count(), size);
-        assert_eq!(av.store_accounts_no_data_count(), size);
+
+        let mut sample = 0;
+        let now = Instant::now();
         av.scan_accounts_stored_meta(|v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();

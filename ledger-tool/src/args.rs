@@ -1,6 +1,7 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
+    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
@@ -12,6 +13,7 @@ use {
         input_parsers::pubkeys_of,
         input_validators::{is_parsable, is_pow2, is_within_range},
     },
+    solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
@@ -368,6 +370,37 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
+    }
+}
+
+pub(crate) fn parse_encoding_format(matches: &ArgMatches<'_>) -> UiAccountEncoding {
+    match matches.value_of("encoding") {
+        Some("jsonParsed") => UiAccountEncoding::JsonParsed,
+        Some("base64") => UiAccountEncoding::Base64,
+        Some("base64+zstd") => UiAccountEncoding::Base64Zstd,
+        _ => UiAccountEncoding::Base64,
+    }
+}
+
+pub(crate) fn parse_account_output_config(matches: &ArgMatches<'_>) -> CliAccountNewConfig {
+    let data_encoding = parse_encoding_format(matches);
+    let output_account_data = !matches.is_present("no_account_data");
+    let data_slice_config = if output_account_data {
+        // None yields the entire account in the slice
+        None
+    } else {
+        // usize::MAX is a sentinel that will yield an
+        // empty data slice. Because of this, length is
+        // ignored so any value will do
+        let offset = usize::MAX;
+        let length = 0;
+        Some(UiDataSliceConfig { offset, length })
+    };
+
+    CliAccountNewConfig {
+        data_encoding,
+        data_slice_config,
+        ..CliAccountNewConfig::default()
     }
 }
 

@@ -43,11 +43,10 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
-lazy_static::lazy_static! {
-    // Make a dummy feature_set with all features enabled to
-    // fetch compute_unit_price and compute_unit_limit for legacy leader.
-    static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
-}
+// Make a dummy feature_set with all features enabled to
+// fetch compute_unit_price and compute_unit_limit for legacy leader.
+static FEATURE_SET: std::sync::LazyLock<FeatureSet> =
+    std::sync::LazyLock::new(FeatureSet::all_enabled);
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(Clone))]

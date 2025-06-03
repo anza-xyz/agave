@@ -22,7 +22,6 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
         accounts_index::{ScanConfig, ScanOrder},
@@ -35,7 +34,7 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
+    solana_cli_output::{CliAccount, OutputFormat},
     solana_clock::{Epoch, Slot},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
@@ -46,6 +45,7 @@ use {
     solana_feature_gate_interface::{self as feature, Feature},
     solana_genesis_config::ClusterType,
     solana_inflation::Inflation,
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_ledger::{
         blockstore::{banking_trace_path, create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
@@ -111,15 +111,6 @@ mod ledger_path;
 mod ledger_utils;
 mod output;
 mod program;
-
-fn parse_encoding_format(matches: &ArgMatches<'_>) -> UiAccountEncoding {
-    match matches.value_of("encoding") {
-        Some("jsonParsed") => UiAccountEncoding::JsonParsed,
-        Some("base64") => UiAccountEncoding::Base64,
-        Some("base64+zstd") => UiAccountEncoding::Base64Zstd,
-        _ => UiAccountEncoding::Base64,
-    }
-}
 
 fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result<()> {
     let mut child = Command::new("dot")
@@ -202,7 +193,10 @@ struct GraphConfig {
 #[allow(clippy::cognitive_complexity)]
 fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     let frozen_banks = bank_forks.frozen_banks();
-    let mut fork_slots: HashSet<_> = frozen_banks.keys().cloned().collect();
+    let mut fork_slots: HashSet<_> = bank_forks
+        .frozen_banks()
+        .map(|(slot, _bank)| slot)
+        .collect();
     for (_, bank) in frozen_banks {
         for parent in bank.parents() {
             fork_slots.remove(&parent.slot());
@@ -761,7 +755,13 @@ fn record_transactions(
                     let instructions = message
                         .instructions()
                         .iter()
-                        .map(|ix| parse_ui_instruction(ix, &message.account_keys(), None))
+                        .map(|ix| {
+                            parse_ui_instruction(
+                                ix,
+                                &message.account_keys(),
+                                Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                            )
+                        })
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
@@ -1696,24 +1696,7 @@ fn main() {
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
 
                     if output_accounts {
-                        let data_encoding = parse_encoding_format(arg_matches);
-                        let output_account_data = !arg_matches.is_present("no_account_data");
-                        let data_slice_config = if output_account_data {
-                            // None yields the entire account in the slice
-                            None
-                        } else {
-                            // usize::MAX is a sentinel that will yield an
-                            // empty data slice. Because of this, length is
-                            // ignored so any value will do
-                            let offset = usize::MAX;
-                            let length = 0;
-                            Some(UiDataSliceConfig { offset, length })
-                        };
-                        let cli_account_config = CliAccountNewConfig {
-                            data_encoding,
-                            data_slice_config,
-                            ..CliAccountNewConfig::default()
-                        };
+                        let output_config = parse_account_output_config(arg_matches);
 
                         let accounts: Vec<_> = genesis_config
                             .accounts
@@ -1722,7 +1705,7 @@ fn main() {
                                 CliAccount::new_with_config(
                                     &pubkey,
                                     &AccountSharedData::from(account),
-                                    &cli_account_config,
+                                    &output_config,
                                 )
                             })
                             .collect();
@@ -2365,9 +2348,7 @@ fn main() {
                     }
 
                     if child_bank_required {
-                        while !bank.is_complete() {
-                            bank.register_unique_tick();
-                        }
+                        bank.fill_bank_with_ticks_for_tests();
                     }
 
                     let pre_capitalization = bank.capitalization();
@@ -2552,10 +2533,12 @@ fn main() {
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
+                    // PrimaryForMaintenance needed over Secondary to purge any
+                    // existing simulated shreds from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
-                        AccessType::Primary, // needed for purging already existing simulated block shreds...
+                        AccessType::PrimaryForMaintenance,
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     let LoadAndProcessLedgerOutput {
@@ -2614,9 +2597,12 @@ fn main() {
                     let bank = bank_forks.read().unwrap().working_bank();
 
                     let include_sysvars = arg_matches.is_present("include_sysvars");
-                    let include_account_contents = !arg_matches.is_present("no_account_contents");
-                    let include_account_data = !arg_matches.is_present("no_account_data");
-                    let account_data_encoding = parse_encoding_format(arg_matches);
+                    let output_config = if arg_matches.is_present("no_account_contents") {
+                        None
+                    } else {
+                        Some(parse_account_output_config(arg_matches))
+                    };
+
                     let mode = if let Some(pubkeys) = pubkeys_of(arg_matches, "account") {
                         info!("Scanning individual accounts: {pubkeys:?}");
                         AccountsOutputMode::Individual(pubkeys)
@@ -2629,10 +2615,8 @@ fn main() {
                     };
                     let config = AccountsOutputConfig {
                         mode,
+                        output_config,
                         include_sysvars,
-                        include_account_contents,
-                        include_account_data,
-                        account_data_encoding,
                     };
                     let output_format =
                         OutputFormat::from_matches(arg_matches, "output_format", false);

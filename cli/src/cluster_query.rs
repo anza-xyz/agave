@@ -736,7 +736,7 @@ pub fn process_catchup(
     our_localhost_port: Option<u16>,
     log: bool,
 ) -> ProcessResult {
-    let sleep_interval = Duration::from_secs(5);
+    let sleep_interval = Duration::from_secs(2);
 
     let progress_bar = new_spinner_progress_bar();
     progress_bar.set_message("Connecting...");

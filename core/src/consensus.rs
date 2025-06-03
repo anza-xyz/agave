@@ -362,10 +362,14 @@ impl Tower {
         vote_account: &Pubkey,
     ) -> Self {
         let root_bank = bank_forks.root_bank();
+        let frozen_banks: Vec<_> = bank_forks
+            .frozen_banks()
+            .map(|(_slot, bank)| bank)
+            .collect();
         let (_progress, heaviest_subtree_fork_choice) =
             crate::replay_stage::ReplayStage::initialize_progress_and_fork_choice(
                 root_bank.deref(),
-                bank_forks.frozen_banks().values().cloned().collect(),
+                frozen_banks,
                 node_pubkey,
                 vote_account,
                 vec![],

@@ -22,8 +22,8 @@ use {
     thiserror::Error,
 };
 
-lazy_static! {
-    static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableProgram> = {
+static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableProgram>> =
+    std::sync::LazyLock::new(|| {
         [
             (
                 address_lookup_table::id(),
@@ -51,8 +51,7 @@ lazy_static! {
                 .map(|spl_token_id| (spl_token_id, ParsableProgram::SplToken)),
         )
         .collect()
-    };
-}
+    });
 
 #[derive(Error, Debug)]
 pub enum ParseInstructionError {

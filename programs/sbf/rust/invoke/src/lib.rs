@@ -3,7 +3,7 @@
 #![allow(unreachable_code)]
 #![allow(clippy::arithmetic_side_effects)]
 
-#[cfg(feature = "dynamic-frames")]
+#[cfg(target_feature = "dynamic-frames")]
 use solana_program::program_memory::sol_memcmp;
 use {
     solana_program::{
@@ -1465,7 +1465,7 @@ fn process_instruction<'a>(
                 )
             };
 
-            #[cfg(not(feature = "dynamic-frames"))]
+            #[cfg(not(target_feature = "dynamic-frames"))]
             // We don't know in which frame we are now, so we skip a few (10) frames at the start
             // which might have been used by the current call stack. We check that the memory for
             // the 10..MAX_CALL_DEPTH frames is zeroed. Then we write a sentinel value, and in the
@@ -1479,7 +1479,7 @@ fn process_instruction<'a>(
                 stack.fill(42);
             }
 
-            #[cfg(feature = "dynamic-frames")]
+            #[cfg(target_feature = "dynamic-frames")]
             // When we have dynamic frames, the stack grows from the higher addresses, so we
             // compare from zero until the beginning of a function frame.
             {

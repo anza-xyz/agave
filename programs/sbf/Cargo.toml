@@ -11,7 +11,8 @@ edition = "2021"
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
-    'cfg(feature, values("custom-panic", "custom-heap"))'
+    'cfg(feature, values("custom-panic", "custom-heap"))',
+    'cfg(target_feature, values("dynamic-frames"))'
 ]
 
 [workspace.dependencies]
@@ -62,7 +63,7 @@ solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.3.0" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.3.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.0" }
-solana-sbpf = "=0.11.0"
+solana-sbpf = "=0.11.1"
 solana-secp256k1-recover = "=2.2.1"
 solana-svm = { path = "../../svm", version = "=2.3.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=2.3.0" }
@@ -131,13 +132,13 @@ solana-compute-budget-instruction = { workspace = true, features = [
 solana-compute-budget-interface = "2.2.2"
 solana-fee = { workspace = true }
 solana-fee-calculator = "2.2.1"
-solana-fee-structure = "2.2.1"
+solana-fee-structure = "2.3.0"
 solana-genesis-config = "2.2.1"
 solana-hash = "2.2.1"
 solana-instruction = "2.2.1"
 solana-keypair = "2.2.1"
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "4.0.1"
+solana-loader-v3-interface = "5.0.0"
 solana-loader-v4-interface = "2.2.1"
 solana-log-collector = { workspace = true }
 solana-logger = { workspace = true }

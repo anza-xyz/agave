@@ -280,7 +280,7 @@ async fn send_transaction_with_rpc_fallback(
             )
             .await
         {
-            match &e.kind {
+            match e.kind() {
                 ErrorKind::Io(_) | ErrorKind::Reqwest(_) => {
                     // fall through on io error, we will retry the transaction
                 }

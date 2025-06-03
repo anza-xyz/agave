@@ -4,6 +4,7 @@ use {
     crate::poh_recorder::{PohRecorder, Record},
     crossbeam_channel::Receiver,
     log::*,
+    solana_clock::DEFAULT_HASHES_PER_SECOND,
     solana_entry::poh::Poh,
     solana_measure::{measure::Measure, measure_us},
     solana_poh_config::PohConfig,
@@ -21,13 +22,15 @@ pub struct PohService {
     tick_producer: JoinHandle<()>,
 }
 
-// Number of hashes to batch together.
+// Amount of time to hash continuously.
+//
 // * If this number is too small, PoH hash rate will suffer.
-// * The larger this number is from 1, the speed of recording transactions will suffer due to lock
-//   contention with the PoH hashing within `tick_producer()`.
+// * If this number is too large, PoH will be less responsive to record requests.
 //
 // Can use test_poh_service to calibrate this
-pub const DEFAULT_HASHES_PER_BATCH: u64 = 64;
+const TARGET_HASH_BATCH_TIME_US: u64 = 50;
+pub const DEFAULT_HASHES_PER_BATCH: u64 =
+    TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
 pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
 
@@ -194,8 +197,8 @@ impl PohService {
                 .sender
                 .send(poh_recorder.write().unwrap().record(
                     record.slot,
-                    record.mixin,
-                    record.transactions,
+                    record.mixins,
+                    record.transaction_batches,
                 ))
                 .is_err()
             {
@@ -257,8 +260,8 @@ impl PohService {
                 loop {
                     let res = poh_recorder_l.record(
                         record.slot,
-                        record.mixin,
-                        std::mem::take(&mut record.transactions),
+                        record.mixins,
+                        std::mem::take(&mut record.transaction_batches),
                     );
                     let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
                     debug_assert!(send_res.is_ok(), "Record wasn't sent.");
@@ -461,11 +464,11 @@ mod tests {
                     loop {
                         // send some data
                         let mut time = Measure::start("record");
-                        let res =
-                            poh_recorder
-                                .write()
-                                .unwrap()
-                                .record(bank.slot(), h1, vec![tx.clone()]);
+                        let res = poh_recorder.write().unwrap().record(
+                            bank.slot(),
+                            vec![h1],
+                            vec![vec![tx.clone()]],
+                        );
                         if let Err(MaxHeightReached) = res {
                             // Advance to the next slot.
                             poh_recorder

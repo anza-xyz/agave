@@ -13,7 +13,6 @@ edition = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 # Update this borsh dependency to the workspace version once
-lazy_static = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 solana-packet = { workspace = true }

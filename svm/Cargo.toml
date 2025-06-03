@@ -69,7 +69,6 @@ agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 ed25519-dalek = { workspace = true }
-lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 prost = { workspace = true }
@@ -88,13 +87,12 @@ solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = [ "rand" ] }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
-solana-signature = { workspace = true }
+solana-signature = { workspace = true, features = [ "rand" ] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }
@@ -116,7 +114,6 @@ frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
     "solana-program-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
 ]
 shuttle-test = [
     "solana-type-overrides/shuttle-test",

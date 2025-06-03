@@ -1,7 +1,6 @@
 use {
     super::immutable_deserialized_packet::ImmutableDeserializedPacket,
     agave_feature_set::FeatureSet,
-    lazy_static::lazy_static,
     solana_builtins_default_costs::get_builtin_instruction_cost,
     solana_sdk_ids::{ed25519_program, secp256k1_program, secp256r1_program},
     std::num::Saturating,
@@ -10,11 +9,10 @@ use {
 
 pub const MAX_ALLOWED_PRECOMPILE_SIGNATURES: u64 = 8;
 
-lazy_static! {
-    // To calculate the static_builtin_cost_sum conservatively, an all-enabled dummy feature_set
-    // is used. It lowers required minimal compute_unit_limit, aligns with future versions.
-    static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
-}
+// To calculate the static_builtin_cost_sum conservatively, an all-enabled dummy feature_set
+// is used. It lowers required minimal compute_unit_limit, aligns with future versions.
+static FEATURE_SET: std::sync::LazyLock<FeatureSet> =
+    std::sync::LazyLock::new(FeatureSet::all_enabled);
 
 #[derive(Debug, Error, PartialEq)]
 pub enum PacketFilterFailure {

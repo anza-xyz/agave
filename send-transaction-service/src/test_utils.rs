@@ -11,6 +11,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     std::{net::SocketAddr, sync::Arc},
     tokio::runtime::Handle,
+    tokio_util::sync::CancellationToken,
 };
 
 // `maybe_runtime` argument is introduced to be able to use runtime from test
@@ -62,6 +63,7 @@ impl CreateClient for TpuClientNextClient {
             leader_forward_count,
             None,
             bind_socket,
+            CancellationToken::new(),
         )
     }
 }

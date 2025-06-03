@@ -99,11 +99,8 @@ use {
     },
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_HASHES_PER_TICK,
-        DEFAULT_TICKS_PER_SECOND, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
-        MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY, UPDATED_HASHES_PER_TICK2,
-        UPDATED_HASHES_PER_TICK3, UPDATED_HASHES_PER_TICK4, UPDATED_HASHES_PER_TICK5,
-        UPDATED_HASHES_PER_TICK6,
+        BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_TICKS_PER_SECOND,
+        INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -3130,11 +3127,6 @@ impl Bank {
         self.register_tick_for_test(&Hash::default())
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn register_unique_tick(&self) {
-        self.register_tick_for_test(&Hash::new_unique())
-    }
-
     pub fn is_complete(&self) -> bool {
         self.tick_height() == self.max_tick_height()
     }
@@ -3175,53 +3167,77 @@ impl Bank {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(sanitized_txs.iter(), tx_account_lock_limit);
         Ok(TransactionBatch::new(
-            lock_results,
+            self.try_lock_accounts(&sanitized_txs),
             self,
             OwnedOrBorrowed::Owned(sanitized_txs),
         ))
     }
 
     /// Attempt to take locks on the accounts in a transaction batch
-    pub fn try_lock_accounts(&self, txs: &[impl SVMMessage]) -> Vec<Result<()>> {
+    pub fn try_lock_accounts(&self, txs: &[impl TransactionWithMeta]) -> Vec<Result<()>> {
+        self.try_lock_accounts_with_results(txs, txs.iter().map(|_| Ok(())))
+    }
+
+    /// Attempt to take locks on the accounts in a transaction batch, and their cost
+    /// limited packing status and duplicate transaction conflict status
+    pub fn try_lock_accounts_with_results(
+        &self,
+        txs: &[impl TransactionWithMeta],
+        tx_results: impl Iterator<Item = Result<()>>,
+    ) -> Vec<Result<()>> {
         let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        self.rc
-            .accounts
-            .lock_accounts(txs.iter(), tx_account_lock_limit)
+        let relax_intrabatch_account_locks = self
+            .feature_set
+            .is_active(&feature_set::relax_intrabatch_account_locks::id());
+
+        // with simd83 enabled, we must fail transactions that duplicate a prior message hash
+        // previously, conflicting account locks would fail such transactions as a side effect
+        let mut batch_message_hashes = AHashSet::with_capacity(txs.len());
+        let tx_results = tx_results
+            .enumerate()
+            .map(|(i, tx_result)| match tx_result {
+                Ok(()) if relax_intrabatch_account_locks => {
+                    // `HashSet::insert()` returns `true` when the value does *not* already exist
+                    if batch_message_hashes.insert(txs[i].message_hash()) {
+                        Ok(())
+                    } else {
+                        Err(TransactionError::AlreadyProcessed)
+                    }
+                }
+                Ok(()) => Ok(()),
+                Err(e) => Err(e),
+            });
+
+        self.rc.accounts.lock_accounts(
+            txs.iter(),
+            tx_results,
+            tx_account_lock_limit,
+            relax_intrabatch_account_locks,
+        )
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions.
-    pub fn prepare_sanitized_batch<'a, 'b, Tx: SVMMessage>(
+    pub fn prepare_sanitized_batch<'a, 'b, Tx: TransactionWithMeta>(
         &'a self,
         txs: &'b [Tx],
     ) -> TransactionBatch<'a, 'b, Tx> {
-        TransactionBatch::new(
-            self.try_lock_accounts(txs),
-            self,
-            OwnedOrBorrowed::Borrowed(txs),
-        )
+        self.prepare_sanitized_batch_with_results(txs, txs.iter().map(|_| Ok(())))
     }
 
     /// Prepare a locked transaction batch from a list of sanitized transactions, and their cost
     /// limited packing status
-    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: SVMMessage>(
+    pub fn prepare_sanitized_batch_with_results<'a, 'b, Tx: TransactionWithMeta>(
         &'a self,
         transactions: &'b [Tx],
         transaction_results: impl Iterator<Item = Result<()>>,
     ) -> TransactionBatch<'a, 'b, Tx> {
         // this lock_results could be: Ok, AccountInUse, WouldExceedBlockMaxLimit or WouldExceedAccountMaxLimit
-        let tx_account_lock_limit = self.get_transaction_account_lock_limit();
-        let lock_results = self.rc.accounts.lock_accounts_with_results(
-            transactions.iter(),
-            transaction_results,
-            tx_account_lock_limit,
-        );
-        TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Borrowed(transactions))
+        TransactionBatch::new(
+            self.try_lock_accounts_with_results(transactions, transaction_results),
+            self,
+            OwnedOrBorrowed::Borrowed(transactions),
+        )
     }
 
     /// Prepare a transaction batch from a single transaction without locking accounts
@@ -3241,7 +3257,7 @@ impl Bank {
     }
 
     /// Prepare a transaction batch from a single transaction after locking accounts
-    pub fn prepare_locked_batch_from_single_tx<'a, Tx: SVMMessage>(
+    pub fn prepare_locked_batch_from_single_tx<'a, Tx: TransactionWithMeta>(
         &'a self,
         transaction: &'a Tx,
     ) -> TransactionBatch<'a, 'a, Tx> {
@@ -6514,30 +6530,6 @@ impl Bank {
             );
         }
 
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick::id()) {
-            self.apply_updated_hashes_per_tick(DEFAULT_HASHES_PER_TICK);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick2::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK2);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick3::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK3);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick4::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK4);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick5::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK5);
-        }
-
-        if new_feature_activations.contains(&feature_set::update_hashes_per_tick6::id()) {
-            self.apply_updated_hashes_per_tick(UPDATED_HASHES_PER_TICK6);
-        }
-
         if new_feature_activations.contains(&feature_set::accounts_lt_hash::id()) {
             // Activating the accounts lt hash feature means we need to have an accounts lt hash
             // value at the end of this if-block.  If the cli arg has been used, that means we
@@ -6597,15 +6589,6 @@ impl Bank {
             // AccountHash for modified accounts, and can stop the background account hasher.
             self.rc.accounts.accounts_db.stop_background_hasher();
         }
-    }
-
-    fn apply_updated_hashes_per_tick(&mut self, hashes_per_tick: u64) {
-        info!(
-            "Activating update_hashes_per_tick {} at slot {}",
-            hashes_per_tick,
-            self.slot(),
-        );
-        self.hashes_per_tick = Some(hashes_per_tick);
     }
 
     fn adjust_sysvar_balance_for_rent(&self, account: &mut AccountSharedData) {
@@ -6980,10 +6963,15 @@ impl TransactionProcessingCallback for Bank {
         );
 
         // Add a bogus executable builtin account, which will be loaded and ignored.
-        let account = solana_sdk::native_loader::create_loadable_account_with_fields(
-            name,
-            self.inherit_specially_retained_account_fields(&existing_genuine_program),
-        );
+        let (lamports, rent_epoch) =
+            self.inherit_specially_retained_account_fields(&existing_genuine_program);
+        let account: AccountSharedData = AccountSharedData::from(Account {
+            lamports,
+            data: name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch,
+        });
         self.store_account_and_update_capitalization(program_id, &account);
     }
 
@@ -7113,16 +7101,15 @@ impl Bank {
         &self,
         txs: Vec<Transaction>,
     ) -> TransactionBatch<RuntimeTransaction<SanitizedTransaction>> {
-        let transaction_account_lock_limit = self.get_transaction_account_lock_limit();
         let sanitized_txs = txs
             .into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)
             .collect::<Vec<_>>();
-        let lock_results = self
-            .rc
-            .accounts
-            .lock_accounts(sanitized_txs.iter(), transaction_account_lock_limit);
-        TransactionBatch::new(lock_results, self, OwnedOrBorrowed::Owned(sanitized_txs))
+        TransactionBatch::new(
+            self.try_lock_accounts(&sanitized_txs),
+            self,
+            OwnedOrBorrowed::Owned(sanitized_txs),
+        )
     }
 
     /// Set the initial accounts data size

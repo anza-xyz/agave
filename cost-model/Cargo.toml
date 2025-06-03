@@ -12,7 +12,6 @@ edition = { workspace = true }
 [dependencies]
 agave-feature-set = { workspace = true }
 ahash = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 solana-bincode = { workspace = true }
 solana-borsh = { workspace = true }

@@ -1450,7 +1450,7 @@ pub fn bigtable_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) {
             let blockstore = Arc::new(crate::open_blockstore(
                 &ledger_path,
                 arg_matches,
-                AccessType::Primary,
+                AccessType::PrimaryForMaintenance,
             ));
 
             let shred_config = if let Some(shred_version) = shred_version {

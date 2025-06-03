@@ -7,10 +7,10 @@ use {
 };
 
 mod spl_memo_1_0 {
-    solana_sdk_macro::declare_id!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo");
+    solana_pubkey::declare_id!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo");
 }
 mod spl_memo_3_0 {
-    solana_sdk_macro::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+    solana_pubkey::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 }
 
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[

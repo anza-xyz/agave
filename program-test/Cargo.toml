@@ -49,9 +49,7 @@ solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true, default-features = false }
 solana-sdk-ids = { workspace = true }
-solana-sdk-macro = { workspace = true }
 solana-signer = { workspace = true }
 solana-stable-layout = { workspace = true }
 solana-stake-interface = { workspace = true }
@@ -69,5 +67,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
+solana-program = { workspace = true }
 solana-stake-program = { workspace = true }
 test-case = { workspace = true }

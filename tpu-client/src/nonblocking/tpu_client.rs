@@ -1006,7 +1006,7 @@ async fn maybe_fetch_cache_info(
 
 fn is_invalid_slot_range_error(client_error: &ClientError) -> bool {
     if let ErrorKind::RpcError(RpcError::RpcResponseError { code, message, .. }) =
-        &client_error.kind
+        client_error.kind()
     {
         return *code == -32602
             && message.contains("Invalid slot range: leader schedule for epoch");

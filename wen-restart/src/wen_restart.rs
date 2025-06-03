@@ -191,7 +191,7 @@ impl std::error::Error for WenRestartError {}
 
 // We need a WenRestartProgressInternalState so we can convert the protobuf written in file
 // into internal data structure in the initialize function. It should be easily
-// convertable to and from WenRestartProgress protobuf.
+// convertible to and from WenRestartProgress protobuf.
 #[derive(Debug, PartialEq)]
 pub(crate) enum WenRestartProgressInternalState {
     Init {
