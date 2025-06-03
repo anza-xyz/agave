@@ -10998,8 +10998,10 @@ checksum = "6af261afb0e8c39252a04d026e3ea9c405342b08c871a2ad8aa5448e068c784c"
 name = "solana-timings"
 version = "2.3.0"
 dependencies = [
+ "criterion",
  "eager",
  "enum-iterator",
+ "rand 0.8.5",
  "solana-pubkey",
 ]
 

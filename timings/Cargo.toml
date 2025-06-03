@@ -14,5 +14,13 @@ eager = { workspace = true }
 enum-iterator = { workspace = true }
 solana-pubkey = { workspace = true }
 
+[dev-dependencies]
+criterion = { workspace = true }
+rand = { workspace = true }
+
+[[bench]]
+name = "accumulate_program_timings"
+harness = false
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
