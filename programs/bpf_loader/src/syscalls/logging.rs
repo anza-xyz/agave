@@ -120,7 +120,7 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, execution_cost.syscall_base_cost)?;
 
-        let untranslated_fields = translate_slice_of_slices::<u8>(
+        let untranslated_fields = translate_slice::<VmSlice<u8>>(
             memory_mapping,
             addr,
             len,

@@ -459,7 +459,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     ) -> Result<Vec<Pubkey>, Error> {
         let mut signers = Vec::new();
         if signers_seeds_len > 0 {
-            let signers_seeds = translate_slice_of_slices::<VmSlice<u8>>(
+            let signers_seeds = translate_slice::<VmSlice<VmSlice<u8>>>(
                 memory_mapping,
                 signers_seeds_addr,
                 signers_seeds_len,
@@ -469,7 +469,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
                 return Err(Box::new(SyscallError::TooManySigners));
             }
             for signer_seeds in signers_seeds.iter() {
-                let untranslated_seeds = translate_slice_of_slices::<u8>(
+                let untranslated_seeds = translate_slice::<VmSlice<u8>>(
                     memory_mapping,
                     signer_seeds.ptr(),
                     signer_seeds.len(),

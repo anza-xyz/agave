@@ -52,7 +52,6 @@ use {
         fmt::Debug,
         marker::PhantomData,
         mem,
-        num::Saturating,
         ops::DerefMut,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
@@ -586,9 +585,10 @@ where
                         } else {
                             pooled.discard_buffer();
                             // Prevent replay stage's OpenSubchannel from winning the race by
-                            // holding the inner lock for the duration sending a discard
-                            // message sending just above. Reset must be sent
-                            // only during gaps of subchannels of the new task channel.
+                            // holding the inner lock for the duration of discard message sending
+                            // just above.  The message (internally SubchanneledPayload::Reset)
+                            // must be sent only during gaps of subchannels of the new task
+                            // channel.
                             sleepless_testing::at(CheckPoint::DiscardRequested);
                             drop(inner);
                         }
@@ -2023,13 +2023,15 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     loop {
                         if discard_on_reset {
                             discard_on_reset = false;
-                            let mut count = Saturating(0);
-                            while let Some(task) = state_machine.schedule_next_unblocked_task() {
-                                state_machine.deschedule_task(&task);
-                                count += 1;
-                            }
-                            state_machine.reinitialize();
-                            sleepless_testing::at(CheckPoint::Discarded(count.0));
+                            // Gracefully clear all buffered tasks to discard all outstanding stale
+                            // tasks; we're not aborting scheduler here. So, `state_machine` needs
+                            // to be reusable after this.
+                            //
+                            // As for panic safety of .clear_and_reinitialize(), it's safe because
+                            // there should be _no scheduled tasks (i.e. owned by us, not by
+                            // state_machine) on the call stack by now.
+                            let count = state_machine.clear_and_reinitialize();
+                            sleepless_testing::at(CheckPoint::Discarded(count));
                         }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
@@ -5007,12 +5009,17 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = DefaultSchedulerPool::new_for_production(
+        let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::block_production_only(),
             None,
             None,
             None,
             None,
             ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
         );
 
         let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
