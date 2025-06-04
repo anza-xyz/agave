@@ -194,6 +194,12 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         assert_matches!(mem::replace(self, Self::NotSpawned), Self::Taken(_));
     }
 
+    fn take_and_trash_pooled(&mut self) -> S::Inner {
+        let inner = self.take_pooled();
+        self.trash_taken();
+        inner
+    }
+
     fn put_returned(&mut self, inner: S::Inner) {
         let new = inner.id();
         assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new);
@@ -581,7 +587,7 @@ where
                         .unwrap();
                     if let Some(pooled) = inner.peek_pooled() {
                         if pooled.is_overgrown() {
-                            let pooled = inner.take_pooled();
+                            let pooled = inner.take_and_trash_pooled();
                             //assert_eq!(Some(pooled.id()), inner.0.take());
                             scheduler_pool.spawn_block_production_scheduler(&mut inner);
                             drop(inner);
