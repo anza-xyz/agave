@@ -201,6 +201,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-io-uring"
+version = "3.0.0"
+dependencies = [
+ "io-uring",
+ "libc",
+ "log",
+ "slab",
+ "smallvec",
+]
+
+[[package]]
 name = "agave-ledger-tool"
 version = "3.0.0"
 dependencies = [
@@ -3793,6 +3804,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5bbe824c507c5da5956355e86a746d82e0e1464f65d862cc5e71da70e94b2c"
 dependencies = [
  "cfg-if 1.0.0",
+]
+
+[[package]]
+name = "io-uring"
+version = "0.7.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ebb93303c65a11753dd0e45cd6bfa5c65ee1f0b9f8e2178b6998ddc8b284f04"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if 1.0.0",
+ "libc",
 ]
 
 [[package]]

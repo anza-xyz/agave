@@ -46,6 +46,7 @@ members = [
     "geyser-plugin-manager",
     "gossip",
     "install",
+    "io-uring",
     "keygen",
     "lattice-hash",
     "ledger",
@@ -180,6 +181,7 @@ agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", vers
 agave-cargo-registry = { path = "cargo-registry", version = "=3.0.0" }
 agave-feature-set = { path = "feature-set", version = "=3.0.0" }
 agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=3.0.0" }
+agave-io-uring = { path = "io-uring", version = "=3.0.0" }
 agave-precompiles = { path = "precompiles", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.0.0" }
@@ -278,6 +280,7 @@ hyper-proxy = "0.9.1"
 im = "15.1.0"
 indexmap = "2.9.0"
 indicatif = "0.17.11"
+io-uring = "0.7.4"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
