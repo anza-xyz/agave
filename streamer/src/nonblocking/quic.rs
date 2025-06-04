@@ -11,7 +11,7 @@ use {
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
+    crossbeam_channel::{bounded, Receiver, Sender},
     futures::{stream::FuturesUnordered, Future, StreamExt as _},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
@@ -65,7 +65,7 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-use crate::nonblocking::channel_wrapper::{MyChannelSendWrapper, MyChannelSender};
+use crate::nonblocking::channel_wrapper::{MyChannelSendWrapper, MyChannelSender, TrySendError};
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -340,6 +340,7 @@ async fn run_server(
     let staked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
     let (sender, receiver) = bounded(coalesce_channel_size);
+    let sender = MyChannelSendWrapper::new(sender);
 
     thread::spawn({
         let exit = exit.clone();
@@ -549,7 +550,7 @@ struct NewConnectionHandlerParams {
     // but I've found that it's simply too easy to accidentally block
     // in async code when using the crossbeam channel, so for the sake of maintainability,
     // we're sticking with an async channel
-    packet_sender: Sender<PacketAccumulator>,
+    // packet_sender: &dyn MyChannelSender<PacketAccumulator>,
     remote_pubkey: Option<Pubkey>,
     peer_type: ConnectionPeerType,
     total_stake: u64,
@@ -561,12 +562,11 @@ struct NewConnectionHandlerParams {
 
 impl NewConnectionHandlerParams {
     fn new_unstaked(
-        packet_sender: Sender<PacketAccumulator>,
+        // packet_sender: impl MyChannelSender<PacketAccumulator>,
         max_connections_per_peer: usize,
         stats: Arc<StreamerStats>,
     ) -> NewConnectionHandlerParams {
         NewConnectionHandlerParams {
-            packet_sender,
             remote_pubkey: None,
             peer_type: ConnectionPeerType::Unstaked,
             total_stake: 0,
@@ -583,6 +583,7 @@ fn handle_and_cache_new_connection(
     connection: Connection,
     mut connection_table_l: MutexGuard<ConnectionTable>,
     connection_table: Arc<Mutex<ConnectionTable>>,
+    packet_sender: impl MyChannelSender<PacketAccumulator>,
     params: &NewConnectionHandlerParams,
     wait_for_chunk_timeout: Duration,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
@@ -629,6 +630,7 @@ fn handle_and_cache_new_connection(
                 last_update,
                 connection_table,
                 cancel_connection,
+                packet_sender,
                 params.clone(),
                 wait_for_chunk_timeout,
                 stream_load_ema,
@@ -660,6 +662,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
     connection: Connection,
     connection_table: Arc<Mutex<ConnectionTable>>,
     max_connections: usize,
+    packet_sender: impl MyChannelSender<PacketAccumulator>,
     params: &NewConnectionHandlerParams,
     wait_for_chunk_timeout: Duration,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
@@ -674,6 +677,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
             connection,
             connection_table,
             connection_table_clone,
+            packet_sender,
             params,
             wait_for_chunk_timeout,
             stream_load_ema,
@@ -736,7 +740,7 @@ async fn setup_connection(
     client_connection_tracker: ClientConnectionTracker,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
-    packet_sender: Sender<PacketAccumulator>,
+    packet_sender: impl MyChannelSender<PacketAccumulator>,
     max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
@@ -759,7 +763,7 @@ async fn setup_connection(
 
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
-                        packet_sender.clone(),
+                        // packet_sender.clone(),
                         max_connections_per_peer,
                         stats.clone(),
                     ),
@@ -776,7 +780,7 @@ async fn setup_connection(
                             ConnectionPeerType::Staked(stake)
                         };
                         NewConnectionHandlerParams {
-                            packet_sender,
+                            // packet_sender,
                             remote_pubkey: Some(pubkey),
                             peer_type,
                             total_stake,
@@ -804,6 +808,7 @@ async fn setup_connection(
                                 new_connection,
                                 connection_table_l,
                                 staked_connection_table.clone(),
+                                packet_sender,
                                 &params,
                                 wait_for_chunk_timeout,
                                 stream_load_ema.clone(),
@@ -821,6 +826,7 @@ async fn setup_connection(
                                 new_connection,
                                 unstaked_connection_table.clone(),
                                 max_unstaked_connections,
+                                packet_sender,
                                 &params,
                                 wait_for_chunk_timeout,
                                 stream_load_ema.clone(),
@@ -846,6 +852,7 @@ async fn setup_connection(
                             new_connection,
                             unstaked_connection_table.clone(),
                             max_unstaked_connections,
+                            packet_sender,
                             &params,
                             wait_for_chunk_timeout,
                             stream_load_ema.clone(),
@@ -1069,13 +1076,14 @@ async fn handle_connection(
     last_update: Arc<AtomicU64>,
     connection_table: Arc<Mutex<ConnectionTable>>,
     cancel: CancellationToken,
+    packet_sender: impl MyChannelSender<PacketAccumulator>,
     params: NewConnectionHandlerParams,
     wait_for_chunk_timeout: Duration,
     stream_load_ema: Arc<StakedStreamLoadEMA>,
     stream_counter: Arc<ConnectionStreamCounter>,
 ) {
     let NewConnectionHandlerParams {
-        packet_sender,
+        // packet_sender,
         peer_type,
         remote_pubkey,
         stats,
@@ -1255,7 +1263,7 @@ enum StreamState {
 async fn handle_chunks(
     chunks: impl ExactSizeIterator<Item = Bytes>,
     accum: &mut PacketAccumulator,
-    packet_sender: &Sender<PacketAccumulator>,
+    packet_sender: &impl MyChannelSender<PacketAccumulator>,
     stats: &StreamerStats,
     peer_type: ConnectionPeerType,
 ) -> Result<StreamState, ()> {
