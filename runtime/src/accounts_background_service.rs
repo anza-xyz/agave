@@ -37,7 +37,10 @@ use {
 };
 
 const INTERVAL_MS: u64 = 100;
-const CLEAN_INTERVAL: Duration = Duration::from_secs(40); // approximately 100 slots
+// Set the clean interval duration to be approximately how long before the next incremental
+// snapshot request is received, plus some buffer.  The default incremental snapshot interval is
+// 100 slots, which ends up being 40 seconds plus buffer.
+const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
