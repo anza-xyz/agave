@@ -14,7 +14,8 @@
 use {
     crate::{
         cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
-        crds::{Crds, CrdsError, Cursor, GossipRoute},
+        cluster_info_metrics::should_report_message_signature,
+        crds::{Crds, CrdsError, Cursor, GossipRoute, SIGNATURE_SAMPLE_LEADING_ZEROS},
         crds_gossip,
         crds_value::CrdsValue,
         protocol::{Ping, PingCache},
@@ -205,7 +206,12 @@ impl CrdsGossipPush {
             if nodes.peek().is_some() {
                 values.push(value.clone())
             }
+            let should_report =
+                should_report_message_signature(value.signature(), SIGNATURE_SAMPLE_LEADING_ZEROS);
             for &node in nodes {
+                if should_report {
+                    log_gossip_crds_sample_egress(value, &node);
+                }
                 push_messages.entry(node).or_default().push(index);
                 num_pushes += 1;
                 if num_pushes >= MAX_NUM_PUSHES {
@@ -283,6 +289,27 @@ impl CrdsGossipPush {
             stakes,
         )
     }
+}
+
+fn log_gossip_crds_sample_egress(value: &CrdsValue, peer: &Pubkey) {
+    datapoint_info!(
+        "gossip_crds_sample_egress",
+        (
+            "origin",
+            value.pubkey().to_string().get(..8),
+            Option<String>
+        ),
+        (
+            "signature",
+            value.signature().to_string().get(..8),
+            Option<String>
+        ),
+        (
+            "peer",
+            peer.to_string().get(..8),
+            Option<String>
+        ),
+    );
 }
 
 #[cfg(test)]

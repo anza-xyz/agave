@@ -62,7 +62,7 @@ const VOTE_SLOTS_METRICS_CAP: usize = 100;
 //      mainnet: ~280k
 // target: 1 signature reported per minute
 // log2(500k) = ~18.9.
-const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
+pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
 
 pub struct Crds {
     /// Stores the map of labels and values
