@@ -542,21 +542,21 @@ where
                 }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
-                    let mut inner = scheduler_pool
-                        .block_production_scheduler_inner
-                        .lock()
-                        .unwrap();
+                    let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
+                    else {
+                        break;
+                    };
                     if let Some(pooled) = inner.peek_pooled() {
                         if pooled.is_overgrown() {
                             let pooled = inner.take_and_trash_pooled();
                             scheduler_pool.spawn_block_production_scheduler(&mut inner);
 
-                            let Ok(mut trashed_scheduler_inners) =
+                            let Ok(mut trashed_inners) =
                                 scheduler_pool.trashed_scheduler_inners.lock()
                             else {
                                 break;
                             };
-                            trashed_scheduler_inners.push(pooled);
+                            trashed_inners.push(pooled);
                             drop(inner);
                         } else {
                             pooled.discard_buffer();
@@ -572,15 +572,13 @@ where
                 }
 
                 let trashed_inner_count = {
-                    let Ok(mut trashed_scheduler_inners) =
-                        scheduler_pool.trashed_scheduler_inners.lock()
+                    let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
                     else {
                         break;
                     };
-                    let trashed_inners: Vec<_> = mem::take(&mut *trashed_scheduler_inners);
-                    drop(trashed_scheduler_inners);
-
                     let trashed_inner_count = trashed_inners.len();
+                    let trashed_inners: Vec<_> = mem::take(&mut *trashed_inners);
+                    // drop all the trashded schedulers outside the lock guard
                     drop(trashed_inners);
                     trashed_inner_count
                 };
@@ -800,7 +798,7 @@ where
             .lock()
             .unwrap()
             .as_mut()
-            .map(|respawner| respawner.banking_stage_monitor.status())
+            .map(|context| context.banking_stage_monitor.status())
     }
 
     fn should_respawn(&self) -> bool {
