@@ -8403,7 +8403,7 @@ fn test_program_is_native_loader(formalize_loaded_transaction_data_size: bool) {
 
     let err = bank.process_transaction(&tx).unwrap_err();
     if formalize_loaded_transaction_data_size {
-        assert_eq!(err, TransactionError::InvalidProgramForExecution,);
+        assert_eq!(err, TransactionError::ProgramAccountNotFound);
     } else {
         assert_eq!(
             err,
@@ -10598,7 +10598,7 @@ fn test_an_empty_instruction_without_program(formalize_loaded_transaction_data_s
 
     let err = bank.process_transaction(&tx).unwrap_err();
     if formalize_loaded_transaction_data_size {
-        assert_eq!(err, TransactionError::InvalidProgramForExecution,);
+        assert_eq!(err, TransactionError::ProgramAccountNotFound);
     } else {
         assert_eq!(
             err,

@@ -663,11 +663,6 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
     }
 
     for (program_id, instruction) in message.program_instructions_iter() {
-        if native_loader::check_id(program_id) {
-            error_metrics.invalid_program_for_execution += 1;
-            return Err(TransactionError::InvalidProgramForExecution);
-        }
-
         let Some(program_account) = account_loader.load_account(program_id) else {
             error_metrics.account_not_found += 1;
             return Err(TransactionError::ProgramAccountNotFound);
@@ -1142,12 +1137,11 @@ mod tests {
             feature_set,
         );
 
-        assert_eq!(error_metrics.account_not_found.0, 0);
         match &loaded_accounts {
             TransactionLoadResult::Loaded(loaded_transaction)
                 if !formalize_loaded_transaction_data_size =>
             {
-                assert_eq!(error_metrics.invalid_program_for_execution.0, 0);
+                assert_eq!(error_metrics.account_not_found.0, 0);
                 assert_eq!(loaded_transaction.accounts.len(), 3);
                 assert_eq!(loaded_transaction.accounts[0].1, accounts[0].1);
                 assert_eq!(loaded_transaction.program_indices.len(), 1);
@@ -1156,10 +1150,10 @@ mod tests {
             TransactionLoadResult::FeesOnly(fees_only_tx)
                 if formalize_loaded_transaction_data_size =>
             {
-                assert_eq!(error_metrics.invalid_program_for_execution.0, 1);
+                assert_eq!(error_metrics.account_not_found.0, 1);
                 assert_eq!(
                     fees_only_tx.load_error,
-                    TransactionError::InvalidProgramForExecution
+                    TransactionError::ProgramAccountNotFound,
                 );
             }
             result => panic!("unexpected result: {:?}", result),
@@ -1743,7 +1737,7 @@ mod tests {
         if formalize_loaded_transaction_data_size {
             assert_eq!(
                 result.unwrap_err(),
-                TransactionError::InvalidProgramForExecution
+                TransactionError::ProgramAccountNotFound,
             );
         } else {
             let loaded_accounts_data_size = base_account_size as u32 * 2;
