@@ -2351,6 +2351,8 @@ pub struct Sockets {
     pub tpu_vote_forwarding_client: UdpSocket,
     /// Client-side socket for ForwardingStage non-vote transactions
     pub tpu_transaction_forwarding_client: UdpSocket,
+    /// Socket for alpenglow consensus logic
+    pub alpenglow: Option<UdpSocket>,
     /// Connection cache endpoint for QUIC-based Vote
     pub quic_vote_client: UdpSocket,
     /// Client-side socket for RPC/SendTransactionService.
@@ -2605,6 +2607,9 @@ impl Node {
         let (_, ancestor_hashes_requests_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("ancestor_hashes_requests QUIC bind should succeed");
+        let (alpenglow_port, alpenglow) =
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("Alpenglow port bind should succeed");
 
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
         let tpu_vote_forwarding_client =
@@ -2638,6 +2643,7 @@ impl Node {
             .unwrap();
         info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
             .unwrap();
+        info.set_alpenglow((bind_ip_addr, alpenglow_port)).unwrap();
 
         let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
             multi_bind_in_range_with_config(
@@ -2681,6 +2687,7 @@ impl Node {
             tpu_transaction_forwarding_client,
             rpc_sts_client,
             vortexor_receivers,
+            alpenglow: Some(alpenglow),
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node { info, sockets }

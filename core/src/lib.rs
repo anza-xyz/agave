@@ -19,6 +19,7 @@ pub mod completed_data_sets_service;
 pub mod consensus;
 pub mod cost_update_service;
 pub mod drop_bank_service;
+mod fake_alpenglow_consensus;
 pub mod fetch_stage;
 pub mod forwarding_stage;
 pub mod gen_keys;

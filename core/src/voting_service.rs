@@ -1,6 +1,7 @@
 use {
     crate::{
         consensus::tower_storage::{SavedTowerVersions, TowerStorage},
+        fake_alpenglow_consensus::FakeAlpenglowConsensus,
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
     bincode::serialize,
@@ -14,7 +15,7 @@ use {
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
     },
@@ -76,6 +77,7 @@ fn send_vote_transaction(
 
 pub struct VotingService {
     thread_hdl: JoinHandle<()>,
+    fake_alpenglow: FakeAlpenglowConsensus,
 }
 
 impl VotingService {
@@ -85,6 +87,7 @@ impl VotingService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
         connection_cache: Arc<ConnectionCache>,
+        alpenglow_socket: UdpSocket,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
@@ -100,7 +103,11 @@ impl VotingService {
                 }
             })
             .unwrap();
-        Self { thread_hdl }
+        let fake_alpenglow = FakeAlpenglowConsensus::new(alpenglow_socket, cluster_info.clone());
+        Self {
+            thread_hdl,
+            fake_alpenglow,
+        }
     }
 
     pub fn handle_vote(
@@ -152,6 +159,10 @@ impl VotingService {
             VoteOp::PushVote {
                 tx, tower_slots, ..
             } => {
+                println!(
+                    "Sending vote transaction at t={:?}",
+                    std::time::Instant::now()
+                );
                 cluster_info.push_vote(&tower_slots, tx);
             }
             VoteOp::RefreshVote {
@@ -164,6 +175,7 @@ impl VotingService {
     }
 
     pub fn join(self) -> thread::Result<()> {
+        self.fake_alpenglow.join()?;
         self.thread_hdl.join()
     }
 }
