@@ -484,7 +484,7 @@ solana-perf = { path = "perf", version = "=2.3.0" }
 solana-poh = { path = "poh", version = "=2.3.0" }
 solana-poh-config = "2.2.1"
 solana-poseidon = { path = "poseidon", version = "=2.3.0" }
-solana-precompile-error = "2.2.1"
+solana-precompile-error = "2.2.2"
 solana-presigner = "2.2.1"
 solana-program = { version = "2.2.1", default-features = false }
 solana-program-error = "2.2.1"
