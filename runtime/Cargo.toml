@@ -9,6 +9,43 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_runtime"
+
+[features]
+dev-context-only-utils = [
+    "dep:solana-system-program",
+    "solana-svm/dev-context-only-utils",
+    "solana-runtime-transaction/dev-context-only-utils",
+    "solana-vote/dev-context-only-utils",
+]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-account/frozen-abi",
+    "solana-accounts-db/frozen-abi",
+    "solana-compute-budget/frozen-abi",
+    "solana-cost-model/frozen-abi",
+    "solana-epoch-schedule/frozen-abi",
+    "solana-hard-forks/frozen-abi",
+    "solana-inflation/frozen-abi",
+    "solana-instruction/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-program-runtime/frozen-abi",
+    "solana-rent/frozen-abi",
+    "solana-rent-collector/frozen-abi",
+    "solana-stake-interface/frozen-abi",
+    "solana-svm/frozen-abi",
+    "solana-transaction-error/frozen-abi",
+    "solana-version/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-precompiles = { workspace = true }
@@ -147,10 +184,6 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 zstd = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_runtime"
-
 [dev-dependencies]
 agave-transaction-view = { workspace = true }
 ed25519-dalek = { workspace = true }
@@ -173,39 +206,6 @@ solana-svm = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = [
-    "dep:solana-system-program",
-    "solana-svm/dev-context-only-utils",
-    "solana-runtime-transaction/dev-context-only-utils",
-    "solana-vote/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-account/frozen-abi",
-    "solana-accounts-db/frozen-abi",
-    "solana-compute-budget/frozen-abi",
-    "solana-cost-model/frozen-abi",
-    "solana-epoch-schedule/frozen-abi",
-    "solana-hard-forks/frozen-abi",
-    "solana-inflation/frozen-abi",
-    "solana-instruction/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-program-runtime/frozen-abi",
-    "solana-rent/frozen-abi",
-    "solana-rent-collector/frozen-abi",
-    "solana-stake-interface/frozen-abi",
-    "solana-svm/frozen-abi",
-    "solana-transaction-error/frozen-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
 
 [[bench]]
 name = "prioritization_fee_cache"

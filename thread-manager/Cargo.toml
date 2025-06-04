@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 anyhow = { workspace = true }
 cfg-if = { workspace = true }
@@ -31,6 +34,3 @@ hyper = { workspace = true, features = ["http1", "client", "stream", "tcp"] }
 serde_json = { workspace = true }
 toml = { workspace = true }
 tower = { workspace = true }
-
-[features]
-dev-context-only-utils = []

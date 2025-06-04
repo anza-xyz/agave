@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
@@ -27,6 +30,3 @@ solana-packet = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

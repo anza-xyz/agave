@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[[bin]]
+name = "cargo-build-sbf"
+path = "src/main.rs"
+
+[features]
+program = []
+
 [dependencies]
 bzip2 = { workspace = true }
 cargo_metadata = { workspace = true }
@@ -27,10 +34,3 @@ tar = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 serial_test = { workspace = true }
-
-[features]
-program = []
-
-[[bin]]
-name = "cargo-build-sbf"
-path = "src/main.rs"

@@ -8,8 +8,11 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
-bincode =  { workspace = true }
+bincode = { workspace = true }
 solana-account-info = { workspace = true }
 solana-define-syscall = { workspace = true }
 solana-instruction = { workspace = true }
@@ -20,9 +23,6 @@ solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sysvar = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

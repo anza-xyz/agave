@@ -8,9 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 byteorder = { workspace = true }
 solana-program-entrypoint = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]

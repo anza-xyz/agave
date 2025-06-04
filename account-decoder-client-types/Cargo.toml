@@ -9,6 +9,14 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+zstd = ["dep:zstd"]
+
 [dependencies]
 base64 = { workspace = true }
 bs58 = { workspace = true, features = ["std"] }
@@ -18,11 +26,3 @@ serde_json = { workspace = true }
 solana-account = { workspace = true }
 solana-pubkey = { workspace = true }
 zstd = { workspace = true, optional = true }
-
-[features]
-zstd = ["dep:zstd"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-all-features = true
-rustdoc-args = ["--cfg=docsrs"]

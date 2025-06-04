@@ -8,19 +8,19 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["custom-heap"]
+custom-heap = []
+
 [dependencies]
 solana-account-info = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
-
-[features]
-default = ["custom-heap"]
-custom-heap = []
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

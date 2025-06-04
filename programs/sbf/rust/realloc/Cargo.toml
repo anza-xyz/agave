@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 solana-account-info = { workspace = true }
 solana-msg = { workspace = true }
@@ -17,9 +20,6 @@ solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sbf-rust-realloc-dep = { workspace = true }
 solana-system-interface = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true
