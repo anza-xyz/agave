@@ -243,12 +243,12 @@ pub struct HandlerContext {
 
 impl HandlerContext {
     fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
-        match &self.banking_stage_helper {
+        match self.banking_stage_helper.clone() {
             None => UsageQueueLoader::OwnedBySelf {
                 usage_queue_loader: UsageQueueLoaderInner::default(),
             },
-            Some(helper) => UsageQueueLoader::SharedWithBankingStage {
-                banking_stage_helper: helper.clone(),
+            Some(banking_stage_helper) => UsageQueueLoader::SharedWithBankingStage {
+                banking_stage_helper,
             },
         }
     }
