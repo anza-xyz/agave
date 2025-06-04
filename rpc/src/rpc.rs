@@ -4547,12 +4547,14 @@ pub mod tests {
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
+        solana_sdk_ids::bpf_loader_upgradeable,
         solana_send_transaction_service::{
             tpu_info::NullTpuInfo,
             transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
         solana_sha256_hasher::hash,
         solana_signer::Signer,
+        solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
@@ -4627,6 +4629,22 @@ pub mod tests {
         } else {
             panic!("Expected single response");
         }
+    }
+
+    fn expected_loaded_accounts_data_size(bank: &Bank, tx: &Transaction) -> u32 {
+        let mut loaded_accounts_data_size = 0;
+        for key in tx.message.account_keys.iter() {
+            if let Some(account) = bank.get_account(key) {
+                assert!(
+                    *account.owner() != bpf_loader_upgradeable::id(),
+                    "LoaderV3 is not supported; to add it, parse the program account and add its programdata size.",
+                );
+                loaded_accounts_data_size +=
+                    (account.data().len() + TRANSACTION_ACCOUNT_BASE_SIZE) as u32;
+            }
+        }
+
+        loaded_accounts_data_size
     }
 
     fn test_builtin_processor(
@@ -5975,11 +5993,7 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
-        let loaded_account_data_size = bank
-            .get_account(&system_program::id())
-            .unwrap()
-            .data()
-            .len() as u32;
+        let loaded_accounts_data_size = expected_loaded_accounts_data_size(&bank, &tx);
 
         // Good signature with sigVerify=true
         let req = format!(
@@ -6020,7 +6034,7 @@ pub mod tests {
                     ],
                     "err":null,
                     "innerInstructions": null,
-                    "loadedAccountsDataSize": loaded_account_data_size,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6107,7 +6121,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
-                    "loadedAccountsDataSize": loaded_account_data_size,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6138,7 +6152,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
-                    "loadedAccountsDataSize": loaded_account_data_size,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6227,7 +6241,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
-                    "loadedAccountsDataSize": loaded_account_data_size,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6320,16 +6334,7 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
-        let loaded_accounts_data_size = bank
-            .get_account(&token_account_pubkey)
-            .unwrap()
-            .data()
-            .len() as u32
-            + bank
-                .get_account(&system_program::id())
-                .unwrap()
-                .data()
-                .len() as u32;
+        let loaded_accounts_data_size = expected_loaded_accounts_data_size(&bank, &tx);
 
         let req = format!(
             r#"{{"jsonrpc":"2.0",
@@ -6444,16 +6449,7 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
-        let loaded_accounts_data_size = bank
-            .get_account(&TestBuiltinEntrypoint::PROGRAM_ID)
-            .unwrap()
-            .data()
-            .len() as u32
-            + bank
-                .get_account(&system_program::id())
-                .unwrap()
-                .data()
-                .len() as u32;
+        let loaded_accounts_data_size = expected_loaded_accounts_data_size(&bank, &tx);
 
         // `innerInstructions` not provided, should not be in response
         let req = format!(

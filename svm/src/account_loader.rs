@@ -1,5 +1,5 @@
 #[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::field_qualifiers;
+use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_overrides::AccountOverrides, nonce_info::NonceInfo,
@@ -39,6 +39,7 @@ use {
 
 // Per SIMD-0186, all accounts are assigned a base size of 64 bytes to cover
 // the storage cost of metadata.
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
 
 // Per SIMD-0186, resolved address lookup tables are assigned a base size of 8248
