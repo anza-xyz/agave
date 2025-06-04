@@ -350,34 +350,42 @@ impl ContactInfo {
 
     pub fn set_socket(&mut self, key: u8, socket: SocketAddr) -> Result<(), Error> {
         sanitize_socket(&socket)?;
+        self.set_sockets_internal(key, &[socket])
+    }
+
+    fn set_sockets_internal(&mut self, key: u8, sockets: &[SocketAddr]) -> Result<(), Error> {
         // Remove the old entry associated with this key (if any).
         self.remove_socket(key);
-        // Find the index at which the new socket entry would be inserted into
-        // self.sockets, and the respective port offset.
-        let mut offset = socket.port();
-        let index = self.sockets.iter().position(|entry| {
-            offset = match offset.checked_sub(entry.offset) {
-                None => return true,
-                Some(offset) => offset,
+        for socket in sockets {
+            sanitize_socket(socket)?;
+
+            // Find the index at which the new socket entry would be inserted into
+            // self.sockets, and the respective port offset.
+            let mut offset = socket.port();
+            let index = self.sockets.iter().position(|entry| {
+                offset = match offset.checked_sub(entry.offset) {
+                    None => return true,
+                    Some(offset) => offset,
+                };
+                false
+            });
+            let entry = SocketEntry {
+                key,
+                index: self.push_addr(socket.ip())?,
+                offset,
             };
-            false
-        });
-        let entry = SocketEntry {
-            key,
-            index: self.push_addr(socket.ip())?,
-            offset,
-        };
-        // Insert the new entry into self.sockets.
-        // Adjust the port offset of the next entry (if any).
-        match index {
-            None => self.sockets.push(entry),
-            Some(index) => {
-                self.sockets[index].offset -= entry.offset;
-                self.sockets.insert(index, entry);
+            // Insert the new entry into self.sockets.
+            // Adjust the port offset of the next entry (if any).
+            match index {
+                None => self.sockets.push(entry),
+                Some(index) => {
+                    self.sockets[index].offset -= entry.offset;
+                    self.sockets.insert(index, entry);
+                }
             }
-        }
-        if let Some(entry) = self.cache.get_mut(usize::from(key)) {
-            *entry = socket; // socket is already sanitized above.
+            if let Some(entry) = self.cache.get_mut(usize::from(key)) {
+                *entry = *socket;
+            }
         }
         debug_assert_matches!(sanitize_entries(&self.addrs, &self.sockets), Ok(()));
         Ok(())
@@ -618,18 +626,6 @@ fn sanitize_entries(addrs: &[IpAddr], sockets: &[SocketEntry]) -> Result<(), Err
             }
         }
     }
-    // Verify that all socket entries have unique key.
-    {
-        let mut mask = [0u64; 4]; // 256-bit bitmask.
-        for &SocketEntry { key, .. } in sockets {
-            let mask = &mut mask[usize::from(key / 64u8)];
-            let bit = 1u64 << (key % 64u8);
-            if (*mask & bit) != 0u64 {
-                return Err(Error::DuplicateSocket(key));
-            }
-            *mask |= bit;
-        }
-    }
     // Verify that all socket entries reference a valid IP address, and
     // that all IP addresses are referenced in the sockets.
     {
@@ -772,19 +768,6 @@ mod tests {
             assert_matches!(
                 sanitize_entries(&addrs, /*sockets:*/ &[]),
                 Err(Error::DuplicateIpAddr(_))
-            );
-        }
-        // Duplicate socket keys.
-        {
-            let keys = [0u8, 1, 5, 1, 3];
-            let (index, offset) = (0u8, 0u16);
-            let sockets: Vec<_> = keys
-                .iter()
-                .map(|&key| SocketEntry { key, index, offset })
-                .collect();
-            assert_matches!(
-                sanitize_entries(/*addrs:*/ &[], &sockets),
-                Err(Error::DuplicateSocket(_))
             );
         }
         // Invalid IP address index.
@@ -1068,6 +1051,22 @@ mod tests {
         );
         other.set_ip(socket.ip());
         assert_matches!(sanitize_quic_offset(&Some(socket), &Some(other)), Ok(()));
+    }
+
+    #[test]
+    fn test_multihoming_contactinfo() {
+        let mut contactinfo = ContactInfo::new(Keypair::new().pubkey(), 42, 777);
+        let sockets = [
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(12, 34, 56, 78)), 8000),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0x9a, 0xbc, 0xde, 0xff)), 8000),
+        ];
+        contactinfo
+            .set_sockets_internal(SOCKET_TAG_GOSSIP, &sockets)
+            .unwrap();
+        dbg!(&contactinfo);
+        let bytes = bincode::serialize(&contactinfo).unwrap();
+        let other: ContactInfo = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(contactinfo, other);
     }
 
     #[test]
