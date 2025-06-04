@@ -53,7 +53,7 @@ macro_rules! get_socket {
         #[cfg(test)]
         pub(crate) fn $name(&self) -> Option<SocketAddr> {
             let socket = self.$name;
-            sanitize_socket(&socket).ok()?;
+            sanitize_socket(&socket, 0).ok()?;
             Some(socket)
         }
     };
@@ -64,7 +64,7 @@ macro_rules! get_socket {
                 Protocol::QUIC => self.$quic,
                 Protocol::UDP => self.$name,
             };
-            sanitize_socket(&socket).ok()?;
+            sanitize_socket(&socket, 0).ok()?;
             Some(socket)
         }
     };
@@ -126,7 +126,7 @@ impl LegacyContactInfo {
 
     pub(crate) fn gossip(&self) -> Option<SocketAddr> {
         let socket = self.gossip;
-        crate::contact_info::sanitize_socket(&socket).ok()?;
+        crate::contact_info::sanitize_socket(&socket, 0).ok()?;
         Some(socket)
     }
 
