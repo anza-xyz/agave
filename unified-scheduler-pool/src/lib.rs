@@ -695,7 +695,7 @@ where
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
             // self.trashed_scheduler_inners, which is periodically drained by the `solScCleaner`
             // thread. Dropping it could take long time (in fact,
-            // UsageQueueLoader::usage_queue_loader() can contain many entries to drop).
+            // PooledSchedulerInner::usage_queue_loader can contain many entries to drop).
             self.trashed_scheduler_inners
                 .lock()
                 .expect("not poisoned")
