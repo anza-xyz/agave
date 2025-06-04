@@ -65,6 +65,7 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
+use crate::nonblocking::channel_wrapper::MyChannelSendWrapper;
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -151,7 +152,7 @@ pub struct SpawnNonBlockingServerResult {
     pub max_concurrent_connections: usize,
 }
 
-pub fn spawn_server(
+pub fn spawn_server_for_testing(
     name: &'static str,
     sock: UdpSocket,
     keypair: &Keypair,
@@ -160,7 +161,7 @@ pub fn spawn_server(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
-    spawn_server_multi(
+    spawn_server_multi_crossbeam(
         name,
         vec![sock],
         keypair,
@@ -171,11 +172,34 @@ pub fn spawn_server(
     )
 }
 
-pub fn spawn_server_multi(
+pub fn spawn_server_multi_crossbeam(
     name: &'static str,
     sockets: Vec<UdpSocket>,
     keypair: &Keypair,
     packet_sender: Sender<PacketBatch>,
+    exit: Arc<AtomicBool>,
+    staked_nodes: Arc<RwLock<StakedNodes>>,
+    quic_server_params: QuicServerParams,
+) -> Result<SpawnNonBlockingServerResult, QuicServerError> {
+
+    let wrapper = MyChannelSendWrapper::new(packet_sender);
+    spawn_server_multi(
+        name,
+        sockets,
+        keypair,
+        wrapper,
+        exit,
+        staked_nodes,
+        quic_server_params,
+    )
+
+}
+
+pub fn spawn_server_multi(
+    name: &'static str,
+    sockets: Vec<UdpSocket>,
+    keypair: &Keypair,
+    packet_sender: MyChannelSendWrapper<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
@@ -282,7 +306,7 @@ impl ClientConnectionTracker {
 async fn run_server(
     name: &'static str,
     endpoints: Vec<Endpoint>,
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: MyChannelSendWrapper<PacketBatch>,
     exit: Arc<AtomicBool>,
     max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -891,7 +915,7 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
 // Holder(s) of the Sender<PacketAccumulator> on the other end should not
 // wait for this function to exit
 fn packet_batch_sender(
-    packet_sender: Sender<PacketBatch>,
+    packet_sender: MyChannelSendWrapper<PacketBatch>,
     packet_receiver: Receiver<PacketAccumulator>,
     exit: Arc<AtomicBool>,
     stats: Arc<StreamerStats>,
@@ -2000,7 +2024,7 @@ pub mod test {
             stats: _,
             thread: t,
             max_concurrent_connections: _,
-        } = spawn_server(
+        } = spawn_server_for_testing(
             "quic_streamer_test",
             s,
             &keypair,
@@ -2034,7 +2058,7 @@ pub mod test {
             stats,
             thread: t,
             max_concurrent_connections: _,
-        } = spawn_server(
+        } = spawn_server_for_testing(
             "quic_streamer_test",
             s,
             &keypair,
