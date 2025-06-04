@@ -65,7 +65,7 @@ use {
     },
     tokio_util::sync::CancellationToken,
 };
-use crate::nonblocking::channel_wrapper::MyChannelSendWrapper;
+use crate::nonblocking::channel_wrapper::{MyChannelSendWrapper, MyChannelSender};
 
 pub const DEFAULT_WAIT_FOR_CHUNK_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -199,7 +199,7 @@ pub fn spawn_server_multi(
     name: &'static str,
     sockets: Vec<UdpSocket>,
     keypair: &Keypair,
-    packet_sender: MyChannelSendWrapper<PacketBatch>,
+    packet_sender: impl MyChannelSender<PacketBatch>,
     exit: Arc<AtomicBool>,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
@@ -306,7 +306,7 @@ impl ClientConnectionTracker {
 async fn run_server(
     name: &'static str,
     endpoints: Vec<Endpoint>,
-    packet_sender: MyChannelSendWrapper<PacketBatch>,
+    packet_sender: impl MyChannelSender<PacketBatch>,
     exit: Arc<AtomicBool>,
     max_connections_per_peer: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
@@ -915,7 +915,7 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
 // Holder(s) of the Sender<PacketAccumulator> on the other end should not
 // wait for this function to exit
 fn packet_batch_sender(
-    packet_sender: MyChannelSendWrapper<PacketBatch>,
+    packet_sender: impl MyChannelSender<PacketBatch>,
     packet_receiver: Receiver<PacketAccumulator>,
     exit: Arc<AtomicBool>,
     stats: Arc<StreamerStats>,
