@@ -1743,7 +1743,7 @@ pub mod test {
             let exit = exit.clone();
             move || {
                 packet_batch_sender(
-                    pkt_batch_sender,
+                    MyChannelSendWrapper::new(pkt_batch_sender),
                     pkt_receiver,
                     exit,
                     stats,
