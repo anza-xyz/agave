@@ -1281,12 +1281,12 @@ mod chained_channel {
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
 /// the pure-logic-only crate). Some practical and mundane pruning will be implemented in this type.
 #[derive(Default, Debug)]
-pub struct UsageQueueLoaderInner {
+struct UsageQueueLoaderInner {
     usage_queues: DashMap<Pubkey, UsageQueue>,
 }
 
 impl UsageQueueLoaderInner {
-    pub fn load(&self, address: Pubkey) -> UsageQueue {
+    fn load(&self, address: Pubkey) -> UsageQueue {
         self.usage_queues.entry(address).or_default().clone()
     }
 
