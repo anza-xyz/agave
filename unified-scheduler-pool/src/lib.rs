@@ -340,6 +340,7 @@ impl BankingStageHelper {
     }
 
     pub fn is_task_id_overgrown(&self) -> bool {
+        // bla bla somewhat arbitrary...
         self.next_task_id.load(Relaxed) > usize::MAX / 2
     }
 
@@ -546,8 +547,12 @@ where
                     else {
                         break;
                     };
+
                     if let Some(pooled) = inner.peek_pooled() {
                         if pooled.is_overgrown() {
+                            // These steps are closely matched to the normal bp respawingin out of
+                            // abundance of caution...
+                            // this is very unlikely code path; add test... bla bla...
                             let pooled = inner.take_and_trash_pooled();
                             scheduler_pool.spawn_block_production_scheduler(&mut inner);
 
