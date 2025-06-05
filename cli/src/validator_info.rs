@@ -20,11 +20,8 @@ use {
         keypair::DefaultSigner,
     },
     solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec},
-    solana_config_program_client::{
-        get_config_data,
-        instructions_bincode::{self as config_instruction},
-        ConfigKeys,
-    },
+    solana_config_interface::instruction::{self as config_instruction},
+    solana_config_program_client::{get_config_data, ConfigKeys},
     solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -360,17 +357,18 @@ pub fn process_set_validator_info(
                 "Publishing info for Validator {:?}",
                 config.signers[0].pubkey()
             );
-            let mut instructions = config_instruction::create_account::<ValidatorInfo>(
-                &config.signers[0].pubkey(),
-                &info_pubkey,
-                lamports,
-                MAX_VALIDATOR_INFO,
-                keys.clone(),
-            )
-            .with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            });
+            let mut instructions =
+                config_instruction::create_account_with_max_config_space::<ValidatorInfo>(
+                    &config.signers[0].pubkey(),
+                    &info_pubkey,
+                    lamports,
+                    MAX_VALIDATOR_INFO,
+                    keys.clone(),
+                )
+                .with_compute_unit_config(&ComputeUnitConfig {
+                    compute_unit_price,
+                    compute_unit_limit,
+                });
             instructions.extend_from_slice(&[config_instruction::store(
                 &info_pubkey,
                 true,
