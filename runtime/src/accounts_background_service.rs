@@ -652,7 +652,9 @@ impl AccountsBackgroundService {
 
                             let duration_since_previous_shrink = previous_shrink_time.elapsed();
                             let should_shrink = duration_since_previous_shrink > SHRINK_INTERVAL;
-                            if should_shrink {
+                            // To avoid pathological interactions between the clean and shrink
+                            // timers, call shrink for either should_shrink or should_clean.
+                            if should_shrink || should_clean {
                                 if should_clean {
                                     // We used to only squash (aka shrink ancients) when we also
                                     // cleaned, so keep that same behavior here for now.
