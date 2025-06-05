@@ -38,6 +38,7 @@ trait AppendVecScan: Send + Sync + Clone {
     /// initialize accumulator
     fn init_accum(&mut self, count: usize);
     /// The slot at which the scan is being performed
+    /// Any updates from slots after this slot should not be included in the scan
     fn scan_slot(&self) -> Slot;
 }
 
