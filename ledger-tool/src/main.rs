@@ -797,12 +797,12 @@ fn record_transactions(
     }
 }
 
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
-use jemallocator::Jemalloc;
-
-#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[cfg(all(
+    not(any(target_env = "msvc", target_os = "freebsd")),
+    feature = "jemallocator"
+))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[allow(clippy::cognitive_complexity)]
 fn main() {
