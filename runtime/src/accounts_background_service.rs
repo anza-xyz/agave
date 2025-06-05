@@ -143,7 +143,7 @@ pub struct SnapshotRequestHandler {
 }
 
 impl SnapshotRequestHandler {
-    // Returns the latest requested snapshot block height and storages
+    // Returns the latest requested snapshot slot and storages
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
@@ -492,7 +492,7 @@ pub struct AbsRequestHandlers {
 }
 
 impl AbsRequestHandlers {
-    // Returns the latest requested snapshot block height, if one exists
+    // Returns the latest requested snapshot slot, if one exists
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
@@ -629,26 +629,38 @@ impl AccountsBackgroundService {
                                     break;
                                 }
                             }
-                        } else if previous_clean_time.elapsed() > CLEAN_INTERVAL {
-                            // Note that the flush will do an internal clean of the
-                            // cache up to bank.slot(), so should be safe as long
-                            // as any later snapshots that are taken are of
-                            // slots >= bank.slot()
-                            bank.force_flush_accounts_cache();
-                            bank.clean_accounts();
-                            last_cleaned_slot = bank.slot();
-                            previous_clean_time = Instant::now();
-                            bank.shrink_ancient_slots();
-                            bank.shrink_candidate_slots();
-                            previous_shrink_time = Instant::now();
                         } else {
-                            // Note that the flush will do an internal clean of the
-                            // cache up to bank.slot(), so should be safe as long
-                            // as any later snapshots that are taken are of
-                            // slots >= bank.slot()
-                            bank.flush_accounts_cache_if_needed();
+                            // we didn't handle a snapshot request, so do flush/clean/shrink
+
+                            // see the comments in Bank::clean_accounts() for why we sub 1 here
+                            let max_clean_slot_inclusive = bank.slot().saturating_sub(1);
+
+                            let duration_since_previous_clean = previous_clean_time.elapsed();
+                            let should_clean = duration_since_previous_clean > CLEAN_INTERVAL;
+
+                            // if we're cleaning, then force flush, otherwise be lazy
+                            let force_flush = should_clean;
+                            bank.rc
+                                .accounts
+                                .accounts_db
+                                .flush_accounts_cache(force_flush, Some(max_clean_slot_inclusive));
+
+                            if should_clean {
+                                bank.clean_accounts();
+                                last_cleaned_slot = max_clean_slot_inclusive;
+                                previous_clean_time = Instant::now();
+                            }
+
                             let duration_since_previous_shrink = previous_shrink_time.elapsed();
-                            if duration_since_previous_shrink > SHRINK_INTERVAL {
+                            let should_shrink = duration_since_previous_shrink > SHRINK_INTERVAL;
+                            // To avoid pathological interactions between the clean and shrink
+                            // timers, call shrink for either should_shrink or should_clean.
+                            if should_shrink || should_clean {
+                                if should_clean {
+                                    // We used to only squash (aka shrink ancients) when we also
+                                    // cleaned, so keep that same behavior here for now.
+                                    bank.shrink_ancient_slots();
+                                }
                                 bank.shrink_candidate_slots();
                                 previous_shrink_time = Instant::now();
                             }
