@@ -578,6 +578,7 @@ fn address_is_aligned<T>(address: u64) -> bool {
         .expect("T to be non-zero aligned")
 }
 
+// Do not use this directly
 macro_rules! translate_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
         Result::<u64, Error>::from(
@@ -587,6 +588,7 @@ macro_rules! translate_inner {
         )
     };
 }
+// Do not use this directly
 macro_rules! translate_type_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         let host_addr = translate_inner!(
@@ -604,6 +606,7 @@ macro_rules! translate_type_inner {
         }
     }};
 }
+// Do not use this directly
 macro_rules! translate_slice_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         if $len == 0 {
@@ -621,13 +624,6 @@ macro_rules! translate_slice_inner {
     }};
 }
 
-fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a mut T, Error> {
-    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
-}
 fn translate_type<'a, T>(
     memory_mapping: &MemoryMapping,
     vm_addr: u64,
@@ -635,22 +631,6 @@ fn translate_type<'a, T>(
 ) -> Result<&'a T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
         .map(|value| &*value)
-}
-
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
 }
 fn translate_slice<'a, T>(
     memory_mapping: &MemoryMapping,
@@ -668,7 +648,6 @@ fn translate_slice<'a, T>(
     )
     .map(|value| &*value)
 }
-
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 /// pass it to a user-defined work function
 fn translate_string_and_do(
@@ -683,6 +662,74 @@ fn translate_string_and_do(
         Ok(message) => work(message),
         Err(err) => Err(SyscallError::InvalidString(err, buf.to_vec()).into()),
     }
+}
+
+// Do not use this directly outside of the CPI syscall
+fn translate_type_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Error> {
+    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
+}
+// Do not use this directly outside of the CPI syscall
+fn translate_slice_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Error> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
+}
+// Safety: This will invalidate previously translated references.
+// No other translated references shall be live when calling this.
+// Meaning it should generally be at the beginning or end of a syscall and
+// it should only be called once with all translations passed in one call.
+#[macro_export]
+macro_rules! translate_mut {
+    (internal, $memory_mapping:expr, $check_aligned:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {{
+        let slice = translate_slice_mut::<$T>(
+            $memory_mapping,
+            $vm_addr_and_element_count.0,
+            $vm_addr_and_element_count.1,
+            $check_aligned,
+        )?;
+        let host_addr = slice.as_ptr() as usize;
+        (slice, host_addr, std::mem::size_of::<$T>().saturating_mul($vm_addr_and_element_count.1 as usize))
+    }};
+    (internal, $memory_mapping:expr, $check_aligned:expr, &mut $T:ty, $vm_addr:expr) => {{
+        let reference = translate_type_mut::<$T>(
+            $memory_mapping,
+            $vm_addr,
+            $check_aligned,
+        )?;
+        let host_addr = reference as *const _ as usize;
+        (reference, host_addr, std::mem::size_of::<$T>())
+    }};
+    ($memory_mapping:expr, $check_aligned:expr, $(let $binding:ident : &mut $T:tt = map($vm_addr:expr $(, $element_count:expr)?) $try:tt;)+) => {
+        // This ensures that all the parameters are collected first so that if they depend on previous translations
+        $(let $binding = ($vm_addr $(, $element_count)?);)+
+        // they are not invalidated by the following translations here:
+        $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $T, $binding);)+
+        let host_ranges = [
+            $(($binding.1, $binding.2),)+
+        ];
+        for (index, range_a) in host_ranges.get(..host_ranges.len().saturating_sub(1)).unwrap().iter().enumerate() {
+            for range_b in host_ranges.get(index.saturating_add(1)..).unwrap().iter() {
+                if !is_nonoverlapping(range_a.0, range_a.1, range_b.0, range_b.1) {
+                    return Err(SyscallError::CopyOverlapping.into());
+                }
+            }
+        }
+        $(let $binding = $binding.0;)+
+    };
 }
 
 declare_builtin_function!(
