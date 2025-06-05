@@ -358,7 +358,7 @@ fn get_nodes(
             }),
     )
     // Add a bunch of fake, unstaked nodes for testing.
-    .chain((0..5000).map(|i: u16| {
+    /*.chain((0..5000).map(|i: u16| {
         let addr_byte1 = (i / 256).min(255) as u8;
         let addr_byte2 = (i % 256).min(255) as u8;
         let contact_info = ContactInfo {
@@ -372,7 +372,7 @@ fn get_nodes(
         };
         let node = NodeId::from(contact_info);
         Node { node, stake: 0 }
-    }))
+    }))*/
     // All staked nodes.
     .chain(
         stakes
