@@ -10642,6 +10642,7 @@ dependencies = [
  "solana-transaction-context",
  "solana-transaction-error",
  "solana-transaction-status",
+ "test-case",
  "tonic-build",
 ]
 
