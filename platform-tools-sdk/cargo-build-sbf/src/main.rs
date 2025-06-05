@@ -890,7 +890,9 @@ fn main() {
             Arg::new("lto")
                 .long("lto")
                 .takes_value(false)
-                .help("Enable Link-Time Optimization (LTO) for all crates being built. This option may decrease program size and CU consumption.")
+                .help("Enable Link-Time Optimization (LTO) for all crates being built. \
+                This option may decrease program size and CU consumption. The default option is LTO \
+                disabled, as one may get mixed results with it.")
         )
         .get_matches_from(args);
 
