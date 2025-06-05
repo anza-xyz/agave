@@ -153,6 +153,7 @@ impl TransactionStatusService {
                         executed_units,
                         fee_details,
                         rent_debits,
+                        post_accounts_states,
                         ..
                     } = committed_tx;
 
@@ -199,6 +200,7 @@ impl TransactionStatusService {
                             transaction.signature(),
                             &transaction_status_meta,
                             &transaction,
+                            &post_accounts_states,
                         );
                     }
 
@@ -327,6 +329,7 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_rent_debits::RentDebits,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_sdk::account::AccountSharedData,
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -353,6 +356,7 @@ pub(crate) mod tests {
     struct TestNotification {
         _meta: TransactionStatusMeta,
         transaction: SanitizedTransaction,
+        post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
     }
 
     struct TestTransactionNotifier {
@@ -375,6 +379,7 @@ pub(crate) mod tests {
             signature: &Signature,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &SanitizedTransaction,
+            post_accounts_states: &[(Pubkey, AccountSharedData)],
         ) {
             self.notifications.insert(
                 TestNotifierKey {
@@ -384,6 +389,7 @@ pub(crate) mod tests {
                 },
                 TestNotification {
                     _meta: transaction_status_meta.clone(),
+                    post_accounts_states: post_accounts_states.to_vec(),
                     transaction: transaction.clone(),
                 },
             );
@@ -434,6 +440,13 @@ pub(crate) mod tests {
         let mut rent_debits = RentDebits::default();
         rent_debits.insert(&pubkey, 123, 456);
 
+        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = transaction
+            .message()
+            .account_keys()
+            .iter()
+            .map(|key| (*key, bank.get_account(key).unwrap()))
+            .collect();
+
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),
             log_messages: None,
@@ -443,6 +456,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            post_accounts_states: post_accounts_states.clone(),
         });
 
         let balances = TransactionBalancesSet {
@@ -523,6 +537,7 @@ pub(crate) mod tests {
             expected_transaction.signature(),
             result.transaction.signature()
         );
+        assert_eq!(post_accounts_states, result.post_accounts_states);
     }
 
     #[test]
@@ -570,6 +585,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits: RentDebits::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            post_accounts_states: vec![],
         });
 
         let balances = TransactionBalancesSet {
