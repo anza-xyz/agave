@@ -41,10 +41,10 @@ fi
 
 for lock_file in $files; do
   if [[ -n $CI ]]; then
-    echo "--- [$lock_file]: cargo " "${shifted_args[@]}" "$@"
+    echo "--- [$lock_file]: cargo check " "${shifted_args[@]}" "$@"
   fi
 
-  if (set -x && cd "$(dirname "$lock_file")" && cargo "${shifted_args[@]}" "$@"); then
+  if (set -x && cd "$(dirname "$lock_file")" && cargo check "${shifted_args[@]}" "$@"); then
     # noop
     true
   else
