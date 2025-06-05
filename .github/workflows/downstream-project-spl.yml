@@ -148,7 +148,8 @@ jobs:
         run: |
           source ci/downstream-projects/common.sh
           cd "${{ matrix.programs }}"
-          $CARGO_TEST_SBF --arch v0 --manifest-path program/Cargo.toml
+          $CARGO_BUILD_SBF --arch v0 --manifest-path program/Cargo.toml
+          RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml
 
       - name: Test SBPFv1
         shell: bash
