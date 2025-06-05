@@ -222,7 +222,7 @@ solana-message = "2.3.0"
 solana-program = { workspace = true }
 solana-program-entrypoint = "2.2.1"
 solana-program-runtime = { workspace = true }
-solana-pubkey = "2.3.0"
+solana-pubkey = "2.4.0"
 solana-rent = "2.2.1"
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
