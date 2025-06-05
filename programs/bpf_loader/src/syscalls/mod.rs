@@ -267,11 +267,11 @@ impl<T> VmSlice<T> {
     }
 
     /// Returns a slice using a mapped physical address
-    pub fn translate(
+    pub fn translate<'a>(
         &self,
-        memory_mapping: &MemoryMapping,
+        memory_mapping: &'a MemoryMapping,
         check_aligned: bool,
-    ) -> Result<&[T], Error> {
+    ) -> Result<&'a [T], Error> {
         translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
 }
@@ -579,6 +579,7 @@ fn address_is_aligned<T>(address: u64) -> bool {
 }
 
 // Do not use this directly
+#[macro_export]
 macro_rules! translate_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
         Result::<u64, Error>::from(
@@ -589,6 +590,7 @@ macro_rules! translate_inner {
     };
 }
 // Do not use this directly
+#[macro_export]
 macro_rules! translate_type_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         let host_addr = translate_inner!(
@@ -607,6 +609,7 @@ macro_rules! translate_type_inner {
     }};
 }
 // Do not use this directly
+#[macro_export]
 macro_rules! translate_slice_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         if $len == 0 {
@@ -625,7 +628,7 @@ macro_rules! translate_slice_inner {
 }
 
 fn translate_type<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
 ) -> Result<&'a T, Error> {
@@ -633,7 +636,7 @@ fn translate_type<'a, T>(
         .map(|value| &*value)
 }
 fn translate_slice<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -648,6 +651,7 @@ fn translate_slice<'a, T>(
     )
     .map(|value| &*value)
 }
+
 /// Take a virtual pointer to a string (points to SBF VM memory space), translate it
 /// pass it to a user-defined work function
 fn translate_string_and_do(
@@ -664,17 +668,17 @@ fn translate_string_and_do(
     }
 }
 
-// Do not use this directly outside of the CPI syscall
+// Do not use this directly
 fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
 ) -> Result<&'a mut T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
 }
-// Do not use this directly outside of the CPI syscall
+// Do not use this directly
 fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -688,6 +692,7 @@ fn translate_slice_mut<'a, T>(
         check_aligned,
     )
 }
+
 // Safety: This will invalidate previously translated references.
 // No other translated references shall be live when calling this.
 // Meaning it should generally be at the beginning or end of a syscall and
@@ -818,7 +823,7 @@ fn translate_and_check_program_address_inputs<'a>(
     seeds_addr: u64,
     seeds_len: u64,
     program_id_addr: u64,
-    memory_mapping: &mut MemoryMapping,
+    memory_mapping: &'a mut MemoryMapping,
     check_aligned: bool,
 ) -> Result<(Vec<&'a [u8]>, &'a Pubkey), Error> {
     let untranslated_seeds =
