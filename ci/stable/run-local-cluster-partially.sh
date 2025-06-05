@@ -17,6 +17,7 @@ LIMIT=${2:-"$BUILDKITE_PARALLEL_JOB_COUNT"}
 
 _ cargo nextest run \
   --profile ci \
+  --cargo-profile ci \
   --package solana-local-cluster \
   --test local_cluster \
   --partition hash:"$((INDEX + 1))/$LIMIT" \
