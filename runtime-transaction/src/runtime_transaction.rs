@@ -14,13 +14,14 @@ use {
     core::ops::Deref,
     solana_compute_budget_instruction::compute_budget_instruction_details::*,
     solana_hash::Hash,
-    solana_message::{AccountKeys, TransactionSignatureDetails},
+    solana_message::{v0::LoadedAddresses, AccountKeys, TransactionSignatureDetails},
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
         svm_message::SVMMessage, svm_transaction::SVMTransaction,
     },
+    solana_transaction_error::TransactionError,
 };
 
 mod sdk_transactions;
@@ -59,7 +60,11 @@ impl<T> StaticMeta for RuntimeTransaction<T> {
     }
 }
 
-impl<T: SVMMessage> DynamicMeta for RuntimeTransaction<T> {}
+impl<T: DynamicMeta> DynamicMeta for RuntimeTransaction<T> {
+    fn resolved_addresses(&self) -> Result<&LoadedAddresses, &TransactionError> {
+        self.transaction.resolved_addresses()
+    }
+}
 
 impl<T> Deref for RuntimeTransaction<T> {
     type Target = T;

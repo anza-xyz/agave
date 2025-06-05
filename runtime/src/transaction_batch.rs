@@ -116,9 +116,10 @@ mod tests {
         super::*,
         crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
         solana_keypair::Keypair,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_system_transaction as system_transaction,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         test_case::test_case,
     };
@@ -197,7 +198,7 @@ mod tests {
     fn setup(
         insert_conflicting_tx: bool,
         relax_intrabatch_account_locks: bool,
-    ) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
+    ) -> (Bank, Vec<RuntimeTransaction<ResolvedTransaction>>) {
         let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,

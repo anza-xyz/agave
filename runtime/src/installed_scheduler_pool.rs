@@ -4,7 +4,7 @@
 //! [BankWithScheduler], which can be used by `ReplayStage` and `BankingStage` for transaction
 //! execution. After use, the scheduler will be returned to the pool.
 //!
-//! [InstalledScheduler] can be fed with [SanitizedTransaction]s. Then, it schedules those
+//! [InstalledScheduler] can be fed with [ResolvedTransaction]s. Then, it schedules those
 //! executions and commits those results into the associated _bank_.
 //!
 //! It's generally assumed that each [InstalledScheduler] is backed by multiple threads for
@@ -26,9 +26,10 @@ use {
     log::*,
     solana_clock::Slot,
     solana_hash::Hash,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
@@ -174,7 +175,7 @@ pub trait InstalledScheduler: Send + Sync + Debug + 'static {
     /// having &mut.
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransaction>,
         index: usize,
     ) -> ScheduleResult;
 
@@ -512,7 +513,7 @@ impl BankWithScheduler {
     pub fn schedule_transaction_executions(
         &self,
         transactions_with_indexes: impl ExactSizeIterator<
-            Item = (RuntimeTransaction<SanitizedTransaction>, usize),
+            Item = (RuntimeTransaction<ResolvedTransaction>, usize),
         >,
     ) -> Result<()> {
         trace!(

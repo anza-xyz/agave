@@ -25,19 +25,19 @@ use {
     core::time::Duration,
     crossbeam_channel::{RecvTimeoutError, TryRecvError},
     solana_accounts_db::account_locks::validate_account_locks,
+    solana_address_lookup_table_interface::state::estimate_last_valid_slot,
+    solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
     solana_cost_model::cost_model::CostModel,
+    solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-        transaction_with_meta::TransactionWithMeta,
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
     },
-    solana_address_lookup_table_interface::state::estimate_last_valid_slot,
-    solana_clock::{Epoch, Slot, MAX_PROCESSING_AGE},
-    solana_fee_structure::FeeBudgetLimits,
-    solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction::sanitized::MessageHash,
     std::{
         num::Saturating,
         sync::{Arc, RwLock},
@@ -73,7 +73,7 @@ pub(crate) struct SanitizedTransactionReceiveAndBuffer {
 }
 
 impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
-    type Transaction = RuntimeTransaction<SanitizedTransaction>;
+    type Transaction = RuntimeTransaction<ResolvedTransaction>;
     type Container = TransactionStateContainer<Self::Transaction>;
 
     /// Returns whether the packet receiver is still connected.
@@ -153,7 +153,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 
     fn buffer_packets(
         &mut self,
-        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
         _timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         packets: Vec<ImmutableDeserializedPacket>,
@@ -264,7 +264,8 @@ impl SanitizedTransactionReceiveAndBuffer {
                 count_metrics.num_buffered += num_buffered;
                 count_metrics.num_dropped_on_sanitization += num_dropped_on_sanitization;
                 count_metrics.num_dropped_on_validate_locks += num_dropped_on_lock_validation;
-                count_metrics.num_dropped_on_receive_transaction_checks += num_dropped_on_transaction_checks;
+                count_metrics.num_dropped_on_receive_transaction_checks +=
+                    num_dropped_on_transaction_checks;
             });
         }
     }
@@ -661,13 +662,13 @@ mod tests {
         super::*,
         crate::banking_stage::tests::create_slow_genesis_config,
         crossbeam_channel::{unbounded, Receiver},
-        solana_ledger::genesis_utils::GenesisConfigInfo,
-        solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
-        solana_pubkey::Pubkey,
         solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_ledger::genesis_utils::GenesisConfigInfo,
         solana_message::{v0, AddressLookupTableAccount, VersionedMessage},
         solana_packet::{Meta, PACKET_DATA_SIZE},
-        solana_keypair::Keypair,
+        solana_perf::packet::{to_packet_batches, Packet, PacketBatch, PinnedPacketBatch},
+        solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction::transfer,
@@ -693,7 +694,7 @@ mod tests {
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> (
         SanitizedTransactionReceiveAndBuffer,
-        TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
     ) {
         let receive_and_buffer = SanitizedTransactionReceiveAndBuffer {
             packet_receiver: PacketDeserializer::new(receiver),
@@ -749,8 +750,7 @@ mod tests {
             calculate_max_age(sanitized_epoch, current_slot - 1, current_slot),
             MaxAge {
                 sanitized_epoch,
-                alt_invalidation_slot: current_slot - 1
-                    + solana_slot_hashes::get_entries() as u64,
+                alt_invalidation_slot: current_slot - 1 + solana_slot_hashes::get_entries() as u64,
             }
         );
 

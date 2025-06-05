@@ -752,15 +752,14 @@ mod tests {
             bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
             vote_sender_types::ReplayVoteReceiver,
         },
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_svm_transaction::svm_message::SVMMessage,
         solana_system_interface::instruction as system_instruction,
         solana_system_transaction as system_transaction,
-        solana_transaction::{
-            sanitized::{MessageHash, SanitizedTransaction},
-            versioned::VersionedTransaction,
-        },
+        solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_transaction_error::TransactionError,
         std::{
             collections::HashSet,
@@ -784,15 +783,15 @@ mod tests {
         _poh_simulator: JoinHandle<()>,
         _replay_vote_receiver: ReplayVoteReceiver,
 
-        consume_sender: Sender<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
-        consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        consume_sender: Sender<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
+        consumed_receiver: Receiver<FinishedConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     }
 
     fn setup_test_frame(
         relax_intrabatch_account_locks: bool,
     ) -> (
         TestFrame,
-        ConsumeWorker<RuntimeTransaction<SanitizedTransaction>>,
+        ConsumeWorker<RuntimeTransaction<ResolvedTransaction>>,
     ) {
         let GenesisConfigInfo {
             genesis_config,

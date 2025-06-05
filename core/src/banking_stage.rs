@@ -717,11 +717,13 @@ mod tests {
         solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         solana_system_transaction as system_transaction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{
@@ -742,7 +744,7 @@ mod tests {
 
     pub(crate) fn sanitize_transactions(
         txs: Vec<Transaction>,
-    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Vec<RuntimeTransaction<ResolvedTransaction>> {
         txs.into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)
             .collect()

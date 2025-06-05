@@ -22,13 +22,13 @@ use {
     solana_poh::poh_recorder::{BankStart, PohRecorderError},
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::{
         account_loader::TransactionCheckResult, transaction_error_metrics::TransactionErrorMetrics,
     },
     solana_time_utils::timestamp,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::TransactionError,
     std::{
         sync::{atomic::Ordering, Arc, RwLock},
@@ -266,7 +266,7 @@ impl VoteWorker {
         &self,
         bank_start: &BankStart,
         reached_end_of_slot: &mut bool,
-        sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+        sanitized_transactions: &mut Vec<RuntimeTransaction<ResolvedTransaction>>,
         banking_stage_stats: &BankingStageStats,
         consumed_buffered_packets_count: &mut usize,
         rebuffered_packet_count: &mut usize,
@@ -484,7 +484,7 @@ fn consume_scan_should_process_packet(
     packet: &ImmutableDeserializedPacket,
     reached_end_of_slot: bool,
     error_counters: &mut TransactionErrorMetrics,
-    sanitized_transactions: &mut Vec<RuntimeTransaction<SanitizedTransaction>>,
+    sanitized_transactions: &mut Vec<RuntimeTransaction<ResolvedTransaction>>,
     slot_metrics_tracker: &mut LeaderSlotMetricsTracker,
 ) -> bool {
     // If end of the slot, return should process (quick loop after reached end of slot)

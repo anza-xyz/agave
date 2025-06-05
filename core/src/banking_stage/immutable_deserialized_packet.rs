@@ -9,7 +9,9 @@ use {
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_sanitize::SanitizeError,
     solana_short_vec::decode_shortu16_len,
     solana_signature::Signature,
@@ -17,7 +19,7 @@ use {
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
     },
     solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction},
+        sanitized::MessageHash,
         versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
     std::{cmp::Ordering, collections::HashSet, mem::size_of},
@@ -129,7 +131,7 @@ impl ImmutableDeserializedPacket {
         votes_only: bool,
         bank: &Bank,
         reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Option<(RuntimeTransaction<SanitizedTransaction>, Slot)> {
+    ) -> Option<(RuntimeTransaction<ResolvedTransaction>, Slot)> {
         if votes_only && !self.is_simple_vote() {
             return None;
         }
@@ -144,7 +146,7 @@ impl ImmutableDeserializedPacket {
             Some(self.is_simple_vote),
         )
         .and_then(|tx| {
-            RuntimeTransaction::<SanitizedTransaction>::try_from(
+            RuntimeTransaction::<ResolvedTransaction>::try_from(
                 tx,
                 address_loader,
                 reserved_account_keys,

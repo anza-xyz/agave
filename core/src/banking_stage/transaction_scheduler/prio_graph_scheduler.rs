@@ -24,8 +24,8 @@ use {
     prio_graph::{AccessKind, GraphNode, PrioGraph},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm_transaction::svm_message::SVMMessage,
     std::num::Saturating,
 };
@@ -265,10 +265,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                             >= self.config.target_transactions_per_batch
                         {
                             num_sent += self.common.send_batch(
-                                    &mut batches,
-                                    thread_id,
-                                    self.config.target_transactions_per_batch,
-                                )?;
+                                &mut batches,
+                                thread_id,
+                                self.config.target_transactions_per_batch,
+                            )?;
                         }
 
                         // if the thread is at max_cu_per_thread, remove it from the schedulable threads
@@ -291,7 +291,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             }
 
             // Send all non-empty batches
-            num_sent += self.common
+            num_sent += self
+                .common
                 .send_batches(&mut batches, self.config.target_transactions_per_batch)?;
 
             // Refresh window budget and do chunked pops
@@ -305,7 +306,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         }
 
         // Send batches for any remaining transactions
-        num_sent += self.common
+        num_sent += self
+            .common
             .send_batches(&mut batches, self.config.target_transactions_per_batch)?;
 
         // Push unschedulable ids back into the container
@@ -433,15 +435,17 @@ mod tests {
         },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_keypair::Keypair,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
         std::borrow::Borrow,
     };
 
@@ -449,9 +453,9 @@ mod tests {
     fn create_test_frame(
         num_threads: usize,
     ) -> (
-        PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
-        Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
-        Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        PrioGraphScheduler<RuntimeTransaction<ResolvedTransaction>>,
+        Vec<Receiver<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>>,
+        Sender<FinishedConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
@@ -473,7 +477,7 @@ mod tests {
         to_pubkeys: impl IntoIterator<Item = impl Borrow<Pubkey>>,
         lamports: u64,
         priority: u64,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransaction> {
         let to_pubkeys_lamports = to_pubkeys
             .into_iter()
             .map(|pubkey| *pubkey.borrow())
@@ -497,7 +501,7 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>> {
         create_container_with_capacity(100 * 1024, tx_infos)
     }
 
@@ -511,7 +515,7 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(capacity);
         for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
             let transaction = prioritized_tranfers(
@@ -534,9 +538,9 @@ mod tests {
     }
 
     fn collect_work(
-        receiver: &Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        receiver: &Receiver<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     ) -> (
-        Vec<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        Vec<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
         Vec<Vec<TransactionId>>,
     ) {
         receiver
@@ -549,14 +553,14 @@ mod tests {
     }
 
     fn test_pre_graph_filter(
-        _txs: &[&RuntimeTransaction<SanitizedTransaction>],
+        _txs: &[&RuntimeTransaction<ResolvedTransaction>],
         results: &mut [bool],
     ) {
         results.fill(true);
     }
 
     fn test_pre_lock_filter(
-        _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
+        _tx: &TransactionState<RuntimeTransaction<ResolvedTransaction>>,
     ) -> PreLockFilterAction {
         PreLockFilterAction::AttemptToSchedule
     }

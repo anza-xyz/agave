@@ -99,8 +99,9 @@ use {
     crate::utils::{ShortCounter, Token, TokenCell},
     assert_matches::assert_matches,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     static_assertions::const_assert_eq,
     std::{collections::VecDeque, mem, sync::Arc},
     unwrap_none::UnwrapNone,
@@ -433,7 +434,7 @@ const_assert_eq!(mem::size_of::<BlockedUsageCountToken>(), 0);
 /// Internal scheduling data about a particular task.
 #[derive(Debug)]
 pub struct TaskInner {
-    transaction: RuntimeTransaction<SanitizedTransaction>,
+    transaction: RuntimeTransaction<ResolvedTransaction>,
     /// The index of a transaction in ledger entries; not used by SchedulingStateMachine by itself.
     /// Carrying this along with the transaction is needed to properly record the execution result
     /// of it.
@@ -447,7 +448,7 @@ impl TaskInner {
         self.index
     }
 
-    pub fn transaction(&self) -> &RuntimeTransaction<SanitizedTransaction> {
+    pub fn transaction(&self) -> &RuntimeTransaction<ResolvedTransaction> {
         &self.transaction
     }
 
@@ -470,7 +471,7 @@ impl TaskInner {
         did_unblock.then_some(self)
     }
 
-    pub fn into_transaction(self: Task) -> RuntimeTransaction<SanitizedTransaction> {
+    pub fn into_transaction(self: Task) -> RuntimeTransaction<ResolvedTransaction> {
         Task::into_inner(self).unwrap().transaction
     }
 }
@@ -850,7 +851,7 @@ impl SchedulingStateMachine {
         }
     }
 
-    /// Creates a new task with [`RuntimeTransaction<SanitizedTransaction>`] with all of
+    /// Creates a new task with [`RuntimeTransaction<ResolvedTransaction>`] with all of
     /// its corresponding [`UsageQueue`]s preloaded.
     ///
     /// Closure (`usage_queue_loader`) is used to delegate the (possibly multi-threaded)
@@ -864,7 +865,7 @@ impl SchedulingStateMachine {
     /// after created, if `has_no_active_task()` is `true`. Also note that this is desired for
     /// separation of concern.
     pub fn create_task(
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransaction>,
         index: usize,
         usage_queue_loader: &mut impl FnMut(Pubkey) -> UsageQueue,
     ) -> Task {
@@ -1037,11 +1038,11 @@ mod tests {
         solana_instruction::{AccountMeta, Instruction},
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
         std::{cell::RefCell, collections::HashMap, rc::Rc},
     };
 
-    fn simplest_transaction() -> RuntimeTransaction<SanitizedTransaction> {
+    fn simplest_transaction() -> RuntimeTransaction<ResolvedTransaction> {
         let message = Message::new(&[], Some(&Pubkey::new_unique()));
         let unsigned = Transaction::new_unsigned(message);
         RuntimeTransaction::from_transaction_for_tests(unsigned)
@@ -1049,7 +1050,7 @@ mod tests {
 
     fn transaction_with_readonly_address(
         address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransaction> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new_readonly(address, false)],
@@ -1062,7 +1063,7 @@ mod tests {
 
     fn transaction_with_writable_address(
         address: Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransaction> {
         let instruction = Instruction {
             program_id: Pubkey::default(),
             accounts: vec![AccountMeta::new(address, false)],

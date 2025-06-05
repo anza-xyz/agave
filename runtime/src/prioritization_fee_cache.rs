@@ -441,16 +441,18 @@ mod tests {
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
     };
 
     fn build_sanitized_transaction_for_test(
         compute_unit_price: u64,
         signer_account: &Pubkey,
         write_account: &Pubkey,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransaction> {
         let transaction = Transaction::new_unsigned(Message::new(
             &[
                 system_instruction::transfer(signer_account, write_account, 1),
@@ -466,7 +468,7 @@ mod tests {
     fn sync_update<'a>(
         prioritization_fee_cache: &PrioritizationFeeCache,
         bank: Arc<Bank>,
-        txs: impl ExactSizeIterator<Item = &'a RuntimeTransaction<SanitizedTransaction>>,
+        txs: impl ExactSizeIterator<Item = &'a RuntimeTransaction<ResolvedTransaction>>,
     ) {
         let expected_update_count = prioritization_fee_cache
             .metrics

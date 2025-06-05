@@ -7,10 +7,10 @@ use {
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::{Slab, VacantEntry},
+    solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_packet::PACKET_DATA_SIZE,
     std::sync::Arc,
 };
 
@@ -346,22 +346,24 @@ mod tests {
         super::*,
         crate::banking_stage::scheduler_messages::MaxAge,
         agave_transaction_view::transaction_view::SanitizedTransactionView,
-        solana_perf::packet::Packet,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
-        solana_message::Message,
         solana_keypair::Keypair,
+        solana_message::Message,
+        solana_perf::packet::Packet,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::{MessageHash, SanitizedTransaction}, Transaction},
+        solana_transaction::{sanitized::MessageHash, Transaction},
         std::collections::HashSet,
     };
 
     /// Returns (transaction_ttl, priority, cost)
     fn test_transaction(
         priority: u64,
-    ) -> (RuntimeTransaction<SanitizedTransaction>, MaxAge, u64, u64) {
+    ) -> (RuntimeTransaction<ResolvedTransaction>, MaxAge, u64, u64) {
         let from_keypair = Keypair::new();
         let ixs = vec![
             system_instruction::transfer(&from_keypair.pubkey(), &solana_pubkey::new_rand(), 1),
@@ -378,7 +380,7 @@ mod tests {
     }
 
     fn push_to_container(
-        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
         num: usize,
     ) {
         for priority in 0..num as u64 {

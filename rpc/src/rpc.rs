@@ -72,7 +72,9 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_utils,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_send_transaction_service::send_transaction_service::TransactionInfo,
     solana_signature::Signature,
     solana_signer::Signer,
@@ -4382,7 +4384,7 @@ fn sanitize_transaction(
     transaction: VersionedTransaction,
     address_loader: impl AddressLoader,
     reserved_account_keys: &HashSet<Pubkey>,
-) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+) -> Result<RuntimeTransaction<ResolvedTransaction>> {
     RuntimeTransaction::try_create(
         transaction,
         MessageHash::Compute,

@@ -977,14 +977,13 @@ mod tests {
         solana_message::SimpleAddressLoader,
         solana_perf::test_tx::{test_invalid_tx, test_tx},
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_sha256_hasher::hash,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        solana_transaction::{
-            sanitized::{MessageHash, SanitizedTransaction},
-            versioned::VersionedTransaction,
-        },
+        solana_transaction::{sanitized::MessageHash, versioned::VersionedTransaction},
         solana_transaction_error::TransactionResult as Result,
     };
 
@@ -1063,7 +1062,7 @@ mod tests {
         let verify_transaction = {
             move |versioned_tx: VersionedTransaction,
                   verification_mode: TransactionVerificationMode|
-                  -> Result<RuntimeTransaction<SanitizedTransaction>> {
+                  -> Result<RuntimeTransaction<ResolvedTransaction>> {
                 let sanitized_tx = {
                     let message_hash =
                         if verification_mode == TransactionVerificationMode::FullVerification {
