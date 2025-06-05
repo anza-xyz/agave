@@ -3,6 +3,7 @@ use {
         admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
+        commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
@@ -100,6 +101,8 @@ pub fn execute(
     ledger_path: &Path,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let run_args = RunArgs::from_clap_arg_match(matches)?;
+
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
@@ -116,26 +119,14 @@ pub fn execute(
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
-    let identity_keypair = keypair_of(matches, "identity").unwrap_or_else(|| {
-        clap::Error::with_description(
-            "The --identity <KEYPAIR> argument is required",
-            clap::ErrorKind::ArgumentNotFound,
-        )
-        .exit();
-    });
+    let identity_keypair = Arc::new(run_args.identity);
 
-    let logfile = {
-        let logfile = matches
-            .value_of("logfile")
-            .map(|s| s.into())
-            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
-
-        if logfile == "-" {
-            None
-        } else {
-            println!("log file: {logfile}");
-            Some(logfile)
-        }
+    let logfile = run_args.logfile;
+    let logfile = if logfile == "-" {
+        None
+    } else {
+        println!("log file: {logfile}");
+        Some(logfile)
     };
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);
@@ -143,7 +134,7 @@ pub fn execute(
     info!("{} {}", crate_name!(), solana_version);
     info!("Starting validator with: {:#?}", std::env::args_os());
 
-    let cuda = matches.is_present("cuda");
+    let cuda = run_args.cuda;
     if cuda {
         solana_perf::perf_libs::init_cuda();
         enable_recycler_warming();
@@ -174,21 +165,15 @@ pub fn execute(
         .staked_map_id,
     ));
 
-    let init_complete_file = matches.value_of("init_complete_file");
+    let init_complete_file = run_args.init_complete_file;
 
     let rpc_bootstrap_config = bootstrap::RpcBootstrapConfig {
-        no_genesis_fetch: matches.is_present("no_genesis_fetch"),
-        no_snapshot_fetch: matches.is_present("no_snapshot_fetch"),
-        check_vote_account: matches
-            .value_of("check_vote_account")
-            .map(|url| url.to_string()),
-        only_known_rpc: matches.is_present("only_known_rpc"),
-        max_genesis_archive_unpacked_size: value_t_or_exit!(
-            matches,
-            "max_genesis_archive_unpacked_size",
-            u64
-        ),
-        incremental_snapshot_fetch: !matches.is_present("no_incremental_snapshots"),
+        no_genesis_fetch: run_args.no_genesis_fetch,
+        no_snapshot_fetch: run_args.no_snapshot_fetch,
+        check_vote_account: run_args.check_vote_account,
+        only_known_rpc: run_args.only_known_rpc,
+        max_genesis_archive_unpacked_size: run_args.max_genesis_archive_unpacked_size,
+        incremental_snapshot_fetch: !run_args.no_incremental_snapshots,
     };
 
     let private_rpc = matches.is_present("private_rpc");
@@ -277,31 +262,18 @@ pub fn execute(
         None
     };
 
-    let known_validators = validators_set(
-        &identity_keypair.pubkey(),
-        matches,
-        "known_validators",
-        "--known-validator",
-    )?;
-    let repair_validators = validators_set(
-        &identity_keypair.pubkey(),
-        matches,
-        "repair_validators",
-        "--repair-validator",
-    )?;
-    let repair_whitelist = validators_set(
-        &identity_keypair.pubkey(),
-        matches,
-        "repair_whitelist",
-        "--repair-whitelist",
-    )?;
+    let known_validators = run_args.known_validators;
+    validate_validator_set(&known_validators, &identity_keypair.pubkey())?;
+
+    let repair_validators = run_args.repair_validators;
+    validate_validator_set(&repair_validators, &identity_keypair.pubkey())?;
+
+    let repair_whitelist = run_args.repair_whitelist;
+    validate_validator_set(&repair_whitelist, &identity_keypair.pubkey())?;
     let repair_whitelist = Arc::new(RwLock::new(repair_whitelist.unwrap_or_default()));
-    let gossip_validators = validators_set(
-        &identity_keypair.pubkey(),
-        matches,
-        "gossip_validators",
-        "--gossip-validator",
-    )?;
+
+    let gossip_validators = run_args.gossip_validators;
+    validate_validator_set(&gossip_validators, &identity_keypair.pubkey())?;
 
     let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
         .expect("invalid bind_address");
@@ -345,16 +317,7 @@ pub fn execute(
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
-    let entrypoint_addrs = values_t!(matches, "entrypoint", String)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entrypoint| {
-            solana_net_utils::parse_host_port(&entrypoint)
-                .map_err(|err| format!("failed to parse entrypoint address: {err}"))
-        })
-        .collect::<Result<HashSet<_>, _>>()?
-        .into_iter()
-        .collect::<Vec<_>>();
+    let entrypoint_addrs = run_args.entrypoints;
     for addr in &entrypoint_addrs {
         if !socket_addr_space.check(addr) {
             Err(format!("invalid entrypoint address: {addr}"))?;
@@ -1260,8 +1223,6 @@ pub fn execute(
     snapshot_utils::remove_tmp_snapshot_archives(&full_snapshot_archives_dir);
     snapshot_utils::remove_tmp_snapshot_archives(&incremental_snapshot_archives_dir);
 
-    let identity_keypair = Arc::new(identity_keypair);
-
     let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
@@ -1364,7 +1325,8 @@ pub fn execute(
     }?;
 
     if let Some(filename) = init_complete_file {
-        File::create(filename).map_err(|err| format!("unable to create {filename}: {err}"))?;
+        File::create(&filename)
+            .map_err(|err| format!("unable to create {}: {err}", filename.display()))?;
     }
     info!("Validator initialized");
     validator.join();
@@ -1382,25 +1344,16 @@ fn hardforks_of(matches: &ArgMatches<'_>, name: &str) -> Option<Vec<Slot>> {
     }
 }
 
-fn validators_set(
+fn validate_validator_set(
+    validator_set: &Option<HashSet<Pubkey>>,
     identity_pubkey: &Pubkey,
-    matches: &ArgMatches<'_>,
-    matches_name: &str,
-    arg_name: &str,
-) -> Result<Option<HashSet<Pubkey>>, String> {
-    if matches.is_present(matches_name) {
-        let validators_set: HashSet<_> = values_t_or_exit!(matches, matches_name, Pubkey)
-            .into_iter()
-            .collect();
-        if validators_set.contains(identity_pubkey) {
-            Err(format!(
-                "the validator's identity pubkey cannot be a {arg_name}: {identity_pubkey}"
-            ))?;
+) -> Result<(), String> {
+    if let Some(validator_set) = validator_set {
+        if validator_set.contains(identity_pubkey) {
+            return Err(format!("contains identity pubkey: {identity_pubkey}"));
         }
-        Ok(Some(validators_set))
-    } else {
-        Ok(None)
     }
+    Ok(())
 }
 
 fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -> Option<u16> {
@@ -1487,5 +1440,40 @@ fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
     AccountSecondaryIndexes {
         keys,
         indexes: account_indexes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_validator_set_with_empty_set() {
+        let identity_pubkey: Pubkey = Pubkey::new_unique();
+        let validator_set = None;
+        assert_eq!(
+            validate_validator_set(&validator_set, &identity_pubkey),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_validate_validator_set_with_validator_set_contains_identity_pubkey() {
+        let identity_pubkey = Pubkey::new_unique();
+        let validator_set = Some(HashSet::from([identity_pubkey]));
+        assert_eq!(
+            validate_validator_set(&validator_set, &identity_pubkey),
+            Err(format!("contains identity pubkey: {identity_pubkey}"))
+        );
+    }
+
+    #[test]
+    fn test_validate_validator_set_with_validator_set_does_not_contain_identity_pubkey() {
+        let identity_pubkey = Pubkey::new_unique();
+        let validator_set = Some(HashSet::from([Pubkey::new_unique()]));
+        assert_eq!(
+            validate_validator_set(&validator_set, &identity_pubkey),
+            Ok(())
+        );
     }
 }
