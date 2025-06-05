@@ -639,10 +639,11 @@ impl AccountsBackgroundService {
                             let should_clean = duration_since_previous_clean > CLEAN_INTERVAL;
 
                             // if we're cleaning, then force flush, otherwise be lazy
+                            let force_flush = should_clean;
                             bank.rc
                                 .accounts
                                 .accounts_db
-                                .flush_accounts_cache(should_clean, Some(max_clean_slot_inclusive));
+                                .flush_accounts_cache(force_flush, Some(max_clean_slot_inclusive));
 
                             if should_clean {
                                 bank.clean_accounts();
