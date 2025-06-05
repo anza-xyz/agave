@@ -3924,7 +3924,7 @@ pub mod rpc_full {
                     return Err(RpcCustomError::SendTransactionPreflightFailure {
                         message: format!("Transaction simulation failed: {err}"),
                         result: RpcSimulateTransactionResult {
-                            err: Some(err),
+                            err: Some(err.into()),
                             logs: Some(logs),
                             accounts: None,
                             units_consumed: Some(units_consumed),
@@ -4073,7 +4073,7 @@ pub mod rpc_full {
             Ok(new_response(
                 bank,
                 RpcSimulateTransactionResult {
-                    err: result.err(),
+                    err: result.err().map(Into::into),
                     logs: Some(logs),
                     accounts,
                     units_consumed: Some(units_consumed),
@@ -7270,16 +7270,16 @@ pub mod tests {
             if let EncodedTransaction::Json(transaction) = transaction {
                 if transaction.signatures[0] == confirmed_block_signatures[0].to_string() {
                     let meta = meta.unwrap();
-                    assert_eq!(meta.status, Ok(()));
+                    assert_eq!(meta.status, Ok(()).into());
                     assert_eq!(meta.err, None);
                 } else if transaction.signatures[0] == confirmed_block_signatures[1].to_string() {
                     let meta = meta.unwrap();
                     assert_eq!(
                         meta.err,
-                        Some(TransactionError::InstructionError(
-                            0,
-                            InstructionError::Custom(1)
-                        ))
+                        Some(
+                            TransactionError::InstructionError(0, InstructionError::Custom(1))
+                                .into()
+                        )
                     );
                     assert_eq!(
                         meta.status,
@@ -7287,6 +7287,7 @@ pub mod tests {
                             0,
                             InstructionError::Custom(1)
                         ))
+                        .into(),
                     );
                 } else {
                     assert_eq!(meta, None);
@@ -7316,16 +7317,16 @@ pub mod tests {
                     deserialize(&bs58::decode(&transaction).into_vec().unwrap()).unwrap();
                 if decoded_transaction.signatures[0] == confirmed_block_signatures[0] {
                     let meta = meta.unwrap();
-                    assert_eq!(meta.status, Ok(()));
+                    assert_eq!(meta.status, Ok(()).into());
                     assert_eq!(meta.err, None);
                 } else if decoded_transaction.signatures[0] == confirmed_block_signatures[1] {
                     let meta = meta.unwrap();
                     assert_eq!(
                         meta.err,
-                        Some(TransactionError::InstructionError(
-                            0,
-                            InstructionError::Custom(1)
-                        ))
+                        Some(
+                            TransactionError::InstructionError(0, InstructionError::Custom(1))
+                                .into()
+                        )
                     );
                     assert_eq!(
                         meta.status,
@@ -7333,6 +7334,7 @@ pub mod tests {
                             0,
                             InstructionError::Custom(1)
                         ))
+                        .into(),
                     );
                 } else {
                     assert_eq!(meta, None);
@@ -8533,7 +8535,7 @@ pub mod tests {
                 },
             ]);
         }
-        assert_eq!(result["result"]["value"]["data"], expected_value);
+        assert_eq!(result["result"]["value"]["data"], expected_value,);
 
         // Test Mint
         let req = format!(

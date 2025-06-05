@@ -92,6 +92,7 @@ solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = "=2.2.3"
 solana-transaction-error = "=2.2.1"
 solana-transaction-status = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 solana-udp-client = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }

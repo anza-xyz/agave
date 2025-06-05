@@ -5676,6 +5676,7 @@ dependencies = [
  "solana-transaction",
  "solana-transaction-error",
  "solana-transaction-status",
+ "solana-transaction-status-client-types",
  "solana-vote-program",
  "spl-memo",
 ]
@@ -5719,6 +5720,7 @@ dependencies = [
  "solana-tpu-client",
  "solana-transaction",
  "solana-transaction-error",
+ "solana-transaction-status-client-types",
  "solana-udp-client",
  "thiserror 2.0.12",
  "tokio",

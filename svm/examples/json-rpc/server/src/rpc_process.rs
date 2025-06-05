@@ -757,7 +757,7 @@ pub mod rpc {
             Ok(new_response(
                 0,
                 RpcSimulateTransactionResult {
-                    err: result.err(),
+                    err: result.err().map(Into::into),
                     logs: Some(logs),
                     accounts,
                     units_consumed: Some(units_consumed),
