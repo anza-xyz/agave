@@ -48,6 +48,7 @@ solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 solana-udp-client = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

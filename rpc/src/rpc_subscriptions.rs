@@ -402,7 +402,9 @@ fn filter_signature_result(
 ) -> (Option<RpcSignatureResult>, Slot) {
     (
         result.map(|result| {
-            RpcSignatureResult::ProcessedSignature(ProcessedSignatureResult { err: result.err() })
+            RpcSignatureResult::ProcessedSignature(ProcessedSignatureResult {
+                err: result.err().map(Into::into),
+            })
         }),
         last_notified_slot,
     )
@@ -446,7 +448,7 @@ fn filter_logs_results(
 ) -> (impl Iterator<Item = RpcLogsResponse>, Slot) {
     let responses = logs.into_iter().flatten().map(|log| RpcLogsResponse {
         signature: log.signature.to_string(),
-        err: log.result.err(),
+        err: log.result.err().map(Into::into),
         logs: log.log_messages,
     });
     (responses, last_notified_slot)

@@ -8,6 +8,7 @@ use {
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::config::RpcSimulateTransactionConfig,
     solana_transaction::Transaction,
+    solana_transaction_status_client_types::UiTransactionError,
 };
 
 /// Enum capturing the possible results of updating a message based on the
@@ -56,7 +57,7 @@ fn simulate_for_compute_unit_limit_unchecked(
         .value;
 
     // Bail if the simulated transaction failed
-    if let Some(err) = simulate_result.err {
+    if let Some(UiTransactionError(err)) = simulate_result.err {
         return Err(err.into());
     }
 
