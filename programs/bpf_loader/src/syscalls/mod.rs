@@ -274,14 +274,6 @@ impl<T> VmSlice<T> {
     ) -> Result<&[T], Error> {
         translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
-
-    pub fn translate_mut(
-        &mut self,
-        memory_mapping: &MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&mut [T], Error> {
-        translate_slice_mut::<T>(memory_mapping, self.ptr, self.len, check_aligned)
-    }
 }
 
 fn consume_compute_meter(invoke_context: &InvokeContext, amount: u64) -> Result<(), Error> {
