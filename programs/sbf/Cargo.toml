@@ -138,7 +138,7 @@ solana-msg = "=2.2.1"
 solana-poseidon = { path = "../../poseidon/", version = "=2.3.0" }
 solana-program = "=2.2.1"
 solana-program-entrypoint = "=2.2.1"
-solana-program-error = "=2.2.1"
+solana-program-error = "=2.2.2"
 solana-program-memory = "=2.2.1"
 solana-program-runtime = { path = "../../program-runtime", version = "=2.3.0" }
 solana-pubkey = { version = "=2.4.0", default-features = false }
