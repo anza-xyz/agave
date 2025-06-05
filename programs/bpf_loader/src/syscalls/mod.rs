@@ -4433,34 +4433,10 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
-        let processed_sibling_instruction = translate_type_mut::<ProcessedSiblingInstruction>(
-            &memory_mapping,
-            VM_BASE_ADDRESS,
-            true,
-        )
-        .unwrap();
+        let processed_sibling_instruction =
+            unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
         processed_sibling_instruction.data_len = 1;
         processed_sibling_instruction.accounts_len = 1;
-        let program_id = translate_type_mut::<Pubkey>(
-            &memory_mapping,
-            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
-            true,
-        )
-        .unwrap();
-        let data = translate_slice_mut::<u8>(
-            &memory_mapping,
-            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
-            processed_sibling_instruction.data_len,
-            true,
-        )
-        .unwrap();
-        let accounts = translate_slice_mut::<AccountMeta>(
-            &memory_mapping,
-            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
-            processed_sibling_instruction.accounts_len,
-            true,
-        )
-        .unwrap();
 
         invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
@@ -4474,6 +4450,26 @@ mod tests {
         );
         assert_eq!(result.unwrap(), 1);
         {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
             let transaction_context = &invoke_context.transaction_context;
             assert_eq!(processed_sibling_instruction.data_len, 1);
             assert_eq!(processed_sibling_instruction.accounts_len, 1);
