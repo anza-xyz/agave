@@ -259,30 +259,11 @@ impl<'a> StorableAccountsBySlot<'a> {
         }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    /// given an overall index for all accounts in self:
-    /// return (slots_and_accounts index, index within those accounts)
-    /// This is the baseline unoptimized implementation. It is not used in the validator. It
-    /// is used for testing an optimized version below - `find_internal_index.`
-    pub fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
-        // search offsets for the accounts slice that contains 'index'.
-        // This could be a binary search.
-        for (offset_index, next_offset) in self.starting_offsets.iter().enumerate() {
-            if next_offset > &index {
-                // offset of prior entry
-                let prior_offset = if offset_index > 0 {
-                    self.starting_offsets[offset_index.saturating_sub(1)]
-                } else {
-                    0
-                };
-                return (offset_index, index - prior_offset);
-            }
-        }
-        panic!("failed");
-    }
-
-    /// given an overall index for all accounts in self:
-    /// return (slots_and_accounts index, index within those accounts)
+    /// given an overall index for all accounts in self: return
+    /// (slots_and_accounts index, index within those accounts)
+    /// This implementation is optimized for performance by using binary search
+    /// on the starting_offsets based on the assumption that the
+    /// starting_offsets are always sorted.
     fn find_internal_index(&self, index: usize) -> (usize, usize) {
         let upper_bound =
             self.starting_offsets
@@ -384,6 +365,29 @@ pub mod tests {
         solana_hash::Hash,
         std::sync::Arc,
     };
+
+    impl<'a> StorableAccountsBySlot<'a> {
+        /// given an overall index for all accounts in self:
+        /// return (slots_and_accounts index, index within those accounts)
+        /// This is the baseline unoptimized implementation. It is not used in the validator. It
+        /// is used for testing an optimized version - `find_internal_index`, in the actual implementation.
+        pub fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
+            // search offsets for the accounts slice that contains 'index'.
+            // This could be a binary search.
+            for (offset_index, next_offset) in self.starting_offsets.iter().enumerate() {
+                if next_offset > &index {
+                    // offset of prior entry
+                    let prior_offset = if offset_index > 0 {
+                        self.starting_offsets[offset_index.saturating_sub(1)]
+                    } else {
+                        0
+                    };
+                    return (offset_index, index - prior_offset);
+                }
+            }
+            panic!("failed");
+        }
+    }
 
     /// this is used in the test for generation of storages
     /// this is no longer used in the validator.
@@ -837,24 +841,23 @@ pub mod tests {
     #[test]
     fn test_find_internal_index() {
         let db = AccountsDb::new_single_for_tests();
-        let account_from_storage =
-            AccountFromStorage::new(&StoredAccountMeta::AppendVec(AppendVecStoredAccountMeta {
-                meta: &StoredMeta {
-                    write_version_obsolete: 0,
-                    pubkey: Pubkey::new_unique(),
-                    data_len: 0,
-                },
-                account_meta: &AccountMeta {
-                    lamports: 0,
-                    owner: Pubkey::new_unique(),
-                    executable: false,
-                    rent_epoch: 0,
-                },
-                data: &[],
-                offset: 0,
-                stored_size: 0,
-                hash: &AccountHash(Hash::new_unique()),
-            }));
+        let account_from_storage = AccountFromStorage::new(&StoredAccountMeta {
+            meta: &StoredMeta {
+                write_version_obsolete: 0,
+                pubkey: Pubkey::new_unique(),
+                data_len: 0,
+            },
+            account_meta: &AccountMeta {
+                lamports: 0,
+                owner: Pubkey::new_unique(),
+                executable: false,
+                rent_epoch: 0,
+            },
+            data: &[],
+            offset: 0,
+            stored_size: 0,
+            hash: &AccountHash(Hash::new_unique()),
+        });
 
         let mut slot_accounts = Vec::new();
         let mut all_accounts = Vec::new();
