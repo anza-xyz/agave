@@ -3,7 +3,10 @@ use {
         route::Router,
         umem::{Frame, FrameOffset},
     },
-    libc::{ifreq, ioctl, mmap, munmap, xdp_ring_offset, IF_NAMESIZE, SIOCGIFADDR, SIOCGIFHWADDR},
+    libc::{
+        ifreq, mmap, munmap, syscall, xdp_ring_offset, SYS_ioctl, IF_NAMESIZE, SIOCGIFADDR,
+        SIOCGIFHWADDR,
+    },
     std::{
         ffi::{c_char, CStr, CString},
         io::{self, ErrorKind},
@@ -86,7 +89,7 @@ impl NetworkDevice {
             );
         }
 
-        let result = unsafe { ioctl(fd.as_raw_fd(), SIOCGIFHWADDR, &mut req) };
+        let result = unsafe { syscall(SYS_ioctl, fd.as_raw_fd(), SIOCGIFHWADDR, &mut req) };
         if result < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -118,7 +121,7 @@ impl NetworkDevice {
             );
         }
 
-        let result = unsafe { libc::ioctl(fd.as_raw_fd(), SIOCGIFADDR, &mut req) };
+        let result = unsafe { syscall(SYS_ioctl, fd.as_raw_fd(), SIOCGIFADDR, &mut req) };
         if result < 0 {
             return Err(io::Error::last_os_error());
         }

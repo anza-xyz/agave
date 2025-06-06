@@ -11,7 +11,11 @@ case "$os_name" in
   export OPENSSL_INCLUDE_DIR="C:\OpenSSL\include"
   ;;
 "macOS") ;;
-"Linux") ;;
+"Linux")
+  if grep "Alpine" /etc/os-release ; then
+    apk add openssl-dev openssl-libs-static
+  fi
+  ;;
 *)
   echo "Unknown Operating System"
   ;;
