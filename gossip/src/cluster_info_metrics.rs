@@ -1,5 +1,5 @@
 use {
-    crate::{crds_gossip::CrdsGossip, protocol::Protocol},
+    crate::{crds_gossip::CrdsGossip, crds_value::CrdsValue, protocol::Protocol},
     itertools::Itertools,
     solana_clock::Slot,
     solana_measure::measure::Measure,
@@ -713,4 +713,30 @@ pub(crate) fn should_report_message_signature(signature: &Signature, leading_zer
         return false;
     };
     u64::from_le_bytes(bytes).trailing_zeros() >= leading_zeros
+}
+
+#[inline]
+pub(crate) fn last_four_chars(s: &str) -> Option<&str> {
+    s.get(s.len().saturating_sub(4)..)
+}
+
+pub(crate) fn log_gossip_crds_sample_egress(value: &CrdsValue, peer: &Pubkey) {
+    datapoint_info!(
+        "gossip_crds_sample_egress",
+        (
+            "origin",
+            last_four_chars(&value.pubkey().to_string()),
+            Option<String>
+        ),
+        (
+            "signature",
+            last_four_chars(&value.signature().to_string()),
+            Option<String>
+        ),
+        (
+            "peer",
+            last_four_chars(&peer.to_string()),
+            Option<String>
+        ),
+    );
 }
