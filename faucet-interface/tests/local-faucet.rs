@@ -1,5 +1,5 @@
 use {
-    solana_faucet::faucet::{request_airdrop_transaction, run_local_faucet},
+    solana_faucet_interface::faucet::{request_airdrop_transaction, run_local_faucet},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,

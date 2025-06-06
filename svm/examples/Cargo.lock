@@ -6173,21 +6173,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-faucet"
+name = "solana-faucet-interface"
 version = "2.3.0"
 dependencies = [
  "bincode",
- "clap",
  "crossbeam-channel",
  "log",
  "serde",
  "serde_derive",
- "solana-clap-utils",
- "solana-cli-config",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-native-token",
@@ -6197,7 +6193,6 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-transaction",
- "solana-version",
  "spl-memo",
  "thiserror 2.0.12",
  "tokio",
@@ -7391,7 +7386,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-rewards-hasher",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-genesis-config",
  "solana-gossip",
  "solana-hash",

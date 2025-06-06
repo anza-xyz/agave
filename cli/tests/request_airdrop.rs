@@ -2,7 +2,7 @@
 use {
     solana_cli::cli::{process_command, CliCommand, CliConfig},
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet_interface::faucet::run_local_faucet,
     solana_keypair::Keypair,
     solana_native_token::sol_to_lamports,
     solana_rpc_client::rpc_client::RpcClient,

@@ -429,7 +429,7 @@ dependencies = [
  "solana-download-utils",
  "solana-entry",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-genesis-utils",
  "solana-geyser-plugin-manager",
  "solana-gossip",
@@ -6660,7 +6660,7 @@ dependencies = [
  "solana-clock",
  "solana-commitment-config",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-gossip",
  "solana-hash",
  "solana-instruction",
@@ -6949,7 +6949,7 @@ dependencies = [
  "solana-compute-budget-interface",
  "solana-connection-cache",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-fee-calculator",
  "solana-genesis",
  "solana-genesis-config",
@@ -7366,7 +7366,7 @@ dependencies = [
  "solana-connection-cache",
  "solana-decode-error",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-feature-gate-client",
  "solana-feature-gate-interface",
  "solana-fee-calculator",
@@ -8009,7 +8009,7 @@ dependencies = [
  "solana-client",
  "solana-connection-cache",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-gossip",
  "solana-hash",
  "solana-instruction",
@@ -8184,21 +8184,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-faucet"
+name = "solana-faucet-bin"
+version = "2.3.0"
+dependencies = [
+ "clap 2.33.3",
+ "log",
+ "solana-clap-utils",
+ "solana-cli-config",
+ "solana-faucet-interface",
+ "solana-keypair",
+ "solana-logger",
+ "solana-metrics",
+ "solana-version",
+ "tokio",
+]
+
+[[package]]
+name = "solana-faucet-interface"
 version = "2.3.0"
 dependencies = [
  "bincode",
- "clap 2.33.3",
  "crossbeam-channel",
  "log",
  "serde",
  "serde_derive",
- "solana-clap-utils",
- "solana-cli-config",
  "solana-hash",
  "solana-instruction",
  "solana-keypair",
- "solana-logger",
  "solana-message",
  "solana-metrics",
  "solana-native-token",
@@ -8208,7 +8220,6 @@ dependencies = [
  "solana-system-interface",
  "solana-system-transaction",
  "solana-transaction",
- "solana-version",
  "spl-memo",
  "thiserror 2.0.12",
  "tokio",
@@ -9782,7 +9793,7 @@ dependencies = [
  "solana-epoch-info",
  "solana-epoch-rewards-hasher",
  "solana-epoch-schedule",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-fee-calculator",
  "solana-fee-structure",
  "solana-genesis-config",
@@ -11246,7 +11257,7 @@ dependencies = [
  "solana-client",
  "solana-commitment-config",
  "solana-core",
- "solana-faucet",
+ "solana-faucet-interface",
  "solana-gossip",
  "solana-hash",
  "solana-instruction",

@@ -44,7 +44,7 @@ spl-token = { workspace = true, features = ["no-entrypoint"] }
 [dev-dependencies]
 solana-accounts-db = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
-solana-faucet = { workspace = true }
+solana-faucet-interface = { workspace = true }
 solana-local-cluster = { workspace = true }
 solana-native-token = { workspace = true }
 solana-poh-config = { workspace = true }

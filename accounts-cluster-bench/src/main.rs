@@ -1410,7 +1410,7 @@ pub mod test {
             accounts_index::{AccountIndex, AccountSecondaryIndexes},
         },
         solana_core::validator::ValidatorConfig,
-        solana_faucet::faucet::run_local_faucet,
+        solana_faucet_interface::faucet::run_local_faucet,
         solana_local_cluster::{
             local_cluster::{ClusterConfig, LocalCluster},
             validator_configs::make_identical_validator_configs,

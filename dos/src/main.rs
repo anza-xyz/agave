@@ -831,7 +831,7 @@ pub mod test {
     use {
         super::*,
         solana_core::validator::ValidatorConfig,
-        solana_faucet::faucet::run_local_faucet,
+        solana_faucet_interface::faucet::run_local_faucet,
         solana_local_cluster::{
             cluster::Cluster,
             local_cluster::{ClusterConfig, LocalCluster},

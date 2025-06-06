@@ -5,7 +5,7 @@ use {
         test_utils::check_ready,
     },
     solana_commitment_config::CommitmentConfig,
-    solana_faucet::faucet::run_local_faucet,
+    solana_faucet_interface::faucet::run_local_faucet,
     solana_fee_structure::FeeStructure,
     solana_keypair::Keypair,
     solana_native_token::sol_to_lamports,

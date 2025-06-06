@@ -21,7 +21,7 @@ solana-bench-tps = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-core = { workspace = true }
-solana-faucet = { workspace = true }
+solana-faucet-interface = { workspace = true }
 solana-gossip = { workspace = true }
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true }
