@@ -267,20 +267,12 @@ impl<T> VmSlice<T> {
     }
 
     /// Returns a slice using a mapped physical address
-    pub fn translate(
+    pub fn translate<'a>(
         &self,
-        memory_mapping: &MemoryMapping,
+        memory_mapping: &'a MemoryMapping,
         check_aligned: bool,
-    ) -> Result<&[T], Error> {
+    ) -> Result<&'a [T], Error> {
         translate_slice::<T>(memory_mapping, self.ptr, self.len, check_aligned)
-    }
-
-    pub fn translate_mut(
-        &mut self,
-        memory_mapping: &MemoryMapping,
-        check_aligned: bool,
-    ) -> Result<&mut [T], Error> {
-        translate_slice_mut::<T>(memory_mapping, self.ptr, self.len, check_aligned)
     }
 }
 
@@ -586,6 +578,8 @@ fn address_is_aligned<T>(address: u64) -> bool {
         .expect("T to be non-zero aligned")
 }
 
+// Do not use this directly
+#[macro_export]
 macro_rules! translate_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
         Result::<u64, Error>::from(
@@ -595,6 +589,8 @@ macro_rules! translate_inner {
         )
     };
 }
+// Do not use this directly
+#[macro_export]
 macro_rules! translate_type_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         let host_addr = translate_inner!(
@@ -612,6 +608,8 @@ macro_rules! translate_type_inner {
         }
     }};
 }
+// Do not use this directly
+#[macro_export]
 macro_rules! translate_slice_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         if $len == 0 {
@@ -629,39 +627,16 @@ macro_rules! translate_slice_inner {
     }};
 }
 
-fn translate_type_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    check_aligned: bool,
-) -> Result<&'a mut T, Error> {
-    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
-}
 fn translate_type<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     check_aligned: bool,
 ) -> Result<&'a T, Error> {
     translate_type_inner!(memory_mapping, AccessType::Load, vm_addr, T, check_aligned)
         .map(|value| &*value)
 }
-
-fn translate_slice_mut<'a, T>(
-    memory_mapping: &MemoryMapping,
-    vm_addr: u64,
-    len: u64,
-    check_aligned: bool,
-) -> Result<&'a mut [T], Error> {
-    translate_slice_inner!(
-        memory_mapping,
-        AccessType::Store,
-        vm_addr,
-        len,
-        T,
-        check_aligned,
-    )
-}
 fn translate_slice<'a, T>(
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     vm_addr: u64,
     len: u64,
     check_aligned: bool,
@@ -691,6 +666,75 @@ fn translate_string_and_do(
         Ok(message) => work(message),
         Err(err) => Err(SyscallError::InvalidString(err, buf.to_vec()).into()),
     }
+}
+
+// Do not use this directly
+fn translate_type_mut<'a, T>(
+    memory_mapping: &'a MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Error> {
+    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
+}
+// Do not use this directly
+fn translate_slice_mut<'a, T>(
+    memory_mapping: &'a MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Error> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
+}
+
+// Safety: This will invalidate previously translated references.
+// No other translated references shall be live when calling this.
+// Meaning it should generally be at the beginning or end of a syscall and
+// it should only be called once with all translations passed in one call.
+#[macro_export]
+macro_rules! translate_mut {
+    (internal, $memory_mapping:expr, $check_aligned:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {{
+        let slice = translate_slice_mut::<$T>(
+            $memory_mapping,
+            $vm_addr_and_element_count.0,
+            $vm_addr_and_element_count.1,
+            $check_aligned,
+        )?;
+        let host_addr = slice.as_ptr() as usize;
+        (slice, host_addr, std::mem::size_of::<$T>().saturating_mul($vm_addr_and_element_count.1 as usize))
+    }};
+    (internal, $memory_mapping:expr, $check_aligned:expr, &mut $T:ty, $vm_addr:expr) => {{
+        let reference = translate_type_mut::<$T>(
+            $memory_mapping,
+            $vm_addr,
+            $check_aligned,
+        )?;
+        let host_addr = reference as *const _ as usize;
+        (reference, host_addr, std::mem::size_of::<$T>())
+    }};
+    ($memory_mapping:expr, $check_aligned:expr, $(let $binding:ident : &mut $T:tt = map($vm_addr:expr $(, $element_count:expr)?) $try:tt;)+) => {
+        // This ensures that all the parameters are collected first so that if they depend on previous translations
+        $(let $binding = ($vm_addr $(, $element_count)?);)+
+        // they are not invalidated by the following translations here:
+        $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $T, $binding);)+
+        let host_ranges = [
+            $(($binding.1, $binding.2),)+
+        ];
+        for (index, range_a) in host_ranges.get(..host_ranges.len().saturating_sub(1)).unwrap().iter().enumerate() {
+            for range_b in host_ranges.get(index.saturating_add(1)..).unwrap().iter() {
+                if !is_nonoverlapping(range_a.0, range_a.1, range_b.0, range_b.1) {
+                    return Err(SyscallError::CopyOverlapping.into());
+                }
+            }
+        }
+        $(let $binding = $binding.0;)+
+    };
 }
 
 declare_builtin_function!(
@@ -779,7 +823,7 @@ fn translate_and_check_program_address_inputs<'a>(
     seeds_addr: u64,
     seeds_len: u64,
     program_id_addr: u64,
-    memory_mapping: &mut MemoryMapping,
+    memory_mapping: &'a mut MemoryMapping,
     check_aligned: bool,
 ) -> Result<(Vec<&'a [u8]>, &'a Pubkey), Error> {
     let untranslated_seeds =
@@ -828,12 +872,11 @@ declare_builtin_function!(
         let Ok(new_address) = Pubkey::create_program_address(&seeds, program_id) else {
             return Ok(1);
         };
-        let address = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            address_addr,
-            32,
             invoke_context.get_check_aligned(),
-        )?;
+            let address: &mut [u8] = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
+        );
         address.copy_from_slice(new_address.as_ref());
         Ok(0)
     }
@@ -873,25 +916,12 @@ declare_builtin_function!(
                 if let Ok(new_address) =
                     Pubkey::create_program_address(&seeds_with_bump, program_id)
                 {
-                    let bump_seed_ref = translate_type_mut::<u8>(
+                    translate_mut!(
                         memory_mapping,
-                        bump_seed_addr,
                         invoke_context.get_check_aligned(),
-                    )?;
-                    let address = translate_slice_mut::<u8>(
-                        memory_mapping,
-                        address_addr,
-                        std::mem::size_of::<Pubkey>() as u64,
-                        invoke_context.get_check_aligned(),
-                    )?;
-                    if !is_nonoverlapping(
-                        bump_seed_ref as *const _ as usize,
-                        std::mem::size_of_val(bump_seed_ref),
-                        address.as_ptr() as usize,
-                        std::mem::size_of::<Pubkey>(),
-                    ) {
-                        return Err(SyscallError::CopyOverlapping.into());
-                    }
+                        let bump_seed_ref: &mut u8 = map(bump_seed_addr)?;
+                        let address: &mut [u8] = map(address_addr, std::mem::size_of::<Pubkey>() as u64)?;
+                    );
                     *bump_seed_ref = bump_seed[0];
                     address.copy_from_slice(new_address.as_ref());
                     return Ok(0);
@@ -919,12 +949,11 @@ declare_builtin_function!(
         let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         consume_compute_meter(invoke_context, cost)?;
 
-        let secp256k1_recover_result = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            result_addr,
-            SECP256K1_PUBLIC_KEY_LENGTH as u64,
             invoke_context.get_check_aligned(),
-        )?;
+            let secp256k1_recover_result: &mut [u8] = map(result_addr, SECP256K1_PUBLIC_KEY_LENGTH as u64)?;
+        );
         let hash = translate_slice::<u8>(
             memory_mapping,
             hash_addr,
@@ -1040,7 +1069,12 @@ declare_builtin_function!(
         result_point_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto, scalar};
+        use solana_curve25519::{
+            curve_syscall_traits::*,
+            edwards::{self, PodEdwardsPoint},
+            ristretto::{self, PodRistrettoPoint},
+            scalar,
+        };
         match curve_id {
             CURVE25519_EDWARDS => match group_op {
                 ADD => {
@@ -1049,23 +1083,24 @@ declare_builtin_function!(
                         .curve25519_edwards_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let left_point = translate_type::<PodEdwardsPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let right_point = translate_type::<PodEdwardsPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
                     if let Some(result_point) = edwards::add_edwards(left_point, right_point) {
-                        *translate_type_mut::<edwards::PodEdwardsPoint>(
+                        translate_mut!(
                             memory_mapping,
-                            result_point_addr,
                             invoke_context.get_check_aligned(),
-                        )? = result_point;
+                            let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                        );
+                        *result_point_ref_mut = result_point;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1077,23 +1112,24 @@ declare_builtin_function!(
                         .curve25519_edwards_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let left_point = translate_type::<PodEdwardsPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let right_point = translate_type::<PodEdwardsPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
                     if let Some(result_point) = edwards::subtract_edwards(left_point, right_point) {
-                        *translate_type_mut::<edwards::PodEdwardsPoint>(
+                        translate_mut!(
                             memory_mapping,
-                            result_point_addr,
                             invoke_context.get_check_aligned(),
-                        )? = result_point;
+                            let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                        );
+                        *result_point_ref_mut = result_point;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1110,18 +1146,19 @@ declare_builtin_function!(
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let input_point = translate_type::<edwards::PodEdwardsPoint>(
+                    let input_point = translate_type::<PodEdwardsPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
                     if let Some(result_point) = edwards::multiply_edwards(scalar, input_point) {
-                        *translate_type_mut::<edwards::PodEdwardsPoint>(
+                        translate_mut!(
                             memory_mapping,
-                            result_point_addr,
                             invoke_context.get_check_aligned(),
-                        )? = result_point;
+                            let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                        );
+                        *result_point_ref_mut = result_point;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1143,23 +1180,24 @@ declare_builtin_function!(
                         .curve25519_ristretto_add_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let left_point = translate_type::<PodRistrettoPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let right_point = translate_type::<PodRistrettoPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
                     if let Some(result_point) = ristretto::add_ristretto(left_point, right_point) {
-                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                        translate_mut!(
                             memory_mapping,
-                            result_point_addr,
                             invoke_context.get_check_aligned(),
-                        )? = result_point;
+                            let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                        );
+                        *result_point_ref_mut = result_point;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1171,12 +1209,12 @@ declare_builtin_function!(
                         .curve25519_ristretto_subtract_cost;
                     consume_compute_meter(invoke_context, cost)?;
 
-                    let left_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let left_point = translate_type::<PodRistrettoPoint>(
                         memory_mapping,
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let right_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let right_point = translate_type::<PodRistrettoPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
@@ -1185,11 +1223,12 @@ declare_builtin_function!(
                     if let Some(result_point) =
                         ristretto::subtract_ristretto(left_point, right_point)
                     {
-                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                        translate_mut!(
                             memory_mapping,
-                            result_point_addr,
                             invoke_context.get_check_aligned(),
-                        )? = result_point;
+                            let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                        );
+                        *result_point_ref_mut = result_point;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1206,18 +1245,19 @@ declare_builtin_function!(
                         left_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
-                    let input_point = translate_type::<ristretto::PodRistrettoPoint>(
+                    let input_point = translate_type::<PodRistrettoPoint>(
                         memory_mapping,
                         right_input_addr,
                         invoke_context.get_check_aligned(),
                     )?;
 
                     if let Some(result_point) = ristretto::multiply_ristretto(scalar, input_point) {
-                        *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                        translate_mut!(
                             memory_mapping,
-                            result_point_addr,
                             invoke_context.get_check_aligned(),
-                        )? = result_point;
+                            let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                        );
+                        *result_point_ref_mut = result_point;
                         Ok(0)
                     } else {
                         Ok(1)
@@ -1257,7 +1297,12 @@ declare_builtin_function!(
         result_point_addr: u64,
         memory_mapping: &mut MemoryMapping,
     ) -> Result<u64, Error> {
-        use solana_curve25519::{curve_syscall_traits::*, edwards, ristretto, scalar};
+        use solana_curve25519::{
+            curve_syscall_traits::*,
+            edwards::{self, PodEdwardsPoint},
+            ristretto::{self, PodRistrettoPoint},
+            scalar,
+        };
 
         if points_len > 512 {
             return Err(Box::new(SyscallError::InvalidLength));
@@ -1283,7 +1328,7 @@ declare_builtin_function!(
                     invoke_context.get_check_aligned(),
                 )?;
 
-                let points = translate_slice::<edwards::PodEdwardsPoint>(
+                let points = translate_slice::<PodEdwardsPoint>(
                     memory_mapping,
                     points_addr,
                     points_len,
@@ -1291,11 +1336,12 @@ declare_builtin_function!(
                 )?;
 
                 if let Some(result_point) = edwards::multiscalar_multiply_edwards(scalars, points) {
-                    *translate_type_mut::<edwards::PodEdwardsPoint>(
+                    translate_mut!(
                         memory_mapping,
-                        result_point_addr,
                         invoke_context.get_check_aligned(),
-                    )? = result_point;
+                        let result_point_ref_mut: &mut PodEdwardsPoint = map(result_point_addr)?;
+                    );
+                    *result_point_ref_mut = result_point;
                     Ok(0)
                 } else {
                     Ok(1)
@@ -1321,7 +1367,7 @@ declare_builtin_function!(
                     invoke_context.get_check_aligned(),
                 )?;
 
-                let points = translate_slice::<ristretto::PodRistrettoPoint>(
+                let points = translate_slice::<PodRistrettoPoint>(
                     memory_mapping,
                     points_addr,
                     points_len,
@@ -1331,11 +1377,12 @@ declare_builtin_function!(
                 if let Some(result_point) =
                     ristretto::multiscalar_multiply_ristretto(scalars, points)
                 {
-                    *translate_type_mut::<ristretto::PodRistrettoPoint>(
+                    translate_mut!(
                         memory_mapping,
-                        result_point_addr,
                         invoke_context.get_check_aligned(),
-                    )? = result_point;
+                        let result_point_ref_mut: &mut PodRistrettoPoint = map(result_point_addr)?;
+                    );
+                    *result_point_ref_mut = result_point;
                     Ok(0)
                 } else {
                     Ok(1)
@@ -1426,17 +1473,12 @@ declare_builtin_function!(
                 .unwrap_or(u64::MAX);
             consume_compute_meter(invoke_context, cost)?;
 
-            let return_data_result = translate_slice_mut::<u8>(
+            translate_mut!(
                 memory_mapping,
-                return_data_addr,
-                length,
                 invoke_context.get_check_aligned(),
-            )?;
-            let program_id_result = translate_type_mut::<Pubkey>(
-                memory_mapping,
-                program_id_addr,
-                invoke_context.get_check_aligned(),
-            )?;
+                let return_data_result: &mut [u8] = map(return_data_addr, length)?;
+                let program_id_result: &mut Pubkey = map(program_id_addr)?;
+            );
 
             let to_slice = return_data_result;
             let from_slice = return_data
@@ -1446,16 +1488,6 @@ declare_builtin_function!(
                 return Err(SyscallError::InvalidLength.into());
             }
             to_slice.copy_from_slice(from_slice);
-
-            if !is_nonoverlapping(
-                to_slice.as_ptr() as usize,
-                length as usize,
-                program_id_result as *const _ as usize,
-                std::mem::size_of::<Pubkey>(),
-            ) {
-                return Err(SyscallError::CopyOverlapping.into());
-            }
-
             *program_id_result = *program_id;
         }
 
@@ -1505,70 +1537,26 @@ declare_builtin_function!(
         }
 
         if let Some(instruction_context) = found_instruction_context {
-            let result_header = translate_type_mut::<ProcessedSiblingInstruction>(
+            translate_mut!(
                 memory_mapping,
-                meta_addr,
                 invoke_context.get_check_aligned(),
-            )?;
+                let result_header: &mut ProcessedSiblingInstruction = map(meta_addr)?;
+            );
 
             if result_header.data_len == (instruction_context.get_instruction_data().len() as u64)
                 && result_header.accounts_len
                     == (instruction_context.get_number_of_instruction_accounts() as u64)
             {
-                let program_id = translate_type_mut::<Pubkey>(
+                translate_mut!(
                     memory_mapping,
-                    program_id_addr,
                     invoke_context.get_check_aligned(),
-                )?;
-                let data = translate_slice_mut::<u8>(
-                    memory_mapping,
-                    data_addr,
-                    result_header.data_len,
-                    invoke_context.get_check_aligned(),
-                )?;
-                let accounts = translate_slice_mut::<AccountMeta>(
-                    memory_mapping,
-                    accounts_addr,
-                    result_header.accounts_len,
-                    invoke_context.get_check_aligned(),
-                )?;
-
-                if !is_nonoverlapping(
-                    result_header as *const _ as usize,
-                    std::mem::size_of::<ProcessedSiblingInstruction>(),
-                    program_id as *const _ as usize,
-                    std::mem::size_of::<Pubkey>(),
-                ) || !is_nonoverlapping(
-                    result_header as *const _ as usize,
-                    std::mem::size_of::<ProcessedSiblingInstruction>(),
-                    accounts.as_ptr() as usize,
-                    std::mem::size_of::<AccountMeta>()
-                        .saturating_mul(result_header.accounts_len as usize),
-                ) || !is_nonoverlapping(
-                    result_header as *const _ as usize,
-                    std::mem::size_of::<ProcessedSiblingInstruction>(),
-                    data.as_ptr() as usize,
-                    result_header.data_len as usize,
-                ) || !is_nonoverlapping(
-                    program_id as *const _ as usize,
-                    std::mem::size_of::<Pubkey>(),
-                    data.as_ptr() as usize,
-                    result_header.data_len as usize,
-                ) || !is_nonoverlapping(
-                    program_id as *const _ as usize,
-                    std::mem::size_of::<Pubkey>(),
-                    accounts.as_ptr() as usize,
-                    std::mem::size_of::<AccountMeta>()
-                        .saturating_mul(result_header.accounts_len as usize),
-                ) || !is_nonoverlapping(
-                    data.as_ptr() as usize,
-                    result_header.data_len as usize,
-                    accounts.as_ptr() as usize,
-                    std::mem::size_of::<AccountMeta>()
-                        .saturating_mul(result_header.accounts_len as usize),
-                ) {
-                    return Err(SyscallError::CopyOverlapping.into());
-                }
+                    let program_id: &mut Pubkey = map(program_id_addr)?;
+                    let data: &mut [u8] = map(data_addr, result_header.data_len)?;
+                    let accounts: &mut [AccountMeta] = map(accounts_addr, result_header.accounts_len)?;
+                    let result_header: &mut ProcessedSiblingInstruction = map(meta_addr)?;
+                );
+                // Marks result_header used. It had to be in translate_mut!() for the overlap checks.
+                let _ = result_header;
 
                 *program_id = *instruction_context
                     .get_last_program_key(invoke_context.transaction_context)?;
@@ -1592,10 +1580,11 @@ declare_builtin_function!(
                     })
                     .collect::<Result<Vec<_>, InstructionError>>()?;
                 accounts.clone_from_slice(account_metas.as_slice());
+            } else {
+                result_header.data_len = instruction_context.get_instruction_data().len() as u64;
+                result_header.accounts_len =
+                    instruction_context.get_number_of_instruction_accounts() as u64;
             }
-            result_header.data_len = instruction_context.get_instruction_data().len() as u64;
-            result_header.accounts_len =
-                instruction_context.get_number_of_instruction_accounts() as u64;
             return Ok(true as u64);
         }
         Ok(false as u64)
@@ -1668,12 +1657,11 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, cost)?;
 
-        let call_result = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            result_addr,
-            output as u64,
             invoke_context.get_check_aligned(),
-        )?;
+            let call_result: &mut [u8] = map(result_addr, output as u64)?;
+        );
         let input = translate_slice::<u8>(
             memory_mapping,
             input_addr,
@@ -1789,13 +1777,12 @@ declare_builtin_function!(
 
         let value = big_mod_exp(base, exponent, modulus);
 
-        let return_value = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            return_value,
-            params.modulus_len,
             invoke_context.get_check_aligned(),
-        )?;
-        return_value.copy_from_slice(value.as_slice());
+            let return_value_ref_mut: &mut [u8] = map(return_value, params.modulus_len)?;
+        );
+        return_value_ref_mut.copy_from_slice(value.as_slice());
 
         Ok(0)
     }
@@ -1835,12 +1822,11 @@ declare_builtin_function!(
         };
         consume_compute_meter(invoke_context, cost.to_owned())?;
 
-        let hash_result = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            result_addr,
-            poseidon::HASH_BYTES as u64,
             invoke_context.get_check_aligned(),
-        )?;
+            let hash_result: &mut [u8] = map(result_addr, poseidon::HASH_BYTES as u64)?;
+        );
         let inputs = translate_slice::<VmSlice<u8>>(
             memory_mapping,
             vals_addr,
@@ -1933,12 +1919,11 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, cost)?;
 
-        let call_result = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            result_addr,
-            output as u64,
             invoke_context.get_check_aligned(),
-        )?;
+            let call_result: &mut [u8] = map(result_addr, output as u64)?;
+        );
         let input = translate_slice::<u8>(
             memory_mapping,
             input_addr,
@@ -2042,12 +2027,11 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, hash_base_cost)?;
 
-        let hash_result = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            result_addr,
-            std::mem::size_of::<H::Output>() as u64,
             invoke_context.get_check_aligned(),
-        )?;
+            let hash_result: &mut [u8] = map(result_addr, std::mem::size_of::<H::Output>() as u64)?;
+        );
         let mut hasher = H::create_hasher();
         if vals_len > 0 {
             let vals = translate_slice::<VmSlice<u8>>(
@@ -4441,34 +4425,10 @@ mod tests {
             SBPFVersion::V3,
         )
         .unwrap();
-        let processed_sibling_instruction = translate_type_mut::<ProcessedSiblingInstruction>(
-            &memory_mapping,
-            VM_BASE_ADDRESS,
-            true,
-        )
-        .unwrap();
+        let processed_sibling_instruction =
+            unsafe { &mut *memory.as_mut_ptr().cast::<ProcessedSiblingInstruction>() };
         processed_sibling_instruction.data_len = 1;
         processed_sibling_instruction.accounts_len = 1;
-        let program_id = translate_type_mut::<Pubkey>(
-            &memory_mapping,
-            VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
-            true,
-        )
-        .unwrap();
-        let data = translate_slice_mut::<u8>(
-            &memory_mapping,
-            VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
-            processed_sibling_instruction.data_len,
-            true,
-        )
-        .unwrap();
-        let accounts = translate_slice_mut::<AccountMeta>(
-            &memory_mapping,
-            VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
-            processed_sibling_instruction.accounts_len,
-            true,
-        )
-        .unwrap();
 
         invoke_context.mock_set_remaining(syscall_base_cost);
         let result = SyscallGetProcessedSiblingInstruction::rust(
@@ -4482,6 +4442,26 @@ mod tests {
         );
         assert_eq!(result.unwrap(), 1);
         {
+            let program_id = translate_type::<Pubkey>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(PROGRAM_ID_OFFSET as u64),
+                true,
+            )
+            .unwrap();
+            let data = translate_slice::<u8>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(DATA_OFFSET as u64),
+                processed_sibling_instruction.data_len,
+                true,
+            )
+            .unwrap();
+            let accounts = translate_slice::<AccountMeta>(
+                &memory_mapping,
+                VM_BASE_ADDRESS.saturating_add(ACCOUNTS_OFFSET as u64),
+                processed_sibling_instruction.accounts_len,
+                true,
+            )
+            .unwrap();
             let transaction_context = &invoke_context.transaction_context;
             assert_eq!(processed_sibling_instruction.data_len, 1);
             assert_eq!(processed_sibling_instruction.accounts_len, 1);
