@@ -3,7 +3,9 @@ use {
         accounts_background_service::{
             SnapshotRequest, SnapshotRequestKind, SnapshotRequestSender,
         },
-        bank::{epoch_accounts_hash_utils, Bank, SquashTiming},
+        bank::{
+            epoch_accounts_hash_utils, Bank, BankSlotDeltaWithoutTransactionStatus, SquashTiming,
+        },
         bank_forks::SetRootError,
         snapshot_config::SnapshotConfig,
     },
@@ -107,7 +109,11 @@ impl SnapshotController {
                         .root_slot_deltas();
                     if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
                         snapshot_root_bank: Arc::clone(bank),
-                        seen_transaction_cache_slot_deltas,
+                        seen_transaction_cache_slot_deltas: seen_transaction_cache_slot_deltas
+                            .into_iter()
+                            .map(BankSlotDeltaWithoutTransactionStatus)
+                            .map(Into::into)
+                            .collect(),
                         request_kind,
                         enqueued: Instant::now(),
                     }) {

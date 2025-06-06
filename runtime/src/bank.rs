@@ -54,7 +54,7 @@ use {
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
         },
         stakes::{Stakes, StakesCache, StakesEnum},
-        status_cache::{SlotDelta, StatusCache},
+        status_cache::{SlotDelta, Status, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
@@ -239,12 +239,65 @@ struct RentMetrics {
     count: AtomicUsize,
 }
 
+pub type BankSeenTransactionCache = StatusCache<()>;
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
     frozen_abi(digest = "5dfDCRGWPV7thfoZtLpTJAV8cC93vQUXgTm6BnrfeUsN")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
+pub struct BankSlotDeltaWithoutTransactionStatus(pub SlotDelta<()>);
+
+fn status_with_replaced_inner_type<T: Clone, R: Clone>(
+    status: Status<T>,
+    replacement: R,
+) -> Status<R> {
+    let status_guard = status.lock().unwrap();
+    let replaced = status_guard
+        .clone()
+        .into_iter()
+        .map(|(hash, (max_slot, statuses))| {
+            (
+                hash,
+                (
+                    max_slot,
+                    statuses
+                        .into_iter()
+                        .map(|(key_slice, _transaction_status)| (key_slice, replacement.clone()))
+                        .collect(),
+                ),
+            )
+        })
+        .collect();
+    Arc::new(Mutex::new(replaced))
+}
+
+impl From<BankSlotDeltaWithoutTransactionStatus> for BankSlotDelta {
+    fn from(value: BankSlotDeltaWithoutTransactionStatus) -> Self {
+        let (slot, is_root, status) = value.0;
+        // To protect against transaction replay attacks, it's not important to know what the status
+        // of seen transaction was, only whether they were seen or not. Blank out the transaction
+        // status here before snapshotting this data.
+        let status_with_result_blanked_out = status_with_replaced_inner_type(
+            status,
+            // Drop the transaction status here; replace it with `OK(())`.
+            Ok(()),
+        );
+        (slot, is_root, status_with_result_blanked_out)
+    }
+}
+
+impl From<BankSlotDelta> for BankSlotDeltaWithoutTransactionStatus {
+    fn from(value: BankSlotDelta) -> Self {
+        let (slot, is_root, status) = value;
+        let status_with_result_blanked_out = status_with_replaced_inner_type(
+            status,
+            // Drop the `Result` here; replace it with `()`.
+            (),
+        );
+        BankSlotDeltaWithoutTransactionStatus((slot, is_root, status_with_result_blanked_out))
+    }
+}
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SquashTiming {
@@ -746,7 +799,7 @@ pub struct Bank {
     pub rc: BankRc,
 
     /// A cache of seen transactions by message hash
-    pub seen_transaction_cache: Arc<RwLock<BankStatusCache>>,
+    pub seen_transaction_cache: Arc<RwLock<BankSeenTransactionCache>>,
 
     /// A cache of transaction statuses by signature
     pub status_cache: Arc<RwLock<BankStatusCache>>,
@@ -1086,7 +1139,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: BankRc::new(accounts),
-            seen_transaction_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            seen_transaction_cache: Arc::<RwLock<BankSeenTransactionCache>>::default(),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
@@ -1824,7 +1877,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: bank_rc,
-            seen_transaction_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            seen_transaction_cache: Arc::<RwLock<BankSeenTransactionCache>>::default(),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors,
@@ -3044,7 +3097,7 @@ impl Bank {
                     tx.recent_blockhash(),
                     tx.message_hash(),
                     self.slot(),
-                    processed_tx.status(),
+                    (),
                 );
                 // Add the transaction signature to the status cache so that transaction status
                 // can be queried by transaction signature over RPC. In the future, this should

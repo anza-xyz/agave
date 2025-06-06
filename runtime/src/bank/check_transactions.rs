@@ -1,5 +1,6 @@
 use {
-    super::{Bank, BankStatusCache},
+    super::Bank,
+    crate::bank::BankSeenTransactionCache,
     agave_feature_set::FeatureSet,
     solana_account::{state_traits::StateMut, AccountSharedData},
     solana_accounts_db::blockhash_queue::BlockhashQueue,
@@ -278,7 +279,7 @@ impl Bank {
     fn is_transaction_already_processed(
         &self,
         sanitized_tx: &impl TransactionWithMeta,
-        seen_transaction_cache: &BankStatusCache,
+        seen_transaction_cache: &BankSeenTransactionCache,
     ) -> bool {
         let key = sanitized_tx.message_hash();
         let transaction_blockhash = sanitized_tx.recent_blockhash();

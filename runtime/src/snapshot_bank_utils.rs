@@ -6,7 +6,7 @@ use {
 };
 use {
     crate::{
-        bank::{Bank, BankSlotDelta},
+        bank::{Bank, BankSlotDelta, BankSlotDeltaWithoutTransactionStatus},
         epoch_stakes::EpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{bank_from_streams, BankIncrementalSnapshotPersistence},
@@ -25,7 +25,7 @@ use {
             SnapshotError, SnapshotRootPaths, SnapshotVersion, StorageAndNextAccountsFileId,
             UnpackedSnapshotsDirAndVersion, VerifyEpochStakesError, VerifySlotDeltasError,
         },
-        status_cache,
+        status_cache::{self, SlotDelta},
     },
     agave_feature_set as feature_set,
     bincode::{config::Options, serialize_into},
@@ -671,10 +671,16 @@ fn rebuild_bank_from_unarchived_snapshots(
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
+    let slot_deltas_without_transaction_status: Vec<SlotDelta<()>> = slot_deltas
+        .into_iter()
+        .map(Into::<BankSlotDeltaWithoutTransactionStatus>::into)
+        .map(|f| f.0)
+        .collect();
+
     bank.seen_transaction_cache
         .write()
         .unwrap()
-        .append(&slot_deltas);
+        .append(slot_deltas_without_transaction_status.as_slice());
 
     info!("Rebuilt bank for slot: {}", bank.slot());
     Ok((
@@ -736,10 +742,16 @@ fn rebuild_bank_from_snapshot(
 
     verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
 
+    let slot_deltas_without_transaction_status: Vec<SlotDelta<()>> = slot_deltas
+        .into_iter()
+        .map(Into::<BankSlotDeltaWithoutTransactionStatus>::into)
+        .map(|f| f.0)
+        .collect();
+
     bank.seen_transaction_cache
         .write()
         .unwrap()
-        .append(&slot_deltas);
+        .append(slot_deltas_without_transaction_status.as_slice());
 
     info!("Rebuilt bank for slot: {}", bank.slot());
     Ok((
@@ -986,7 +998,11 @@ fn bank_to_full_snapshot_archive_with(
         AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
         bank,
         snapshot_storages,
-        seen_transaction_cache_slot_deltas,
+        seen_transaction_cache_slot_deltas
+            .into_iter()
+            .map(BankSlotDeltaWithoutTransactionStatus)
+            .map(Into::into)
+            .collect(),
         None,
     );
     let snapshot_package =
@@ -1085,7 +1101,11 @@ pub fn bank_to_incremental_snapshot_archive(
         AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(full_snapshot_slot)),
         bank,
         snapshot_storages,
-        seen_transaction_cache_slot_deltas,
+        seen_transaction_cache_slot_deltas
+            .into_iter()
+            .map(BankSlotDeltaWithoutTransactionStatus)
+            .map(Into::into)
+            .collect(),
         None,
     );
     let snapshot_package = SnapshotPackage::new(
