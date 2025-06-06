@@ -145,7 +145,7 @@ fn memmove(
     dst_addr: u64,
     src_addr: u64,
     n: u64,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &mut MemoryMapping,
 ) -> Result<u64, Error> {
     translate_mut!(
         memory_mapping,
