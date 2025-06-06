@@ -46,6 +46,7 @@ solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
 solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-transaction-status-client-types = { workspace = true }
 solana-vote-program = { workspace = true }
 spl-memo = { workspace = true, features = ["no-entrypoint"] }
 
