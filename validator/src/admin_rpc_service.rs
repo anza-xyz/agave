@@ -27,7 +27,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -208,6 +208,9 @@ pub trait AdminRpc {
         identity_keypair: Vec<u8>,
         require_tower: bool,
     ) -> Result<()>;
+
+    #[rpc(meta, name = "setGossipSocket")]
+    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
 
     #[rpc(meta, name = "setStakedNodesOverrides")]
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()>;
@@ -510,6 +513,36 @@ impl AdminRpc for AdminRpcImpl {
         })?;
 
         AdminRpcImpl::set_identity_keypair(meta, identity_keypair, require_tower)
+    }
+
+    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()> {
+        info!("greg:set_gossip_socket request received");
+        let ip: IpAddr = ip
+            .parse()
+            .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid IP address: {e}")))?;
+        let new_addr = SocketAddr::new(ip, port);
+
+        meta.with_post_init(|post_init| {
+            if let Some(gossip_rebinder) = &post_init.gossip_rebinder {
+                info!("greg: rebind gossip socket to {new_addr}");
+                gossip_rebinder.rebind(new_addr).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Failed to rebind gossip socket: {e}"
+                    ))
+                })?;
+                info!("greg: rebind gossip socket to {new_addr} done");
+            }
+            info!("greg: refresh gossip ContactInfo");
+            post_init
+                .cluster_info
+                .set_gossip_ip(new_addr)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Failed to refresh gossip ContactInfo: {e}"
+                    ))
+                })?;
+            Ok(())
+        })
     }
 
     fn set_staked_nodes_overrides(&self, meta: Self::Metadata, path: String) -> Result<()> {
@@ -990,6 +1023,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
+                    gossip_rebinder: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

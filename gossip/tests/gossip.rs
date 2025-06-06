@@ -50,6 +50,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
         true, // should_check_duplicate_instance
         None,
         exit,
+        None,
     );
     let _ = cluster_info.my_contact_info();
     (
@@ -78,6 +79,7 @@ fn test_node_with_bank(
         true, // should_check_duplicate_instance
         None,
         exit,
+        None,
     );
     let _ = cluster_info.my_contact_info();
     (

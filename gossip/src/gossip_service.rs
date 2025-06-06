@@ -7,17 +7,18 @@ use {
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
-    solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
+    solana_net_utils::{bind_to, DEFAULT_IP_ECHO_SERVER_THREADS},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
+        atomic_udp_socket::AtomicUdpSocket,
         evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
@@ -50,10 +51,12 @@ impl GossipService {
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
+        gossip_rebind_rx: Option<Receiver<SocketAddr>>,
     ) -> Self {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let gossip_socket = Arc::new(gossip_socket);
+        let gossip_socket = Arc::new(AtomicUdpSocket::new(gossip_socket));
+
         trace!(
             "GossipService: id: {}, listening on: {:?}",
             &cluster_info.id(),
@@ -61,7 +64,7 @@ impl GossipService {
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
-        let t_receiver = streamer::receiver(
+        let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
             gossip_socket.clone(),
             exit.clone(),
@@ -96,20 +99,29 @@ impl GossipService {
             gossip_validators,
             exit.clone(),
         );
-        let t_responder = streamer::responder(
+        let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_socket,
+            gossip_socket.clone(),
             response_receiver,
             socket_addr_space,
             stats_reporter_sender,
         );
+        let t_rebind = gossip_rebind_rx.map(|rebind_rx| {
+            spawn_socket_rebinder(
+                "solGossipRebinder".to_string(),
+                gossip_socket.clone(),
+                exit.clone(),
+                rebind_rx,
+            )
+        });
         let t_metrics = Builder::new()
             .name("solGossipMetr".to_string())
             .spawn({
                 let cluster_info = cluster_info.clone();
                 let mut epoch_specs = bank_forks.map(EpochSpecs::from);
+                let exit_clone = exit.clone();
                 move || {
-                    while !exit.load(Ordering::Relaxed) {
+                    while !exit_clone.load(Ordering::Relaxed) {
                         sleep(SUBMIT_GOSSIP_STATS_INTERVAL);
                         let stakes = epoch_specs
                             .as_mut()
@@ -123,7 +135,8 @@ impl GossipService {
                 }
             })
             .unwrap();
-        let thread_hdls = vec![
+
+        let mut thread_hdls = vec![
             t_receiver,
             t_responder,
             t_socket_consume,
@@ -131,6 +144,9 @@ impl GossipService {
             t_gossip,
             t_metrics,
         ];
+        if let Some(t_rebind) = t_rebind {
+            thread_hdls.push(t_rebind);
+        }
         Self { thread_hdls }
     }
 
@@ -140,6 +156,36 @@ impl GossipService {
         }
         Ok(())
     }
+}
+
+fn spawn_socket_rebinder(
+    thread_name: String,
+    socket: Arc<AtomicUdpSocket>,
+    exit: Arc<AtomicBool>,
+    rebind_rx: Receiver<SocketAddr>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(thread_name)
+        .spawn(move || {
+            while !exit.load(Ordering::Relaxed) {
+                match rebind_rx.recv_timeout(Duration::from_secs(1)) {
+                    Ok(new_addr) => {
+                        info!("Rebinding socket to {new_addr}");
+                        match bind_to(new_addr.ip(), new_addr.port(), false) {
+                            Ok(new_socket) => {
+                                socket.swap(new_socket);
+                            }
+                            Err(e) => {
+                                warn!("Failed to bind to {new_addr}: {e}");
+                            }
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        })
+        .expect("Failed to spawn socket rebinder thread")
 }
 
 /// Discover Validators in a cluster
@@ -380,6 +426,7 @@ pub fn make_gossip_node(
         should_check_duplicate_instance,
         None,
         exit,
+        None,
     );
     (gossip_service, ip_echo, cluster_info)
 }
@@ -415,6 +462,7 @@ mod tests {
             true, // should_check_duplicate_instance
             None,
             exit.clone(),
+            None,
         );
         exit.store(true, Ordering::Relaxed);
         d.join().unwrap();
