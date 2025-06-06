@@ -54,7 +54,7 @@ use {
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
         },
         stakes::{Stakes, StakesCache, StakesEnum},
-        status_cache::{SlotDelta, StatusCache},
+        status_cache::{SlotDelta, Status, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
     accounts_lt_hash::{CacheValue as AccountsLtHashCacheValue, Stats as AccountsLtHashStats},
@@ -239,12 +239,65 @@ struct RentMetrics {
     count: AtomicUsize,
 }
 
+pub type BankSeenTransactionCache = StatusCache<()>;
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
     frozen_abi(digest = "5dfDCRGWPV7thfoZtLpTJAV8cC93vQUXgTm6BnrfeUsN")
 )]
 pub type BankSlotDelta = SlotDelta<Result<()>>;
+pub struct BankSlotDeltaWithoutTransactionStatus(pub SlotDelta<()>);
+
+fn status_with_replaced_inner_type<T: Clone, R: Clone>(
+    status: Status<T>,
+    replacement: R,
+) -> Status<R> {
+    let status_guard = status.lock().unwrap();
+    let replaced = status_guard
+        .clone()
+        .into_iter()
+        .map(|(hash, (max_slot, statuses))| {
+            (
+                hash,
+                (
+                    max_slot,
+                    statuses
+                        .into_iter()
+                        .map(|(key_slice, _transaction_status)| (key_slice, replacement.clone()))
+                        .collect(),
+                ),
+            )
+        })
+        .collect();
+    Arc::new(Mutex::new(replaced))
+}
+
+impl From<BankSlotDeltaWithoutTransactionStatus> for BankSlotDelta {
+    fn from(value: BankSlotDeltaWithoutTransactionStatus) -> Self {
+        let (slot, is_root, status) = value.0;
+        // To protect against transaction replay attacks, it's not important to know what the status
+        // of seen transaction was, only whether they were seen or not. Blank out the transaction
+        // status here before snapshotting this data.
+        let status_with_result_blanked_out = status_with_replaced_inner_type(
+            status,
+            // Drop the transaction status here; replace it with `OK(())`.
+            Ok(()),
+        );
+        (slot, is_root, status_with_result_blanked_out)
+    }
+}
+
+impl From<BankSlotDelta> for BankSlotDeltaWithoutTransactionStatus {
+    fn from(value: BankSlotDelta) -> Self {
+        let (slot, is_root, status) = value;
+        let status_with_result_blanked_out = status_with_replaced_inner_type(
+            status,
+            // Drop the `Result` here; replace it with `()`.
+            (),
+        );
+        BankSlotDeltaWithoutTransactionStatus((slot, is_root, status_with_result_blanked_out))
+    }
+}
 
 #[derive(Default, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SquashTiming {
@@ -519,6 +572,7 @@ impl PartialEq for Bank {
         let Self {
             skipped_rewrites: _,
             rc: _,
+            seen_transaction_cache: _,
             status_cache: _,
             blockhash_queue,
             ancestors,
@@ -744,7 +798,10 @@ pub struct Bank {
     /// References to accounts, parent and signature status
     pub rc: BankRc,
 
-    /// A cache of signature statuses
+    /// A cache of seen transactions by message hash
+    pub seen_transaction_cache: Arc<RwLock<BankSeenTransactionCache>>,
+
+    /// A cache of transaction statuses by signature
     pub status_cache: Arc<RwLock<BankStatusCache>>,
 
     /// FIFO queue of `recent_blockhash` items
@@ -1082,6 +1139,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: BankRc::new(accounts),
+            seen_transaction_cache: Arc::<RwLock<BankSeenTransactionCache>>::default(),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
@@ -1286,6 +1344,8 @@ impl Bank {
             }
         });
 
+        let (seen_transaction_cache, seen_transaction_cache_time_us) =
+            measure_us!(Arc::clone(&parent.seen_transaction_cache));
         let (status_cache, status_cache_time_us) = measure_us!(Arc::clone(&parent.status_cache));
 
         let (fee_rate_governor, fee_components_time_us) = measure_us!(
@@ -1320,6 +1380,7 @@ impl Bank {
         let mut new = Self {
             skipped_rewrites: Mutex::default(),
             rc,
+            seen_transaction_cache,
             status_cache,
             slot,
             bank_id,
@@ -1482,6 +1543,7 @@ impl Bank {
             NewBankTimings {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
+                seen_transaction_cache_time_us,
                 status_cache_time_us,
                 fee_components_time_us,
                 blockhash_queue_time_us,
@@ -1815,6 +1877,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: bank_rc,
+            seen_transaction_cache: Arc::<RwLock<BankSeenTransactionCache>>::default(),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors,
@@ -2092,8 +2155,8 @@ impl Bank {
         self.freeze_started.load(Relaxed)
     }
 
-    pub fn status_cache_ancestors(&self) -> Vec<u64> {
-        let mut roots = self.status_cache.read().unwrap().roots().clone();
+    pub fn seen_transaction_cache_ancestors(&self) -> Vec<u64> {
+        let mut roots = self.seen_transaction_cache.read().unwrap().roots().clone();
         let min = roots.iter().min().cloned().unwrap_or(0);
         for ancestor in self.ancestors.keys() {
             if ancestor >= min {
@@ -2737,9 +2800,10 @@ impl Bank {
         *self.rc.parent.write().unwrap() = None;
 
         let mut squash_cache_time = Measure::start("squash_cache_time");
-        roots
-            .iter()
-            .for_each(|slot| self.status_cache.write().unwrap().add_root(*slot));
+        roots.iter().for_each(|slot| {
+            self.seen_transaction_cache.write().unwrap().add_root(*slot);
+            self.status_cache.write().unwrap().add_root(*slot);
+        });
         squash_cache_time.stop();
 
         SquashTiming {
@@ -3005,10 +3069,15 @@ impl Bank {
 
     /// Forget all signatures. Useful for benchmarking.
     pub fn clear_signatures(&self) {
+        self.seen_transaction_cache.write().unwrap().clear();
         self.status_cache.write().unwrap().clear();
     }
 
     pub fn clear_slot_signatures(&self, slot: Slot) {
+        self.seen_transaction_cache
+            .write()
+            .unwrap()
+            .clear_slot_entries(slot);
         self.status_cache.write().unwrap().clear_slot_entries(slot);
     }
 
@@ -3017,17 +3086,18 @@ impl Bank {
         sanitized_txs: &[impl TransactionWithMeta],
         processing_results: &[TransactionProcessingResult],
     ) {
+        let mut seen_transaction_cache = self.seen_transaction_cache.write().unwrap();
         let mut status_cache = self.status_cache.write().unwrap();
         assert_eq!(sanitized_txs.len(), processing_results.len());
         for (tx, processing_result) in sanitized_txs.iter().zip(processing_results) {
             if let Ok(processed_tx) = &processing_result {
                 // Add the message hash to the status cache to ensure that this message
                 // won't be processed again with a different signature.
-                status_cache.insert(
+                seen_transaction_cache.insert(
                     tx.recent_blockhash(),
                     tx.message_hash(),
                     self.slot(),
-                    processed_tx.status(),
+                    (),
                 );
                 // Add the transaction signature to the status cache so that transaction status
                 // can be queried by transaction signature over RPC. In the future, this should

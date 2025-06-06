@@ -54,7 +54,7 @@ impl AccountsPackage {
         package_kind: AccountsPackageKind,
         bank: &Bank,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-        status_cache_slot_deltas: Vec<BankSlotDelta>,
+        seen_transaction_cache_slot_deltas: Vec<BankSlotDelta>,
         accounts_hash_for_testing: Option<AccountsHash>,
     ) -> Self {
         let slot = bank.slot();
@@ -91,7 +91,7 @@ impl AccountsPackage {
             let bank_hash_stats = bank.get_bank_hash_stats();
             let bank_fields_to_serialize = bank.get_fields_to_serialize();
             SupplementalSnapshotInfo {
-                status_cache_slot_deltas,
+                seen_transaction_cache_slot_deltas,
                 bank_fields_to_serialize,
                 bank_hash_stats,
                 accounts_delta_hash,
@@ -178,7 +178,7 @@ impl AccountsPackage {
             rent_collector: RentCollector::default(),
             accounts_hash_algorithm: AccountsHashAlgorithm::Merkle,
             snapshot_info: Some(SupplementalSnapshotInfo {
-                status_cache_slot_deltas: Vec::default(),
+                seen_transaction_cache_slot_deltas: Vec::default(),
                 bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
                 bank_hash_stats: BankHashStats::default(),
                 accounts_delta_hash: AccountsDeltaHash(Hash::default()),
@@ -203,7 +203,7 @@ impl std::fmt::Debug for AccountsPackage {
 
 /// Supplemental information needed for snapshots
 pub struct SupplementalSnapshotInfo {
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub seen_transaction_cache_slot_deltas: Vec<BankSlotDelta>,
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub accounts_delta_hash: AccountsDeltaHash,
@@ -227,7 +227,7 @@ pub struct SnapshotPackage {
     pub block_height: Slot,
     pub hash: SnapshotHash,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub seen_transaction_cache_slot_deltas: Vec<BankSlotDelta>,
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
     pub accounts_delta_hash: AccountsDeltaHash,
@@ -308,7 +308,7 @@ impl SnapshotPackage {
                     .map(|accounts_lt_hash| accounts_lt_hash.0.checksum()),
             ),
             snapshot_storages: accounts_package.snapshot_storages,
-            status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
+            seen_transaction_cache_slot_deltas: snapshot_info.seen_transaction_cache_slot_deltas,
             bank_fields_to_serialize: snapshot_info.bank_fields_to_serialize,
             accounts_delta_hash: snapshot_info.accounts_delta_hash,
             bank_hash_stats: snapshot_info.bank_hash_stats,
@@ -332,7 +332,7 @@ impl SnapshotPackage {
             block_height: Slot::default(),
             hash: SnapshotHash(Hash::default()),
             snapshot_storages: Vec::default(),
-            status_cache_slot_deltas: Vec::default(),
+            seen_transaction_cache_slot_deltas: Vec::default(),
             bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
             accounts_delta_hash: AccountsDeltaHash(Hash::default()),
             bank_hash_stats: BankHashStats::default(),

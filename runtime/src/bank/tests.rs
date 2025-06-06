@@ -4773,7 +4773,7 @@ fn test_get_filtered_indexed_accounts() {
 }
 
 #[test]
-fn test_status_cache_ancestors() {
+fn test_seen_transaction_cache_ancestors() {
     solana_logger::setup();
     let (parent, _bank_forks) = create_simple_test_arc_bank(500);
     let bank1 = Arc::new(new_from_parent(parent));
@@ -4785,7 +4785,7 @@ fn test_status_cache_ancestors() {
 
     let bank = new_from_parent(bank);
     assert_eq!(
-        bank.status_cache_ancestors(),
+        bank.seen_transaction_cache_ancestors(),
         (bank.slot() - MAX_CACHE_ENTRIES as u64..=bank.slot()).collect::<Vec<_>>()
     );
 }
