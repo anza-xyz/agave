@@ -75,6 +75,8 @@ solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
+
+[target.'cfg(debug_assertions)'.dependencies]
 solana-transaction-context = { workspace = true, features = ["debug-signature"] }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
