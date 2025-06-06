@@ -172,7 +172,7 @@ dependencies = [
  "dirs-next",
  "indicatif",
  "nix",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "scopeguard",
  "semver 1.0.26",
  "serde",
@@ -5717,9 +5717,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.16"
+version = "0.12.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bf597b113be201cb2269b4c39b39a804d01b99ee95a4278f0ed04e45cff1c71"
+checksum = "a2f8e5513d63f2e5b386eb5106dc67eaf3f84e95258e210489136b8b92ad6119"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -5769,7 +5769,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.1.0",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -7241,7 +7241,7 @@ dependencies = [
  "log",
  "predicates",
  "regex",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "semver 1.0.26",
  "serial_test",
  "solana-file-download",
@@ -7343,7 +7343,7 @@ dependencies = [
  "log",
  "num-traits",
  "pretty-hex",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "semver 1.0.26",
  "serde",
  "serde_derive",
@@ -9035,7 +9035,7 @@ dependencies = [
  "gethostname",
  "log",
  "rand 0.8.5",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "serial_test",
  "solana-cluster-type",
  "solana-sha256-hasher",
@@ -9129,7 +9129,7 @@ name = "solana-notifier"
 version = "2.3.0"
 dependencies = [
  "log",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "serde_json",
  "solana-hash",
 ]
@@ -9866,7 +9866,7 @@ dependencies = [
  "jsonrpc-core",
  "jsonrpc-http-server",
  "log",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "reqwest-middleware",
  "semver 1.0.26",
  "serde",
@@ -9904,7 +9904,7 @@ version = "2.3.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "reqwest-middleware",
  "serde",
  "serde_derive",
@@ -9981,7 +9981,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "log",
- "reqwest 0.12.16",
+ "reqwest 0.12.19",
  "serde",
  "serde_json",
  "solana-account-decoder",
@@ -13037,9 +13037,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.4"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fdb0c213ca27a9f57ab69ddb290fd80d970922355b83ae380b395d3986b8a2e"
+checksum = "adc82fd73de2a9722ac5da747f12383d2bfdb93591ee6c58486e0097890f05f2"
 dependencies = [
  "bitflags 2.9.1",
  "bytes",
