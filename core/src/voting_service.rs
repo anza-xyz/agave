@@ -9,7 +9,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
     solana_connection_cache::client_connection::ClientConnection,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_transaction::Transaction,
@@ -77,7 +77,7 @@ fn send_vote_transaction(
 
 pub struct VotingService {
     thread_hdl: JoinHandle<()>,
-    fake_alpenglow: FakeAlpenglowConsensus,
+    fake_alpenglow: Option<FakeAlpenglowConsensus>,
 }
 
 impl VotingService {
@@ -87,23 +87,29 @@ impl VotingService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
         connection_cache: Arc<ConnectionCache>,
-        alpenglow_socket: UdpSocket,
+        alpenglow_socket: Option<UdpSocket>,
+        epoch_specs: EpochSpecs,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
-            .spawn(move || {
-                for vote_op in vote_receiver.iter() {
-                    Self::handle_vote(
-                        &cluster_info,
-                        &poh_recorder,
-                        tower_storage.as_ref(),
-                        vote_op,
-                        connection_cache.clone(),
-                    );
+            .spawn({
+                let cluster_info = cluster_info.clone();
+                move || {
+                    for vote_op in vote_receiver.iter() {
+                        Self::handle_vote(
+                            &cluster_info,
+                            &poh_recorder,
+                            tower_storage.as_ref(),
+                            vote_op,
+                            connection_cache.clone(),
+                        );
+                    }
                 }
             })
             .unwrap();
-        let fake_alpenglow = FakeAlpenglowConsensus::new(alpenglow_socket, cluster_info.clone());
+
+        let fake_alpenglow = alpenglow_socket
+            .map(|s| FakeAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
         Self {
             thread_hdl,
             fake_alpenglow,
@@ -159,10 +165,6 @@ impl VotingService {
             VoteOp::PushVote {
                 tx, tower_slots, ..
             } => {
-                println!(
-                    "Sending vote transaction at t={:?}",
-                    std::time::Instant::now()
-                );
                 cluster_info.push_vote(&tower_slots, tx);
             }
             VoteOp::RefreshVote {
@@ -175,7 +177,9 @@ impl VotingService {
     }
 
     pub fn join(self) -> thread::Result<()> {
-        self.fake_alpenglow.join()?;
+        if let Some(ag) = self.fake_alpenglow {
+            ag.join()?;
+        }
         self.thread_hdl.join()
     }
 }
