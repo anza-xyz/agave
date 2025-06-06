@@ -1,5 +1,6 @@
 use {
     super::*,
+    crate::translate_mut,
     solana_program_runtime::invoke_context::SerializedAccountMetadata,
     solana_sbpf::{error::EbpfError, memory_region::MemoryRegion},
     std::slice,
@@ -87,14 +88,14 @@ declare_builtin_function!(
             .get_feature_set()
             .bpf_account_data_direct_mapping
         {
-            let cmp_result = translate_type_mut::<i32>(
+            translate_mut!(
                 memory_mapping,
-                cmp_result_addr,
                 invoke_context.get_check_aligned(),
-            )?;
+                let cmp_result_ref_mut: &mut i32 = map(cmp_result_addr)?;
+            );
             let syscall_context = invoke_context.get_syscall_context()?;
 
-            *cmp_result = memcmp_non_contiguous(s1_addr, s2_addr, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())?;
+            *cmp_result_ref_mut = memcmp_non_contiguous(s1_addr, s2_addr, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())?;
         } else {
             let s1 = translate_slice::<u8>(
                 memory_mapping,
@@ -117,11 +118,12 @@ declare_builtin_function!(
             // long because `translate_slice` would have failed otherwise.
             let result = unsafe { memcmp(s1, s2, n as usize) };
 
-            *translate_type_mut::<i32>(
+            translate_mut!(
                 memory_mapping,
-                cmp_result_addr,
                 invoke_context.get_check_aligned(),
-            )? = result;
+                let cmp_result_ref_mut: &mut i32 = map(cmp_result_addr)?;
+            );
+            *cmp_result_ref_mut = result;
         }
 
         Ok(0)
@@ -150,12 +152,11 @@ declare_builtin_function!(
 
             memset_non_contiguous(dst_addr, c as u8, n, &syscall_context.accounts_metadata, memory_mapping, invoke_context.get_check_aligned())
         } else {
-            let s = translate_slice_mut::<u8>(
+            translate_mut!(
                 memory_mapping,
-                dst_addr,
-                n,
                 invoke_context.get_check_aligned(),
-            )?;
+                let s: &mut [u8] = map(dst_addr, n)?;
+            );
             s.fill(c as u8);
             Ok(0)
         }
@@ -184,13 +185,12 @@ fn memmove(
             invoke_context.get_check_aligned(),
         )
     } else {
-        let dst_ptr = translate_slice_mut::<u8>(
+        translate_mut!(
             memory_mapping,
-            dst_addr,
-            n,
             invoke_context.get_check_aligned(),
-        )?
-        .as_mut_ptr();
+            let dst_ref_mut: &mut [u8] = map(dst_addr, n)?;
+        );
+        let dst_ptr = dst_ref_mut.as_mut_ptr();
         let src_ptr = translate_slice::<u8>(
             memory_mapping,
             src_addr,
