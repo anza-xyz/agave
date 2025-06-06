@@ -1377,7 +1377,7 @@ fn common_extend_program(
     const PROGRAM_DATA_ACCOUNT_INDEX: IndexOfAccount = 0;
     const PROGRAM_ACCOUNT_INDEX: IndexOfAccount = 1;
     const AUTHORITY_ACCOUNT_INDEX: IndexOfAccount = 2;
-    // let system_program_account_index = if check_authority { 3 } else { 2 };
+    // The unused `system_program_account_index` is 3 if `check_authority` and 2 otherwise.
     let optional_payer_account_index = if check_authority { 4 } else { 3 };
 
     if additional_bytes == 0 {
