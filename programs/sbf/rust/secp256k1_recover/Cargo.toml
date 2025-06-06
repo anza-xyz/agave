@@ -8,15 +8,15 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 libsecp256k1 = { workspace = true }
 solana-keccak-hasher = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
 solana-secp256k1-recover = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

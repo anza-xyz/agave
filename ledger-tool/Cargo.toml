@@ -9,6 +9,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
@@ -87,14 +93,8 @@ tokio = { workspace = true, features = ["full"] }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
 
-[dev-dependencies]
-assert_cmd = { workspace = true }
-
-[features]
-dev-context-only-utils = []
-
 [target."cfg(unix)".dependencies]
 signal-hook = { workspace = true }
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dev-dependencies]
+assert_cmd = { workspace = true }

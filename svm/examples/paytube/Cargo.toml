@@ -5,6 +5,10 @@ version = { workspace = true }
 edition = { workspace = true }
 publish = false
 
+[features]
+dummy-for-ci-check = []
+frozen-abi = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 solana-account = { workspace = true }
@@ -38,7 +42,3 @@ termcolor = { workspace = true }
 
 [dev-dependencies]
 solana-test-validator = { workspace = true }
-
-[features]
-dummy-for-ci-check = []
-frozen-abi = []

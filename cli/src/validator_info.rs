@@ -10,7 +10,7 @@ use {
     serde_json::{Map, Value},
     solana_account::Account,
     solana_account_decoder::validator_info::{
-        self, ValidatorInfo, MAX_LONG_FIELD_LENGTH, MAX_SHORT_FIELD_LENGTH,
+        self, ValidatorInfo, MAX_LONG_FIELD_LENGTH, MAX_SHORT_FIELD_LENGTH, MAX_VALIDATOR_INFO,
     },
     solana_clap_utils::{
         compute_budget::{compute_unit_price_arg, ComputeUnitLimit, COMPUTE_UNIT_PRICE_ARG},
@@ -20,11 +20,8 @@ use {
         keypair::DefaultSigner,
     },
     solana_cli_output::{CliValidatorInfo, CliValidatorInfoVec},
-    solana_config_program_client::{
-        get_config_data,
-        instructions_bincode::{self as config_instruction, ConfigState},
-        ConfigKeys,
-    },
+    solana_config_interface::instruction::{self as config_instruction},
+    solana_config_program_client::{get_config_data, ConfigKeys},
     solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -48,7 +45,7 @@ pub fn check_details_length(string: String) -> Result<(), String> {
 
 pub fn check_total_length(info: &ValidatorInfo) -> Result<(), String> {
     let size = serialized_size(&info).unwrap();
-    let limit = ValidatorInfo::max_space();
+    let limit = MAX_VALIDATOR_INFO;
 
     if size > limit {
         Err(format!(
@@ -337,7 +334,7 @@ pub fn process_set_validator_info(
         (validator_info::id(), false),
         (config.signers[0].pubkey(), true),
     ];
-    let data_len = ValidatorInfo::max_space()
+    let data_len = MAX_VALIDATOR_INFO
         .checked_add(serialized_size(&ConfigKeys { keys: keys.clone() }).unwrap())
         .expect("ValidatorInfo and two keys fit into a u64");
     let lamports = rpc_client.get_minimum_balance_for_rent_exemption(data_len as usize)?;
@@ -360,16 +357,18 @@ pub fn process_set_validator_info(
                 "Publishing info for Validator {:?}",
                 config.signers[0].pubkey()
             );
-            let mut instructions = config_instruction::create_account::<ValidatorInfo>(
-                &config.signers[0].pubkey(),
-                &info_pubkey,
-                lamports,
-                keys.clone(),
-            )
-            .with_compute_unit_config(&ComputeUnitConfig {
-                compute_unit_price,
-                compute_unit_limit,
-            });
+            let mut instructions =
+                config_instruction::create_account_with_max_config_space::<ValidatorInfo>(
+                    &config.signers[0].pubkey(),
+                    &info_pubkey,
+                    lamports,
+                    MAX_VALIDATOR_INFO,
+                    keys.clone(),
+                )
+                .with_compute_unit_config(&ComputeUnitConfig {
+                    compute_unit_price,
+                    compute_unit_limit,
+                });
             instructions.extend_from_slice(&[config_instruction::store(
                 &info_pubkey,
                 true,
@@ -661,7 +660,7 @@ mod tests {
 
         assert_eq!(
             serialized_size(&validator_info).unwrap(),
-            ValidatorInfo::max_space()
+            MAX_VALIDATOR_INFO
         );
     }
 }

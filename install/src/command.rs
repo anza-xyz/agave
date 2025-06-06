@@ -9,10 +9,8 @@ use {
     crossbeam_channel::unbounded,
     indicatif::{ProgressBar, ProgressStyle},
     serde_derive::{Deserialize, Serialize},
-    solana_config_program_client::{
-        get_config_data,
-        instructions_bincode::{self as config_instruction, ConfigState},
-    },
+    solana_config_interface::instruction::{self as config_instruction},
+    solana_config_program_client::get_config_data,
     solana_hash::Hash,
     solana_keypair::{read_keypair_file, signable::Signable, Keypair},
     solana_message::Message,
@@ -229,14 +227,16 @@ fn new_update_manifest(
         let recent_blockhash = rpc_client.get_latest_blockhash()?;
 
         let lamports = rpc_client
-            .get_minimum_balance_for_rent_exemption(SignedUpdateManifest::max_space() as usize)?;
+            .get_minimum_balance_for_rent_exemption(SignedUpdateManifest::MAX_SPACE as usize)?;
 
-        let instructions = config_instruction::create_account::<SignedUpdateManifest>(
-            &from_keypair.pubkey(),
-            &update_manifest_keypair.pubkey(),
-            lamports,
-            vec![], // additional keys
-        );
+        let instructions =
+            config_instruction::create_account_with_max_config_space::<SignedUpdateManifest>(
+                &from_keypair.pubkey(),
+                &update_manifest_keypair.pubkey(),
+                lamports,
+                SignedUpdateManifest::MAX_SPACE,
+                vec![], // additional keys
+            );
         let message = Message::new(&instructions, Some(&from_keypair.pubkey()));
         let signers = [from_keypair, update_manifest_keypair];
         let transaction = Transaction::new(&signers, message, recent_blockhash);

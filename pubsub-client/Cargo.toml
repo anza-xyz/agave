@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 crossbeam-channel = { workspace = true }
 futures-util = { workspace = true }
@@ -34,6 +37,3 @@ url = { workspace = true }
 anyhow = { workspace = true }
 solana-commitment-config = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

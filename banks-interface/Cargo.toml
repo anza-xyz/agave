@@ -9,10 +9,17 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_banks_interface"
+
 [dependencies]
 serde = { workspace = true }
 serde_derive = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = [ "serde" ] }
 solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true, features = [ "serde" ] }
 solana-hash = { workspace = true }
@@ -20,13 +27,6 @@ solana-message = { workspace = true, features = [ "serde" ] }
 solana-pubkey = { workspace = true }
 solana-signature = { workspace = true, features = [ "serde" ] }
 solana-transaction = { workspace = true, features = [ "serde" ] }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = [ "serde" ] }
 solana-transaction-error = { workspace = true, features = [ "serde" ] }
 tarpc = { workspace = true, features = ["full"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_banks_interface"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
