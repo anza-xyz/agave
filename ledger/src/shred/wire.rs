@@ -17,7 +17,7 @@ use {
 #[cfg(test)]
 use {
     rand::{seq::SliceRandom, Rng},
-    solana_perf::packet::Packet,
+    solana_perf::packet::{bytes::Bytes, BytesPacket, Packet},
     std::collections::HashMap,
 };
 
@@ -367,18 +367,20 @@ pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
     Ok(())
 }
 
-// Minimally corrupts the packet so that the signature no longer verifies.
+// Minimally corrupts the shred so that the signature no longer verifies.
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 pub(crate) fn corrupt_packet<R: Rng>(
     rng: &mut R,
-    packet: &mut Packet,
+    packet: &mut BytesPacket,
     keypairs: &HashMap<Slot, Keypair>,
 ) {
-    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut Packet, offsets: Range<usize>) {
-        let buffer = packet.buffer_mut();
+    fn modify_packet<R: Rng>(rng: &mut R, packet: &mut BytesPacket, offsets: Range<usize>) {
+        let mut buffer = packet.data(..).unwrap().to_vec();
         let byte = buffer[offsets].choose_mut(rng).unwrap();
         *byte = rng.gen::<u8>().max(1u8).wrapping_add(*byte);
+        let buffer = Bytes::from(buffer);
+        *packet = BytesPacket::new(buffer, packet.meta().clone());
     }
     // We need to re-borrow the `packet` here, otherwise compiler considers it
     // as moved.

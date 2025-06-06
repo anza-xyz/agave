@@ -50,7 +50,11 @@ impl BytesPacket {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn from_bytes(dest: Option<&SocketAddr>, buffer: Bytes) -> Self {
+    pub fn from_bytes<B>(dest: Option<&SocketAddr>, buffer: B) -> Self
+    where
+        B: Into<Bytes>,
+    {
+        let buffer = buffer.into();
         let mut meta = Meta {
             size: buffer.len(),
             ..Default::default()
