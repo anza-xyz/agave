@@ -1,7 +1,7 @@
 use {
     crate::{
         consensus::tower_storage::{SavedTowerVersions, TowerStorage},
-        fake_alpenglow_consensus::FakeAlpenglowConsensus,
+        mock_alpenglow_consensus::MockAlpenglowConsensus,
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
     bincode::serialize,
@@ -9,7 +9,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
     solana_connection_cache::client_connection::ClientConnection,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_transaction::Transaction,
@@ -77,7 +77,6 @@ fn send_vote_transaction(
 
 pub struct VotingService {
     thread_hdl: JoinHandle<()>,
-    fake_alpenglow: FakeAlpenglowConsensus,
 }
 
 impl VotingService {
@@ -87,27 +86,49 @@ impl VotingService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
         connection_cache: Arc<ConnectionCache>,
-        alpenglow_socket: UdpSocket,
+        alpenglow_socket: Option<UdpSocket>,
+        epoch_specs: EpochSpecs,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
-            .spawn(move || {
-                for vote_op in vote_receiver.iter() {
-                    Self::handle_vote(
-                        &cluster_info,
-                        &poh_recorder,
-                        tower_storage.as_ref(),
-                        vote_op,
-                        connection_cache.clone(),
-                    );
+            .spawn({
+                let cluster_info = cluster_info.clone();
+                let mock_alpenglow = alpenglow_socket
+                    .map(|s| MockAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
+                move || {
+                    for vote_op in vote_receiver.iter() {
+                        // Figure out if we are casting a new vote and what slot it is for
+                        let slot = match vote_op {
+                            VoteOp::PushVote {
+                                tx: _,
+                                ref tower_slots,
+                                ..
+                            } => tower_slots.iter().copied().max().unwrap_or(0),
+                            _ => 0,
+                        };
+                        // perform all the normal vote handling routines
+                        Self::handle_vote(
+                            &cluster_info,
+                            &poh_recorder,
+                            tower_storage.as_ref(),
+                            vote_op,
+                            connection_cache.clone(),
+                        );
+                        // trigger mock alpenglow vote if applicable
+                        if slot != 0 {
+                            if let Some(ag) = mock_alpenglow.as_ref() {
+                                ag.send_fake_votes(slot);
+                            }
+                        }
+                    }
+                    if let Some(ag) = mock_alpenglow {
+                        let _ = ag.join();
+                    }
                 }
             })
             .unwrap();
-        let fake_alpenglow = FakeAlpenglowConsensus::new(alpenglow_socket, cluster_info.clone());
-        Self {
-            thread_hdl,
-            fake_alpenglow,
-        }
+
+        Self { thread_hdl }
     }
 
     pub fn handle_vote(
@@ -159,10 +180,6 @@ impl VotingService {
             VoteOp::PushVote {
                 tx, tower_slots, ..
             } => {
-                println!(
-                    "Sending vote transaction at t={:?}",
-                    std::time::Instant::now()
-                );
                 cluster_info.push_vote(&tower_slots, tx);
             }
             VoteOp::RefreshVote {
@@ -175,7 +192,6 @@ impl VotingService {
     }
 
     pub fn join(self) -> thread::Result<()> {
-        self.fake_alpenglow.join()?;
         self.thread_hdl.join()
     }
 }

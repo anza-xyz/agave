@@ -6,11 +6,15 @@ use {
     chrono::TimeDelta,
     crossbeam_channel::{bounded, Receiver, Sender},
     solana_clock::Slot,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{
+        cluster_info::ClusterInfo,
+        epoch_specs::{self, EpochSpecs},
+    },
+    solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_signature::SIGNATURE_BYTES,
     solana_signer::Signer,
-    solana_streamer::sendmmsg::batch_send,
+    solana_streamer::{recvmmsg::recv_mmsg, sendmmsg::batch_send},
     solana_turbine::cluster_nodes,
     std::{
         collections::HashMap,
@@ -23,7 +27,7 @@ use {
 
 struct Counters {
     stake: Stake,
-    vote_relative_time: TimeDelta,
+    vote_relative_time: Duration,
 }
 
 struct SharedState {
@@ -35,7 +39,7 @@ struct SharedState {
 
 // This is a placeholder that is only used for load-testing.
 // This is not representative of the actual alpenglow implementation.
-pub(crate) struct FakeAlpenglowConsensus {
+pub(crate) struct MockAlpenglowConsensus {
     sender_thread: JoinHandle<()>,
     listener_thread: JoinHandle<()>,
     state: Arc<Mutex<SharedState>>,
@@ -55,11 +59,18 @@ impl FakeVotePacket {
     fn from_bytes_mut(buf: &mut [u8]) -> &mut Self {
         bytemuck::from_bytes_mut::<FakeVotePacket>(&mut buf[..FAKE_VOTE_HEADER_SIZE])
     }
+    fn from_bytes(buf: &[u8]) -> &Self {
+        bytemuck::from_bytes::<FakeVotePacket>(&buf[..FAKE_VOTE_HEADER_SIZE])
+    }
 }
 const CHECK_INTERVAL: Duration = Duration::from_millis(10);
 
-impl FakeAlpenglowConsensus {
-    pub(crate) fn new(socket: UdpSocket, cluster_info: Arc<ClusterInfo>) -> Self {
+impl MockAlpenglowConsensus {
+    pub(crate) fn new(
+        socket: UdpSocket,
+        cluster_info: Arc<ClusterInfo>,
+        epoch_specs: EpochSpecs,
+    ) -> Self {
         let socket = Arc::new(socket);
         let (new_slot_tx, new_slot_rx) = bounded(4);
         let shared_state = Arc::new(Mutex::new(SharedState {
@@ -75,10 +86,25 @@ impl FakeAlpenglowConsensus {
                 let socket = socket.clone();
                 let new_slot_rx = new_slot_rx.clone();
                 let cluster_info = cluster_info.clone();
-                move || Self::listener_thread(shared_state, cluster_info, socket, new_slot_rx)
+                let epoch_specs = epoch_specs.clone();
+                move || {
+                    Self::listener_thread(
+                        shared_state,
+                        cluster_info,
+                        epoch_specs,
+                        socket,
+                        new_slot_rx,
+                    )
+                }
             }),
             sender_thread: thread::spawn(move || {
-                Self::sender_thread(shared_state, cluster_info, socket.clone(), new_slot_rx)
+                Self::sender_thread(
+                    shared_state,
+                    cluster_info,
+                    epoch_specs,
+                    socket.clone(),
+                    new_slot_rx,
+                )
             }),
             send_event: new_slot_tx,
         }
@@ -88,11 +114,43 @@ impl FakeAlpenglowConsensus {
     fn listener_thread(
         state: Arc<Mutex<SharedState>>,
         cluster_info: Arc<ClusterInfo>,
+        mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
 
         new_slot: Receiver<Slot>,
     ) {
-        let mut lockguard = state.lock().unwrap();
+        let mut packets: Vec<Packet> = vec![Packet::default(); 2048];
+        loop {
+            // recv_mmsg will auto timeout in 1 second
+            let Ok(n) = recv_mmsg(&socket, &mut packets) else {
+                return;
+            };
+            let mut lockguard = state.lock().unwrap();
+            if lockguard.should_exit {
+                return;
+            }
+            let elapsed = lockguard.current_slot_start.elapsed();
+            for pkt in packets.iter().take(n) {
+                if pkt.meta().size < FAKE_VOTE_HEADER_SIZE {
+                    continue;
+                }
+                let Some(pkt_buf) = pkt.data(..) else {
+                    continue;
+                };
+                let vote_pkt = FakeVotePacket::from_bytes(pkt_buf);
+                let pk = Pubkey::new_from_array(vote_pkt.sender);
+                let Some(&stake) = epoch_specs.current_epoch_staked_nodes().get(&pk) else {
+                    continue;
+                };
+                lockguard.peers.insert(
+                    pk,
+                    Counters {
+                        stake,
+                        vote_relative_time: elapsed,
+                    },
+                );
+            }
+        }
     }
 
     /// Sends fake votes to everyone in the cluster
@@ -100,6 +158,7 @@ impl FakeAlpenglowConsensus {
     fn sender_thread(
         state: Arc<Mutex<SharedState>>,
         cluster_info: Arc<ClusterInfo>,
+        mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
         new_slot: Receiver<Slot>,
     ) {
@@ -107,15 +166,13 @@ impl FakeAlpenglowConsensus {
         let id = cluster_info.id();
 
         loop {
-            let slot = match new_slot.recv_timeout(CHECK_INTERVAL) {
-                Ok(slot) => slot,
-                Err(_) => {
-                    if state.lock().unwrap().should_exit {
-                        return;
-                    }
-                    continue;
+            let Ok(slot) = new_slot.recv_timeout(CHECK_INTERVAL) else {
+                if state.lock().unwrap().should_exit {
+                    return;
                 }
+                continue;
             };
+            // prepare the packet to send and sign it
             {
                 let pkt = FakeVotePacket::from_bytes_mut(&mut packet_buf);
                 pkt.slot_number = slot;
@@ -127,6 +184,8 @@ impl FakeAlpenglowConsensus {
                 let pkt = FakeVotePacket::from_bytes_mut(&mut packet_buf);
                 pkt.signature = *signature.as_array();
             }
+
+            // Clear the stats for the previous slots in preparation for the new one
             {
                 let mut lockguard = state.lock().unwrap();
                 let counts = Self::count_collected_votes(&lockguard.peers);
@@ -134,34 +193,42 @@ impl FakeAlpenglowConsensus {
                 lockguard.current_slot = slot;
                 lockguard.current_slot_start = Instant::now();
             }
-            for peer in cluster_info.all_tvu_peers()
+
+            // prepare addresses to send the packets
+            let mut send_instructions = Vec::with_capacity(2000);
+            for peer in epoch_specs.current_epoch_staked_nodes().keys() {
+                let Some(ag_addr) = cluster_info
+                    .lookup_contact_info(peer, |ci| ci.alpenglow())
+                    .flatten()
+                else {
+                    continue;
+                };
+                send_instructions.push((packet_buf.as_slice(), ag_addr));
+            }
+
+            // broadcast to everybody at once
+            batch_send(&socket, send_instructions);
         }
     }
 
-    fn count_collected_votes(peers:& HashMap<Pubkey, Counters>) -> (Stake, f64) {
+    fn count_collected_votes(peers: &HashMap<Pubkey, Counters>) -> (Stake, f64) {
         let mut total_voted: Stake = 0;
-        let mut total_delay_ms = 0i128;
+        let mut total_delay_ms = 0u128;
         for (pubkey, counters) in peers.iter() {
             total_voted += counters.stake;
-            total_delay_ms += (counters
-                .vote_relative_time
-                .num_milliseconds()
-                .clamp(-400, 400) as i128)
-                * counters.stake as i128;
+            total_delay_ms += (counters.vote_relative_time.as_millis().clamp(0, 400) as u128)
+                * counters.stake as u128;
         }
         let stake_weighted_delay = total_delay_ms as f64 / total_voted as f64;
         (total_voted, stake_weighted_delay)
     }
 
-    pub(crate) fn send_fake_votes(&mut self, slot: Slot) {
+    pub(crate) fn send_fake_votes(&self, slot: Slot) {
         self.send_event.send(slot);
-        //let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
-        //let packet_refs: Vec<_> = packets.iter().map(|p| (&p[..], &addr)).collect();
-
-        //batch_send(sock, packets)
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
+        self.state.lock().unwrap().should_exit = true;
         self.sender_thread.join()?;
         self.listener_thread.join()
     }
