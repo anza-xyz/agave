@@ -9,6 +9,7 @@ use {
         pubkey_bins::PubkeyBinCalculator24,
         sorted_storages::SortedStorages,
     },
+    ahash::HashSet,
     rayon::prelude::*,
     solana_account::ReadableAccount as _,
     solana_clock::Slot,
@@ -30,7 +31,7 @@ trait AppendVecScan: Send + Sync + Clone {
     /// return true if this pubkey should be included
     fn filter(&mut self, pubkey: &Pubkey) -> bool;
     /// set current slot of the scan
-    fn set_slot(&mut self, slot: Slot, is_ancient: bool);
+    fn set_slot(&mut self, slot: Slot, is_ancient: bool, storage: &AccountStorageEntry);
     /// found `account` in the append vec
     fn found_account(&mut self, account: &LoadedAccount);
     /// scanning is done
@@ -56,14 +57,29 @@ struct ScanState<'a> {
     pubkey_to_bin_index: usize,
     is_ancient: bool,
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
+    max_slot: Slot,
+    pub_keys_to_skip: HashSet<Pubkey>,
 }
 
 impl AppendVecScan for ScanState<'_> {
-    fn set_slot(&mut self, slot: Slot, is_ancient: bool) {
+    fn set_slot(&mut self, slot: Slot, is_ancient: bool, storage: &AccountStorageEntry) {
         self.current_slot = slot;
         self.is_ancient = is_ancient;
+        self.pub_keys_to_skip.clear();
+        let accounts = storage.get_obsolete_accounts(Some(self.max_slot));
+
+        for account in accounts {
+            let offset = account.0;
+            let stored_account = storage.accounts.get_account_index_info(offset);
+            self.pub_keys_to_skip
+                .insert(stored_account.unwrap().index_info.pubkey);
+        }
     }
+
     fn filter(&mut self, pubkey: &Pubkey) -> bool {
+        if self.pub_keys_to_skip.contains(pubkey) {
+            return false;
+        }
         self.pubkey_to_bin_index = self.bin_calculator.bin_from_pubkey(pubkey);
         self.bin_range.contains(&self.pubkey_to_bin_index)
     }
@@ -151,6 +167,8 @@ impl AccountsDb {
             stats_num_zero_lamport_accounts_ancient: Arc::clone(
                 &stats.num_zero_lamport_accounts_ancient,
             ),
+            max_slot: storages.max_slot_inclusive(),
+            pub_keys_to_skip: HashSet::default(),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -223,6 +241,7 @@ impl AccountsDb {
                     if is_first_scan_pass && slot < one_epoch_old {
                         self.update_old_slot_stats(stats, storage);
                     }
+
                     if let Some(storage) = storage {
                         let ok = Self::hash_storage_info(&mut hasher, storage, slot);
                         if !ok {
@@ -310,7 +329,7 @@ impl AccountsDb {
                                     scanner.init_accum(range);
                                     init_accum = false;
                                 }
-                                scanner.set_slot(slot, ancient);
+                                scanner.set_slot(slot, ancient, storage);
 
                                 Self::scan_single_account_storage(storage, &mut scanner);
                             });
@@ -419,7 +438,7 @@ mod tests {
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {
             true
         }
-        fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
+        fn set_slot(&mut self, slot: Slot, _is_ancient: bool, _storage: &AccountStorageEntry) {
             self.current_slot = slot;
         }
         fn init_accum(&mut self, _count: usize) {}
@@ -449,7 +468,7 @@ mod tests {
     }
 
     impl AppendVecScan for TestScanSimple {
-        fn set_slot(&mut self, slot: Slot, _is_ancient: bool) {
+        fn set_slot(&mut self, slot: Slot, _is_ancient: bool, _storage: &AccountStorageEntry) {
             self.current_slot = slot;
         }
         fn filter(&mut self, _pubkey: &Pubkey) -> bool {
