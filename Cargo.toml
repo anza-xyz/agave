@@ -340,7 +340,7 @@ rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.11.1"
-reqwest = { version = "0.12.16", default-features = false }
+reqwest = { version = "0.12.19", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
@@ -369,7 +369,7 @@ soketto = "0.7"
 solana-account = "2.2.1"
 solana-account-decoder = { path = "account-decoder", version = "=2.3.0" }
 solana-account-decoder-client-types = { path = "account-decoder-client-types", version = "=2.3.0" }
-solana-account-info = "2.2.1"
+solana-account-info = "2.3.0"
 solana-accounts-db = { path = "accounts-db", version = "=2.3.0" }
 solana-address-lookup-table-interface = "2.2.2"
 solana-atomic-u64 = "2.2.1"
@@ -471,7 +471,7 @@ solana-precompile-error = "2.2.2"
 solana-presigner = "2.2.1"
 solana-program = { version = "2.2.1", default-features = false }
 solana-program-entrypoint = "2.2.1"
-solana-program-error = "2.2.1"
+solana-program-error = "2.2.2"
 solana-program-memory = "2.3.0"
 solana-program-option = "2.2.1"
 solana-program-pack = "2.2.1"
