@@ -714,3 +714,8 @@ pub(crate) fn should_report_message_signature(signature: &Signature, leading_zer
     };
     u64::from_le_bytes(bytes).trailing_zeros() >= leading_zeros
 }
+
+#[inline]
+pub(crate) fn last_four_chars(s: &str) -> Option<&str> {
+    s.get(s.len().saturating_sub(4)..)
+}

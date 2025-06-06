@@ -27,7 +27,7 @@
 
 use {
     crate::{
-        cluster_info_metrics::should_report_message_signature,
+        cluster_info_metrics::{last_four_chars, should_report_message_signature},
         contact_info::ContactInfo,
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
@@ -718,17 +718,17 @@ impl CrdsDataStats {
                 "gossip_crds_sample",
                 (
                     "origin",
-                    entry.value.pubkey().to_string().get(..8),
+                    last_four_chars(&entry.value.pubkey().to_string()),
                     Option<String>
                 ),
                 (
                     "signature",
-                    entry.value.signature().to_string().get(..8),
+                    last_four_chars(&entry.value.signature().to_string()),
                     Option<String>
                 ),
                 (
                     "from",
-                    from.to_string().get(..8),
+                    last_four_chars(&from.to_string()),
                     Option<String>
                 )
             );

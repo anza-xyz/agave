@@ -14,7 +14,7 @@
 use {
     crate::{
         cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY,
-        cluster_info_metrics::should_report_message_signature,
+        cluster_info_metrics::{last_four_chars, should_report_message_signature},
         crds::{Crds, CrdsError, Cursor, GossipRoute, SIGNATURE_SAMPLE_LEADING_ZEROS},
         crds_gossip,
         crds_value::CrdsValue,
@@ -296,17 +296,17 @@ fn log_gossip_crds_sample_egress(value: &CrdsValue, peer: &Pubkey) {
         "gossip_crds_sample_egress",
         (
             "origin",
-            value.pubkey().to_string().get(..8),
+            last_four_chars(&value.pubkey().to_string()),
             Option<String>
         ),
         (
             "signature",
-            value.signature().to_string().get(..8),
+            last_four_chars(&value.signature().to_string()),
             Option<String>
         ),
         (
             "peer",
-            peer.to_string().get(..8),
+            last_four_chars(&peer.to_string()),
             Option<String>
         ),
     );
