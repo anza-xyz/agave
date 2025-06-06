@@ -9,5 +9,6 @@ declare dcou_tainted_packages=(
   agave-store-tool
   agave-store-histogram
   agave-accounts-hash-cache-tool
+  solana-program-test
   solana-dos
 )

@@ -391,7 +391,7 @@ mod tests {
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         while !bank.is_complete() {
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
         }
 
         // Set extra field

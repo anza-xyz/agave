@@ -143,7 +143,7 @@ impl VoteSimulator {
                 }
             }
 
-            new_bank.fill_bank_with_ticks_for_tests();
+            new_bank.fill_bank_with_ticks();
             if !visit.node().has_no_child() || is_frozen {
                 new_bank.set_block_id(Some(Hash::new_unique()));
                 new_bank.freeze();
@@ -397,7 +397,7 @@ pub fn initialize_state(
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();
     }
 
-    bank0.fill_bank_with_ticks_for_tests();
+    bank0.fill_bank_with_ticks();
     bank0.freeze();
     let mut progress = ProgressMap::default();
     progress.insert(

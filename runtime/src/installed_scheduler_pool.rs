@@ -491,8 +491,8 @@ impl BankWithScheduler {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn fill_bank_with_ticks_for_tests(&self) {
-        self.do_fill_bank_with_ticks_for_tests(&self.inner.scheduler);
+    pub fn fill_bank_with_ticks(&self) {
+        self.do_fill_bank_with_ticks(&self.inner.scheduler);
     }
 
     pub fn has_installed_scheduler(&self) -> bool {

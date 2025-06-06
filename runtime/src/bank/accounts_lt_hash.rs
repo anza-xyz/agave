@@ -1006,7 +1006,7 @@ mod tests {
             }
 
             // flush the write cache to disk to ensure there are duplicates across the storages
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             bank.squash();
             bank.force_flush_accounts_cache();
         }
@@ -1041,7 +1041,7 @@ mod tests {
             assert_eq!(bank.get_balance(&accounts[i].pubkey()), 0);
 
             // flush the write cache to disk to ensure the storages match the accounts written here
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             bank.squash();
             bank.force_flush_accounts_cache();
         }
@@ -1176,7 +1176,7 @@ mod tests {
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             bank.squash();
             bank.force_flush_accounts_cache();
         }
@@ -1206,7 +1206,7 @@ mod tests {
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
         }
 
         // Now verify the accounts lt hash from feature activation is the same as if we calculated
@@ -1310,7 +1310,7 @@ mod tests {
             bank.register_unique_recent_blockhash_for_test();
             bank.transfer(amount, &mint_keypair, &pubkey::new_rand())
                 .unwrap();
-            bank.fill_bank_with_ticks_for_tests();
+            bank.fill_bank_with_ticks();
             bank.squash();
             bank.force_flush_accounts_cache();
         }
