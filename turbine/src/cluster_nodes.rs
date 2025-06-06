@@ -358,7 +358,7 @@ fn get_nodes(
             }),
     )
     // Add a bunch of fake, unstaked nodes for testing.
-    /*.chain((0..5000).map(|i: u16| {
+    .chain((0..5000).map(|i: u16| {
         let addr_byte1 = (i / 256).min(255) as u8;
         let addr_byte2 = (i % 256).min(255) as u8;
         let contact_info = ContactInfo {
@@ -367,6 +367,33 @@ fn get_nodes(
             tvu_quic: None,
             tvu_udp: Some(SocketAddr::new(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::new(50, 234, addr_byte1, addr_byte2)),
+                8080,
+            )),
+        };
+        let node = NodeId::from(contact_info);
+        Node { node, stake: 0 }
+    }))
+    /*.chain((0..3000).map(|i: u16| {
+        let ip = match i % 10 {
+            0 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 75)),
+            1 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 89)),
+            2 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 57)),
+            3 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 81)),
+            4 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 61)),
+            5 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 65)),
+            6 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 141)),
+            7 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 27)),
+            8 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 79)),
+            9 => std::net::IpAddr::V4(std::net::Ipv4Addr::new(147, 28, 173, 41)),
+            _ => unreachable!(),
+        };
+
+        let contact_info = ContactInfo {
+            pubkey: Pubkey::new_unique(),
+            wallclock: timestamp(),
+            tvu_quic: None,
+            tvu_udp: Some(SocketAddr::new(
+                ip,
                 8080,
             )),
         };
