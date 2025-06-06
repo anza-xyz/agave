@@ -98,13 +98,16 @@ impl SnapshotController {
 
                 let mut snapshot_time = Measure::start("squash::snapshot_time");
                 if bank.is_startup_verification_complete() {
-                    // Save off the status cache because these may get pruned if another
+                    // Save off the seen transaction cache because these may get pruned if another
                     // `set_root()` is called before the snapshots package can be generated
-                    let status_cache_slot_deltas =
-                        bank.status_cache.read().unwrap().root_slot_deltas();
+                    let seen_transaction_cache_slot_deltas = bank
+                        .seen_transaction_cache
+                        .read()
+                        .unwrap()
+                        .root_slot_deltas();
                     if let Err(e) = self.abs_request_sender.send(SnapshotRequest {
                         snapshot_root_bank: Arc::clone(bank),
-                        status_cache_slot_deltas,
+                        seen_transaction_cache_slot_deltas,
                         request_kind,
                         enqueued: Instant::now(),
                     }) {
@@ -185,7 +188,7 @@ impl SnapshotController {
 
             if let Err(err) = self.abs_request_sender.send(SnapshotRequest {
                 snapshot_root_bank: Arc::clone(eah_bank),
-                status_cache_slot_deltas: Vec::default(),
+                seen_transaction_cache_slot_deltas: Vec::default(),
                 request_kind: SnapshotRequestKind::EpochAccountsHash,
                 enqueued: Instant::now(),
             }) {

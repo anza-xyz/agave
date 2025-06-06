@@ -71,7 +71,7 @@ impl Bank {
             max_age,
             error_counters,
         );
-        self.check_status_cache(sanitized_txs, lock_results, error_counters)
+        self.check_seen_transaction_cache(sanitized_txs, lock_results, error_counters)
     }
 
     fn check_age_and_compute_budget_limits<Tx: TransactionWithMeta>(
@@ -249,15 +249,15 @@ impl Bank {
         Some((*nonce_address, nonce_account, nonce_data))
     }
 
-    fn check_status_cache<Tx: TransactionWithMeta>(
+    fn check_seen_transaction_cache<Tx: TransactionWithMeta>(
         &self,
         sanitized_txs: &[impl core::borrow::Borrow<Tx>],
         lock_results: Vec<TransactionCheckResult>,
         error_counters: &mut TransactionErrorMetrics,
     ) -> Vec<TransactionCheckResult> {
-        // Do allocation before acquiring the lock on the status cache.
+        // Do allocation before acquiring the lock on the seen transaction cache.
         let mut check_results = Vec::with_capacity(sanitized_txs.len());
-        let rcache = self.status_cache.read().unwrap();
+        let rcache = self.seen_transaction_cache.read().unwrap();
 
         check_results.extend(sanitized_txs.iter().zip(lock_results).map(
             |(sanitized_tx, lock_result)| {
@@ -278,11 +278,11 @@ impl Bank {
     fn is_transaction_already_processed(
         &self,
         sanitized_tx: &impl TransactionWithMeta,
-        status_cache: &BankStatusCache,
+        seen_transaction_cache: &BankStatusCache,
     ) -> bool {
         let key = sanitized_tx.message_hash();
         let transaction_blockhash = sanitized_tx.recent_blockhash();
-        status_cache
+        seen_transaction_cache
             .get_status(key, transaction_blockhash, &self.ancestors)
             .is_some()
     }
