@@ -94,6 +94,12 @@ if [[ -z "$SOLANA_DOCKER_RUN_NOSETUID" ]]; then
   ARGS+=(--user "$(id -u):$(id -g)")
 fi
 
+if [[ -n "$CRATE_PUBLISH_TEST" ]]; then
+  ARGS+=(
+    --network container:kellnr
+  )
+fi
+
 if [[ -n $SOLANA_ALLOCATE_TTY ]]; then
   # Colored output, progress bar and Ctrl-C:
   # https://stackoverflow.com/a/41099052/10242004

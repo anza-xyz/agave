@@ -2,7 +2,7 @@
 name = "solana-vortexor-receiver"
 description = "Solana TPU Vortexor Receiver"
 documentation = "https://docs.rs/solana-vortexor-receiver"
-publish = false
+publish = true
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
