@@ -17,7 +17,10 @@ pub mod accounts_update_notifier_interface;
 mod active_stats;
 pub mod ancestors;
 mod ancient_append_vecs;
+#[cfg(feature = "dev-context-only-utils")]
 pub mod append_vec;
+#[cfg(not(feature = "dev-context-only-utils"))]
+mod append_vec;
 pub mod blockhash_queue;
 mod bucket_map_holder;
 mod bucket_map_holder_stats;

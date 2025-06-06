@@ -6,7 +6,7 @@ use {
     },
     rayon::prelude::*,
     solana_account::ReadableAccount,
-    solana_accounts_db::append_vec::AppendVec,
+    solana_accounts_db::accounts_file::{AccountsFile, StorageAccess},
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
@@ -109,7 +109,9 @@ fn cmd_search(
 }
 
 fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
-    let storage = AppendVec::new_for_store_tool(file.as_ref()).map_err(|err| {
+    let file_size = std::fs::metadata(&file).unwrap().len() as usize;
+    let storage = AccountsFile::new_from_file(file.as_ref(), file_size, StorageAccess::default())
+        .map_err(|err| {
         format!(
             "failed to open account storage file '{}': {err}",
             file.as_ref().display(),
@@ -117,7 +119,7 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
     })?;
     // By default, when the AppendVec is dropped, the backing file will be removed.
     // We do not want to remove the backing file here in the store-tool, so prevent dropping.
-    let storage = ManuallyDrop::new(storage);
+    let storage = ManuallyDrop::new(storage.0);
 
     let data_size_width = width10(MAX_PERMITTED_DATA_LENGTH);
     let offset_width = width16(storage.capacity());
@@ -178,7 +180,8 @@ fn do_search(
         )
     })?;
     files.par_iter().for_each(|file| {
-        let Ok(storage) = AppendVec::new_for_store_tool(file).inspect_err(|err| {
+        let file_size = std::fs::metadata(file).unwrap().len() as usize;
+        let Ok(storage) = AccountsFile::new_from_file(file, file_size, StorageAccess::default()).inspect_err(|err| {
             eprintln!(
                 "failed to open account storage file '{}': {err}",
                 file.display(),
@@ -188,7 +191,7 @@ fn do_search(
         };
         // By default, when the AppendVec is dropped, the backing file will be removed.
         // We do not want to remove the backing file here in the store-tool, so prevent dropping.
-        let storage = ManuallyDrop::new(storage);
+        let storage = ManuallyDrop::<AccountsFile>::new(storage.0);
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
         storage.scan_accounts_stored_meta(|account| {
