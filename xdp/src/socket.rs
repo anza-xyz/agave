@@ -133,8 +133,8 @@ impl<U: Umem> Socket<U> {
             let rx_ring = Some(RxRing::new(
                 mmap_ring(
                     fd.as_raw_fd(),
-                    tx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
-                    &offsets.tx,
+                    rx_ring_size.saturating_mul(mem::size_of::<XdpDesc>()),
+                    &offsets.rx,
                     XDP_PGOFF_RX_RING as u64,
                 )?,
                 rx_ring_size as u32,
