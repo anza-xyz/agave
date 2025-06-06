@@ -519,7 +519,7 @@ impl PartialEq for Bank {
         let Self {
             skipped_rewrites: _,
             rc: _,
-            status_cache: _,
+            seen_transaction_cache: _,
             blockhash_queue,
             ancestors,
             hash,
@@ -744,8 +744,8 @@ pub struct Bank {
     /// References to accounts, parent and signature status
     pub rc: BankRc,
 
-    /// A cache of signature statuses
-    pub status_cache: Arc<RwLock<BankStatusCache>>,
+    /// A cache of seen transactions by message hash & transaction statuses by signature
+    pub seen_transaction_cache: Arc<RwLock<BankStatusCache>>,
 
     /// FIFO queue of `recent_blockhash` items
     blockhash_queue: RwLock<BlockhashQueue>,
@@ -1082,7 +1082,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: BankRc::new(accounts),
-            status_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            seen_transaction_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
             ancestors: Ancestors::default(),
             hash: RwLock::<Hash>::default(),
@@ -1286,7 +1286,8 @@ impl Bank {
             }
         });
 
-        let (status_cache, status_cache_time_us) = measure_us!(Arc::clone(&parent.status_cache));
+        let (seen_transaction_cache, seen_transaction_cache_time_us) =
+            measure_us!(Arc::clone(&parent.seen_transaction_cache));
 
         let (fee_rate_governor, fee_components_time_us) = measure_us!(
             FeeRateGovernor::new_derived(&parent.fee_rate_governor, parent.signature_count())
@@ -1320,7 +1321,7 @@ impl Bank {
         let mut new = Self {
             skipped_rewrites: Mutex::default(),
             rc,
-            status_cache,
+            seen_transaction_cache,
             slot,
             bank_id,
             epoch,
@@ -1482,7 +1483,7 @@ impl Bank {
             NewBankTimings {
                 bank_rc_creation_time_us,
                 total_elapsed_time_us: time.as_us(),
-                status_cache_time_us,
+                seen_transaction_cache_time_us,
                 fee_components_time_us,
                 blockhash_queue_time_us,
                 stakes_cache_time_us,
@@ -1815,7 +1816,7 @@ impl Bank {
         let mut bank = Self {
             skipped_rewrites: Mutex::default(),
             rc: bank_rc,
-            status_cache: Arc::<RwLock<BankStatusCache>>::default(),
+            seen_transaction_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
             ancestors,
             hash: RwLock::new(fields.hash),
@@ -2092,8 +2093,8 @@ impl Bank {
         self.freeze_started.load(Relaxed)
     }
 
-    pub fn status_cache_ancestors(&self) -> Vec<u64> {
-        let mut roots = self.status_cache.read().unwrap().roots().clone();
+    pub fn seen_transaction_cache_ancestors(&self) -> Vec<u64> {
+        let mut roots = self.seen_transaction_cache.read().unwrap().roots().clone();
         let min = roots.iter().min().cloned().unwrap_or(0);
         for ancestor in self.ancestors.keys() {
             if ancestor >= min {
@@ -2737,9 +2738,10 @@ impl Bank {
         *self.rc.parent.write().unwrap() = None;
 
         let mut squash_cache_time = Measure::start("squash_cache_time");
-        roots
-            .iter()
-            .for_each(|slot| self.status_cache.write().unwrap().add_root(*slot));
+        roots.iter().for_each(|slot| {
+            self.seen_transaction_cache.write().unwrap().add_root(*slot);
+            self.seen_transaction_cache.write().unwrap().add_root(*slot)
+        });
         squash_cache_time.stop();
 
         SquashTiming {
@@ -3005,11 +3007,14 @@ impl Bank {
 
     /// Forget all signatures. Useful for benchmarking.
     pub fn clear_signatures(&self) {
-        self.status_cache.write().unwrap().clear();
+        self.seen_transaction_cache.write().unwrap().clear();
     }
 
     pub fn clear_slot_signatures(&self, slot: Slot) {
-        self.status_cache.write().unwrap().clear_slot_entries(slot);
+        self.seen_transaction_cache
+            .write()
+            .unwrap()
+            .clear_slot_entries(slot);
     }
 
     fn update_transaction_statuses(
@@ -3017,13 +3022,13 @@ impl Bank {
         sanitized_txs: &[impl TransactionWithMeta],
         processing_results: &[TransactionProcessingResult],
     ) {
-        let mut status_cache = self.status_cache.write().unwrap();
+        let mut seen_transaction_cache = self.seen_transaction_cache.write().unwrap();
         assert_eq!(sanitized_txs.len(), processing_results.len());
         for (tx, processing_result) in sanitized_txs.iter().zip(processing_results) {
             if let Ok(processed_tx) = &processing_result {
                 // Add the message hash to the status cache to ensure that this message
                 // won't be processed again with a different signature.
-                status_cache.insert(
+                seen_transaction_cache.insert(
                     tx.recent_blockhash(),
                     tx.message_hash(),
                     self.slot(),
@@ -3032,7 +3037,7 @@ impl Bank {
                 // Add the transaction signature to the status cache so that transaction status
                 // can be queried by transaction signature over RPC. In the future, this should
                 // only be added for API nodes because voting validators don't need to do this.
-                status_cache.insert(
+                seen_transaction_cache.insert(
                     tx.recent_blockhash(),
                     tx.signature(),
                     self.slot(),
@@ -5265,14 +5270,14 @@ impl Bank {
         signature: &Signature,
         blockhash: &Hash,
     ) -> Option<Result<()>> {
-        let rcache = self.status_cache.read().unwrap();
+        let rcache = self.seen_transaction_cache.read().unwrap();
         rcache
             .get_status(signature, blockhash, &self.ancestors)
             .map(|v| v.1)
     }
 
     pub fn get_signature_status_slot(&self, signature: &Signature) -> Option<(Slot, Result<()>)> {
-        let rcache = self.status_cache.read().unwrap();
+        let rcache = self.seen_transaction_cache.read().unwrap();
         rcache.get_status_any_blockhash(signature, &self.ancestors)
     }
 

@@ -63,7 +63,7 @@ mod archive_format;
 pub mod snapshot_storage_rebuilder;
 pub use archive_format::*;
 
-pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
+pub const SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME: &str = "status_cache"; // This name purposefully mismatches its use to maintain backward compatibility with snapshots from old validators.
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
 pub const SNAPSHOT_STATE_COMPLETE_FILENAME: &str = "state_complete";
 pub const SNAPSHOT_STORAGES_FLUSHED_FILENAME: &str = "storages_flushed";
@@ -183,10 +183,11 @@ impl BankSnapshotInfo {
             return Err(SnapshotNewFromDirError::IncompleteDir(bank_snapshot_dir));
         }
 
-        let status_cache_file = bank_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-        if !status_cache_file.is_file() {
+        let seen_transaction_cache_file =
+            bank_snapshot_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
+        if !seen_transaction_cache_file.is_file() {
             return Err(SnapshotNewFromDirError::MissingStatusCacheFile(
-                status_cache_file,
+                seen_transaction_cache_file,
             ));
         }
 
@@ -802,7 +803,7 @@ pub fn serialize_and_archive_snapshot_package(
         block_height,
         hash: snapshot_hash,
         mut snapshot_storages,
-        status_cache_slot_deltas,
+        seen_transaction_cache_slot_deltas,
         bank_fields_to_serialize,
         bank_hash_stats,
         accounts_delta_hash,
@@ -817,7 +818,7 @@ pub fn serialize_and_archive_snapshot_package(
         &snapshot_config.bank_snapshots_dir,
         snapshot_config.snapshot_version,
         snapshot_storages.as_slice(),
-        status_cache_slot_deltas.as_slice(),
+        seen_transaction_cache_slot_deltas.as_slice(),
         bank_fields_to_serialize,
         bank_hash_stats,
         accounts_delta_hash,
@@ -962,11 +963,14 @@ fn serialize_snapshot(
             "bank serialize"
         );
 
-        let status_cache_path = bank_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-        let (status_cache_consumed_size, status_cache_serialize_us) = measure_us!(
-            snapshot_bank_utils::serialize_status_cache(slot_deltas, &status_cache_path)
-                .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?
-        );
+        let seen_transaction_cache_path =
+            bank_snapshot_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
+        let (seen_transaction_cache_consumed_size, seen_transaction_cache_serialize_us) =
+            measure_us!(snapshot_bank_utils::serialize_seen_transaction_cache(
+                slot_deltas,
+                &seen_transaction_cache_path
+            )
+            .map_err(|err| AddBankSnapshotError::SerializeStatusCache(Box::new(err)))?);
 
         let version_path = bank_snapshot_dir.join(SNAPSHOT_VERSION_FILENAME);
         let (_, write_version_file_us) = measure_us!(fs::write(
@@ -988,11 +992,11 @@ fn serialize_snapshot(
             "snapshot_bank",
             ("slot", slot, i64),
             ("bank_size", bank_snapshot_consumed_size, i64),
-            ("status_cache_size", status_cache_consumed_size, i64),
+            ("status_cache_size", seen_transaction_cache_consumed_size, i64),
             ("flush_storages_us", flush_storages_us, Option<i64>),
             ("hard_link_storages_us", hard_link_storages_us, Option<i64>),
             ("bank_serialize_us", bank_serialize.as_us(), i64),
-            ("status_cache_serialize_us", status_cache_serialize_us, i64),
+            ("status_cache_serialize_us", seen_transaction_cache_serialize_us, i64),
             ("write_version_file_us", write_version_file_us, i64),
             (
                 "write_state_complete_file_us",
@@ -1068,10 +1072,19 @@ fn archive_snapshot(
 
     // Following the existing archive format, the status cache is under snapshots/, not under <slot>/
     // like in the snapshot dir.
-    let staging_status_cache = staging_snapshots_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-    let src_status_cache = src_snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-    symlink::symlink_file(&src_status_cache, &staging_status_cache)
-        .map_err(|err| E::SymlinkStatusCache(err, src_status_cache, staging_status_cache))?;
+    let staging_seen_transaction_cache =
+        staging_snapshots_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
+    let src_seen_transaction_cache =
+        src_snapshot_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
+    symlink::symlink_file(&src_seen_transaction_cache, &staging_seen_transaction_cache).map_err(
+        |err| {
+            E::SymlinkStatusCache(
+                err,
+                src_seen_transaction_cache,
+                staging_seen_transaction_cache,
+            )
+        },
+    )?;
 
     // The bank snapshot has the version file, so symlink it to the correct staging path
     let staging_version_file = staging_dir.path().join(SNAPSHOT_VERSION_FILENAME);
@@ -1704,10 +1717,10 @@ fn create_snapshot_meta_files_for_unarchived_snapshot(unpack_dir: impl AsRef<Pat
     let version_file = unpack_dir.as_ref().join(SNAPSHOT_VERSION_FILENAME);
     fs::hard_link(version_file, slot_dir.join(SNAPSHOT_VERSION_FILENAME))?;
 
-    let status_cache_file = snapshots_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
+    let seen_transaction_cache_file = snapshots_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
     fs::hard_link(
-        status_cache_file,
-        slot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME),
+        seen_transaction_cache_file,
+        slot_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME),
     )?;
 
     write_snapshot_state_complete_file(slot_dir)?;
@@ -2430,19 +2443,19 @@ pub fn verify_snapshot_archive(
         fs::remove_file(p2).unwrap();
     }
 
-    // The new the status_cache file is inside the slot directory together with the snapshot file.
-    // When unpacking an archive, the status_cache file from the archive is one-level up outside of
-    //  the slot directory.
-    // The unpacked status_cache file need to be put back into the slot directory for the directory
-    // comparison to pass.
-    let existing_unpacked_status_cache_file =
-        unpacked_snapshots.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-    let new_unpacked_status_cache_file = unpacked_snapshots
+    // The new the seen_transaction_cache file is inside the slot directory together with the
+    // snapshot file. When unpacking an archive, the status_cache file from the archive is one-level
+    // up outside of the slot directory.
+    // The unpacked seen_transaction_cache file need to be put back into the slot directory for the
+    // directory comparison to pass.
+    let existing_unpacked_seen_transaction_cache_file =
+        unpacked_snapshots.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
+    let new_unpacked_seen_transaction_cache_file = unpacked_snapshots
         .join(&slot)
-        .join(SNAPSHOT_STATUS_CACHE_FILENAME);
+        .join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
     fs::rename(
-        existing_unpacked_status_cache_file,
-        new_unpacked_status_cache_file,
+        existing_unpacked_seen_transaction_cache_file,
+        new_unpacked_seen_transaction_cache_file,
     )
     .unwrap();
 
@@ -2991,8 +3004,9 @@ mod tests {
             let snapshot_path = snapshot_dir.join(snapshot_filename);
             fs::File::create(snapshot_path).unwrap();
 
-            let status_cache_file = snapshot_dir.join(SNAPSHOT_STATUS_CACHE_FILENAME);
-            fs::File::create(status_cache_file).unwrap();
+            let seen_transaction_cache_file =
+                snapshot_dir.join(SNAPSHOT_SEEN_TRANSACTION_CACHE_FILENAME);
+            fs::File::create(seen_transaction_cache_file).unwrap();
 
             let version_path = snapshot_dir.join(SNAPSHOT_VERSION_FILENAME);
             fs::write(version_path, SnapshotVersion::default().as_str().as_bytes()).unwrap();

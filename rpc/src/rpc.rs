@@ -156,7 +156,7 @@ fn is_finalized(
     slot: Slot,
 ) -> bool {
     slot <= block_commitment_cache.highest_super_majority_root()
-        && (blockstore.is_root(slot) || bank.status_cache_ancestors().contains(&slot))
+        && (blockstore.is_root(slot) || bank.seen_transaction_cache_ancestors().contains(&slot))
 }
 
 #[derive(Debug, Clone)]
@@ -1357,7 +1357,10 @@ impl JsonRpcRequestProcessor {
         } else if commitment.is_confirmed() {
             // Check if block is confirmed
             let confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-            if confirmed_bank.status_cache_ancestors().contains(&slot) {
+            if confirmed_bank
+                .seen_transaction_cache_ancestors()
+                .contains(&slot)
+            {
                 self.check_blockstore_writes_complete(slot)?;
                 let result = self
                     .runtime
@@ -1487,7 +1490,7 @@ impl JsonRpcRequestProcessor {
             let confirmed_bank = self.get_bank_with_config(config)?;
             if last_element < end_slot {
                 let mut confirmed_blocks = confirmed_bank
-                    .status_cache_ancestors()
+                    .seen_transaction_cache_ancestors()
                     .into_iter()
                     .filter(|&slot| slot <= end_slot && slot > last_element)
                     .collect();
@@ -1565,7 +1568,7 @@ impl JsonRpcRequestProcessor {
                     .cloned()
                     .unwrap_or_else(|| start_slot.saturating_sub(1));
                 let mut confirmed_blocks = confirmed_bank
-                    .status_cache_ancestors()
+                    .seen_transaction_cache_ancestors()
                     .into_iter()
                     .filter(|&slot| slot > last_element)
                     .collect();
@@ -1779,7 +1782,7 @@ impl JsonRpcRequestProcessor {
             Some(mut confirmed_transaction) => {
                 if commitment.is_confirmed()
                     && confirmed_bank // should be redundant
-                        .status_cache_ancestors()
+                        .seen_transaction_cache_ancestors()
                         .contains(&confirmed_transaction.slot)
                 {
                     if confirmed_transaction.block_time.is_none() {

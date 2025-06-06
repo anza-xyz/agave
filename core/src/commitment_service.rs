@@ -108,7 +108,7 @@ impl AggregateCommitmentService {
             let aggregation_data = receiver.recv_timeout(Duration::from_secs(1))?;
             let aggregation_data = receiver.try_iter().last().unwrap_or(aggregation_data);
 
-            let ancestors = aggregation_data.bank.status_cache_ancestors();
+            let ancestors = aggregation_data.bank.seen_transaction_cache_ancestors();
             if ancestors.is_empty() {
                 continue;
             }
@@ -607,7 +607,7 @@ mod tests {
         let working_bank = bank_forks.read().unwrap().working_bank();
         let vote_state = get_vote_state(vote_pubkey, &working_bank);
         let root = vote_state.root_slot.unwrap();
-        let ancestors = working_bank.status_cache_ancestors();
+        let ancestors = working_bank.seen_transaction_cache_ancestors();
         let _ = AggregateCommitmentService::update_commitment_cache(
             &block_commitment_cache,
             CommitmentAggregationData {
@@ -642,7 +642,7 @@ mod tests {
         );
 
         let working_bank = bank_forks.read().unwrap().working_bank();
-        let ancestors = working_bank.status_cache_ancestors();
+        let ancestors = working_bank.seen_transaction_cache_ancestors();
         let _ = AggregateCommitmentService::update_commitment_cache(
             &block_commitment_cache,
             CommitmentAggregationData {
@@ -691,7 +691,7 @@ mod tests {
         let vote_state =
             get_vote_state(validator_vote_keypairs.vote_keypair.pubkey(), &working_bank);
         let root = vote_state.root_slot.unwrap();
-        let ancestors = working_bank.status_cache_ancestors();
+        let ancestors = working_bank.seen_transaction_cache_ancestors();
         let _ = AggregateCommitmentService::update_commitment_cache(
             &block_commitment_cache,
             CommitmentAggregationData {

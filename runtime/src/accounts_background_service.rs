@@ -106,7 +106,7 @@ impl SendDroppedBankCallback {
 
 pub struct SnapshotRequest {
     pub snapshot_root_bank: Arc<Bank>,
-    pub status_cache_slot_deltas: Vec<BankSlotDelta>,
+    pub seen_transaction_cache_slot_deltas: Vec<BankSlotDelta>,
     pub request_kind: SnapshotRequestKind,
 
     /// The instant this request was send to the queue.
@@ -280,7 +280,7 @@ impl SnapshotRequestHandler {
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
         let SnapshotRequest {
             snapshot_root_bank,
-            status_cache_slot_deltas,
+            seen_transaction_cache_slot_deltas,
             request_kind,
             enqueued: _,
         } = snapshot_request;
@@ -367,7 +367,7 @@ impl SnapshotRequestHandler {
                         accounts_package_kind,
                         &snapshot_root_bank,
                         snapshot_storages,
-                        status_cache_slot_deltas,
+                        seen_transaction_cache_slot_deltas,
                         accounts_hash_for_testing,
                     ),
                     AccountsPackageKind::EpochAccountsHash => panic!(
@@ -887,7 +887,7 @@ mod test {
         let send_snapshot_request = |snapshot_root_bank, request_kind| {
             let snapshot_request = SnapshotRequest {
                 snapshot_root_bank,
-                status_cache_slot_deltas: Vec::default(),
+                seen_transaction_cache_slot_deltas: Vec::default(),
                 request_kind,
                 enqueued: Instant::now(),
             };

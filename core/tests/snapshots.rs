@@ -217,7 +217,7 @@ fn run_bank_forks_snapshot_n<F>(
         let bank = bank_forks.write().unwrap().insert(bank);
         f(bank.clone_without_scheduler().as_ref(), mint_keypair);
         // Set root to make sure we don't end up with too many account storage entries
-        // and to allow snapshotting of bank and the purging logic on status_cache to
+        // and to allow snapshotting of bank and the purging logic on `seen_transaction_cache` to
         // kick in
         if slot % set_root_interval == 0 || slot == last_slot {
             if !bank.is_complete() {
@@ -365,7 +365,7 @@ fn test_slots_to_snapshot(snapshot_version: SnapshotVersion, cluster_type: Clust
             .read()
             .unwrap()
             .root_bank()
-            .status_cache
+            .seen_transaction_cache
             .read()
             .unwrap()
             .roots()
@@ -380,13 +380,13 @@ fn test_slots_to_snapshot(snapshot_version: SnapshotVersion, cluster_type: Clust
 #[test_case(V1_2_0, Devnet)]
 #[test_case(V1_2_0, Testnet)]
 #[test_case(V1_2_0, MainnetBeta)]
-fn test_bank_forks_status_cache_snapshot(
+fn test_bank_forks_seen_transaction_cache_snapshot(
     snapshot_version: SnapshotVersion,
     cluster_type: ClusterType,
 ) {
     // create banks up to slot (MAX_CACHE_ENTRIES * 2) + 1 while transferring 1 lamport into 2 different accounts each time
     // this is done to ensure the AccountStorageEntries keep getting cleaned up as the root moves
-    // ahead. Also tests the status_cache purge and status cache snapshotting.
+    // ahead. Also tests the `seen_transaction_cache` purge and snapshotting.
     // Makes sure that the last bank is restored correctly
     let key1 = Keypair::new().pubkey();
     let key2 = Keypair::new().pubkey();
@@ -502,7 +502,7 @@ fn test_bank_forks_incremental_snapshot(
         };
 
         // Set root to make sure we don't end up with too many account storage entries
-        // and to allow snapshotting of bank and the purging logic on status_cache to
+        // and to allow snapshotting of bank and the purging logic on `seen_transaction_cache` to
         // kick in
         if slot % SET_ROOT_INTERVAL == 0 {
             // set_root sends a snapshot request
