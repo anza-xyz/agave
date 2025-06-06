@@ -722,13 +722,9 @@ fn process_instruction<'a>(
             )
             .unwrap();
             let account = &accounts[ARGUMENT_INDEX];
+            let byte_offset = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
             // this should cause the tx to fail since the callee changed ownership
-            unsafe {
-                *account
-                    .data
-                    .borrow_mut()
-                    .get_unchecked_mut(instruction_data[1] as usize) = 42
-            };
+            unsafe { *account.data.borrow_mut().get_unchecked_mut(byte_offset) = 42 };
         }
         TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLEE_NESTED => {
             msg!("TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLEE_NESTED");
@@ -754,14 +750,10 @@ fn process_instruction<'a>(
                 accounts,
             )
             .unwrap();
+            let byte_offset = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
             // this should cause the tx to failsince invoked_program_id now owns
             // the account
-            unsafe {
-                *account
-                    .data
-                    .borrow_mut()
-                    .get_unchecked_mut(instruction_data[1] as usize) = 42
-            };
+            unsafe { *account.data.borrow_mut().get_unchecked_mut(byte_offset) = 42 };
         }
         TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER => {
             msg!("TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE_MOVING_DATA_POINTER");
