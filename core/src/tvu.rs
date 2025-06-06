@@ -27,7 +27,7 @@ use {
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::{
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
-        duplicate_shred_listener::DuplicateShredListener,
+        duplicate_shred_listener::DuplicateShredListener, epoch_specs::EpochSpecs,
     },
     solana_keypair::Keypair,
     solana_ledger::{
@@ -85,7 +85,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
-    pub alpenglow: UdpSocket,
+    pub alpenglow: Option<UdpSocket>,
 }
 
 pub struct TvuConfig {
@@ -352,6 +352,7 @@ impl Tvu {
             tower_storage,
             vote_connection_cache.clone(),
             alpenglow_socket,
+            EpochSpecs::from(bank_forks.clone()),
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
