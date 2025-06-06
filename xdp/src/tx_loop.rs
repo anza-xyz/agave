@@ -44,7 +44,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
-    const FRAME_COUNT: usize = 4096;
+    const FRAME_COUNT: usize = 8192;
 
     // try to allocate huge pages first, then fall back to regular pages
     const HUGE_2MB: usize = 2 * 1024 * 1024;
