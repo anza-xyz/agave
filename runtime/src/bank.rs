@@ -6434,7 +6434,7 @@ impl Bank {
     }
 
     /// Returns how clean_accounts() should handle old storages
-    fn clean_accounts_old_storages_policy(&self) -> OldStoragesPolicy {
+    pub fn clean_accounts_old_storages_policy(&self) -> OldStoragesPolicy {
         if self.are_ancient_storages_enabled() {
             OldStoragesPolicy::Leave
         } else {

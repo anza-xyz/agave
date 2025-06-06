@@ -418,6 +418,24 @@ impl SnapshotRequestHandler {
         );
         Ok(snapshot_root_bank.slot())
     }
+
+    /// Returns the slot of the next snapshot request to be handled
+    fn peek_next_snapshot_request_slot(&self) -> Option<Slot> {
+        // We reuse `get_next_snapshot_request()` here, since it already implements all the logic
+        // for getting the highest priority request, *AND* we leverage its test coverage.
+        // Additionally, since `get_next_snapshot_request()` drops old requests, we might get to
+        // proactively clean up old banks earlier as well!
+        let (next_request, _, _) = self.get_next_snapshot_request()?;
+        let next_slot = next_request.snapshot_root_bank.slot();
+
+        // make sure to re-enqueue the request, otherwise we'd lose it!
+        self.snapshot_controller
+            .request_sender()
+            .try_send(next_request)
+            .expect("re-enqueue snapshot request");
+
+        Some(next_slot)
+    }
 }
 
 #[derive(Debug)]
@@ -632,8 +650,18 @@ impl AccountsBackgroundService {
                         } else {
                             // we didn't handle a snapshot request, so do flush/clean/shrink
 
-                            // see the comments in Bank::clean_accounts() for why we sub 1 here
-                            let max_clean_slot_inclusive = bank.slot().saturating_sub(1);
+                            let next_snapshot_request_slot = request_handlers
+                                .snapshot_request_handler
+                                .peek_next_snapshot_request_slot();
+
+                            // We cannot clean past the next snapshot request slot because it may
+                            // have zero-lamport accounts.  See the comments in
+                            // Bank::clean_accounts() for more information.
+                            let max_clean_slot_inclusive = cmp::min(
+                                next_snapshot_request_slot.unwrap_or(Slot::MAX),
+                                bank.slot(),
+                            )
+                            .saturating_sub(1);
 
                             let duration_since_previous_clean = previous_clean_time.elapsed();
                             let should_clean = duration_since_previous_clean > CLEAN_INTERVAL;
@@ -646,7 +674,12 @@ impl AccountsBackgroundService {
                                 .flush_accounts_cache(force_flush, Some(max_clean_slot_inclusive));
 
                             if should_clean {
-                                bank.clean_accounts();
+                                bank.rc.accounts.accounts_db.clean_accounts(
+                                    Some(max_clean_slot_inclusive),
+                                    false,
+                                    bank.epoch_schedule(),
+                                    bank.clean_accounts_old_storages_policy(),
+                                );
                                 last_cleaned_slot = max_clean_slot_inclusive;
                                 previous_clean_time = Instant::now();
                             }
