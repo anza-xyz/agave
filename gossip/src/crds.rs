@@ -57,11 +57,10 @@ const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
 const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // Required number of leading zero bits for crds signature to get reported to influx
-// mean new push messages received per minute per node
-//      testnet: ~500k,
-//      mainnet: ~280k
+// mean new CrdsValues received per minute per node
+//      testnet/mainnet: ~680k as of 2025-06-06
 // target: 1 signature reported per minute
-// log2(500k) = ~18.9.
+// log2(680k) = ~19.375.
 pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
 
 pub struct Crds {
