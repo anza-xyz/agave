@@ -75,7 +75,8 @@ solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
-solana-transaction-context = { workspace = true }
+[target.'cfg(debug_assertions)'.dependencies]
+solana-transaction-context = { workspace = true, features = ["debug-signature"] }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
 spl-generic-token = { workspace = true }
@@ -119,7 +120,7 @@ solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils", "debug-signature"] }
 spl-token = { workspace = true }
 test-case = { workspace = true }
 
