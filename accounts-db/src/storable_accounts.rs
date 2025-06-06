@@ -366,7 +366,7 @@ pub mod tests {
         std::sync::Arc,
     };
 
-    impl<'a> StorableAccountsBySlot<'a> {
+    impl StorableAccountsBySlot<'_> {
         /// given an overall index for all accounts in self:
         /// return (slots_and_accounts index, index within those accounts)
         /// This is the baseline unoptimized implementation. It is not used in the validator. It
