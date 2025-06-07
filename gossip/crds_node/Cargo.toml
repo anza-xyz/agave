@@ -1,0 +1,34 @@
+[package]
+name = "crds_node"
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+version = { workspace = true }
+description = "A standalone CRDS node for simulations and tests"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+borsh = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+signal-hook = { workspace = true }
+solana-gossip = { workspace = true, features = ["dev-context-only-utils"] }
+solana-hash = { workspace = true, features = ["borsh", "dev-context-only-utils"] }
+solana-instruction = { workspace = true, features = ["bincode", "borsh"] }
+solana-keypair = { workspace = true }
+solana-logger = { workspace = true }
+solana-net-utils = { workspace = true }
+solana-packet =  { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
+solana-streamer = { workspace = true }
+solana-time-utils = { workspace = true }
+solana-transaction = { workspace = true, features = ["bincode", "dev-context-only-utils"] }
+
+[lints]
+workspace = true

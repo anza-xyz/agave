@@ -27,7 +27,7 @@ use {
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::{
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
-        duplicate_shred_listener::DuplicateShredListener,
+        duplicate_shred_listener::DuplicateShredListener, epoch_specs::EpochSpecs,
     },
     solana_keypair::Keypair,
     solana_ledger::{
@@ -85,6 +85,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
+    pub alpenglow: Option<UdpSocket>,
 }
 
 pub struct TvuConfig {
@@ -179,6 +180,7 @@ impl Tvu {
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
+            alpenglow: alpenglow_socket,
         } = sockets;
 
         let (fetch_sender, fetch_receiver) = unbounded();
@@ -349,6 +351,8 @@ impl Tvu {
             poh_recorder.clone(),
             tower_storage,
             vote_connection_cache.clone(),
+            alpenglow_socket,
+            EpochSpecs::from(bank_forks.clone()),
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
@@ -552,6 +556,7 @@ pub mod tests {
                     retransmit: target1.sockets.retransmit_sockets,
                     fetch: target1.sockets.tvu,
                     ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
+                    alpenglow: target1.sockets.alpenglow,
                 }
             },
             blockstore,
