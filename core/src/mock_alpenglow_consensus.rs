@@ -39,7 +39,7 @@ struct SharedState {
 
 // This is a placeholder that is only used for load-testing.
 // This is not representative of the actual alpenglow implementation.
-pub(crate) struct FakeAlpenglowConsensus {
+pub(crate) struct MockAlpenglowConsensus {
     sender_thread: JoinHandle<()>,
     listener_thread: JoinHandle<()>,
     state: Arc<Mutex<SharedState>>,
@@ -65,7 +65,7 @@ impl FakeVotePacket {
 }
 const CHECK_INTERVAL: Duration = Duration::from_millis(10);
 
-impl FakeAlpenglowConsensus {
+impl MockAlpenglowConsensus {
     pub(crate) fn new(
         socket: UdpSocket,
         cluster_info: Arc<ClusterInfo>,
@@ -223,7 +223,7 @@ impl FakeAlpenglowConsensus {
         (total_voted, stake_weighted_delay)
     }
 
-    pub(crate) fn send_fake_votes(&mut self, slot: Slot) {
+    pub(crate) fn send_fake_votes(&self, slot: Slot) {
         self.send_event.send(slot);
     }
 
