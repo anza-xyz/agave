@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use {crate::io_uring::dir_remover::RingDirRemover, agave_io_uring::io_uring_supported};
 use {
     log::*,
     solana_measure::measure_time,
@@ -49,7 +51,7 @@ pub fn create_accounts_run_and_snapshot_dirs(
         // The run/ content cleanup will be done at a later point.  The snapshot/ content persists
         // across the process boot, and will be purged by the account_background_service.
         if fs::remove_dir_all(&account_dir).is_err() {
-            delete_contents_of_path(&account_dir);
+            remove_dir_contents(&account_dir);
         }
         fs::create_dir_all(&run_path)?;
         fs::create_dir_all(&snapshot_path)?;
@@ -108,7 +110,7 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
         lock.insert(path.as_ref().to_path_buf());
         drop(lock); // unlock before doing sync delete
 
-        delete_contents_of_path(&path);
+        remove_dir_contents(&path);
         IN_PROGRESS_DELETES.lock().unwrap().remove(path.as_ref());
         return;
     }
@@ -119,7 +121,7 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
         .name("solDeletePath".to_string())
         .spawn(move || {
             trace!("background deleting {}...", path_delete.display());
-            let (result, measure_delete) = measure_time!(fs::remove_dir_all(&path_delete));
+            let (result, measure_delete) = measure_time!(remove_dir_all(&path_delete));
             if let Err(err) = result {
                 panic!("Failed to async delete '{}': {err}", path_delete.display());
             }
@@ -133,11 +135,41 @@ pub fn move_and_async_delete_path(path: impl AsRef<Path>) {
         .expect("spawn background delete thread");
 }
 
+/// Removes a directory and all its contents.
+pub fn remove_dir_all(path: impl Into<PathBuf> + AsRef<Path>) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if io_uring_supported() {
+        if let Ok(mut remover) = RingDirRemover::new() {
+            return remover.remove_dir_all(path);
+        }
+    }
+
+    fs::remove_dir_all(path)
+}
+
+/// Removes the contents of a directory, but not the directory itself.
+pub fn remove_dir_contents(path: impl AsRef<Path>) {
+    let path = path.as_ref();
+
+    #[cfg(target_os = "linux")]
+    if io_uring_supported() {
+        if let Ok(mut remover) = RingDirRemover::new() {
+            if let Err(e) = remover.remove_dir_contents(path) {
+                warn!("Failed to delete contents of '{}': {e}", path.display());
+            }
+
+            return;
+        }
+    }
+
+    remove_dir_contents_slow(path)
+}
+
 /// Delete the files and subdirectories in a directory.
 /// This is useful if the process does not have permission
 /// to delete the top level directory it might be able to
 /// delete the contents of that directory.
-pub fn delete_contents_of_path(path: impl AsRef<Path>) {
+fn remove_dir_contents_slow(path: impl AsRef<Path>) {
     match fs::read_dir(&path) {
         Err(err) => {
             warn!(
@@ -202,7 +234,7 @@ mod tests {
 
         // delete a `run/` and `snapshot/` dir, then re-create it
         let account_path_first = account_paths.first().unwrap();
-        delete_contents_of_path(account_path_first);
+        remove_dir_contents(account_path_first);
         assert!(account_path_first.exists());
         assert!(!account_path_first.join(ACCOUNTS_RUN_DIR).exists());
         assert!(!account_path_first.join(ACCOUNTS_SNAPSHOT_DIR).exists());
