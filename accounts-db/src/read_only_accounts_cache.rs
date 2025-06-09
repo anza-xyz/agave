@@ -346,7 +346,7 @@ impl ReadOnlyAccountsCache {
         rng: &mut R,
         #[cfg(feature = "dev-context-only-utils")] mut callback: impl FnMut(
             &Pubkey,
-            ReadOnlyAccountCacheEntry,
+            Option<ReadOnlyAccountCacheEntry>,
         ),
     ) -> u64
     where
@@ -386,8 +386,13 @@ impl ReadOnlyAccountsCache {
             Self::do_remove(&key, cache, data_size);
             #[cfg(feature = "dev-context-only-utils")]
             {
+<<<<<<< HEAD
                 let entry = Self::do_remove(&key, cache, data_size);
                 callback(&key, entry.unwrap());
+=======
+                #[allow(clippy::used_underscore_binding)]
+                callback(&key, _entry);
+>>>>>>> 8e60bf233 (Do not unwrap evicted entry in ReadOnlyAccountsCache (#6471))
             }
             num_evicts = num_evicts.saturating_add(1);
         }
@@ -412,7 +417,7 @@ impl ReadOnlyAccountsCache {
     ) -> u64
     where
         R: Rng,
-        C: FnMut(&Pubkey, ReadOnlyAccountCacheEntry),
+        C: FnMut(&Pubkey, Option<ReadOnlyAccountCacheEntry>),
     {
         #[allow(clippy::used_underscore_binding)]
         let target_data_size = self._max_data_size_lo;
