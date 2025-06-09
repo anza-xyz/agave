@@ -4,7 +4,8 @@
 use {
     crate::{
         atomic_udp_socket::{
-            AtomicSocketProvider, AtomicUdpSocket, FixedSocketProvider, SocketProvider,
+            AtomicSocketProvider, AtomicUdpSocket, CurrentSocket, FixedSocketProvider,
+            SocketProvider,
         },
         packet::{
             self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
@@ -161,10 +162,13 @@ fn recv_loop<P: SocketProvider>(
     is_staked_service: bool,
 ) -> Result<()> {
     loop {
-        let (socket, changed) = provider.current_socket();
-        if changed {
-            socket.set_read_timeout(Some(Duration::from_secs(1)))?;
-        }
+        let socket = match provider.current_socket() {
+            CurrentSocket::Same(sock) => sock,
+            CurrentSocket::Changed(sock) => {
+                sock.set_read_timeout(Some(Duration::from_secs(1)))?;
+                sock
+            }
+        };
         let mut packet_batch = if use_pinned_memory {
             PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
@@ -559,7 +563,7 @@ fn responder_loop<P: SocketProvider>(
     }
 
     loop {
-        let (sock, _) = provider.current_socket();
+        let sock = provider.current_socket_ref();
         if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
             match e {
                 StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,

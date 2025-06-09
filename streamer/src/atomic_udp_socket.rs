@@ -31,9 +31,21 @@ impl AtomicUdpSocket {
     }
 }
 
+pub enum CurrentSocket<'a> {
+    Same(&'a UdpSocket),
+    Changed(&'a UdpSocket),
+}
+
 /// Trait for providing a socket.
 pub trait SocketProvider {
-    fn current_socket(&mut self) -> (&UdpSocket, bool);
+    fn current_socket(&mut self) -> CurrentSocket;
+
+    #[inline]
+    fn current_socket_ref(&mut self) -> &UdpSocket {
+        match self.current_socket() {
+            CurrentSocket::Same(sock) | CurrentSocket::Changed(sock) => sock,
+        }
+    }
 }
 
 /// Fixed UDP Socket -> default
@@ -47,38 +59,32 @@ impl FixedSocketProvider {
 }
 impl SocketProvider for FixedSocketProvider {
     #[inline]
-    fn current_socket(&mut self) -> (&UdpSocket, bool) {
-        (&self.socket, false)
+    fn current_socket(&mut self) -> CurrentSocket {
+        CurrentSocket::Same(&self.socket)
     }
 }
 
 /// Hot-swappable `AtomicUdpSocket`
 pub struct AtomicSocketProvider {
     atomic: Arc<AtomicUdpSocket>,
-    last_id: usize,
     current: Arc<UdpSocket>,
 }
 impl AtomicSocketProvider {
     pub fn new(atomic: Arc<AtomicUdpSocket>) -> Self {
         let s = atomic.load();
-        Self {
-            atomic,
-            current: s,
-            last_id: 0,
-        }
+        Self { atomic, current: s }
     }
 }
 impl SocketProvider for AtomicSocketProvider {
     // Check if the socket has changed since the last call
     #[inline]
-    fn current_socket(&mut self) -> (&UdpSocket, bool) {
-        let s = self.atomic.load();
-        let id = Arc::as_ptr(&s) as usize;
-        let changed = id != self.last_id;
-        if changed {
-            self.last_id = id;
-            self.current = s;
+    fn current_socket(&mut self) -> CurrentSocket {
+        let sock = self.atomic.load();
+        if !Arc::ptr_eq(&sock, &self.current) {
+            self.current = sock;
+            CurrentSocket::Changed(&self.current)
+        } else {
+            CurrentSocket::Same(&self.current)
         }
-        (&*self.current, changed)
     }
 }
