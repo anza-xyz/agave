@@ -62,7 +62,7 @@ struct ScanState<'a> {
     scan_slot: Slot,
     /// When current_slot is set, this hashset gets updated with a list of
     /// pubkeys to skip when scanning current_slot
-    pub_keys_to_skip: HashSet<Pubkey>,
+    pubkeys_to_skip: HashSet<Pubkey>,
 }
 
 impl AppendVecScan for ScanState<'_> {
@@ -71,7 +71,7 @@ impl AppendVecScan for ScanState<'_> {
         self.is_ancient = is_ancient;
 
         // Reinitialize the hashset to remove all entries
-        self.pub_keys_to_skip = HashSet::default();
+        self.pubkeys_to_skip = HashSet::default();
 
         // Get a list of all accounts that were marked obsolete at the slot
         // the scan is being done or earlier
@@ -81,13 +81,13 @@ impl AppendVecScan for ScanState<'_> {
         for account in accounts {
             let offset = account.0;
             let stored_account = storage.accounts.get_account_index_info(offset);
-            self.pub_keys_to_skip
+            self.pubkeys_to_skip
                 .insert(stored_account.unwrap().index_info.pubkey);
         }
     }
 
     fn filter(&mut self, pubkey: &Pubkey) -> bool {
-        if self.pub_keys_to_skip.contains(pubkey) {
+        if self.pubkeys_to_skip.contains(pubkey) {
             return false;
         }
         self.pubkey_to_bin_index = self.bin_calculator.bin_from_pubkey(pubkey);
@@ -178,7 +178,7 @@ impl AccountsDb {
                 &stats.num_zero_lamport_accounts_ancient,
             ),
             scan_slot: storages.max_slot_inclusive(),
-            pub_keys_to_skip: HashSet::default(),
+            pubkeys_to_skip: HashSet::default(),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -1050,25 +1050,25 @@ mod tests {
         _slot_expected: Slot,
         calls: Arc<AtomicU64>,
         accum: BinnedHashData,
-        pub_keys_to_skip: HashSet<Pubkey>,
+        pubkeys_to_skip: HashSet<Pubkey>,
         scan_slot: Slot,
     }
 
     impl AppendVecScan for TestScanObsolete {
         fn set_slot(&mut self, slot: Slot, _is_ancient: bool, storage: &AccountStorageEntry) {
             self.current_slot = slot;
-            self.pub_keys_to_skip.clear();
+            self.pubkeys_to_skip.clear();
             let accounts = storage.get_obsolete_accounts(Some(self.scan_slot));
 
             for account in accounts {
                 let offset = account.0;
                 let stored_account = storage.accounts.get_account_index_info(offset);
-                self.pub_keys_to_skip
+                self.pubkeys_to_skip
                     .insert(stored_account.unwrap().index_info.pubkey);
             }
         }
         fn filter(&mut self, pubkey: &Pubkey) -> bool {
-            if self.pub_keys_to_skip.contains(pubkey) {
+            if self.pubkeys_to_skip.contains(pubkey) {
                 return false;
             }
             true
@@ -1127,7 +1127,7 @@ mod tests {
                 _slot_expected: slot,
                 accum: Vec::default(),
                 calls: calls.clone(),
-                pub_keys_to_skip: HashSet::default(),
+                pubkeys_to_skip: HashSet::default(),
                 scan_slot: scan_slot as Slot,
             };
             scanner.set_slot(scan_slot as Slot, false, &storage);
