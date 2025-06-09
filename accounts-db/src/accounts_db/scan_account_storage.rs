@@ -1118,7 +1118,7 @@ mod tests {
         }
 
         // Perform scans of the storage assuming a different slot and verify the number of accounts found matches
-        for scan_slot in 0..=(num_accounts - 1) {
+        for scan_slot in 0..num_accounts {
             let calls = Arc::new(AtomicU64::new(0));
             let expected_count = num_accounts - scan_slot;
 
