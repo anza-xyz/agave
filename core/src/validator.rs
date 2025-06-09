@@ -55,6 +55,7 @@ use {
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+        gossip_rebinder::GossipRebinder,
         gossip_service::GossipService,
     },
     solana_hard_forks::HardForks,
@@ -1314,6 +1315,7 @@ impl Validator {
         let stats_reporter_service =
             StatsReporterService::new(stats_reporter_receiver, exit.clone());
 
+        let (gossip_rebind_tx, gossip_rebind_rx) = crossbeam_channel::bounded(1);
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(bank_forks.clone()),
@@ -1322,6 +1324,7 @@ impl Validator {
             should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
             exit.clone(),
+            Some(gossip_rebind_rx),
         );
         let serve_repair = ServeRepair::new(
             cluster_info.clone(),
@@ -1677,6 +1680,7 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
+            gossip_rebinder: Some(Arc::new(GossipRebinder::new(gossip_rebind_tx))),
         });
 
         Ok(Self {

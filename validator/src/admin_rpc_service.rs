@@ -27,7 +27,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -215,6 +215,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
+
+    #[rpc(meta, name = "setGossipSocket")]
+    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -533,6 +536,32 @@ impl AdminRpc for AdminRpcImpl {
 
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
+    }
+
+    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()> {
+        let ip: IpAddr = ip
+            .parse()
+            .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid IP address: {e}")))?;
+        let new_addr = SocketAddr::new(ip, port);
+
+        meta.with_post_init(|post_init| {
+            if let Some(gossip_rebinder) = &post_init.gossip_rebinder {
+                gossip_rebinder.rebind(new_addr).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Failed to rebind gossip socket: {e}"
+                    ))
+                })?;
+            }
+            post_init
+                .cluster_info
+                .set_gossip_socket(new_addr)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Failed to refresh gossip ContactInfo: {e}"
+                    ))
+                })?;
+            Ok(())
+        })
     }
 
     fn repair_shred_from_peer(
@@ -995,6 +1024,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
+                    gossip_rebinder: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

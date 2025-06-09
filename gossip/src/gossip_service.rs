@@ -7,7 +7,7 @@ use {
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
@@ -50,6 +50,7 @@ impl GossipService {
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
         exit: Arc<AtomicBool>,
+        gossip_rebind_rx: Option<Receiver<SocketAddr>>,
     ) -> Self {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
@@ -98,11 +99,19 @@ impl GossipService {
         );
         let t_responder = streamer::responder(
             "Gossip",
-            gossip_socket,
+            gossip_socket.clone(),
             response_receiver,
             socket_addr_space,
             stats_reporter_sender,
         );
+        let t_rebind = gossip_rebind_rx.map(|rebind_rx| {
+            spawn_socket_rebinder(
+                "solGossipRebinder".to_string(),
+                gossip_socket.clone(),
+                exit.clone(),
+                rebind_rx,
+            )
+        });
         let t_metrics = Builder::new()
             .name("solGossipMetr".to_string())
             .spawn({
@@ -123,7 +132,7 @@ impl GossipService {
                 }
             })
             .unwrap();
-        let thread_hdls = vec![
+        let mut thread_hdls = vec![
             t_receiver,
             t_responder,
             t_socket_consume,
@@ -131,6 +140,9 @@ impl GossipService {
             t_gossip,
             t_metrics,
         ];
+        if let Some(t_rebind) = t_rebind {
+            thread_hdls.push(t_rebind);
+        }
         Self { thread_hdls }
     }
 
@@ -140,6 +152,29 @@ impl GossipService {
         }
         Ok(())
     }
+}
+
+// Read from socket rebind channel and rebind the socket to the new address.
+fn spawn_socket_rebinder(
+    thread_name: String,
+    _socket: Arc<UdpSocket>,
+    exit: Arc<AtomicBool>,
+    rebind_rx: Receiver<SocketAddr>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(thread_name)
+        .spawn(move || {
+            while !exit.load(Ordering::Relaxed) {
+                match rebind_rx.recv_timeout(Duration::from_secs(1)) {
+                    Ok(new_addr) => {
+                        info!("Rebinding socket to {new_addr}. Place holder for now.");
+                    }
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        })
+        .expect("Failed to spawn socket rebinder thread")
 }
 
 /// Discover Validators in a cluster
@@ -380,6 +415,7 @@ pub fn make_gossip_node(
         should_check_duplicate_instance,
         None,
         exit,
+        None,
     );
     (gossip_service, ip_echo, cluster_info)
 }
@@ -415,6 +451,7 @@ mod tests {
             true, // should_check_duplicate_instance
             None,
             exit.clone(),
+            None,
         );
         exit.store(true, Ordering::Relaxed);
         d.join().unwrap();
