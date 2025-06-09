@@ -694,9 +694,9 @@ dependencies = [
 
 [[package]]
 name = "arc-swap"
-version = "1.5.0"
+version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5d78ce20460b82d3fa150275ed9d55e21064fc7951177baacf86a145c4a4b1f"
+checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
 
 [[package]]
 name = "ark-bn254"
@@ -10666,6 +10666,7 @@ dependencies = [
 name = "solana-streamer"
 version = "3.0.0"
 dependencies = [
+ "arc-swap",
  "assert_matches",
  "async-channel",
  "bytes",

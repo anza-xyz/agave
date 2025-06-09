@@ -3,6 +3,9 @@
 
 use {
     crate::{
+        atomic_udp_socket::{
+            AtomicSocketProvider, AtomicUdpSocket, FixedSocketProvider, SocketProvider,
+        },
         packet::{
             self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
         },
@@ -146,8 +149,8 @@ impl StreamerReceiveStats {
 
 pub type Result<T> = std::result::Result<T, StreamerError>;
 
-fn recv_loop(
-    socket: &UdpSocket,
+fn recv_loop<P: SocketProvider>(
+    provider: &mut P,
     exit: &AtomicBool,
     packet_batch_sender: &impl ChannelSend<PacketBatch>,
     recycler: &PacketBatchRecycler,
@@ -158,6 +161,10 @@ fn recv_loop(
     is_staked_service: bool,
 ) -> Result<()> {
     loop {
+        let (socket, changed) = provider.current_socket();
+        if changed {
+            socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+        }
         let mut packet_batch = if use_pinned_memory {
             PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
@@ -230,8 +237,41 @@ pub fn receiver(
     Builder::new()
         .name(thread_name)
         .spawn(move || {
+            let mut provider = FixedSocketProvider::new(socket);
             let _ = recv_loop(
-                &socket,
+                &mut provider,
+                &exit,
+                &packet_batch_sender,
+                &recycler,
+                &stats,
+                coalesce,
+                use_pinned_memory,
+                in_vote_only_mode,
+                is_staked_service,
+            );
+        })
+        .unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn receiver_atomic(
+    thread_name: String,
+    socket: Arc<AtomicUdpSocket>,
+    exit: Arc<AtomicBool>,
+    packet_batch_sender: impl ChannelSend<PacketBatch>,
+    recycler: PacketBatchRecycler,
+    stats: Arc<StreamerReceiveStats>,
+    coalesce: Option<Duration>,
+    use_pinned_memory: bool,
+    in_vote_only_mode: Option<Arc<AtomicBool>>,
+    is_staked_service: bool,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(thread_name)
+        .spawn(move || {
+            let mut provider = AtomicSocketProvider::new(socket);
+            let _ = recv_loop(
+                &mut provider,
                 &exit,
                 &packet_batch_sender,
                 &recycler,

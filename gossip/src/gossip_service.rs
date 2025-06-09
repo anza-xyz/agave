@@ -11,13 +11,14 @@ use {
     rand::{thread_rng, Rng},
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
-    solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
+    solana_net_utils::{bind_to, DEFAULT_IP_ECHO_SERVER_THREADS},
     solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
+        atomic_udp_socket::AtomicUdpSocket,
         evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
@@ -54,7 +55,7 @@ impl GossipService {
     ) -> Self {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let gossip_socket = Arc::new(gossip_socket);
+        let gossip_socket = Arc::new(AtomicUdpSocket::new(gossip_socket));
         trace!(
             "GossipService: id: {}, listening on: {:?}",
             &cluster_info.id(),
@@ -62,7 +63,7 @@ impl GossipService {
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
-        let t_receiver = streamer::receiver(
+        let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
             gossip_socket.clone(),
             exit.clone(),
@@ -157,7 +158,7 @@ impl GossipService {
 // Read from socket rebind channel and rebind the socket to the new address.
 fn spawn_socket_rebinder(
     thread_name: String,
-    _socket: Arc<UdpSocket>,
+    socket: Arc<AtomicUdpSocket>,
     exit: Arc<AtomicBool>,
     rebind_rx: Receiver<SocketAddr>,
 ) -> JoinHandle<()> {
@@ -167,7 +168,15 @@ fn spawn_socket_rebinder(
             while !exit.load(Ordering::Relaxed) {
                 match rebind_rx.recv_timeout(Duration::from_secs(1)) {
                     Ok(new_addr) => {
-                        info!("Rebinding socket to {new_addr}. Place holder for now.");
+                        info!("Rebinding socket to {new_addr}");
+                        match bind_to(new_addr.ip(), new_addr.port(), false) {
+                            Ok(new_socket) => {
+                                socket.swap(new_socket);
+                            }
+                            Err(e) => {
+                                warn!("Failed to bind to {new_addr}: {e}");
+                            }
+                        }
                     }
                     Err(RecvTimeoutError::Timeout) => continue,
                     Err(RecvTimeoutError::Disconnected) => break,
