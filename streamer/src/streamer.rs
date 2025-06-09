@@ -500,6 +500,27 @@ pub fn recv_packet_batches(
     Ok((packet_batches, num_packets, recv_duration))
 }
 
+pub fn responder_atomic(
+    name: &'static str,
+    sock: Arc<AtomicUdpSocket>,
+    r: PacketBatchReceiver,
+    socket_addr_space: SocketAddrSpace,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(format!("solRspndr{name}"))
+        .spawn(move || {
+            responder_loop(
+                AtomicSocketProvider::new(sock),
+                name,
+                r,
+                socket_addr_space,
+                stats_reporter_sender,
+            );
+        })
+        .unwrap()
+}
+
 pub fn responder(
     name: &'static str,
     sock: Arc<UdpSocket>,
@@ -510,41 +531,58 @@ pub fn responder(
     Builder::new()
         .name(format!("solRspndr{name}"))
         .spawn(move || {
-            let mut errors = 0;
-            let mut last_error = None;
-            let mut last_print = 0;
-            let mut stats = None;
-
-            if stats_reporter_sender.is_some() {
-                stats = Some(StreamerSendStats::default());
-            }
-
-            loop {
-                if let Err(e) = recv_send(&sock, &r, &socket_addr_space, &mut stats) {
-                    match e {
-                        StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                        StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
-                        _ => {
-                            errors += 1;
-                            last_error = Some(e);
-                        }
-                    }
-                }
-                let now = timestamp();
-                if now - last_print > 1000 && errors != 0 {
-                    datapoint_info!(name, ("errors", errors, i64),);
-                    info!("{} last-error: {:?} count: {}", name, last_error, errors);
-                    last_print = now;
-                    errors = 0;
-                }
-                if let Some(ref stats_reporter_sender) = stats_reporter_sender {
-                    if let Some(ref mut stats) = stats {
-                        stats.maybe_submit(name, stats_reporter_sender);
-                    }
-                }
-            }
+            responder_loop(
+                FixedSocketProvider::new(sock),
+                name,
+                r,
+                socket_addr_space,
+                stats_reporter_sender,
+            );
         })
         .unwrap()
+}
+
+fn responder_loop<P: SocketProvider>(
+    mut provider: P,
+    name: &'static str,
+    r: PacketBatchReceiver,
+    socket_addr_space: SocketAddrSpace,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) {
+    let mut errors = 0;
+    let mut last_error = None;
+    let mut last_print = 0;
+    let mut stats = None;
+
+    if stats_reporter_sender.is_some() {
+        stats = Some(StreamerSendStats::default());
+    }
+
+    loop {
+        let (sock, _) = provider.current_socket();
+        if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
+            match e {
+                StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
+                StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
+                _ => {
+                    errors += 1;
+                    last_error = Some(e);
+                }
+            }
+        }
+        let now = timestamp();
+        if now - last_print > 1000 && errors != 0 {
+            datapoint_info!(name, ("errors", errors, i64),);
+            info!("{} last-error: {:?} count: {}", name, last_error, errors);
+            last_print = now;
+            errors = 0;
+        }
+        if let Some(ref stats_reporter_sender) = stats_reporter_sender {
+            if let Some(ref mut stats) = stats {
+                stats.maybe_submit(name, stats_reporter_sender);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

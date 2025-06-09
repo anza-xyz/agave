@@ -98,7 +98,7 @@ impl GossipService {
             gossip_validators,
             exit.clone(),
         );
-        let t_responder = streamer::responder(
+        let t_responder = streamer::responder_atomic(
             "Gossip",
             gossip_socket.clone(),
             response_receiver,
