@@ -43,7 +43,7 @@ solana-rpc-client = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
-solana-transaction = "=2.2.2"
+solana-transaction = "=2.2.3"
 solana-version = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
