@@ -386,13 +386,8 @@ impl ReadOnlyAccountsCache {
             Self::do_remove(&key, cache, data_size);
             #[cfg(feature = "dev-context-only-utils")]
             {
-<<<<<<< HEAD
                 let entry = Self::do_remove(&key, cache, data_size);
-                callback(&key, entry.unwrap());
-=======
-                #[allow(clippy::used_underscore_binding)]
-                callback(&key, _entry);
->>>>>>> 8e60bf233 (Do not unwrap evicted entry in ReadOnlyAccountsCache (#6471))
+                callback(&key, entry);
             }
             num_evicts = num_evicts.saturating_add(1);
         }
