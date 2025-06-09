@@ -54,7 +54,10 @@ use {
         mem,
         ops::DerefMut,
         sync::{
-            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
+            atomic::{
+                AtomicU64, AtomicUsize,
+                Ordering::{Relaxed, SeqCst},
+            },
             Arc, Mutex, MutexGuard, OnceLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
@@ -85,6 +88,7 @@ enum CheckPoint<'a> {
     TimeoutListenerTriggered(usize),
     DiscardRequested,
     Discarded(usize),
+    IdlingSchedulerTrashed,
 }
 
 type CountOrDefault = Option<usize>;
@@ -326,6 +330,9 @@ pub struct BankingStageHelper {
     new_task_sender: Sender<NewTaskPayload>,
 }
 
+// bla bla somewhat arbitrary...
+const MAX_TASK_ID: usize = usize::MAX / 2;
+
 impl BankingStageHelper {
     fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
         Self {
@@ -339,9 +346,13 @@ impl BankingStageHelper {
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
-    pub fn is_task_id_overgrown(&self) -> bool {
-        // bla bla somewhat arbitrary...
-        self.next_task_id.load(Relaxed) > usize::MAX / 2
+    fn is_task_id_overgrown(&self) -> bool {
+        self.next_task_id.load(SeqCst) > MAX_TASK_ID
+    }
+
+    #[cfg(test)]
+    fn change_next_task_id(&self, next_task_id: usize) {
+        self.next_task_id.store(next_task_id, SeqCst);
     }
 
     pub fn create_new_task(
@@ -554,6 +565,7 @@ where
                             // abundance of caution...
                             // this is very unlikely code path; add test... bla bla...
                             let pooled = inner.take_and_trash_pooled();
+                            info!("idling BP scheduler ({}) is overgrown", pooled.id());
                             scheduler_pool.spawn_block_production_scheduler(&mut inner);
 
                             let Ok(mut trashed_inners) =
@@ -562,6 +574,7 @@ where
                                 break;
                             };
                             trashed_inners.push(pooled);
+                            sleepless_testing::at(CheckPoint::IdlingSchedulerTrashed);
                             drop(inner);
                         } else {
                             pooled.discard_buffer();
@@ -879,6 +892,14 @@ where
         assert_matches!(result, Ok(_));
         block_production_scheduler_inner.put_spawned(inner);
         trace!("spawn block production scheduler: end!");
+    }
+
+    #[cfg(test)]
+    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize) {
+        (*self.block_production_scheduler_inner.lock().unwrap())
+            .peek_pooled()
+            .unwrap()
+            .change_block_producing_scheduler_next_task_id(next_task_id);
     }
 
     pub fn default_handler_count() -> usize {
@@ -1331,12 +1352,26 @@ impl UsageQueueLoader {
         if self.usage_queue_loader().count() > max_usage_queue_count {
             return true;
         }
+
         match self {
-            Self::OwnedBySelf { .. } => false,
+            Self::OwnedBySelf {
+                usage_queue_loader: _,
+            } => false,
             Self::SharedWithBankingStage {
                 banking_stage_helper,
             } => banking_stage_helper.is_task_id_overgrown(),
         }
+    }
+
+    #[cfg(test)]
+    fn change_banking_stage_next_task_id(&self, next_task_id: usize) {
+        let Self::SharedWithBankingStage {
+            banking_stage_helper,
+        } = self
+        else {
+            panic!()
+        };
+        banking_stage_helper.change_next_task_id(next_task_id);
     }
 }
 
@@ -2409,6 +2444,8 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
+    #[cfg(test)]
+    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize);
     fn discard_buffer(&self);
     fn ensure_abort(&mut self);
 }
@@ -2566,6 +2603,12 @@ where
     fn is_overgrown(&self) -> bool {
         self.usage_queue_loader
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
+    }
+
+    #[cfg(test)]
+    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize) {
+        self.usage_queue_loader
+            .change_banking_stage_next_task_id(next_task_id);
     }
 
     fn discard_buffer(&self) {
@@ -4256,6 +4299,10 @@ mod tests {
             unimplemented!()
         }
 
+        fn change_block_producing_scheduler_next_task_id(&self, _next_task_id: usize) {
+            unimplemented!()
+        }
+
         fn discard_buffer(&self) {
             unimplemented!()
         }
@@ -4882,7 +4929,7 @@ mod tests {
     }
 
     #[test]
-    fn test_block_production_scheduler_drop_overgrown() {
+    fn test_block_production_scheduler_drop_overgrown_on_returning() {
         solana_logger::setup();
 
         let GenesisConfigInfo { genesis_config, .. } =
@@ -4938,6 +4985,89 @@ mod tests {
         Box::new(scheduler.into_inner().1).return_to_pool();
 
         // Re-take a brand-new one
+        let scheduler = pool.do_take_scheduler(context);
+        scheduler.unpause_after_taken();
+        let respawned_new_scheduler_id = scheduler.id();
+        Box::new(scheduler.into_inner().1).return_to_pool();
+
+        // id should be different
+        assert_ne!(trashed_old_scheduler_id, respawned_new_scheduler_id);
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_block_production_scheduler_drop_overgrown_on_idling() {
+        #[derive(Debug)]
+        struct InactiveBankingMinitor;
+
+        impl BankingStageMonitor for InactiveBankingMinitor {
+            fn status(&mut self) -> BankingStageStatus {
+                BankingStageStatus::Inactive
+            }
+        }
+
+        solana_logger::setup();
+
+        let GenesisConfigInfo { genesis_config, .. } =
+            create_genesis_config_for_block_production(10_000);
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::IdlingSchedulerTrashed,
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = DefaultSchedulerPool::do_new(
+            SupportedSchedulingMode::block_production_only(),
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
+
+        let (_banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        pool.register_banking_stage(
+            None,
+            banking_packet_receiver,
+            Box::new(|_, _| unreachable!()),
+            transaction_recorder,
+            Box::new(InactiveBankingMinitor),
+        );
+
+        // Quickly take and return scheduler just to remember id
+        let context = SchedulingContext::for_production(bank);
+        let scheduler = pool.do_take_scheduler(context.clone());
+        let trashed_old_scheduler_id = scheduler.id();
+        scheduler.unpause_after_taken();
+        Box::new(scheduler.into_inner().1).return_to_pool();
+
+        pool.change_block_producing_scheduler_next_task_id(MAX_TASK_ID + 1);
+
+        // Re-take a brand-new one only after solScCleaner did its job...
+        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
+
         let scheduler = pool.do_take_scheduler(context);
         scheduler.unpause_after_taken();
         let respawned_new_scheduler_id = scheduler.id();
