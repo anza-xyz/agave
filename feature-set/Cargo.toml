@@ -1,7 +1,11 @@
 [package]
 name = "agave-feature-set"
+<<<<<<< HEAD
 version = "2.3.0"
+=======
+>>>>>>> c5eaac2b0 (feature-set: Inherit package version from workspace (#6447))
 description = "Solana runtime feature declarations"
+version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
