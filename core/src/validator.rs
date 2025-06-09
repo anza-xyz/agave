@@ -2677,14 +2677,14 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
     // Staked nodes entries will not expire until an epoch after. So it
     // is necessary here to filter for recent entries to establish liveness.
     let peers: HashMap<_, _> = cluster_info
-        .all_tvu_peers()
+        .all_peers()
         .into_iter()
-        .filter(|node| {
-            let age = now.saturating_sub(node.wallclock());
+        .filter(|(_node, node_clock)| {
+            let age = now.saturating_sub(*node_clock);
             // Contact infos are refreshed twice during this period.
             age < CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS
         })
-        .map(|node| (*node.pubkey(), node))
+        .map(|(node, _)| (*node.pubkey(), node))
         .collect();
     let my_shred_version = cluster_info.my_shred_version();
     let my_id = cluster_info.id();

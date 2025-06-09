@@ -88,7 +88,6 @@ impl<T> Drop for TimedGuard<'_, T> {
 
 #[derive(Default)]
 pub struct GossipStats {
-    pub(crate) all_tvu_peers: Counter,
     pub(crate) bad_prune_destination: Counter,
     pub(crate) entrypoint2: Counter,
     pub(crate) entrypoint: Counter,
@@ -239,7 +238,6 @@ pub(crate) fn submit_gossip_stats(
         ("push_vote_read", stats.push_vote_read.clear(), i64),
         ("get_votes", stats.get_votes.clear(), i64),
         ("get_votes_count", stats.get_votes_count.clear(), i64),
-        ("all_tvu_peers", stats.all_tvu_peers.clear(), i64),
         ("tvu_peers", stats.tvu_peers.clear(), i64),
         ("table_size", table_size as i64, i64),
         ("purged_values_size", purged_values_size as i64, i64),
