@@ -119,17 +119,24 @@ pub struct ComputeBudget {
     pub alt_bn128_g2_decompress: u64,
 }
 
-// TODO: Plumb feature.
+#[cfg(feature = "dev-context-only-utils")]
 impl Default for ComputeBudget {
     fn default() -> Self {
         Self::from_budget_and_cost(
-            &SVMTransactionExecutionBudget::new_with_defaults(/* simd_0296_active */ false),
+            &SVMTransactionExecutionBudget::default(),
             &SVMTransactionExecutionCost::default(),
         )
     }
 }
 
 impl ComputeBudget {
+    pub fn new_with_defaults(simd_0296_active: bool) -> Self {
+        Self::from_budget_and_cost(
+            &SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active),
+            &SVMTransactionExecutionCost::default(),
+        )
+    }
+
     pub fn from_budget_and_cost(
         budget: &SVMTransactionExecutionBudget,
         cost: &SVMTransactionExecutionCost,
@@ -258,7 +265,8 @@ impl From<ComputeBudgetLimits> for ComputeBudget {
         ComputeBudget {
             compute_unit_limit: u64::from(compute_budget_limits.compute_unit_limit),
             heap_size: compute_budget_limits.updated_heap_bytes,
-            ..ComputeBudget::default()
+            // TODO: Plumb feature.
+            ..ComputeBudget::new_with_defaults(/* simd_0296_active */ false)
         }
     }
 }

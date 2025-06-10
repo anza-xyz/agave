@@ -1226,16 +1226,17 @@ fn test_program_sbf_call_depth() {
         "solana_sbf_rust_call_depth",
     );
 
-    let instruction = Instruction::new_with_bincode(
-        program_id,
-        &(ComputeBudget::default().max_call_depth - 1),
-        vec![],
+    let budget = ComputeBudget::new_with_defaults(
+        genesis_config
+            .accounts
+            .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
     );
+    let instruction =
+        Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert!(result.is_ok());
 
-    let instruction =
-        Instruction::new_with_bincode(program_id, &ComputeBudget::default().max_call_depth, vec![]);
+    let instruction = Instruction::new_with_bincode(program_id, &budget.max_call_depth, vec![]);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert!(result.is_err());
 }

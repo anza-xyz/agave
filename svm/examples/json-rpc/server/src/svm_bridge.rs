@@ -150,7 +150,7 @@ impl<'a> TransactionBatch<'a> {
 }
 
 pub fn create_custom_environment<'a>() -> BuiltinProgram<InvokeContext<'a>> {
-    let compute_budget = ComputeBudget::default();
+    let compute_budget = ComputeBudget::new_with_defaults(/* simd_0296_active */ false);
     let vm_config = Config {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,

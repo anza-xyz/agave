@@ -4,7 +4,7 @@
 // Export tokio for test clients
 pub use tokio;
 use {
-    agave_feature_set::FEATURE_NAMES,
+    agave_feature_set::{raise_cpi_nesting_limit_to_8, FEATURE_NAMES},
     async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
@@ -847,7 +847,11 @@ impl ProgramTest {
             Arc::new(RuntimeConfig {
                 compute_budget: self.compute_max_units.map(|max_units| ComputeBudget {
                     compute_unit_limit: max_units,
-                    ..ComputeBudget::default()
+                    ..ComputeBudget::new_with_defaults(
+                        genesis_config
+                            .accounts
+                            .contains_key(&raise_cpi_nesting_limit_to_8::id()),
+                    )
                 }),
                 transaction_account_lock_limit: self.transaction_account_lock_limit,
                 ..RuntimeConfig::default()

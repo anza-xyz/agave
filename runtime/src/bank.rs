@@ -1479,7 +1479,13 @@ impl Bank {
     fn prepare_program_cache_for_upcoming_feature_set(&self) {
         let (_epoch, slot_index) = self.epoch_schedule.get_epoch_and_slot_index(self.slot);
         let slots_in_epoch = self.epoch_schedule.get_slots_in_epoch(self.epoch);
-        let compute_budget = self.compute_budget.unwrap_or_default().to_budget();
+        // TODO: Plumb feature.
+        let compute_budget = self
+            .compute_budget
+            .unwrap_or(ComputeBudget::new_with_defaults(
+                /* simd_0296_active */ false,
+            ))
+            .to_budget();
         let (upcoming_feature_set, _newly_activated) = self.compute_active_feature_set(true);
 
         // Recompile loaded programs one at a time before the next epoch hits
@@ -4109,14 +4115,26 @@ impl Bank {
                 Some(Arc::new(
                     create_program_runtime_environment_v1(
                         &self.feature_set.runtime_features(),
-                        &self.compute_budget().unwrap_or_default().to_budget(),
+                        // TODO: Plumb feature.
+                        &self
+                            .compute_budget()
+                            .unwrap_or(ComputeBudget::new_with_defaults(
+                                /* simd_0296_active */ false,
+                            ))
+                            .to_budget(),
                         false, /* deployment */
                         false, /* debugging_features */
                     )
                     .unwrap(),
                 )),
                 Some(Arc::new(create_program_runtime_environment_v2(
-                    &self.compute_budget().unwrap_or_default().to_budget(),
+                    // TODO: Plumb feature.
+                    &self
+                        .compute_budget()
+                        .unwrap_or(ComputeBudget::new_with_defaults(
+                            /* simd_0296_active */ false,
+                        ))
+                        .to_budget(),
                     false, /* debugging_features */
                 ))),
             );
