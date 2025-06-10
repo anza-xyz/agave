@@ -11,7 +11,7 @@ use {
         },
         feature::{status_from_account, CliFeatureStatus},
     },
-    agave_feature_set::{FeatureSet, FEATURE_NAMES},
+    agave_feature_set::{raise_cpi_nesting_limit_to_8, FeatureSet, FEATURE_NAMES},
     agave_syscalls::create_program_runtime_environment_v1,
     bip39::{Language, Mnemonic, MnemonicType, Seed},
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
@@ -3075,7 +3075,9 @@ fn verify_elf(
     // Verify the program
     let program_runtime_environment = create_program_runtime_environment_v1(
         &feature_set.runtime_features(),
-        &SVMTransactionExecutionBudget::default(),
+        &SVMTransactionExecutionBudget::new_with_defaults(
+            feature_set.is_active(&raise_cpi_nesting_limit_to_8::id()),
+        ),
         true,
         false,
     )
