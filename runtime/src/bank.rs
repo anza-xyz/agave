@@ -79,8 +79,7 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
-            VerifyAccountsHashAndLamportsConfig,
+            DuplicatesLtHash, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
             AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
@@ -6048,7 +6047,6 @@ impl Bank {
                     Some(latest_full_snapshot_slot),
                     true,
                     self.epoch_schedule(),
-                    self.clean_accounts_old_storages_policy(),
                 );
                 info!("Cleaning... Done.");
             } else {
@@ -6395,7 +6393,6 @@ impl Bank {
             Some(highest_slot_to_clean),
             false,
             self.epoch_schedule(),
-            self.clean_accounts_old_storages_policy(),
         );
     }
 
@@ -6431,15 +6428,6 @@ impl Bank {
             .accounts_db
             .test_skip_rewrites_but_include_in_bank_hash;
         can_skip_rewrites || test_skip_rewrites_but_include_in_bank_hash
-    }
-
-    /// Returns how clean_accounts() should handle old storages
-    pub fn clean_accounts_old_storages_policy(&self) -> OldStoragesPolicy {
-        if self.are_ancient_storages_enabled() {
-            OldStoragesPolicy::Leave
-        } else {
-            OldStoragesPolicy::Clean
-        }
     }
 
     pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<CostTracker>> {

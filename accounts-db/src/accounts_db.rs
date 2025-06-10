@@ -2438,28 +2438,11 @@ impl AccountsDb {
         is_startup: bool,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
-        old_storages_policy: OldStoragesPolicy,
     ) -> CleaningCandidates {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_root_inclusive = self.accounts_index.max_root_inclusive();
         let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
-
-        if old_storages_policy == OldStoragesPolicy::Clean {
-            let slot_one_epoch_old =
-                max_root_inclusive.saturating_sub(epoch_schedule.slots_per_epoch);
-            // do nothing special for these 100 old storages that will likely get cleaned up shortly
-            let acceptable_straggler_slot_count = 100;
-            let old_slot_cutoff =
-                slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
-            let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
-            let num_old_storages = old_storages.len();
-            for (old_slot, old_storage) in std::iter::zip(old_slots, old_storages) {
-                self.dirty_stores.entry(old_slot).or_insert(old_storage);
-            }
-            info!("Marked {num_old_storages} old storages as dirty");
-        }
-
         let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
@@ -2571,16 +2554,7 @@ impl AccountsDb {
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
     pub fn clean_accounts_for_tests(&self) {
-        self.clean_accounts(
-            None,
-            false,
-            &EpochSchedule::default(),
-            if self.ancient_append_vec_offset.is_some() {
-                OldStoragesPolicy::Leave
-            } else {
-                OldStoragesPolicy::Clean
-            },
-        )
+        self.clean_accounts(None, false, &EpochSchedule::default())
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -2689,7 +2663,6 @@ impl AccountsDb {
         max_clean_root_inclusive: Option<Slot>,
         is_startup: bool,
         epoch_schedule: &EpochSchedule,
-        old_storages_policy: OldStoragesPolicy,
     ) {
         if self.exhaustively_verify_refcounts {
             //at startup use all cores to verify refcounts
@@ -2722,7 +2695,6 @@ impl AccountsDb {
             is_startup,
             &mut key_timings,
             epoch_schedule,
-            old_storages_policy,
         );
         measure_construct_candidates.stop();
         drop(active_guard);
@@ -4318,15 +4290,7 @@ impl AccountsDb {
         let maybe_clean = || {
             if self.dirty_stores.len() > DIRTY_STORES_CLEANING_THRESHOLD {
                 let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-                self.clean_accounts(
-                    latest_full_snapshot_slot,
-                    is_startup,
-                    epoch_schedule,
-                    // Leave any old storages alone for now.  Once the validator is running
-                    // normal, calls to clean_accounts() will have the correct policy based
-                    // on if ancient storages are enabled or not.
-                    OldStoragesPolicy::Leave,
-                );
+                self.clean_accounts(latest_full_snapshot_slot, is_startup, epoch_schedule);
             }
         };
 
@@ -8824,20 +8788,6 @@ pub(crate) enum UpdateIndexThreadSelection {
     Inline,
     /// Use a thread-pool if the number of updates exceeds a threshold
     PoolWithThreshold,
-}
-
-/// How should old storages be handled in clean_accounts()?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum OldStoragesPolicy {
-    /// Clean all old storages, even if they were not explictly marked as dirty.
-    ///
-    /// This is the default behavior when not skipping rewrites.
-    Clean,
-    /// Leave all old storages.
-    ///
-    /// When skipping rewrites, we intentionally will have ancient storages.
-    /// Do not clean them up automatically in clean_accounts().
-    Leave,
 }
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
