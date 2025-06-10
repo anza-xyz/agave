@@ -2,7 +2,9 @@ use {
     crate::{
         bank::{BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
-            self, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize, SnapshotStreams,
+            self, AccountsDbFields, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
+            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
+            SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -13,10 +15,10 @@ use {
         snapshot_hash::SnapshotHash,
         snapshot_package::{SnapshotKind, SnapshotPackage},
         snapshot_utils::snapshot_storage_rebuilder::{
-            RebuiltSnapshotStorage, SnapshotStorageRebuilder,
+            get_slot_and_append_vec_id, SnapshotStorageRebuilder,
         },
     },
-    crossbeam_channel::Sender,
+    crossbeam_channel::{Receiver, Sender},
     log::*,
     regex::Regex,
     solana_accounts_db::{
@@ -1681,6 +1683,115 @@ fn streaming_unarchive_snapshot(
         .collect()
 }
 
+/// Used to determine if a filename is structured like a version file, bank file, or storage file
+#[derive(PartialEq, Debug)]
+enum SnapshotFileKind {
+    Version,
+    BankFields,
+    Storage,
+}
+
+/// Determines `SnapshotFileKind` for `filename` if any
+fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
+    static VERSION_FILE_REGEX: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^version$").unwrap());
+    static BANK_FIELDS_FILE_REGEX: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^[0-9]+(\.pre)?$").unwrap());
+
+    if VERSION_FILE_REGEX.is_match(filename) {
+        Some(SnapshotFileKind::Version)
+    } else if BANK_FIELDS_FILE_REGEX.is_match(filename) {
+        Some(SnapshotFileKind::BankFields)
+    } else if get_slot_and_append_vec_id(filename).is_ok() {
+        Some(SnapshotFileKind::Storage)
+    } else {
+        None
+    }
+}
+
+/// Waits for snapshot file
+/// Due to parallel unpacking, we may receive some append_vec files before the snapshot file
+/// This function will push append_vec files into a buffer until we receive the snapshot file
+fn get_version_and_snapshot_files(
+    file_receiver: &Receiver<PathBuf>,
+) -> (PathBuf, PathBuf, Vec<PathBuf>) {
+    let mut append_vec_files = Vec::with_capacity(1024);
+    let mut snapshot_version_path = None;
+    let mut snapshot_file_path = None;
+
+    loop {
+        if let Ok(path) = file_receiver.recv() {
+            let filename = path.file_name().unwrap().to_str().unwrap();
+            match get_snapshot_file_kind(filename) {
+                Some(SnapshotFileKind::Version) => {
+                    snapshot_version_path = Some(path);
+
+                    // break if we have both the snapshot file and the version file
+                    if snapshot_file_path.is_some() {
+                        break;
+                    }
+                }
+                Some(SnapshotFileKind::BankFields) => {
+                    snapshot_file_path = Some(path);
+
+                    // break if we have both the snapshot file and the version file
+                    if snapshot_version_path.is_some() {
+                        break;
+                    }
+                }
+                Some(SnapshotFileKind::Storage) => {
+                    append_vec_files.push(path);
+                }
+                None => {} // do nothing for other kinds of files
+            }
+        } else {
+            panic!("did not receive snapshot file from unpacking threads");
+        }
+    }
+    let snapshot_version_path = snapshot_version_path.unwrap();
+    let snapshot_file_path = snapshot_file_path.unwrap();
+
+    (snapshot_version_path, snapshot_file_path, append_vec_files)
+}
+
+/// Fields and information parsed from the snapshot.
+struct SnapshotFieldsBundle {
+    snapshot_version: SnapshotVersion,
+    bank_fields: SnapshotBankFields,
+    accounts_db_fields: SnapshotAccountsDbFields<SerializableAccountStorageEntry>,
+    append_vec_files: Vec<PathBuf>,
+}
+
+/// Parses fields and information from the snapshot files provided by
+/// `file_receiver`.
+fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<SnapshotFieldsBundle> {
+    let (snapshot_version_path, snapshot_file_path, append_vec_files) =
+        get_version_and_snapshot_files(file_receiver);
+    let snapshot_version_str = snapshot_version_from_file(snapshot_version_path)?;
+    let snapshot_version = snapshot_version_str.parse().map_err(|err| {
+        IoError::other(format!(
+            "unsupported snapshot version '{snapshot_version_str}': {err}",
+        ))
+    })?;
+
+    let snapshot_file = fs::File::open(snapshot_file_path).unwrap();
+    let full_snapshot_stream = &mut BufReader::new(snapshot_file);
+    let mut snapshot_streams = SnapshotStreams {
+        full_snapshot_stream,
+        incremental_snapshot_stream: None,
+    };
+    let (bank_fields, accounts_db_fields) = match snapshot_version {
+        SnapshotVersion::V1_2_0 => serde_snapshot::fields_from_streams(&mut snapshot_streams)?,
+    };
+
+    Ok(SnapshotFieldsBundle {
+        snapshot_version,
+        bank_fields,
+        accounts_db_fields,
+        append_vec_files,
+    })
+}
+
 /// BankSnapshotInfo::new_from_dir() requires a few meta files to accept a snapshot dir
 /// as a valid one.  A dir unpacked from an archive lacks these files.  Fill them here to
 /// allow new_from_dir() checks to pass.  These checks are not needed for unpacked dirs,
@@ -1745,8 +1856,11 @@ fn unarchive_snapshot(
     let num_rebuilder_threads = num_cpus::get_physical()
         .saturating_sub(parallel_divisions)
         .max(1);
-    let (version_and_storages, measure_untar) = measure_time!(
+    let snapshot_bundle = snapshot_fields_from_files(&file_receiver)?;
+    let (storage, measure_untar) = measure_time!(
         SnapshotStorageRebuilder::rebuild_storage(
+            &snapshot_bundle.accounts_db_fields.collapse_into()?,
+            snapshot_bundle.append_vec_files,
             file_receiver,
             num_rebuilder_threads,
             next_append_vec_id,
@@ -1759,16 +1873,12 @@ fn unarchive_snapshot(
 
     create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
-    let RebuiltSnapshotStorage {
-        snapshot_version,
-        storage,
-    } = version_and_storages;
     Ok(UnarchivedSnapshot {
         unpack_dir,
         storage,
         unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
             unpacked_snapshots_dir,
-            snapshot_version,
+            snapshot_version: snapshot_bundle.snapshot_version,
         },
         measure_untar,
     })
@@ -1803,7 +1913,11 @@ pub fn rebuild_storages_from_snapshot_dir(
     account_paths: &[PathBuf],
     next_append_vec_id: Arc<AtomicAccountsFileId>,
     storage_access: StorageAccess,
-) -> Result<AccountStorageMap> {
+) -> Result<(
+    AccountStorageMap,
+    SnapshotBankFields,
+    AccountsDbFields<SerializableAccountStorageEntry>,
+)> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
     let accounts_hardlinks = bank_snapshot_dir.join(SNAPSHOT_ACCOUNTS_HARDLINKS);
     let account_run_paths: HashSet<_> = HashSet::from_iter(account_paths);
@@ -1869,8 +1983,13 @@ pub fn rebuild_storages_from_snapshot_dir(
         account_paths,
     )?;
 
+    let snapshot_bundle = snapshot_fields_from_files(&file_receiver)?;
+    let accounts_db_fields = snapshot_bundle.accounts_db_fields.collapse_into()?;
+
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
-    let version_and_storages = SnapshotStorageRebuilder::rebuild_storage(
+    let storage = SnapshotStorageRebuilder::rebuild_storage(
+        &accounts_db_fields,
+        snapshot_bundle.append_vec_files,
         file_receiver,
         num_rebuilder_threads,
         next_append_vec_id,
@@ -1878,11 +1997,7 @@ pub fn rebuild_storages_from_snapshot_dir(
         storage_access,
     )?;
 
-    let RebuiltSnapshotStorage {
-        snapshot_version: _,
-        storage,
-    } = version_and_storages;
-    Ok(storage)
+    Ok((storage, snapshot_bundle.bank_fields, accounts_db_fields))
 }
 
 /// Reads the `snapshot_version` from a file. Before opening the file, its size
@@ -3534,6 +3649,23 @@ mod tests {
         assert_matches!(
             ret,
             Err(GetSnapshotAccountsHardLinkDirError::GetAccountPath(_))
+        );
+    }
+
+    #[test]
+    fn test_get_snapshot_file_kind() {
+        assert_eq!(None, get_snapshot_file_kind("file.txt"));
+        assert_eq!(
+            Some(SnapshotFileKind::Version),
+            get_snapshot_file_kind(SNAPSHOT_VERSION_FILENAME)
+        );
+        assert_eq!(
+            Some(SnapshotFileKind::BankFields),
+            get_snapshot_file_kind("1234")
+        );
+        assert_eq!(
+            Some(SnapshotFileKind::Storage),
+            get_snapshot_file_kind("1000.999")
         );
     }
 
