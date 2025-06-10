@@ -23,7 +23,6 @@ use {
     solana_transaction::versioned::{TransactionVersion, VersionedTransaction},
     solana_transaction_context::TransactionReturnData,
     solana_transaction_error::{TransactionError, TransactionResult},
-    std::ops::Deref,
     thiserror::Error,
 };
 pub mod option_serializer;
@@ -234,13 +233,17 @@ impl From<&MessageAddressTableLookup> for UiAddressTableLookup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UiTransactionError(pub TransactionError);
+pub struct UiTransactionError(TransactionError);
 
-impl Deref for UiTransactionError {
-    type Target = TransactionError;
+impl fmt::Display for UiTransactionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl std::error::Error for UiTransactionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
     }
 }
 
@@ -303,35 +306,12 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct UiTransactionResult<T>(Result<T, UiTransactionError>);
-
-impl<T> Deref for UiTransactionResult<T> {
-    type Target = Result<T, UiTransactionError>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> From<TransactionResult<T>> for UiTransactionResult<T> {
-    fn from(value: TransactionResult<T>) -> Self {
-        UiTransactionResult(value.map_err(Into::into))
-    }
-}
-
-impl<T> From<UiTransactionResult<T>> for TransactionResult<T> {
-    fn from(value: UiTransactionResult<T>) -> Self {
-        value.0.map_err(Into::into)
-    }
-}
-
 /// A duplicate representation of TransactionStatusMeta with `err` field
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiTransactionStatusMeta {
     pub err: Option<UiTransactionError>,
-    pub status: UiTransactionResult<()>, // This field is deprecated.  See https://github.com/solana-labs/solana/issues/9302
+    pub status: Result<(), UiTransactionError>, // This field is deprecated.  See https://github.com/solana-labs/solana/issues/9302
     pub fee: u64,
     pub pre_balances: Vec<u64>,
     pub post_balances: Vec<u64>,
@@ -386,7 +366,7 @@ impl From<TransactionStatusMeta> for UiTransactionStatusMeta {
     fn from(meta: TransactionStatusMeta) -> Self {
         Self {
             err: meta.status.clone().map_err(Into::into).err(),
-            status: meta.status.into(),
+            status: meta.status.map_err(Into::into),
             fee: meta.fee,
             pre_balances: meta.pre_balances,
             post_balances: meta.post_balances,
