@@ -119,10 +119,11 @@ pub struct ComputeBudget {
     pub alt_bn128_g2_decompress: u64,
 }
 
+// TODO: Plumb feature.
 impl Default for ComputeBudget {
     fn default() -> Self {
         Self::from_budget_and_cost(
-            &SVMTransactionExecutionBudget::default(),
+            &SVMTransactionExecutionBudget::new_with_defaults(/* simd_0296_active */ false),
             &SVMTransactionExecutionCost::default(),
         )
     }
