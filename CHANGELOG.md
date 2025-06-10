@@ -21,7 +21,7 @@ Release channels have their own copy of this changelog:
 * ABI of `TimedTracedEvent` changed, since `PacketBatch` became an enum, which carries different packet batch types. (#5646)
 
 #### Changes
-* Account notifications for Geyser are no longer deduplicated when restorting from a snapshot.
+* Account notifications for Geyser are no longer deduplicated when restoring from a snapshot.
 * Add `--no-snapshots` to disable generating snapshots.
 * `--block-production-method central-scheduler-greedy` is now the default.
 * The default full snapshot interval is now 50,000 slots.
