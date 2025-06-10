@@ -65,6 +65,7 @@ solana-time-utils = { workspace = true }
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-instruction-padding = { version = "=0.3.0", features = ["no-entrypoint"] }

@@ -2155,7 +2155,7 @@ pub fn process_transaction_history(
                     signature.verbose = Some(CliHistoryVerbose {
                         slot: result.slot,
                         block_time: result.block_time,
-                        err: result.err.map(Into::into),
+                        err: result.err,
                         confirmation_status: result.confirmation_status,
                         memo: result.memo,
                     });
@@ -2209,7 +2209,7 @@ pub fn process_transaction_history(
                     confirmation_status: result.confirmation_status,
                     transaction,
                     get_transaction_error,
-                    err: result.err.map(Into::into),
+                    err: result.err,
                 });
             }
         }
