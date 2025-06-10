@@ -9442,9 +9442,9 @@ dependencies = [
 
 [[package]]
 name = "solana-program-memory"
-version = "2.3.0"
+version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10a3ff409c17fba997b67e4e3eb996467221c62fb737fed995e4c3accefc2ab5"
+checksum = "3a5426090c6f3fd6cfdc10685322fede9ca8e5af43cd6a59e98bfe4e91671712"
 dependencies = [
  "solana-define-syscall",
 ]
