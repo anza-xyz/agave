@@ -21,7 +21,6 @@ pub mod duplicate_shred_listener;
 pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;
-pub mod gossip_rebinder;
 pub mod gossip_service;
 #[macro_use]
 mod tlv;
