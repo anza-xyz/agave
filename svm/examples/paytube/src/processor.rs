@@ -105,7 +105,8 @@ pub(crate) fn get_transaction_check_results(
             None,
             Ok(compute_budget_limit.get_compute_budget_and_limits(
                 compute_budget_limit.loaded_accounts_bytes,
-                FeeDetails::default()
+                FeeDetails::default(),
+                /* simd_0296_active */ false,
             )),
         ));
         len
