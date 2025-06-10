@@ -675,6 +675,22 @@ impl HotStorageReader {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+    ) -> TieredStorageResult<()> {
+        for i in 0..self.footer.account_entry_count {
+            self.get_stored_account_without_data_callback(IndexOffset(i), &mut callback)?;
+        }
+        Ok(())
+    }
+
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// Prefer scan_accounts_without_data() when account data is not needed,
+    /// as it can potentially read less and be faster.
     pub fn scan_accounts(
         &self,
         mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),

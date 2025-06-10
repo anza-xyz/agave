@@ -11,7 +11,7 @@ use {
             TieredStorageResult,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     std::path::Path,
 };
@@ -165,20 +165,11 @@ impl TieredStorageReader {
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
     ) -> TieredStorageResult<()> {
-        // Note, this should be reimplemented to not read account data
-        self.scan_accounts(|stored_account| {
-            let account = StoredAccountInfoWithoutData {
-                pubkey: stored_account.pubkey(),
-                lamports: stored_account.lamports(),
-                owner: stored_account.owner(),
-                data_len: stored_account.data().len(),
-                executable: stored_account.executable(),
-                rent_epoch: stored_account.rent_epoch(),
-            };
-            callback(account);
-        })
+        match self {
+            Self::Hot(hot) => hot.scan_accounts_without_data(callback),
+        }
     }
 
     /// Iterate over all accounts and call `callback` with each account.
