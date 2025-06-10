@@ -55,7 +55,7 @@ use {
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
-        gossip_service::{GossipService, GossipSocket},
+        gossip_service::GossipService,
     },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -119,7 +119,9 @@ use {
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
     solana_streamer::{
-        atomic_udp_socket::AtomicUdpSocket, quic::QuicServerParams, socket::SocketAddrSpace,
+        atomic_udp_socket::{AtomicUdpSocket, SocketKind},
+        quic::QuicServerParams,
+        socket::SocketAddrSpace,
         streamer::StakedNodes,
     },
     solana_time_utils::timestamp,
@@ -1321,7 +1323,7 @@ impl Validator {
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(bank_forks.clone()),
-            GossipSocket::Rebindable(atomic_socket.clone()),
+            SocketKind::Rebindable(atomic_socket.clone()),
             config.gossip_validators.clone(),
             should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),

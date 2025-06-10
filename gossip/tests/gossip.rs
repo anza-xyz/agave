@@ -8,7 +8,7 @@ use {
         cluster_info::{ClusterInfo, Node},
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
-        gossip_service::{GossipService, GossipSocket},
+        gossip_service::GossipService,
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -17,6 +17,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
+        atomic_udp_socket::SocketKind,
         sendmmsg::{multi_target_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -45,7 +46,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        GossipSocket::Static(test_node.sockets.gossip),
+        SocketKind::Static(test_node.sockets.gossip),
         None,
         true, // should_check_duplicate_instance
         None,
@@ -73,7 +74,7 @@ fn test_node_with_bank(
     let gossip_service = GossipService::new(
         &cluster_info,
         Some(bank_forks),
-        GossipSocket::Static(test_node.sockets.gossip),
+        SocketKind::Static(test_node.sockets.gossip),
         None,
         true, // should_check_duplicate_instance
         None,

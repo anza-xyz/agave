@@ -88,3 +88,8 @@ impl SocketProvider for AtomicSocketProvider {
         }
     }
 }
+
+pub enum SocketKind {
+    Static(UdpSocket),
+    Rebindable(Arc<AtomicUdpSocket>),
+}
