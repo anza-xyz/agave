@@ -3213,6 +3213,14 @@ impl ReplayStage {
                     None
                 };
                 bank.set_block_id(block_id);
+                // Freeze the bank before sending to any auxiliary threads
+                // that may expect to be operating on a frozen bank
+                bank.freeze();
+                datapoint_info!(
+                    "bank_frozen",
+                    ("slot", bank_slot, i64),
+                    ("hash", bank.hash().to_string(), String),
+                );
 
                 let r_replay_stats = replay_stats.read().unwrap();
                 let replay_progress = bank_progress.replay_progress.clone();
@@ -3225,15 +3233,10 @@ impl ReplayStage {
                 );
                 did_complete_bank = true;
                 let _ = cluster_slots_update_sender.send(vec![bank_slot]);
+
                 if let Some(transaction_status_sender) = transaction_status_sender {
                     transaction_status_sender.send_transaction_status_freeze_message(bank);
                 }
-                bank.freeze();
-                datapoint_info!(
-                    "bank_frozen",
-                    ("slot", bank_slot, i64),
-                    ("hash", bank.hash().to_string(), String),
-                );
                 // report cost tracker stats
                 cost_update_sender
                     .send(CostUpdate::FrozenBank {

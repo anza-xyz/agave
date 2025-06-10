@@ -7,6 +7,7 @@ use {
     crate::transaction_notifier_interface::TransactionNotifierArc,
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::izip,
+    solana_clock::Slot,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
@@ -25,7 +26,18 @@ use {
         thread::{self, Builder, JoinHandle},
         time::Duration,
     },
+    thiserror::Error,
 };
+
+#[derive(Error, Debug)]
+enum Error {
+    #[error("blockstore operation failed: {0}")]
+    Blockstore(#[from] BlockstoreError),
+
+    #[error("received nonfrozen bank: {0}")]
+    NonFrozenBank(Slot),
+}
+type Result<T> = std::result::Result<T, Error>;
 
 // Used when draining and shutting down TSS in unit tests.
 #[cfg(feature = "dev-context-only-utils")]
@@ -109,7 +121,7 @@ impl TransactionStatusService {
         transaction_notifier: Option<TransactionNotifierArc>,
         blockstore: &Blockstore,
         enable_extended_tx_metadata_storage: bool,
-    ) -> Result<(), BlockstoreError> {
+    ) -> Result<()> {
         match transaction_status_message {
             TransactionStatusMessage::Batch(TransactionStatusBatch {
                 slot,
@@ -241,6 +253,9 @@ impl TransactionStatusService {
                 }
             }
             TransactionStatusMessage::Freeze(bank) => {
+                if !bank.is_frozen() {
+                    return Err(Error::NonFrozenBank(bank.slot()));
+                }
                 Self::write_block_meta(&bank, blockstore)?;
                 max_complete_transaction_status_slot.fetch_max(bank.slot(), Ordering::SeqCst);
             }
@@ -248,7 +263,7 @@ impl TransactionStatusService {
         Ok(())
     }
 
-    fn write_block_meta(bank: &Bank, blockstore: &Blockstore) -> Result<(), BlockstoreError> {
+    fn write_block_meta(bank: &Bank, blockstore: &Blockstore) -> Result<()> {
         let slot = bank.slot();
 
         blockstore.set_block_time(slot, bank.clock().unix_timestamp)?;
