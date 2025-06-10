@@ -7,7 +7,7 @@ use {
         program_data_size, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
         EXECUTION_SLOT, WALLCLOCK_TIME,
     },
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::{self as feature_set, raise_cpi_nesting_limit_to_8, FeatureSet},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
     solana_clock::Slot,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -465,6 +465,8 @@ impl SvmTestEntry {
                                 signature_count.saturating_mul(LAMPORTS_PER_SIGNATURE),
                                 v.get_prioritization_fee(),
                             ),
+                            self.feature_set()
+                                .is_active(&raise_cpi_nesting_limit_to_8::id()),
                         )
                     });
                     CheckedTransactionDetails::new(tx_details.nonce, compute_budget)
