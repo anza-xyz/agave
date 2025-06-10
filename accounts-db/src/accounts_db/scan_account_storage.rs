@@ -80,13 +80,11 @@ impl AppendVecScan for ScanState<'_> {
         // For each obsolete account found, add its pubkey to the hashset so it can be skipped
         for account in accounts {
             let offset = account.0;
-            let stored_account = storage.accounts.get_account_index_info(offset);
-            self.pubkeys_to_skip.insert(
-                stored_account
-                    .expect("Obsolete account offset is a valid account offset in storage")
-                    .index_info
-                    .pubkey,
-            );
+            storage
+                .accounts
+                .get_stored_account_without_data_callback(offset, |stored_account| {
+                    self.pubkeys_to_skip.insert(*stored_account.pubkey());
+                });
         }
     }
 
