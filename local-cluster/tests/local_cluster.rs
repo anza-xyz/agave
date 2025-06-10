@@ -57,6 +57,7 @@ use {
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
     },
+    solana_native_token::LAMPORTS_PER_SOL,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -5950,4 +5951,20 @@ fn test_invalid_forks_persisted_on_restart() {
         );
         sleep(Duration::from_millis(100));
     }
+}
+
+#[test]
+#[ignore]
+#[serial]
+fn test_mock_alpenglow_consensus() {
+    solana_logger::setup_with_default("error,solana_core::mock_alpenglow_consensus=trace");
+    let num_nodes = 3;
+    let _local = LocalCluster::new_with_equal_stakes(
+        num_nodes,
+        DEFAULT_MINT_LAMPORTS,
+        100 * LAMPORTS_PER_SOL,
+        SocketAddrSpace::Unspecified,
+    );
+    std::thread::sleep(Duration::from_secs(59));
+    // todo: figure out how to validate it is actually working here automatically
 }
