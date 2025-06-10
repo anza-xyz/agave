@@ -1,6 +1,6 @@
-// Wrapper around the gossip rebinder channel.
-// The channel is used to send commands to GossipService to rebind the gossip socket to a new address.
-// Used by the Admin RPC service.
+/// Wrapper around the gossip rebinder channel.
+/// The channel is used to send commands to GossipService to rebind the gossip socket to a new address.
+/// Used by the Admin RPC service.
 use {
     crossbeam_channel::Sender,
     std::{

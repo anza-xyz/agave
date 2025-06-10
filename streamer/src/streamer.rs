@@ -161,11 +161,19 @@ fn recv_loop<P: SocketProvider>(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
+    let mut has_set_timeout = false;
     loop {
         let socket = match provider.current_socket() {
-            CurrentSocket::Same(sock) => sock,
             CurrentSocket::Changed(sock) => {
                 sock.set_read_timeout(Some(Duration::from_secs(1)))?;
+                has_set_timeout = true;
+                sock
+            }
+            CurrentSocket::Same(sock) => {
+                if !has_set_timeout {
+                    sock.set_read_timeout(Some(Duration::from_secs(1)))?;
+                    has_set_timeout = true;
+                }
                 sock
             }
         };
