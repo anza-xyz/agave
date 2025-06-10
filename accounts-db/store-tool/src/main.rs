@@ -210,7 +210,7 @@ fn do_search(
         };
         // By default, when the Storage is dropped, the backing file will be removed.
         // We do not want to remove the backing file here in the store-tool, so prevent dropping.
-        let storage = ManuallyDrop::<AccountsFile>::new(storage);
+        let storage = ManuallyDrop::new(storage);
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
         storage.scan_accounts_stored_meta(|account| {
