@@ -52,8 +52,6 @@ fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
     let (_, total_lamports) = accounts
         .accounts_db
         .update_accounts_hash_for_tests(0, &ancestors, false, false);
-    accounts.add_root(slot);
-    accounts.accounts_db.flush_accounts_cache(true, Some(slot));
     bencher.iter(|| {
         assert!(accounts
             .accounts_db
@@ -113,10 +111,12 @@ fn bench_delete_dependencies(bencher: &mut Bencher) {
     for i in 0..1000 {
         let pubkey = solana_pubkey::new_rand();
         let account = AccountSharedData::new(i + 1, 0, AccountSharedData::default().owner());
-        accounts.store_slow_uncached(i, &pubkey, &account);
-        accounts.store_slow_uncached(i, &old_pubkey, &zero_account);
+        accounts.store_cached(
+            (i, &[(&pubkey, &account), (&old_pubkey, &zero_account)][..]),
+            None,
+        );
         old_pubkey = pubkey;
-        accounts.add_root(i);
+        accounts.accounts_db.add_root_and_flush_write_cache(i);
     }
     bencher.iter(|| {
         accounts.accounts_db.clean_accounts_for_tests();
@@ -326,8 +326,9 @@ fn bench_load_largest_accounts(b: &mut Bencher) {
         let lamports = rng.gen();
         let pubkey = Pubkey::new_unique();
         let account = AccountSharedData::new(lamports, 0, &Pubkey::default());
-        accounts.store_slow_uncached(0, &pubkey, &account);
+        accounts.store_cached((0, &[(&pubkey, &account)][..]), None);
     }
+    accounts.accounts_db.add_root_and_flush_write_cache(0);
     let ancestors = Ancestors::from(vec![0]);
     let bank_id = 0;
     b.iter(|| {

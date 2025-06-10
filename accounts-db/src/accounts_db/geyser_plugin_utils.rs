@@ -201,15 +201,20 @@ pub mod tests {
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
 
         // Account with key1 is updated twice in two different slots, should get notified twice
-        accounts.store_uncached(0, &[(&key1, &account)]);
-        accounts.store_uncached(1, &[(&key1, &account)]);
+        accounts.store_cached((0, &[(&key1, &account)][..]), None);
+        accounts.add_root_and_flush_write_cache(0);
+        accounts.store_cached((1, &[(&key1, &account)][..]), None);
+        accounts.add_root_and_flush_write_cache(1);
 
         // Account with key2 is updated in a single slot, should get notified once
-        accounts.store_uncached(2, &[(&key2, &account)]);
+        accounts.store_cached((2, &[(&key2, &account)][..]), None);
+        accounts.add_root_and_flush_write_cache(2);
 
-        // Account with key3 is updated twice in a single slot, should get notified twice
-        accounts.store_uncached(3, &[(&key3, &account)]);
-        accounts.store_uncached(3, &[(&key3, &account)]);
+        // Account with key3 is updated twice in a single slot, should only get a single notification
+        accounts.store_cached((3, &[(&key3, &account)][..]), None);
+        accounts.store_cached((3, &[(&key3, &account)][..]), None);
+
+        accounts.add_root_and_flush_write_cache(3);
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();
@@ -238,16 +243,13 @@ pub mod tests {
             assert_eq!(*write_version, 1);
         }
 
-        // Ensure key3 was notified twice in the same slot
+        // With write caching, a single slot can only have a one version of an account.
         {
             let notified_key3 = notifier.accounts_notified.get(&key3).unwrap();
-            assert_eq!(notified_key3.len(), 2);
+            assert_eq!(notified_key3.len(), 1);
             let (slot, write_version, _account) = &notified_key3[0];
             assert_eq!(*slot, 3);
             assert_eq!(*write_version, 1);
-            let (slot, write_version, _account) = &notified_key3[1];
-            assert_eq!(*slot, 3);
-            assert_eq!(*write_version, 2);
         }
 
         // Ensure we were notified that startup is done

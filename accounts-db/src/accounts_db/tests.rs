@@ -2275,14 +2275,8 @@ fn test_verify_accounts_hash_bad_account_hash() {
     db.update_accounts_hash_for_tests(some_slot, &ancestors, false, false);
 
     // provide bogus account hashes
-    db.store_accounts_unfrozen(
-        (some_slot, accounts),
-        &StoreTo::Storage(&db.find_storage_candidate(some_slot)),
-        None,
-        StoreReclaims::Default,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    db.add_root(some_slot);
+    db.store_cached((some_slot, accounts), None);
+    db.add_root_and_flush_write_cache(some_slot);
 
     let epoch_schedule = EpochSchedule::default();
     let rent_collector = RentCollector::default();
@@ -4376,7 +4370,7 @@ fn test_flush_rooted_accounts_cache_without_clean() {
     run_flush_rooted_accounts_cache(false);
 }
 
-fn run_test_shrink_unref(do_intra_cache_clean: bool) {
+fn run_test_shrink_unref() {
     let db = AccountsDb::new_single_for_tests();
     let epoch_schedule = EpochSchedule::default();
     let account_key1 = Pubkey::new_unique();
@@ -4387,13 +4381,11 @@ fn run_test_shrink_unref(do_intra_cache_clean: bool) {
     // This has to be done uncached since we are trying to add another account to the append vec AFTER it has been flushed.
     // This doesn't work if the flush creates an append vec of exactly the right size.
     // Normal operations NEVER write the same account to the same append vec twice during a write cache flush.
-    db.store_uncached(0, &[(&account_key1, &account1)][..]);
-    db.store_uncached(0, &[(&account_key2, &account1)][..]);
+    db.store_for_tests(
+        0,
+        &[(&account_key1, &account1), (&account_key2, &account1)][..],
+    );
     db.add_root(0);
-    if !do_intra_cache_clean {
-        // Add an additional ref within the same slot to pubkey 1
-        db.store_uncached(0, &[(&account_key1, &account1)]);
-    }
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1
     db.store_cached((1, &[(&account_key1, &account1)][..]), None);
@@ -4445,13 +4437,8 @@ fn run_test_shrink_unref(do_intra_cache_clean: bool) {
 }
 
 #[test]
-fn test_shrink_unref() {
-    run_test_shrink_unref(false)
-}
-
-#[test]
 fn test_shrink_unref_with_intra_slot_cleaning() {
-    run_test_shrink_unref(true)
+    run_test_shrink_unref()
 }
 
 #[test]
@@ -4495,8 +4482,8 @@ fn test_clean_drop_dead_storage_handle_zero_lamport_single_ref_accounts() {
     let account0 = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store into slot 0
-    db.store_uncached(0, &[(&account_key1, &account1)][..]);
-    db.add_root(0);
+    db.store_cached((0, &[(&account_key1, &account1)][..]), None);
+    db.add_root_and_flush_write_cache(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
     // And store one additional live account to make the store still alive after clean.
@@ -4543,9 +4530,14 @@ fn test_shrink_unref_handle_zero_lamport_single_ref_accounts() {
     let account0 = AccountSharedData::new(0, 0, AccountSharedData::default().owner());
 
     // Store into slot 0
-    db.store_uncached(0, &[(&account_key1, &account1)][..]);
-    db.store_uncached(0, &[(&account_key2, &account1)][..]);
-    db.add_root(0);
+    db.store_cached(
+        (
+            0,
+            &[(&account_key1, &account1), (&account_key2, &account1)][..],
+        ),
+        None,
+    );
+    db.add_root_and_flush_write_cache(0);
 
     // Make account_key1 in slot 0 outdated by updating in rooted slot 1 with a zero lamport account
     db.store_cached((1, &[(&account_key1, &account0)][..]), None);
@@ -4620,8 +4612,9 @@ define_accounts_db_test!(test_partial_clean, |db| {
     let account4 = AccountSharedData::new(4, 0, AccountSharedData::default().owner());
 
     // Store accounts into slots 0 and 1
-    db.store_uncached(0, &[(&account_key1, &account1), (&account_key2, &account1)]);
-    db.store_uncached(1, &[(&account_key1, &account2)]);
+    db.store_for_tests(0, &[(&account_key1, &account1), (&account_key2, &account1)]);
+    db.store_for_tests(1, &[(&account_key1, &account2)]);
+
     db.print_accounts_stats("pre-clean1");
 
     // clean accounts - no accounts should be cleaned, since no rooted slots
@@ -4632,15 +4625,16 @@ define_accounts_db_test!(test_partial_clean, |db| {
     db.clean_accounts_for_tests();
 
     db.print_accounts_stats("post-clean1");
-    // Check stores > 0
-    assert!(!db.storage.is_empty_entry(0));
-    assert!(!db.storage.is_empty_entry(1));
+
+    // Assert that cache entries have been added
+    assert!(!db.accounts_cache.slot_cache(0).unwrap().is_empty());
+    assert!(!db.accounts_cache.slot_cache(1).unwrap().is_empty());
 
     // root slot 0
     db.add_root_and_flush_write_cache(0);
 
     // store into slot 2
-    db.store_uncached(2, &[(&account_key2, &account3), (&account_key1, &account3)]);
+    db.store_for_tests(2, &[(&account_key2, &account3), (&account_key1, &account3)]);
     db.clean_accounts_for_tests();
     db.print_accounts_stats("post-clean2");
 
@@ -4650,7 +4644,7 @@ define_accounts_db_test!(test_partial_clean, |db| {
 
     db.print_accounts_stats("post-clean3");
 
-    db.store_uncached(3, &[(&account_key2, &account4)]);
+    db.store_for_tests(3, &[(&account_key2, &account4)]);
     db.add_root_and_flush_write_cache(3);
 
     // Check that we can clean where max_root=3 and slot=2 is not rooted
@@ -4799,7 +4793,7 @@ fn do_test_load_account_and_shrink_race(with_retry: bool) {
     let lamports = 42;
     let mut account = AccountSharedData::new(1, 0, AccountSharedData::default().owner());
     account.set_lamports(lamports);
-    db.store_uncached(slot, &[(&pubkey, &account)]);
+    db.store_for_tests(slot, &[(&pubkey, &account)]);
 
     // Set the slot as a root so account loads will see the contents of this slot
     db.add_root(slot);
