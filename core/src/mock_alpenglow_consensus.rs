@@ -305,29 +305,3 @@ impl MockAlpenglowConsensus {
         self.listener_thread.join()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use {
-        serial_test::serial,
-        solana_local_cluster::local_cluster::{LocalCluster, DEFAULT_MINT_LAMPORTS},
-        solana_native_token::LAMPORTS_PER_SOL,
-        solana_streamer::socket::SocketAddrSpace,
-        std::time::Duration,
-    };
-
-    #[test]
-    #[serial]
-    fn test_mock_alpenglow_consensus() {
-        solana_logger::setup_with_default("error,solana_core::mock_alpenglow_consensus=trace");
-        let num_nodes = 3;
-        let local = LocalCluster::new_with_equal_stakes(
-            num_nodes,
-            DEFAULT_MINT_LAMPORTS,
-            100 * LAMPORTS_PER_SOL,
-            SocketAddrSpace::Unspecified,
-        );
-        std::thread::sleep(Duration::from_secs(59));
-        // todo: figure out how to validate it is actually working here automatically
-    }
-}
