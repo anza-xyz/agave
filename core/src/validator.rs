@@ -55,8 +55,7 @@ use {
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
-        gossip_rebinder::GossipRebinder,
-        gossip_service::GossipService,
+        gossip_service::{GossipService, GossipSocket},
     },
     solana_hard_forks::HardForks,
     solana_hash::Hash,
@@ -119,7 +118,10 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
+    solana_streamer::{
+        atomic_udp_socket::AtomicUdpSocket, quic::QuicServerParams, socket::SocketAddrSpace,
+        streamer::StakedNodes,
+    },
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -1315,16 +1317,15 @@ impl Validator {
         let stats_reporter_service =
             StatsReporterService::new(stats_reporter_receiver, exit.clone());
 
-        let (gossip_rebind_tx, gossip_rebind_rx) = crossbeam_channel::bounded(1);
+        let atomic_socket = Arc::new(AtomicUdpSocket::new(node.sockets.gossip));
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(bank_forks.clone()),
-            node.sockets.gossip,
+            GossipSocket::Rebindable(atomic_socket.clone()),
             config.gossip_validators.clone(),
             should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
             exit.clone(),
-            Some(gossip_rebind_rx),
         );
         let serve_repair = ServeRepair::new(
             cluster_info.clone(),
@@ -1680,7 +1681,7 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
-            gossip_rebinder: Some(Arc::new(GossipRebinder::new(gossip_rebind_tx))),
+            gossip_socket: Some(atomic_socket.clone()),
         });
 
         Ok(Self {

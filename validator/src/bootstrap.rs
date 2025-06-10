@@ -12,7 +12,7 @@ use {
         cluster_info::{ClusterInfo, Node},
         contact_info::{ContactInfo, Protocol},
         crds_data,
-        gossip_service::GossipService,
+        gossip_service::{GossipService, GossipSocket},
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -161,12 +161,11 @@ fn start_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        GossipSocket::Static(gossip_socket),
         gossip_validators,
         should_check_duplicate_instance,
         None,
         gossip_exit_flag.clone(),
-        None,
     );
     (cluster_info, gossip_exit_flag, gossip_service)
 }

@@ -18,6 +18,7 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
+    solana_net_utils::bind_to,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -545,12 +546,13 @@ impl AdminRpc for AdminRpcImpl {
         let new_addr = SocketAddr::new(ip, port);
 
         meta.with_post_init(|post_init| {
-            if let Some(gossip_rebinder) = &post_init.gossip_rebinder {
-                gossip_rebinder.rebind(new_addr).map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!(
-                        "Failed to rebind gossip socket: {e}"
-                    ))
+            if let Some(socket) = &post_init.gossip_socket {
+                let new_socket = bind_to(new_addr.ip(), new_addr.port(), false).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
                 })?;
+
+                // hot-swap new socket
+                socket.swap(new_socket);
             }
             post_init
                 .cluster_info
@@ -1024,7 +1026,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
-                    gossip_rebinder: None,
+                    gossip_socket: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

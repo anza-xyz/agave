@@ -8,7 +8,7 @@ use {
         cluster_info::{ClusterInfo, Node},
         contact_info::{ContactInfo, Protocol},
         crds::Cursor,
-        gossip_service::GossipService,
+        gossip_service::{GossipService, GossipSocket},
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -45,12 +45,11 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        test_node.sockets.gossip,
+        GossipSocket::Static(test_node.sockets.gossip),
         None,
         true, // should_check_duplicate_instance
         None,
         exit,
-        None,
     );
     let _ = cluster_info.my_contact_info();
     (
@@ -74,12 +73,11 @@ fn test_node_with_bank(
     let gossip_service = GossipService::new(
         &cluster_info,
         Some(bank_forks),
-        test_node.sockets.gossip,
+        GossipSocket::Static(test_node.sockets.gossip),
         None,
         true, // should_check_duplicate_instance
         None,
         exit,
-        None,
     );
     let _ = cluster_info.my_contact_info();
     (
