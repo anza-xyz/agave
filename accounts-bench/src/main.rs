@@ -114,7 +114,7 @@ fn main() {
             println!("{time}");
             for slot in 0..num_slots {
                 update_accounts_bench(&accounts, &pubkeys, ((x + 1) * num_slots + slot) as u64);
-                accounts.add_root((x * num_slots + slot) as u64);
+                accounts.accounts_db.add_root_and_flush_write_cache((x * num_slots + slot) as u64);
             }
         } else {
             let mut pubkeys: Vec<Pubkey> = vec![];
