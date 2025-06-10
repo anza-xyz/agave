@@ -179,28 +179,6 @@ EOF
       "Stable-SBF skipped as no relevant files were modified"
   fi
 
-  # Downstream backwards compatibility
-  if affects \
-             .rs$ \
-             Cargo.lock$ \
-             Cargo.toml$ \
-             ^ci/rust-version.sh \
-             ^ci/test-stable-perf.sh \
-             ^ci/test-stable.sh \
-             ^ci/test-local-cluster.sh \
-             ^core/build.rs \
-             ^fetch-perf-libs.sh \
-             ^platform-tools-sdk/ \
-             ^programs/ \
-             ^ci/downstream-projects \
-             .buildkite/scripts/build-downstream-projects.sh \
-      ; then
-    .buildkite/scripts/build-downstream-projects.sh default >> "$output_file"
-  else
-    annotate --style info \
-      "downstream-projects skipped as no relevant files were modified"
-  fi
-
   # Coverage...
   if affects \
              .rs$ \
