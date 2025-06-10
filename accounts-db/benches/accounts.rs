@@ -81,6 +81,7 @@ fn bench_update_accounts_hash(bencher: &mut Bencher) {
     let accounts = Accounts::new(Arc::new(accounts_db));
     let mut pubkeys: Vec<Pubkey> = vec![];
     create_test_accounts(&accounts, &mut pubkeys, 50_000, 0);
+    accounts.accounts_db.add_root_and_flush_write_cache(0);
     let ancestors = Ancestors::from(vec![0]);
     bencher.iter(|| {
         accounts
@@ -96,6 +97,7 @@ fn bench_accounts_delta_hash(bencher: &mut Bencher) {
     let accounts = Accounts::new(Arc::new(accounts_db));
     let mut pubkeys: Vec<Pubkey> = vec![];
     create_test_accounts(&accounts, &mut pubkeys, 100_000, 0);
+    accounts.accounts_db.add_root_and_flush_write_cache(0);
     bencher.iter(|| {
         accounts.accounts_db.calculate_accounts_delta_hash(0);
     });

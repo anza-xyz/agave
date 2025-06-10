@@ -9082,10 +9082,7 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
 /// A set of utility functions used for testing and benchmarking
 #[cfg(feature = "dev-context-only-utils")]
 pub mod test_utils {
-    use {
-        super::*,
-        crate::{accounts::Accounts, append_vec::aligned_stored_size},
-    };
+    use {super::*, crate::accounts::Accounts};
 
     pub fn create_test_accounts(
         accounts: &Accounts,
@@ -9094,26 +9091,6 @@ pub mod test_utils {
         slot: Slot,
     ) {
         let data_size = 0;
-        if accounts
-            .accounts_db
-            .storage
-            .get_slot_storage_entry(slot)
-            .is_none()
-        {
-            // Some callers relied on old behavior where the file size was rounded up to the
-            // next page size because they append to the storage file after it was written.
-            // This behavior is not supported by a normal running validator.  Since this function
-            // is only called by tests/benches, add some extra capacity to the file to not break
-            // the tests/benches.  Those tests/benches should be updated though!  Bypassing the
-            // write cache in general is not supported.
-            let bytes_required = num * aligned_stored_size(data_size) + 4096;
-            // allocate an append vec for this slot that can hold all the test accounts. This prevents us from creating more than 1 append vec for this slot.
-            _ = accounts.accounts_db.create_and_insert_store(
-                slot,
-                bytes_required as u64,
-                "create_test_accounts",
-            );
-        }
 
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
@@ -9122,7 +9099,7 @@ pub mod test_utils {
                 data_size,
                 AccountSharedData::default().owner(),
             );
-            accounts.store_slow_uncached(slot, &pubkey, &account);
+            accounts.store_cached((slot, &[(&pubkey, &account)][..]), None);
             pubkeys.push(pubkey);
         }
     }
@@ -9133,7 +9110,7 @@ pub mod test_utils {
         for pubkey in pubkeys {
             let amount = thread_rng().gen_range(0..10);
             let account = AccountSharedData::new(amount, 0, AccountSharedData::default().owner());
-            accounts.store_slow_uncached(slot, pubkey, &account);
+            accounts.store_cached((slot, &[(pubkey, &account)][..]), None);
         }
     }
 }
