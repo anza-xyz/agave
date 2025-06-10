@@ -9,7 +9,7 @@ use {
         pubkey_bins::PubkeyBinCalculator24,
         sorted_storages::SortedStorages,
     },
-    ahash::HashSet,
+    ahash::AHashSet,
     rayon::prelude::*,
     solana_account::ReadableAccount as _,
     solana_clock::Slot,
@@ -58,11 +58,11 @@ struct ScanState<'a> {
     is_ancient: bool,
     stats_num_zero_lamport_accounts_ancient: Arc<AtomicU64>,
     /// The maximum slot included in the scan. Any updates to accounts due to
-    /// slots newer than scan_slot will be filtered out.
-    scan_slot: Slot,
+    /// slots newer than max_slot will be filtered out.
+    max_slot: Slot,
     /// When current_slot is set, this hashset gets updated with a list of
     /// pubkeys to skip when scanning current_slot
-    pubkeys_to_skip: HashSet<Pubkey>,
+    pubkeys_to_skip: AHashSet<Pubkey>,
 }
 
 impl AppendVecScan for ScanState<'_> {
@@ -71,18 +71,22 @@ impl AppendVecScan for ScanState<'_> {
         self.is_ancient = is_ancient;
 
         // Reinitialize the hashset to remove all entries
-        self.pubkeys_to_skip = HashSet::default();
+        self.pubkeys_to_skip.clear();
 
         // Get a list of all accounts that were marked obsolete at the slot
         // the scan is being done or earlier
-        let accounts = storage.get_obsolete_accounts(Some(self.scan_slot));
+        let accounts = storage.get_obsolete_accounts(Some(self.max_slot));
 
         // For each obsolete account found, add its pubkey to the hashset so it can be skipped
         for account in accounts {
             let offset = account.0;
             let stored_account = storage.accounts.get_account_index_info(offset);
-            self.pubkeys_to_skip
-                .insert(stored_account.unwrap().index_info.pubkey);
+            self.pubkeys_to_skip.insert(
+                stored_account
+                    .expect("Obsolete account offset is a valid account offset in storage")
+                    .index_info
+                    .pubkey,
+            );
         }
     }
 
@@ -177,8 +181,8 @@ impl AccountsDb {
             stats_num_zero_lamport_accounts_ancient: Arc::clone(
                 &stats.num_zero_lamport_accounts_ancient,
             ),
-            scan_slot: storages.max_slot_inclusive(),
-            pubkeys_to_skip: HashSet::default(),
+            max_slot: storages.max_slot_inclusive(),
+            pubkeys_to_skip: AHashSet::default(),
         };
 
         let result = self.scan_account_storage_no_bank(
@@ -1050,15 +1054,15 @@ mod tests {
         _slot_expected: Slot,
         calls: Arc<AtomicU64>,
         accum: BinnedHashData,
-        pubkeys_to_skip: HashSet<Pubkey>,
-        scan_slot: Slot,
+        pubkeys_to_skip: AHashSet<Pubkey>,
+        max_slot: Slot,
     }
 
     impl AppendVecScan for TestScanObsolete {
         fn set_slot(&mut self, slot: Slot, _is_ancient: bool, storage: &AccountStorageEntry) {
             self.current_slot = slot;
             self.pubkeys_to_skip.clear();
-            let accounts = storage.get_obsolete_accounts(Some(self.scan_slot));
+            let accounts = storage.get_obsolete_accounts(Some(self.max_slot));
 
             for account in accounts {
                 let offset = account.0;
@@ -1118,19 +1122,19 @@ mod tests {
         }
 
         // Perform scans of the storage assuming a different slot and verify the number of accounts found matches
-        for scan_slot in 0..num_accounts {
+        for max_slot in 0..num_accounts {
             let calls = Arc::new(AtomicU64::new(0));
-            let expected_count = num_accounts - scan_slot;
+            let expected_count = num_accounts - max_slot;
 
             let mut scanner = TestScanObsolete {
-                current_slot: scan_slot as u64,
+                current_slot: max_slot as u64,
                 _slot_expected: slot,
                 accum: Vec::default(),
                 calls: calls.clone(),
-                pubkeys_to_skip: HashSet::default(),
-                scan_slot: scan_slot as Slot,
+                pubkeys_to_skip: AHashSet::default(),
+                max_slot: max_slot as Slot,
             };
-            scanner.set_slot(scan_slot as Slot, false, &storage);
+            scanner.set_slot(max_slot as Slot, false, &storage);
 
             AccountsDb::scan_single_account_storage(&storage, &mut scanner);
             scanner.scanning_complete();
