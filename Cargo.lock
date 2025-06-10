@@ -7910,6 +7910,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface",
+ "solana-local-cluster",
  "solana-logger",
  "solana-measure",
  "solana-message",

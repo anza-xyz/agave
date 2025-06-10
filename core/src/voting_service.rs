@@ -121,7 +121,9 @@ impl VotingService {
                             }
                         }
                     }
+                    error!("Exiting vote handler");
                     if let Some(ag) = mock_alpenglow {
+                        error!("Telling AG to die");
                         let _ = ag.join();
                     }
                 }
