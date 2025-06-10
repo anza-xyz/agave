@@ -93,7 +93,7 @@ impl VotingService {
             .name("solVoteService".to_string())
             .spawn({
                 let cluster_info = cluster_info.clone();
-                let mock_alpenglow = alpenglow_socket
+                let mut mock_alpenglow = alpenglow_socket
                     .map(|s| MockAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
                 move || {
                     for vote_op in vote_receiver.iter() {
@@ -116,14 +116,12 @@ impl VotingService {
                         );
                         // trigger mock alpenglow vote if applicable
                         if slot != 0 {
-                            if let Some(ag) = mock_alpenglow.as_ref() {
-                                ag.send_fake_votes(slot);
+                            if let Some(ag) = mock_alpenglow.as_mut() {
+                                ag.signal_new_slot(slot);
                             }
                         }
                     }
-                    error!("Exiting vote handler");
                     if let Some(ag) = mock_alpenglow {
-                        error!("Telling AG to die");
                         let _ = ag.join();
                     }
                 }
