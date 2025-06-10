@@ -8104,23 +8104,20 @@ impl AccountsDb {
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
             // there were duplicate pubkeys in this same slot
             // Some were not inserted. This means some info like stored data is off.
-            duplicates_this_slot
-                .into_iter()
-                .filter_map(|(pubkey, (_slot, info))| {
-                    let duplicate = storage.accounts.get_account_index_info(info.offset());
-                    duplicate
-                        .as_ref()
-                        .inspect(|duplicate| assert_eq!(pubkey, duplicate.index_info.pubkey));
-                    duplicate
-                })
-                .for_each(|duplicate| {
-                    stored_size_alive =
-                        stored_size_alive.saturating_sub(duplicate.stored_size_aligned);
-                    if !duplicate.is_zero_lamport() {
-                        accounts_data_len =
-                            accounts_data_len.saturating_sub(duplicate.index_info.data_len);
-                    }
-                });
+            for (pubkey, (_slot, info)) in duplicates_this_slot {
+                storage.accounts.get_stored_account_without_data_callback(
+                    info.offset(),
+                    |duplicate_account| {
+                        assert_eq!(pubkey, *duplicate_account.pubkey());
+                        let data_len = duplicate_account.data_len;
+                        let stored_size_aligned = storage.accounts.calculate_stored_size(data_len);
+                        stored_size_alive = stored_size_alive.saturating_sub(stored_size_aligned);
+                        if !duplicate_account.is_zero_lamport() {
+                            accounts_data_len = accounts_data_len.saturating_sub(data_len as u64);
+                        }
+                    },
+                );
+            }
         }
 
         {
