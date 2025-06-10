@@ -1366,6 +1366,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "boxcar"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66bb12751a83493ef4b8da1120451a262554e216a247f14b48cb5e8fe7ed8bdf"
+
+[[package]]
 name = "brotli"
 version = "3.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2225,6 +2231,7 @@ dependencies = [
  "once_cell",
  "parking_lot_core 0.9.8",
  "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -8323,13 +8330,15 @@ dependencies = [
 
 [[package]]
 name = "solana-frozen-abi"
-version = "2.2.2"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bdd72d99751bcd646dc6a32772bf181c7b49f5379e4a4c8946920f3082b0ec6"
+checksum = "4ac93e831736e9cbd1571c5c692fa7533a304f184f77cba52e5b83c4c7eeebda"
 dependencies = [
+ "boxcar",
  "bs58",
  "bv",
  "bytes",
+ "dashmap",
  "im",
  "log",
  "memmap2 0.5.10",
