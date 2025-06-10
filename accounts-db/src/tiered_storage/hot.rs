@@ -3,7 +3,7 @@
 use {
     crate::{
         account_info::AccountInfo,
-        account_storage::stored_account_info::StoredAccountInfo,
+        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{MatchAccountOwnerError, StoredAccountsInfo},
         append_vec::{IndexInfo, IndexInfoInner},
         tiered_storage::{
@@ -522,7 +522,45 @@ impl HotStorageReader {
         Ok(data)
     }
 
-    /// calls `callback` with the account located at the specified index offset.
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
+        &self,
+        index_offset: IndexOffset,
+        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
+        if index_offset.0 >= self.footer.account_entry_count {
+            return Ok(None);
+        }
+
+        let account_offset = self.get_account_offset(index_offset)?;
+        let meta = self.get_account_meta_from_offset(account_offset)?;
+        let account_block = self.get_account_block(account_offset, index_offset)?;
+
+        let stored_account = StoredAccountInfoWithoutData {
+            pubkey: self.get_account_address(index_offset)?,
+            lamports: meta.lamports(),
+            owner: self.get_owner_address(meta.owner_offset())?,
+            data_len: meta.account_data_size(account_block),
+            executable: meta.flags().executable(),
+            rent_epoch: meta.final_rent_epoch(account_block),
+        };
+
+        Ok(Some(callback(stored_account)))
+    }
+
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
         index_offset: IndexOffset,
@@ -1463,6 +1501,42 @@ mod tests {
                 owner_addresses[account_meta.owner_offset().0 as usize]
             );
         }
+    }
+
+    #[test]
+    fn test_get_stored_account_without_data_callback() {
+        const NUM_ACCOUNTS: usize = 20;
+        const NUM_OWNERS: usize = 10;
+        let test_info = write_test_file(NUM_ACCOUNTS, NUM_OWNERS);
+
+        let file = TieredReadableFile::new(&test_info.file_path).unwrap();
+        let hot_storage = HotStorageReader::new(file).unwrap();
+
+        for i in 0..NUM_ACCOUNTS {
+            hot_storage
+                .get_stored_account_without_data_callback(IndexOffset(i as u32), |stored_account| {
+                    assert_eq!(stored_account.lamports, test_info.metas[i].lamports());
+                    assert_eq!(stored_account.data_len, test_info.datas[i].len());
+                    assert_eq!(
+                        *stored_account.owner,
+                        test_info.owners[test_info.metas[i].owner_offset().0 as usize]
+                    );
+                    assert_eq!(*stored_account.pubkey(), test_info.addresses[i]);
+                })
+                .unwrap()
+                .unwrap();
+        }
+        // Make sure it returns None on NUM_ACCOUNTS to allow termination on
+        // while loop in actual accounts-db read case.
+        assert!(matches!(
+            hot_storage.get_stored_account_without_data_callback(
+                IndexOffset(NUM_ACCOUNTS as u32),
+                |_| {
+                    panic!("unexpected");
+                }
+            ),
+            Ok(None),
+        ));
     }
 
     #[test]

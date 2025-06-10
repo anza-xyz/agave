@@ -88,7 +88,30 @@ impl TieredStorageReader {
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
+        &self,
+        index_offset: IndexOffset,
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
+        match self {
+            Self::Hot(hot) => hot.get_stored_account_without_data_callback(index_offset, callback),
+        }
+    }
+
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
         index_offset: IndexOffset,

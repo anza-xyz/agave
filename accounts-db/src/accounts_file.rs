@@ -163,7 +163,39 @@ impl AccountsFile {
         format!("{slot}.{id}")
     }
 
-    /// calls `callback` with the account located at the specified index offset.
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
+        &self,
+        offset: usize,
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
+    ) -> Option<Ret> {
+        match self {
+            Self::AppendVec(av) => av.get_stored_account_without_data_callback(offset, callback),
+            Self::TieredStorage(ts) => {
+                // Note: The conversion here is needed as the AccountsDB currently
+                // assumes all offsets are multiple of 8 while TieredStorage uses
+                // IndexOffset that is equivalent to AccountInfo::reduced_offset.
+                let index_offset = IndexOffset(AccountInfo::get_reduced_offset(offset));
+                ts.reader()?
+                    .get_stored_account_without_data_callback(index_offset, callback)
+                    .ok()?
+            }
+        }
+    }
+
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
         offset: usize,
