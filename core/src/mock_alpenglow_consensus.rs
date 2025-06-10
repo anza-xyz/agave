@@ -5,6 +5,7 @@ use {
     bytemuck::{Pod, Zeroable},
     chrono::TimeDelta,
     crossbeam_channel::{bounded, Receiver, Sender},
+    futures::future::err,
     solana_clock::Slot,
     solana_gossip::{
         cluster_info::ClusterInfo,
@@ -71,6 +72,7 @@ impl MockAlpenglowConsensus {
         cluster_info: Arc<ClusterInfo>,
         epoch_specs: EpochSpecs,
     ) -> Self {
+        //socket.set_nonblocking(true).unwrap();
         let socket = Arc::new(socket);
         let (new_slot_tx, new_slot_rx) = bounded(4);
         let shared_state = Arc::new(Mutex::new(SharedState {
@@ -119,8 +121,15 @@ impl MockAlpenglowConsensus {
 
         new_slot: Receiver<Slot>,
     ) {
+        socket
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         let mut packets: Vec<Packet> = vec![Packet::default(); 2048];
         loop {
+            // must wipe all Meta records to reuse the buffer
+            for p in packets.iter_mut() {
+                *p.meta_mut() = Meta::default();
+            }
             // recv_mmsg will auto timeout in 1 second
             let Ok(n) = recv_mmsg(&socket, &mut packets) else {
                 return;
@@ -172,6 +181,13 @@ impl MockAlpenglowConsensus {
                 }
                 continue;
             };
+
+            if slot % 20 == 0 {
+                for (peer, stake) in epoch_specs.current_epoch_staked_nodes().iter() {
+                    error!("Stake for {peer} is {stake}");
+                }
+            }
+            let total_staked: u64 = epoch_specs.current_epoch_staked_nodes().values().sum();
             // prepare the packet to send and sign it
             {
                 let pkt = FakeVotePacket::from_bytes_mut(&mut packet_buf);
@@ -188,7 +204,12 @@ impl MockAlpenglowConsensus {
             // Clear the stats for the previous slots in preparation for the new one
             {
                 let mut lockguard = state.lock().unwrap();
-                let counts = Self::count_collected_votes(&lockguard.peers);
+                let (total_voted, weighted_delay) = Self::count_collected_votes(&lockguard.peers);
+                error!(
+                    "Got {} % of total stake collected, stake-weighted delay is {}ms",
+                    100.0 * total_voted as f64 / total_staked as f64,
+                    weighted_delay
+                );
                 lockguard.peers.clear();
                 lockguard.current_slot = slot;
                 lockguard.current_slot_start = Instant::now();
@@ -204,6 +225,7 @@ impl MockAlpenglowConsensus {
                     continue;
                 };
                 send_instructions.push((packet_buf.as_slice(), ag_addr));
+                error!("Sending mock vote to {ag_addr}");
             }
 
             // broadcast to everybody at once
@@ -212,7 +234,7 @@ impl MockAlpenglowConsensus {
     }
 
     fn count_collected_votes(peers: &HashMap<Pubkey, Counters>) -> (Stake, f64) {
-        let mut total_voted: Stake = 0;
+        let mut total_voted: Stake = 1; //start with 1 lamport to avoid zero division later
         let mut total_delay_ms = 0u128;
         for (pubkey, counters) in peers.iter() {
             total_voted += counters.stake;
@@ -231,5 +253,29 @@ impl MockAlpenglowConsensus {
         self.state.lock().unwrap().should_exit = true;
         self.sender_thread.join()?;
         self.listener_thread.join()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use serial_test::serial;
+    use solana_local_cluster::local_cluster::{LocalCluster, DEFAULT_MINT_LAMPORTS};
+    use solana_native_token::LAMPORTS_PER_SOL;
+    use solana_streamer::socket::SocketAddrSpace;
+
+    #[test]
+    #[serial]
+    fn test_mock_alpenglow_consensus() {
+        solana_logger::setup_with_default("error");
+        let num_nodes = 3;
+        let local = LocalCluster::new_with_equal_stakes(
+            num_nodes,
+            DEFAULT_MINT_LAMPORTS,
+            100 * LAMPORTS_PER_SOL,
+            SocketAddrSpace::Unspecified,
+        );
+        std::thread::sleep(Duration::from_secs(10));
     }
 }
