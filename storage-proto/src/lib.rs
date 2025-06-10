@@ -114,7 +114,7 @@ struct StoredTransactionError(Vec<u8>);
 impl From<StoredTransactionError> for TransactionError {
     fn from(value: StoredTransactionError) -> Self {
         let bytes = value.0;
-        bincode::deserialize::<Self>(&bytes).expect("transaction error to deserialize from bytes")
+        bincode::deserialize(&bytes).expect("transaction error to deserialize from bytes")
     }
 }
 

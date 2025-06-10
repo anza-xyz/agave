@@ -288,7 +288,7 @@ impl From<generated::Transaction> for VersionedTransaction {
 
 impl From<TransactionError> for generated::TransactionError {
     fn from(value: TransactionError) -> Self {
-        let stored_error = Into::<StoredTransactionError>::into(value).0;
+        let stored_error = StoredTransactionError::from(value).0;
         Self { err: stored_error }
     }
 }
