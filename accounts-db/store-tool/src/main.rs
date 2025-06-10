@@ -208,7 +208,7 @@ fn do_search(
         }) else {
             return;
         };
-        // By default, when the Storage is dropped, the backing file will be removed.
+        // By default, when the storage is dropped, the backing file will be removed.
         // We do not want to remove the backing file here in the store-tool, so prevent dropping.
         let storage = ManuallyDrop::new(storage);
 
