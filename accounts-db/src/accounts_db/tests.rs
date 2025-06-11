@@ -2265,14 +2265,8 @@ fn test_verify_accounts_hash_bad_account_hash() {
     db.update_accounts_hash_for_tests(some_slot, &ancestors, false, false);
 
     // provide bogus account hashes
-    db.store_accounts_unfrozen(
-        (some_slot, accounts),
-        &StoreTo::Storage(&db.find_storage_candidate(some_slot)),
-        None,
-        StoreReclaims::Default,
-        UpdateIndexThreadSelection::PoolWithThreshold,
-    );
-    db.add_root(some_slot);
+    db.store_cached((some_slot, accounts), None);
+    db.add_root_and_flush_write_cache(some_slot);
 
     let epoch_schedule = EpochSchedule::default();
     let rent_collector = RentCollector::default();
