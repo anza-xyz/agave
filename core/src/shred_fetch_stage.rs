@@ -182,7 +182,6 @@ impl ShredFetchStage {
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
         sender: Sender<PacketBatch>,
-        recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         name: &'static str,
@@ -202,10 +201,8 @@ impl ShredFetchStage {
                     socket,
                     exit.clone(),
                     packet_sender.clone(),
-                    recycler.clone(),
                     receiver_stats.clone(),
                     None,  // coalesce
-                    true,  // use_pinned_memory
                     None,  // in_vote_only_mode
                     false, // is_staked_service
                 )
@@ -257,7 +254,6 @@ impl ShredFetchStage {
             sockets,
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
             bank_forks.clone(),
             shred_version,
             "shred_fetch",
@@ -273,7 +269,6 @@ impl ShredFetchStage {
             vec![repair_socket],
             exit.clone(),
             sender.clone(),
-            recycler.clone(),
             bank_forks.clone(),
             shred_version,
             "shred_fetch_repair",

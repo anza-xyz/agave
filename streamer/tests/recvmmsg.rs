@@ -2,10 +2,7 @@
 
 use {
     solana_net_utils::bind_to_localhost,
-    solana_streamer::{
-        packet::{Meta, Packet, PACKET_DATA_SIZE},
-        recvmmsg::*,
-    },
+    solana_streamer::{packet::PACKET_DATA_SIZE, recvmmsg::*, streamer::RecvBuffer},
     std::time::Instant,
 };
 
@@ -25,9 +22,11 @@ pub fn test_recv_mmsg_batch_size() {
             let data = [0; PACKET_DATA_SIZE];
             sender.send_to(&data[..], addr).unwrap();
         }
-        let mut packets = vec![Packet::default(); TEST_BATCH_SIZE];
+        let mut buffer = RecvBuffer::new(TEST_BATCH_SIZE);
+        let mut buffers = buffer.chunk_bufs();
+        let mut metas = RecvMetas::new();
         let now = Instant::now();
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let recv = recv_mmsg(&reader, &mut buffers[..], &mut metas).unwrap();
         elapsed_in_max_batch += now.elapsed().as_nanos();
         if recv == TEST_BATCH_SIZE {
             num_max_batches += 1;
@@ -41,17 +40,17 @@ pub fn test_recv_mmsg_batch_size() {
             let data = [0; PACKET_DATA_SIZE];
             sender.send_to(&data[..], addr).unwrap();
         }
-        let mut packets = vec![Packet::default(); 4];
+        let mut buffer = RecvBuffer::new(4);
+        let mut buffers = buffer.chunk_bufs();
+        let mut metas = RecvMetas::new();
         let mut recv = 0;
         let now = Instant::now();
-        while let Ok(num) = recv_mmsg(&reader, &mut packets[..]) {
+        while let Ok(num) = recv_mmsg(&reader, &mut buffers[..], &mut metas) {
             recv += num;
             if recv >= TEST_BATCH_SIZE {
                 break;
             }
-            packets
-                .iter_mut()
-                .for_each(|pkt| *pkt.meta_mut() = Meta::default());
+            metas.clear();
         }
         elapsed_in_small_batch += now.elapsed().as_nanos();
         assert_eq!(TEST_BATCH_SIZE, recv);
