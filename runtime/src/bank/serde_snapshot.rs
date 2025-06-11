@@ -5,9 +5,7 @@ mod tests {
             bank::{
                 epoch_accounts_hash_utils, test_utils as bank_test_utils, Bank, EpochRewardStatus,
             },
-            epoch_stakes::{
-                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
-            },
+            epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{
@@ -20,7 +18,7 @@ mod tests {
                 create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
-            stakes::{SerdeStakesToStakeFormat, Stakes, StakesEnum},
+            stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         solana_accounts_db::{
             account_storage::AccountStorageMap,
@@ -127,7 +125,7 @@ mod tests {
         } else {
             0
         } + 2;
-        let mut bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
+        let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
 
         // Test new account
         let key2 = Pubkey::new_unique();
@@ -163,40 +161,11 @@ mod tests {
         let expected_accounts_lt_hash =
             has_accounts_lt_hash.then(|| bank2.accounts_lt_hash.lock().unwrap().clone());
 
-        // Only if a bank was recently recreated from a snapshot will it have an epoch stakes entry
-        // of type "delegations" which cannot be serialized into the versioned epoch stakes map. Simulate
-        // this condition by replacing the epoch 0 stakes map of stake accounts with an epoch stakes map
-        // of delegations.
-        {
-            assert_eq!(bank2.epoch_stakes.len(), 2);
-            assert!(bank2
-                .epoch_stakes
-                .values()
-                .all(|epoch_stakes| matches!(epoch_stakes.stakes(), &StakesEnum::Accounts(_))));
-
-            let StakesEnum::Accounts(stake_accounts) =
-                bank2.epoch_stakes.remove(&0).unwrap().stakes().clone()
-            else {
-                panic!("expected the epoch 0 stakes entry to have stake accounts");
-            };
-
-            bank2.epoch_stakes.insert(
-                0,
-                EpochStakes::new(Arc::new(StakesEnum::Delegations(stake_accounts.into())), 0),
-            );
-        }
-
         let mut buf = Vec::new();
         let cursor = Cursor::new(&mut buf);
         let mut writer = BufWriter::new(cursor);
         {
             let mut bank_fields = bank2.get_fields_to_serialize();
-            // Ensure that epoch_stakes and versioned_epoch_stakes are each
-            // serialized with at least one entry to verify that epoch stakes
-            // entries are combined correctly during deserialization
-            assert!(!bank_fields.epoch_stakes.is_empty());
-            assert!(!bank_fields.versioned_epoch_stakes.is_empty());
-
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
             serde_snapshot::serialize_bank_snapshot_into(
@@ -322,12 +291,12 @@ mod tests {
         // entries are of type Stakes<StakeAccount> so add a new entry for Stakes<Stake>.
         bank.epoch_stakes.insert(
             42,
-            EpochStakes::from(VersionedEpochStakes::Current {
+            VersionedEpochStakes::Current {
                 stakes: SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
-            }),
+            },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
 
@@ -544,7 +513,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "3PsrjAtyWBU3KPopGoM1UK1sa8HjVzehjBi7M2v6wW1Q")
+            frozen_abi(digest = "CsLEuMN7aF93CutCEYfUQrWi3kBV4weLtmckWs8f6Kt1")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {

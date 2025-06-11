@@ -431,14 +431,6 @@ impl StakesEnum {
             StakesEnum::Stakes(stakes) => stakes.vote_accounts(),
         }
     }
-
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
-        match self {
-            StakesEnum::Accounts(stakes) => stakes.staked_nodes(),
-            StakesEnum::Delegations(stakes) => stakes.staked_nodes(),
-            StakesEnum::Stakes(stakes) => stakes.staked_nodes(),
-        }
-    }
 }
 
 /// This conversion is very memory intensive so should only be used in

@@ -17,7 +17,7 @@ use {
     },
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::epoch_stakes::EpochStakes,
+    solana_runtime::epoch_stakes::VersionedEpochStakes,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         iter,
@@ -87,7 +87,7 @@ impl RepairWeight {
         &mut self,
         blockstore: &Blockstore,
         votes: I,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) where
         I: Iterator<Item = (Slot, Vec<Pubkey>)>,
@@ -204,7 +204,7 @@ impl RepairWeight {
     pub fn get_best_weighted_repairs(
         &mut self,
         blockstore: &Blockstore,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
         max_new_orphans: usize,
         max_new_shreds: usize,
@@ -528,7 +528,7 @@ impl RepairWeight {
         blockstore: &Blockstore,
         processed_slots: &mut HashSet<Slot>,
         repairs: &mut Vec<ShredRepairType>,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
         max_new_orphans: usize,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -666,7 +666,7 @@ impl RepairWeight {
         &mut self,
         blockstore: &Blockstore,
         mut orphan_tree_root: Slot,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> Option<Slot> {
         // Must only be called on existing orphan trees
@@ -764,7 +764,7 @@ impl RepairWeight {
     /// It is expected that no two children of a parent could both reach `DUPLICATE_THRESHOLD`.
     pub fn get_popular_pruned_forks(
         &self,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> Vec<Slot> {
         #[cfg(test)]
@@ -946,7 +946,7 @@ impl RepairWeight {
         root1: TreeRoot,
         root2: TreeRoot,
         merge_leaf: Slot,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) {
         // Update self.slot_to_tree to reflect the merge

@@ -13831,7 +13831,7 @@ fn test_bank_epoch_stakes() {
 
     // Setup new epoch stakes on Bank 1 for both leader schedule epochs.
     let make_new_epoch_stakes = |stake_coefficient: u64| {
-        EpochStakes::new_for_tests(
+        VersionedEpochStakes::new_for_tests(
             voting_keypairs
                 .iter()
                 .map(|keypair| {

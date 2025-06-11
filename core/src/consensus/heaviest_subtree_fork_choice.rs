@@ -11,7 +11,7 @@ use {
     solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, bank_forks::BankForks, epoch_stakes::EpochStakes},
+    solana_runtime::{bank::Bank, bank_forks::BankForks, epoch_stakes::VersionedEpochStakes},
     std::{
         borrow::Borrow,
         cmp::Ordering,
@@ -344,7 +344,7 @@ impl HeaviestSubtreeForkChoice {
         &'a mut self,
         // newly updated votes on a fork
         pubkey_votes: impl Iterator<Item = impl Borrow<(Pubkey, SlotHashKey)> + 'b>,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> SlotHashKey {
         // Generate the set of updates
@@ -655,7 +655,7 @@ impl HeaviestSubtreeForkChoice {
         &mut self,
         other: HeaviestSubtreeForkChoice,
         merge_leaf: &SlotHashKey,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) {
         assert!(self.fork_infos.contains_key(merge_leaf));
@@ -974,7 +974,7 @@ impl HeaviestSubtreeForkChoice {
     fn generate_update_operations<'a, 'b>(
         &'a mut self,
         pubkey_votes: impl Iterator<Item = impl Borrow<(Pubkey, SlotHashKey)> + 'b>,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> UpdateOperations {
         let mut update_operations: BTreeMap<(SlotHashKey, UpdateLabel), UpdateOperation> =
