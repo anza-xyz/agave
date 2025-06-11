@@ -11,7 +11,7 @@ use {
             TieredStorageResult,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     std::path::Path,
 };
@@ -88,7 +88,30 @@ impl TieredStorageReader {
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
+        &self,
+        index_offset: IndexOffset,
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
+        match self {
+            Self::Hot(hot) => hot.get_stored_account_without_data_callback(index_offset, callback),
+        }
+    }
+
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
         index_offset: IndexOffset,
@@ -142,20 +165,11 @@ impl TieredStorageReader {
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
     ) -> TieredStorageResult<()> {
-        // Note, this should be reimplemented to not read account data
-        self.scan_accounts(|stored_account| {
-            let account = StoredAccountInfoWithoutData {
-                pubkey: stored_account.pubkey(),
-                lamports: stored_account.lamports(),
-                owner: stored_account.owner(),
-                data_len: stored_account.data().len(),
-                executable: stored_account.executable(),
-                rent_epoch: stored_account.rent_epoch(),
-            };
-            callback(account);
-        })
+        match self {
+            Self::Hot(hot) => hot.scan_accounts_without_data(callback),
+        }
     }
 
     /// Iterate over all accounts and call `callback` with each account.

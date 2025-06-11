@@ -8,12 +8,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.3](#edge-channel)
-* [beta - v2.2](https://github.com/anza-xyz/agave/blob/v2.2/CHANGELOG.md)
-* [stable - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
+* [edge - v3.0](#edge-channel)
+* [beta - v2.3](https://github.com/anza-xyz/agave/blob/v2.3/CHANGELOG.md)
+* [stable - v2.2](https://github.com/anza-xyz/agave/blob/v2.2/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 2.3.0 - Unreleased
+## 3.0.0 - Unreleased
+
+
+## 2.3.0
 
 ### Validator
 
@@ -21,7 +24,7 @@ Release channels have their own copy of this changelog:
 * ABI of `TimedTracedEvent` changed, since `PacketBatch` became an enum, which carries different packet batch types. (#5646)
 
 #### Changes
-* Account notifications for Geyser are no longer deduplicated when restorting from a snapshot.
+* Account notifications for Geyser are no longer deduplicated when restoring from a snapshot.
 * Add `--no-snapshots` to disable generating snapshots.
 * `--block-production-method central-scheduler-greedy` is now the default.
 * The default full snapshot interval is now 50,000 slots.

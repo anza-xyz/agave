@@ -1,7 +1,7 @@
 [package]
 name = "agave-feature-set"
-version = "2.3.0"
 description = "Solana runtime feature declarations"
+version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }

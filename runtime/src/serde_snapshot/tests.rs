@@ -225,7 +225,7 @@ mod serde_snapshot_tests {
         let mut pubkeys: Vec<Pubkey> = vec![];
         create_test_accounts(&accounts, &mut pubkeys, 100, slot);
         check_accounts_local(&accounts, &pubkeys, 100);
-        accounts.add_root(slot);
+        accounts.accounts_db.add_root_and_flush_write_cache(slot);
         let accounts_delta_hash = accounts.accounts_db.calculate_accounts_delta_hash(slot);
         let accounts_hash = AccountsHash(Hash::new_unique());
         accounts

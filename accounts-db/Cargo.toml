@@ -59,6 +59,7 @@ rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
+slab = { workspace = true }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
 solana-address-lookup-table-interface = { workspace = true, features = [
@@ -105,6 +106,10 @@ static_assertions = { workspace = true }
 tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+agave-io-uring = { workspace = true }
+io-uring = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }

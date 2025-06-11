@@ -27,7 +27,7 @@
 
 use {
     crate::{
-        cluster_info_metrics::should_report_message_signature,
+        cluster_info_metrics::{last_four_chars, should_report_message_signature},
         contact_info::ContactInfo,
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
@@ -57,12 +57,11 @@ const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
 const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // Required number of leading zero bits for crds signature to get reported to influx
-// mean new push messages received per minute per node
-//      testnet: ~500k,
-//      mainnet: ~280k
+// mean new CrdsValues received per minute per node
+//      testnet/mainnet: ~680k as of 2025-06-06
 // target: 1 signature reported per minute
-// log2(500k) = ~18.9.
-const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
+// log2(680k) = ~19.375.
+pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
 
 pub struct Crds {
     /// Stores the map of labels and values
@@ -718,17 +717,17 @@ impl CrdsDataStats {
                 "gossip_crds_sample",
                 (
                     "origin",
-                    entry.value.pubkey().to_string().get(..8),
+                    last_four_chars(&entry.value.pubkey().to_string()),
                     Option<String>
                 ),
                 (
                     "signature",
-                    entry.value.signature().to_string().get(..8),
+                    last_four_chars(&entry.value.signature().to_string()),
                     Option<String>
                 ),
                 (
                     "from",
-                    from.to_string().get(..8),
+                    last_four_chars(&from.to_string()),
                     Option<String>
                 )
             );
