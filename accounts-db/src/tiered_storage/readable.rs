@@ -76,18 +76,6 @@ impl TieredStorageReader {
         }
     }
 
-    /// Returns the `IndexInfo` for the account located at the specified index offset.
-    ///
-    /// Only intended to be used with the accounts index.
-    pub(crate) fn get_account_index_info(
-        &self,
-        index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<IndexInfo>> {
-        match self {
-            Self::Hot(hot) => hot.get_account_index_info(index_offset),
-        }
-    }
-
     /// Calls `callback` with the stored account at `offset`.
     ///
     /// Returns `None` if there is no account at `offset`, otherwise returns the result of

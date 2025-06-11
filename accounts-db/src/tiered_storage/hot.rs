@@ -610,38 +610,6 @@ impl HotStorageReader {
         )))
     }
 
-    /// Returns the `IndexInfo` for the account located at the specified index offset.
-    ///
-    /// Only intended to be used with the accounts index.
-    pub(crate) fn get_account_index_info(
-        &self,
-        index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<IndexInfo>> {
-        if index_offset.0 >= self.footer.account_entry_count {
-            return Ok(None);
-        }
-
-        let account_offset = self.get_account_offset(index_offset)?;
-
-        let meta = self.get_account_meta_from_offset(account_offset)?;
-        let account_block = self.get_account_block(account_offset, index_offset)?;
-
-        let account_data_size = meta.account_data_size(account_block);
-
-        let account_index_info = IndexInfo {
-            stored_size_aligned: stored_size(account_data_size),
-            index_info: IndexInfoInner {
-                pubkey: *self.get_account_address(index_offset)?,
-                lamports: meta.lamports(),
-                offset: AccountInfo::reduced_offset_to_offset(index_offset.0),
-                data_len: account_data_size as u64,
-                executable: meta.flags().executable(),
-                rent_epoch: meta.final_rent_epoch(account_block),
-            },
-        };
-        Ok(Some(account_index_info))
-    }
-
     /// iterate over all pubkeys
     pub fn scan_pubkeys(&self, mut callback: impl FnMut(&Pubkey)) -> TieredStorageResult<()> {
         for i in 0..self.footer.account_entry_count {
