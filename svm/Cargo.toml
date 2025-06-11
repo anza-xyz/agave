@@ -75,6 +75,7 @@ solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
+solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
 spl-generic-token = { workspace = true }
