@@ -59,14 +59,12 @@ solana-type-overrides = { workspace = true }
 spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
 
-<<<<<<< HEAD
+[target.'cfg(debug_assertions)'.dependencies]
+solana-transaction-context = { workspace = true, features = ["debug-signature"] }
+
 [lib]
 crate-type = ["lib"]
 name = "solana_svm"
-=======
-[target.'cfg(debug_assertions)'.dependencies]
-solana-transaction-context = { workspace = true, features = ["debug-signature"] }
->>>>>>> b22b23f1d (Add missing feature to svm dep (#6440))
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
