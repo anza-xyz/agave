@@ -1,8 +1,12 @@
 use {
-    crate::cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
-    clap::{App, Arg},
+    crate::{
+        cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
+        commands::{FromClapArgMatches, Result},
+    },
+    clap::{value_t, values_t, App, Arg, ArgMatches},
     solana_clap_utils::{
         hidden_unless_forced,
+        input_parsers::keypair_of,
         input_validators::{
             is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
             is_slot, is_within_range, validate_cpu_ranges,
@@ -17,15 +21,122 @@ use {
     },
     solana_ledger::use_snapshot_archives_at_startup,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
+    solana_sdk::{
+        pubkey::Pubkey,
+        signature::{Keypair, Signer},
+    },
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::str::FromStr,
+    std::{collections::HashSet, net::SocketAddr, path::PathBuf, str::FromStr},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
+
+#[derive(Debug, PartialEq)]
+pub struct RunArgs {
+    pub identity: Keypair,
+    pub logfile: String,
+    pub cuda: bool,
+    pub init_complete_file: Option<PathBuf>,
+    pub entrypoints: Vec<SocketAddr>,
+    pub known_validators: Option<HashSet<Pubkey>>,
+    pub repair_validators: Option<HashSet<Pubkey>>,
+    pub gossip_validators: Option<HashSet<Pubkey>>,
+    pub repair_whitelist: Option<HashSet<Pubkey>>,
+
+    // rpc bootstrap config
+    pub no_genesis_fetch: bool,
+    pub no_snapshot_fetch: bool,
+    pub check_vote_account: Option<String>,
+    pub only_known_rpc: bool,
+    pub no_incremental_snapshots: bool,
+    pub max_genesis_archive_unpacked_size: u64,
+}
+
+impl FromClapArgMatches for RunArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let identity = keypair_of(matches, "identity").ok_or(clap::Error::with_description(
+            "The --identity <KEYPAIR> argument is required",
+            clap::ErrorKind::ArgumentNotFound,
+        ))?;
+
+        let logfile = matches
+            .value_of("logfile")
+            .map(|s| s.into())
+            .unwrap_or_else(|| format!("agave-validator-{}.log", identity.pubkey()));
+
+        let cuda = matches.is_present("cuda");
+
+        let init_complete_file = value_t!(matches, "init_complete_file", PathBuf).ok();
+
+        let no_genesis_fetch = matches.is_present("no_genesis_fetch");
+        let no_snapshot_fetch = matches.is_present("no_snapshot_fetch");
+
+        let entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
+        let mut parsed_entrypoints = HashSet::new();
+        for entrypoint in entrypoints {
+            let parsed = solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
+                Box::<dyn std::error::Error>::from(format!(
+                    "failed to parse entrypoint address: {err}"
+                ))
+            })?;
+            parsed_entrypoints.insert(parsed);
+        }
+        let entrypoints = parsed_entrypoints.into_iter().collect();
+
+        let check_vote_account = matches
+            .value_of("check_vote_account")
+            .map(|url| url.to_string());
+
+        let known_validators = values_t!(matches, "known_validators", Pubkey)
+            .ok()
+            .map(|validators| validators.into_iter().collect());
+
+        let repair_validators = values_t!(matches, "repair_validators", Pubkey)
+            .ok()
+            .map(|validators| validators.into_iter().collect());
+
+        let gossip_validators = values_t!(matches, "gossip_validators", Pubkey)
+            .ok()
+            .map(|validators| validators.into_iter().collect());
+
+        let repair_whitelist = values_t!(matches, "repair_whitelist", Pubkey)
+            .ok()
+            .map(|validators| validators.into_iter().collect());
+
+        let only_known_rpc = matches.is_present("only_known_rpc");
+
+        let no_incremental_snapshots = matches.is_present("no_incremental_snapshots");
+
+        let max_genesis_archive_unpacked_size =
+            value_t!(matches, "max_genesis_archive_unpacked_size", u64).map_err(|err| {
+                Box::<dyn std::error::Error>::from(format!(
+                    "failed to parse max_genesis_archive_unpacked_size: {err}"
+                ))
+            })?;
+
+        Ok(RunArgs {
+            identity,
+            logfile,
+            cuda,
+            init_complete_file,
+            entrypoints,
+            no_genesis_fetch,
+            no_snapshot_fetch,
+            check_vote_account,
+            known_validators,
+            repair_validators,
+            gossip_validators,
+            repair_whitelist,
+            only_known_rpc,
+            no_incremental_snapshots,
+            max_genesis_archive_unpacked_size,
+        })
+    }
+}
 
 pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 'a> {
     app
@@ -1672,4 +1783,630 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 tpu-client-next is used by default.",
             ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    impl Default for RunArgs {
+        fn default() -> Self {
+            let default_args = DefaultArgs::default();
+
+            let identity = Keypair::new();
+            let logfile = format!("agave-validator-{}.log", identity.pubkey());
+            let cuda = false;
+            let init_complete_file = None;
+            let entrypoints = vec![];
+            let known_validators = None;
+            let repair_validators = None;
+            let gossip_validators = None;
+            let repair_whitelist = None;
+
+            // rpc bootstrap config
+            let no_genesis_fetch = false;
+            let no_snapshot_fetch = false;
+            let check_vote_account = None;
+            let only_known_rpc = false;
+            let no_incremental_snapshots = false;
+            let max_genesis_archive_unpacked_size =
+                default_args.genesis_archive_unpacked_size.parse().unwrap();
+
+            RunArgs {
+                identity,
+                logfile,
+                cuda,
+                init_complete_file,
+                no_genesis_fetch,
+                no_snapshot_fetch,
+                entrypoints,
+                check_vote_account,
+                known_validators,
+                repair_validators,
+                gossip_validators,
+                repair_whitelist,
+                only_known_rpc,
+                no_incremental_snapshots,
+                max_genesis_archive_unpacked_size,
+            }
+        }
+    }
+
+    impl Clone for RunArgs {
+        fn clone(&self) -> Self {
+            RunArgs {
+                identity: self.identity.insecure_clone(),
+                logfile: self.logfile.clone(),
+                cuda: self.cuda,
+                init_complete_file: self.init_complete_file.clone(),
+                entrypoints: self.entrypoints.clone(),
+                known_validators: self.known_validators.clone(),
+                repair_validators: self.repair_validators.clone(),
+                gossip_validators: self.gossip_validators.clone(),
+                repair_whitelist: self.repair_whitelist.clone(),
+                no_genesis_fetch: self.no_genesis_fetch,
+                no_snapshot_fetch: self.no_snapshot_fetch,
+                check_vote_account: self.check_vote_account.clone(),
+                only_known_rpc: self.only_known_rpc,
+                no_incremental_snapshots: self.no_incremental_snapshots,
+                max_genesis_archive_unpacked_size: self.max_genesis_archive_unpacked_size,
+            }
+        }
+    }
+
+    fn get_run_command_matches<'a>(
+        default_args: &'a DefaultArgs,
+        args: Vec<&str>,
+    ) -> ArgMatches<'a> {
+        let app_name = "run_command";
+        let app = App::new(app_name);
+        let app = add_args(app, default_args);
+        let args = [&[app_name], &args[..]].concat();
+        app.get_matches_from(args)
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_identity_file_short_arg() {
+        let default_args = DefaultArgs::default();
+        let default_run_args = RunArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity.insecure_clone();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let matches = get_run_command_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
+        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+        assert_eq!(
+            args,
+            RunArgs {
+                identity: keypair,
+                ..default_run_args
+            }
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_identity_file_long_arg() {
+        let default_args = DefaultArgs::default();
+        let default_run_args = RunArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity.insecure_clone();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let matches =
+            get_run_command_matches(&default_args, vec!["--identity", file.to_str().unwrap()]);
+        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+        assert_eq!(
+            args,
+            RunArgs {
+                identity: keypair,
+                ..default_run_args
+            }
+        );
+    }
+
+    fn test_run_command_with_identity_setup(
+        args: Vec<&str>,
+        default_run_args: RunArgs,
+        expected_args: RunArgs,
+    ) {
+        let default_args = DefaultArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity.insecure_clone();
+        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+
+        let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
+        let matches = get_run_command_matches(&default_args, args);
+        let mut args = RunArgs::from_clap_arg_match(&matches).unwrap();
+
+        // clap doesn't ensure elements order, sort them
+        args.entrypoints.sort();
+
+        assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log_default() {
+        let default_run_args = RunArgs::default();
+        let identity = default_run_args.identity.insecure_clone();
+        let expected_args = RunArgs {
+            logfile: "agave-validator-".to_string() + &identity.pubkey().to_string() + ".log",
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(vec![], default_run_args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log_short_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            logfile: "-".to_string(),
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(vec!["-o", "-"], default_run_args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            logfile: "custom_log.log".to_string(),
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--log", "custom_log.log"],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_cuda_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            cuda: true,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(vec!["--cuda"], default_run_args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_init_complete_file_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            init_complete_file: Some(PathBuf::from("init_complete")),
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--init-complete-file", "init_complete"],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_genesis_fetch_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            no_genesis_fetch: true,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--no-genesis-fetch"],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_snapshot_fetch_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            no_snapshot_fetch: true,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--no-snapshot-fetch"],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_entrypoint_long_arg_single_address() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            entrypoints: vec![SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                8000,
+            )],
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--entrypoint", "127.0.0.1:8000"],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_entrypoint_long_arg_multiple_addresses() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            entrypoints: vec![
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8001),
+            ],
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--entrypoint",
+                "127.0.0.1:8000",
+                "--entrypoint",
+                "127.0.0.1:8001",
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_entrypoint_long_arg_duplicate_address() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            entrypoints: vec![SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                8000,
+            )],
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--entrypoint",
+                "127.0.0.1:8000",
+                "--entrypoint",
+                "127.0.0.1:8000",
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_check_vote_account_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            entrypoints: vec![SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                8000,
+            )],
+            check_vote_account: Some("https://api.mainnet-beta.solana.com".to_string()),
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                // entrypoint is required for check-vote-account
+                "--entrypoint",
+                "127.0.0.1:8000",
+                "--check-vote-account",
+                "https://api.mainnet-beta.solana.com",
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_known_validators_long_arg_single() {
+        let default_run_args = RunArgs::default();
+        let known_validators_pubkey = Pubkey::new_unique();
+        let known_validators = Some(HashSet::from([known_validators_pubkey]));
+        let expected_args = RunArgs {
+            known_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--known-validator", &known_validators_pubkey.to_string()],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_known_validators_long_arg_multiple() {
+        let default_run_args = RunArgs::default();
+        let known_validators_pubkey_1 = Pubkey::new_unique();
+        let known_validators_pubkey_2 = Pubkey::new_unique();
+        let known_validators = Some(HashSet::from([
+            known_validators_pubkey_1,
+            known_validators_pubkey_2,
+        ]));
+        let expected_args = RunArgs {
+            known_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--known-validator",
+                &known_validators_pubkey_1.to_string(),
+                "--known-validator",
+                &known_validators_pubkey_2.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_known_validators_long_arg_duplicate() {
+        let default_run_args = RunArgs::default();
+        let known_validators_pubkey_1 = Pubkey::new_unique();
+        let known_validators = Some(HashSet::from([known_validators_pubkey_1]));
+        let expected_args = RunArgs {
+            known_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--known-validator",
+                &known_validators_pubkey_1.to_string(),
+                "--known-validator",
+                &known_validators_pubkey_1.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_repair_validators_long_arg_single() {
+        let default_run_args = RunArgs::default();
+        let repair_validators_pubkey = Pubkey::new_unique();
+        let repair_validators = Some(HashSet::from([repair_validators_pubkey]));
+        let expected_args = RunArgs {
+            repair_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--repair-validator", &repair_validators_pubkey.to_string()],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_repair_validators_long_arg_multiple() {
+        let default_run_args = RunArgs::default();
+        let repair_validators_pubkey_1 = Pubkey::new_unique();
+        let repair_validators_pubkey_2 = Pubkey::new_unique();
+        let repair_validators = Some(HashSet::from([
+            repair_validators_pubkey_1,
+            repair_validators_pubkey_2,
+        ]));
+        let expected_args = RunArgs {
+            repair_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--repair-validator",
+                &repair_validators_pubkey_1.to_string(),
+                "--repair-validator",
+                &repair_validators_pubkey_2.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_repair_validators_long_arg_duplicate() {
+        let default_run_args = RunArgs::default();
+        let repair_validators_pubkey = Pubkey::new_unique();
+        let repair_validators = Some(HashSet::from([repair_validators_pubkey]));
+        let expected_args = RunArgs {
+            repair_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--repair-validator",
+                &repair_validators_pubkey.to_string(),
+                "--repair-validator",
+                &repair_validators_pubkey.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_gossip_validators_long_arg_single() {
+        let default_run_args = RunArgs::default();
+        let gossip_validators_pubkey = Pubkey::new_unique();
+        let gossip_validators = Some(HashSet::from([gossip_validators_pubkey]));
+        let expected_args = RunArgs {
+            gossip_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--gossip-validator", &gossip_validators_pubkey.to_string()],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_gossip_validators_long_arg_multiple() {
+        let default_run_args = RunArgs::default();
+        let gossip_validators_pubkey_1 = Pubkey::new_unique();
+        let gossip_validators_pubkey_2 = Pubkey::new_unique();
+        let gossip_validators = Some(HashSet::from([
+            gossip_validators_pubkey_1,
+            gossip_validators_pubkey_2,
+        ]));
+        let expected_args = RunArgs {
+            gossip_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--gossip-validator",
+                &gossip_validators_pubkey_1.to_string(),
+                "--gossip-validator",
+                &gossip_validators_pubkey_2.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_gossip_validators_long_arg_duplicate() {
+        let default_run_args = RunArgs::default();
+        let gossip_validators_pubkey = Pubkey::new_unique();
+        let gossip_validators = Some(HashSet::from([gossip_validators_pubkey]));
+        let expected_args = RunArgs {
+            gossip_validators,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--gossip-validator",
+                &gossip_validators_pubkey.to_string(),
+                "--gossip-validator",
+                &gossip_validators_pubkey.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_repair_whitelist_long_arg_single() {
+        let default_run_args = RunArgs::default();
+        let repair_whitelist_pubkey = Pubkey::new_unique();
+        let repair_whitelist = Some(HashSet::from([repair_whitelist_pubkey]));
+        let expected_args = RunArgs {
+            repair_whitelist,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--repair-whitelist", &repair_whitelist_pubkey.to_string()],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_repair_whitelist_long_arg_multiple() {
+        let default_run_args = RunArgs::default();
+        let repair_whitelist_pubkey_1 = Pubkey::new_unique();
+        let repair_whitelist_pubkey_2 = Pubkey::new_unique();
+        let repair_whitelist = Some(HashSet::from([
+            repair_whitelist_pubkey_1,
+            repair_whitelist_pubkey_2,
+        ]));
+        let expected_args = RunArgs {
+            repair_whitelist,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--repair-whitelist",
+                &repair_whitelist_pubkey_1.to_string(),
+                "--repair-whitelist",
+                &repair_whitelist_pubkey_2.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_repair_whitelist_long_arg_duplicate() {
+        let default_run_args = RunArgs::default();
+        let repair_whitelist_pubkey = Pubkey::new_unique();
+        let repair_whitelist = Some(HashSet::from([repair_whitelist_pubkey]));
+        let expected_args = RunArgs {
+            repair_whitelist,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--repair-whitelist",
+                &repair_whitelist_pubkey.to_string(),
+                "--repair-whitelist",
+                &repair_whitelist_pubkey.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_only_known_rpc_long_arg() {
+        let default_run_args = RunArgs::default();
+        let known_validators_pubkey = Pubkey::new_unique();
+        let known_validators = Some(HashSet::from([known_validators_pubkey]));
+        let expected_args = RunArgs {
+            known_validators,
+            only_known_rpc: true,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                // --known-validator is required for --only-known-rpc
+                "--known-validator",
+                &known_validators_pubkey.to_string(),
+                "--only-known-rpc",
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_incremental_snapshot_fetch_long_arg() {
+        let default_run_args = RunArgs::default();
+        let expected_args = RunArgs {
+            no_incremental_snapshots: true,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec!["--no-incremental-snapshots"],
+            default_run_args,
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_max_genesis_archive_unpacked_size_long_arg() {
+        let default_run_args = RunArgs::default();
+        let max_genesis_archive_unpacked_size = 1000000000;
+        let expected_args = RunArgs {
+            max_genesis_archive_unpacked_size,
+            ..default_run_args.clone()
+        };
+        test_run_command_with_identity_setup(
+            vec![
+                "--max-genesis-archive-unpacked-size",
+                &max_genesis_archive_unpacked_size.to_string(),
+            ],
+            default_run_args,
+            expected_args,
+        );
+    }
 }
