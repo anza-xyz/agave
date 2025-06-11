@@ -7556,15 +7556,11 @@ impl AccountsDb {
             .fetch_add(measure.as_us(), Ordering::Relaxed);
     }
 
-    pub fn store_cached<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-    ) {
+    pub fn store_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
         self.store(
             accounts,
             &StoreTo::Cache,
-            transactions,
+            None,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );

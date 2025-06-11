@@ -623,7 +623,7 @@ impl Accounts {
     }
 
     pub fn store_accounts_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        self.accounts_db.store_cached(accounts, None)
+        self.accounts_db.store_cached(accounts)
     }
 
     /// Add a slot to root.  Root slots cannot be purged
