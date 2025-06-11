@@ -149,6 +149,7 @@ pub struct FlushStats {
     pub num_bytes_purged: Saturating<u64>,
     pub store_accounts_timing: StoreAccountsTiming,
     pub store_accounts_total_us: Saturating<u64>,
+    pub slots_not_cleaned_due_to_scans: Saturating<usize>,
 }
 
 impl FlushStats {
@@ -160,6 +161,7 @@ impl FlushStats {
         self.store_accounts_timing
             .accumulate(&other.store_accounts_timing);
         self.store_accounts_total_us += other.store_accounts_total_us;
+        self.slots_not_cleaned_due_to_scans += other.slots_not_cleaned_due_to_scans;
     }
 }
 
