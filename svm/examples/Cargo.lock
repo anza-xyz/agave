@@ -6284,9 +6284,9 @@ dependencies = [
 
 [[package]]
 name = "solana-genesis-config"
-version = "2.2.1"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "968dabd2b92d57131473eddbd475339da530e14f54397386abf303de3a2595a2"
+checksum = "b3725085d47b96d37fef07a29d78d2787fc89a0b9004c66eed7753d1e554989f"
 dependencies = [
  "bincode",
  "chrono",
@@ -6302,7 +6302,6 @@ dependencies = [
  "solana-inflation",
  "solana-keypair",
  "solana-logger",
- "solana-native-token",
  "solana-poh-config",
  "solana-pubkey",
  "solana-rent",
