@@ -158,7 +158,6 @@ struct DeserializableVersionedBank {
     stakes: Stakes<Delegation>,
     #[allow(dead_code)]
     unused_accounts: UnusedAccounts,
-    #[allow(dead_code)]
     unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
 }
@@ -432,8 +431,15 @@ fn deserialize_bank_fields<R>(
 where
     R: Read,
 {
-    let mut bank_fields: BankFieldsToDeserialize =
-        deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
+    let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
+    if !deserializable_bank.unused_epoch_stakes.is_empty() {
+        return Err(Box::new(bincode::ErrorKind::Custom(
+            "Expected deserialized bank's unused_epoch_stakes field \
+             to be empty"
+                .to_string(),
+        )));
+    }
+    let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);
     let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
     let extra_fields = deserialize_from(stream)?;
 
