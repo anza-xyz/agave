@@ -97,14 +97,14 @@ impl VotingService {
                     .map(|s| MockAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
                 move || {
                     for vote_op in vote_receiver.iter() {
-                        // Figure out if we are casting a new vote and what slot it is for
+                        // Figure out if we are casting a vote for a new slot, and what slot it is for
                         let slot = match vote_op {
                             VoteOp::PushVote {
                                 tx: _,
                                 ref tower_slots,
                                 ..
-                            } => tower_slots.iter().copied().max().unwrap_or(0),
-                            _ => 0,
+                            } => tower_slots.iter().copied().last(),
+                            _ => None,
                         };
                         // perform all the normal vote handling routines
                         Self::handle_vote(
@@ -114,8 +114,8 @@ impl VotingService {
                             vote_op,
                             connection_cache.clone(),
                         );
-                        // trigger mock alpenglow vote if applicable
-                        if slot != 0 {
+                        // trigger mock alpenglow vote if we have just cast an actual vote
+                        if let Some(slot) = slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
                                 ag.signal_new_slot(slot);
                             }
