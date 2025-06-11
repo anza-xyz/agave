@@ -1109,45 +1109,51 @@ pub fn execute(
         },
     );
 
-    let gossip_host: IpAddr = matches
+    let gossip_host = matches
         .value_of("gossip_host")
         .map(|gossip_host| {
             solana_net_utils::parse_host(gossip_host)
                 .map_err(|err| format!("failed to parse --gossip-host: {err}"))
         })
-        .transpose()?
-        .or_else(|| {
-            if !entrypoint_addrs.is_empty() {
-                let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
-                order.shuffle(&mut thread_rng());
-                // Return once we determine our IP from an entrypoint
-                order.into_iter().find_map(|i| {
-                    let entrypoint_addr = &entrypoint_addrs[i];
-                    info!(
-                        "Contacting {} to determine the validator's public IP address",
-                        entrypoint_addr
-                    );
-                    solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
-                        .map_or_else(
-                            |err| {
-                                warn!(
-                                    "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
-                                );
-                                None
-                            },
-                            Some,
-                        )
-                })
-            } else {
-                Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
-            }
-        })
-        .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?;
+        .transpose()?;
+    if gossip_host.is_some() {
+        warn!("--gossip-host is deprecated. Use --bind-address or rely on automatic public IP discovery instead.");
+    }
+
+    let advertised_ip = if let Some(ip) = gossip_host {
+        ip
+    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
+        bind_address
+    } else if !entrypoint_addrs.is_empty() {
+        let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
+        order.shuffle(&mut thread_rng());
+
+        order
+            .into_iter()
+            .find_map(|i| {
+                let entrypoint_addr = &entrypoint_addrs[i];
+                info!(
+                    "Contacting {} to determine the validator's public IP address",
+                    entrypoint_addr
+                );
+                solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
+                    .map_or_else(
+                        |err| {
+                            warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                            None
+                        },
+                        Some,
+                    )
+            })
+            .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
         solana_net_utils::find_available_port_in_range(bind_address, (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
-    let gossip_addr = SocketAddr::new(gossip_host, gossip_port);
+    let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
 
     let public_tpu_addr = matches
         .value_of("public_tpu_addr")

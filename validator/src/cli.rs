@@ -844,10 +844,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .help(
-                    "Gossip DNS name or IP address for the validator to advertise in gossip \
-                     [default: 127.0.0.1]",
-                ),
+                .hidden(hidden_unless_forced())
+                .help("DEPRECATED: Use --bind-address instead."),
         )
         .arg(
             Arg::with_name("dynamic_port_range")

@@ -350,10 +350,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("HOST")
             .takes_value(true)
             .validator(solana_net_utils::is_host)
-            .help(
-                "Gossip DNS name or IP address for the validator to advertise in gossip \
-                 [default: ask --entrypoint, or 127.0.0.1 when --entrypoint is not provided]",
-            ),
+            .hidden(hidden_unless_forced())
+            .help("DEPRECATED: Use --bind-address instead."),
     )
     .arg(
         Arg::with_name("public_tpu_addr")

@@ -158,12 +158,6 @@ fn main() {
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
-    let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
-        solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
-            eprintln!("Failed to parse --gossip-host: {err}");
-            exit(1);
-        })
-    });
     let gossip_port = value_t!(matches, "gossip_port", u16).ok();
     let dynamic_port_range = matches.value_of("dynamic_port_range").map(|port_range| {
         solana_net_utils::parse_port_range(port_range).unwrap_or_else(|| {
@@ -171,15 +165,21 @@ fn main() {
             exit(1);
         })
     });
-    let bind_address = solana_net_utils::parse_host(
-        matches
-            .value_of("bind_address")
-            .expect("Bind address has default value"),
-    )
-    .unwrap_or_else(|err| {
-        eprintln!("Failed to parse --bind-address: {err}");
-        exit(1);
-    });
+    let bind_address = if let Some(addr) = matches.value_of("bind_address") {
+        solana_net_utils::parse_host(addr).unwrap_or_else(|err| {
+            eprintln!("Failed to parse --bind-address: {err}");
+            exit(1);
+        })
+    } else if let Some(addr) = matches.value_of("gossip_host") {
+        warn!("--gossip-host is deprecated. Use --bind-address instead.");
+        solana_net_utils::parse_host(addr).unwrap_or_else(|err| {
+            eprintln!("Failed to parse --gossip-host: {err}");
+            exit(1);
+        })
+    } else {
+        // fallback if neither is specified
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
     let compute_unit_limit = value_t!(matches, "compute_unit_limit", u64).ok();
 
     let faucet_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), faucet_port);
@@ -559,9 +559,7 @@ fn main() {
         genesis.rent = Rent::with_slots_per_epoch(slots_per_epoch);
     }
 
-    if let Some(gossip_host) = gossip_host {
-        genesis.gossip_host(gossip_host);
-    }
+    genesis.gossip_host(bind_address);
 
     if let Some(gossip_port) = gossip_port {
         genesis.gossip_port(gossip_port);
