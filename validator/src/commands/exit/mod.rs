@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use {crate::commands::Error, std::io, std::thread, std::time::Duration};
 use {
     crate::{
         admin_rpc_service,
@@ -102,13 +104,74 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     }
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+    let validator_pid =
+        admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+
     println!("Exit request sent");
 
     if exit_args.monitor {
         monitor::execute(matches, ledger_path)?;
+    } else {
+        poll_until_pid_terminates(validator_pid)?;
     }
 
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn poll_until_pid_terminates(pid: u32) -> Result<()> {
+    let pid = i32::try_from(pid)?;
+
+    println!("Monitoring agave-validator process {pid}");
+    loop {
+        // From man kill(2)
+        //
+        // If sig is 0, then no signal is sent, but existence and permission
+        // checks are still performed; this can be used to check for the
+        // existence of a process ID or process group ID that the caller is
+        // permitted to signal.
+        let result = unsafe {
+            libc::kill(pid, /*sig:*/ 0)
+        };
+        if result >= 0 {
+            println!("Waiting for {pid} to terminate ...");
+        } else {
+            let errno = io::Error::last_os_error()
+                .raw_os_error()
+                .ok_or(Error::Dynamic("unable to read raw os error".into()))?;
+            match errno {
+                libc::ESRCH => {
+                    println!("Process {pid} has terminated");
+                    break;
+                }
+                libc::EINVAL => {
+                    // An invalid signal was specified, we only pass sig=0 so
+                    // this should not be possible
+                    Err(Error::Dynamic(
+                        format!("unexpected invalid signal error for kill({pid}, 0)").into(),
+                    ))?;
+                }
+                libc::EPERM => {
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))?;
+                }
+                unknown => {
+                    Err(Error::Dynamic(
+                        format!("unexpected errno for kill({pid}, 0): {unknown}").into(),
+                    ))?;
+                }
+            }
+        }
+
+        // Give the process some time to shutdown before checking again
+        thread::sleep(Duration::from_millis(500));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn poll_until_pid_terminates(pid: u32) -> Result<()> {
+    println!("Unable to monitor agave-validator process {pid} on this platform");
     Ok(())
 }
 
