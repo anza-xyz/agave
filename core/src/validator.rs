@@ -1058,17 +1058,6 @@ impl Validator {
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
 
-        let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
-            exit.clone(),
-            max_complete_transaction_status_slot.clone(),
-            blockstore.clone(),
-            bank_forks.clone(),
-            block_commitment_cache.clone(),
-            optimistically_confirmed_bank.clone(),
-            &config.pubsub_config,
-            None,
-        ));
-
         let max_slots = Arc::new(MaxSlots::default());
 
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
@@ -1147,6 +1136,7 @@ impl Validator {
             Arc::new(AtomicBool::new(config.rpc_config.disable_health_check));
         let (
             json_rpc_service,
+            rpc_subscriptions,
             pubsub_service,
             completed_data_sets_sender,
             completed_data_sets_service,
@@ -1203,13 +1193,22 @@ impl Validator {
                 send_transaction_service_config: config.send_transaction_service_config.clone(),
                 max_slots: max_slots.clone(),
                 leader_schedule_cache: leader_schedule_cache.clone(),
-                max_complete_transaction_status_slot,
+                max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option,
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
-
+            let rpc_subscriptions = Arc::new(RpcSubscriptions::new_with_config(
+                exit.clone(),
+                max_complete_transaction_status_slot,
+                blockstore.clone(),
+                bank_forks.clone(),
+                block_commitment_cache.clone(),
+                optimistically_confirmed_bank.clone(),
+                &config.pubsub_config,
+                None,
+            ));
             let pubsub_service = if !config.rpc_config.full_api {
                 None
             } else {
@@ -1278,6 +1277,7 @@ impl Validator {
             });
             (
                 Some(json_rpc_service),
+                Some(rpc_subscriptions),
                 pubsub_service,
                 completed_data_sets_sender,
                 completed_data_sets_service,
@@ -1286,7 +1286,7 @@ impl Validator {
                 bank_notification_sender_config,
             )
         } else {
-            (None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None)
         };
 
         if config.halt_at_slot.is_some() {

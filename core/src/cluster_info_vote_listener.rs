@@ -193,7 +193,7 @@ impl ClusterInfoVoteListener {
         verified_packets_sender: BankingPacketSender,
         vote_tracker: Arc<VoteTracker>,
         bank_forks: Arc<RwLock<BankForks>>,
-        subscriptions: Arc<RpcSubscriptions>,
+        subscriptions: Option<Arc<RpcSubscriptions>>,
         verified_vote_sender: VerifiedVoteSender,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         replay_votes_receiver: ReplayVoteReceiver,
@@ -318,7 +318,7 @@ impl ClusterInfoVoteListener {
         vote_tracker: Arc<VoteTracker>,
         bank_hash_cache: &mut BankHashCache,
         dumped_slot_subscription: DumpedSlotSubscription,
-        subscriptions: Arc<RpcSubscriptions>,
+        subscriptions: Option<Arc<RpcSubscriptions>>,
         gossip_verified_vote_hash_sender: GossipVerifiedVoteHashSender,
         verified_vote_sender: VerifiedVoteSender,
         replay_votes_receiver: ReplayVoteReceiver,
@@ -330,6 +330,7 @@ impl ClusterInfoVoteListener {
         let mut latest_vote_slot_per_validator = HashMap::new();
         let mut last_process_root = Instant::now();
         let duplicate_confirmed_slot_sender = Some(duplicate_confirmed_slot_sender);
+        let subscriptions = subscriptions.and_then(|arc| Arc::try_unwrap(arc).ok());
         let mut vote_processing_time = Some(VoteProcessingTiming::default());
         loop {
             if exit.load(Ordering::Relaxed) {
@@ -389,7 +390,7 @@ impl ClusterInfoVoteListener {
         gossip_vote_txs_receiver: &VerifiedVoteTransactionsReceiver,
         vote_tracker: &VoteTracker,
         root_bank: &Bank,
-        subscriptions: &RpcSubscriptions,
+        subscriptions: &Option<RpcSubscriptions>,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
         verified_vote_sender: &VerifiedVoteSender,
         replay_votes_receiver: &ReplayVoteReceiver,
@@ -445,7 +446,7 @@ impl ClusterInfoVoteListener {
         vote_transaction_signature: Signature,
         vote_tracker: &VoteTracker,
         root_bank: &Bank,
-        subscriptions: &RpcSubscriptions,
+        rpc_subscriptions: &Option<RpcSubscriptions>,
         verified_vote_sender: &VerifiedVoteSender,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
         diff: &mut HashMap<Slot, HashMap<Pubkey, bool>>,
@@ -586,7 +587,9 @@ impl ClusterInfoVoteListener {
         *latest_vote_slot = max(*latest_vote_slot, last_vote_slot);
 
         if is_new_vote {
-            subscriptions.notify_vote(*vote_pubkey, vote, vote_transaction_signature);
+            if let Some(rpc_subscriptions) = rpc_subscriptions {
+                rpc_subscriptions.notify_vote(*vote_pubkey, vote, vote_transaction_signature);
+            }
             let _ = verified_vote_sender.send((*vote_pubkey, vote_slots));
         }
     }
@@ -597,7 +600,7 @@ impl ClusterInfoVoteListener {
         gossip_vote_txs: Vec<Transaction>,
         replayed_votes: Vec<ParsedVote>,
         root_bank: &Bank,
-        subscriptions: &RpcSubscriptions,
+        subscriptions: &Option<RpcSubscriptions>,
         gossip_verified_vote_hash_sender: &GossipVerifiedVoteHashSender,
         verified_vote_sender: &VerifiedVoteSender,
         bank_notification_sender: &Option<BankNotificationSender>,
@@ -881,7 +884,7 @@ mod tests {
             &votes_receiver,
             &vote_tracker,
             &bank3,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &gossip_verified_vote_hash_sender,
             &verified_vote_sender,
             &replay_votes_receiver,
@@ -916,7 +919,7 @@ mod tests {
             &votes_receiver,
             &vote_tracker,
             &bank3,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &gossip_verified_vote_hash_sender,
             &verified_vote_sender,
             &replay_votes_receiver,
@@ -1010,7 +1013,7 @@ mod tests {
             &votes_txs_receiver,
             &vote_tracker,
             &bank0,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &gossip_verified_vote_hash_sender,
             &verified_vote_sender,
             &replay_votes_receiver,
@@ -1180,7 +1183,7 @@ mod tests {
             &votes_txs_receiver,
             &vote_tracker,
             &bank0,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &gossip_verified_vote_hash_sender,
             &verified_vote_sender,
             &replay_votes_receiver,
@@ -1293,7 +1296,7 @@ mod tests {
                     &votes_receiver,
                     &vote_tracker,
                     &bank,
-                    &subscriptions,
+                    &Arc::try_unwrap(subscriptions.clone()).ok(),
                     &gossip_verified_vote_hash_sender,
                     &verified_vote_sender,
                     &replay_votes_receiver,
@@ -1389,7 +1392,7 @@ mod tests {
                 Signature::default(),
             )],
             &bank,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &gossip_verified_vote_hash_sender,
             &verified_vote_sender,
             &None,
@@ -1438,7 +1441,7 @@ mod tests {
                 Signature::default(),
             )],
             &new_root_bank,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &gossip_verified_vote_hash_sender,
             &verified_vote_sender,
             &None,
@@ -1656,7 +1659,7 @@ mod tests {
             signature,
             &vote_tracker,
             &bank,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &verified_vote_sender,
             &gossip_verified_vote_hash_sender,
             &mut diff,
@@ -1689,7 +1692,7 @@ mod tests {
             signature,
             &vote_tracker,
             &bank,
-            &subscriptions,
+            &Arc::try_unwrap(subscriptions.clone()).ok(),
             &verified_vote_sender,
             &gossip_verified_vote_hash_sender,
             &mut diff,
