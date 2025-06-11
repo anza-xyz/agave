@@ -126,7 +126,9 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
-        solana_secp256k1_program::new_secp256k1_instruction,
+        solana_secp256k1_program::{
+            eth_address_from_pubkey, new_secp256k1_instruction_with_signature,
+        },
         solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
@@ -598,8 +600,18 @@ mod tests {
     }
 
     fn secp256k1_instruction_for_test() -> Instruction {
+        let message = b"hello";
         let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
-        new_secp256k1_instruction(&secret_key, b"hello")
+        let pubkey = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
+        let (signature, recovery_id) =
+            solana_secp256k1_program::sign_message(&secret_key.serialize(), &message[..]).unwrap();
+        new_secp256k1_instruction_with_signature(
+            &message[..],
+            &signature,
+            recovery_id,
+            &eth_address,
+        )
     }
 
     fn ed25519_instruction_for_test() -> Instruction {

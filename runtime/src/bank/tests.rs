@@ -10362,8 +10362,20 @@ fn test_call_precomiled_program() {
         }
     };
     let message_arr = b"hello";
-    let instruction =
-        solana_secp256k1_program::new_secp256k1_instruction(&secp_privkey, message_arr);
+    let pubkey = libsecp256k1::PublicKey::from_secret_key(&secp_privkey);
+    let eth_address = solana_secp256k1_program::eth_address_from_pubkey(
+        &pubkey.serialize()[1..].try_into().unwrap(),
+    );
+    let (signature, recovery_id) =
+        solana_secp256k1_program::sign_message(&secp_privkey.serialize(), &message_arr[..])
+            .unwrap();
+    let instruction = solana_secp256k1_program::new_secp256k1_instruction_with_signature(
+        &message_arr[..],
+        &signature,
+        recovery_id,
+        &eth_address,
+    );
+
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
