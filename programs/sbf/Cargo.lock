@@ -8688,15 +8688,16 @@ dependencies = [
 
 [[package]]
 name = "solana-secp256k1-program"
-version = "2.2.1"
+version = "2.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0a1caa972414cc78122c32bdae65ac5fe89df7db598585a5cde19d16a20280a"
+checksum = "f19833e4bc21558fe9ec61f239553abe7d05224347b57d65c2218aeeb82d6149"
 dependencies = [
  "digest 0.10.7",
  "libsecp256k1 0.6.0",
  "serde",
  "serde_derive",
  "sha3",
+ "solana-signature",
 ]
 
 [[package]]
