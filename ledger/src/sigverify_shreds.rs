@@ -39,11 +39,15 @@ const SIGN_SHRED_GPU_MIN: usize = 256;
 pub type LruCache = lazy_lru::LruCache<(Signature, Pubkey, /*merkle root:*/ Hash), ()>;
 
 #[must_use]
-pub fn verify_shred_cpu(
-    packet: PacketRef,
+pub fn verify_shred_cpu<'a, P>(
+    packet: P,
     slot_leaders: &HashMap<Slot, Pubkey>,
     cache: &RwLock<LruCache>,
-) -> bool {
+) -> bool
+where
+    P: Into<PacketRef<'a>>,
+{
+    let packet = packet.into();
     if packet.meta().discard() {
         return false;
     }
@@ -539,7 +543,7 @@ mod tests {
         solana_entry::entry::Entry,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_perf::packet::PinnedPacketBatch,
+        solana_perf::packet::{BytesPacket, BytesPacketBatch},
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
@@ -549,7 +553,6 @@ mod tests {
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
         solana_logger::setup();
-        let mut packet = Packet::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let mut shred = Shred::new_from_data(
             slot,
@@ -565,18 +568,17 @@ mod tests {
         let keypair = Keypair::new();
         shred.sign(&keypair);
         trace!("signature {}", shred.signature());
-        packet.buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        packet.meta_mut().size = shred.payload().len();
+        let packet = shred.to_packet();
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
         let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
 
         let leader_slots = HashMap::new();
-        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
+        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
     }
 
     #[test]
@@ -586,7 +588,7 @@ mod tests {
 
     fn run_test_sigverify_shreds_cpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
-        let mut batch = PinnedPacketBatch::default();
+        // let mut batch = PinnedPacketBatch::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let mut shred = Shred::new_from_data(
             slot,
@@ -600,11 +602,8 @@ mod tests {
         );
         let keypair = Keypair::new();
         shred.sign(&keypair);
-        batch.resize(1, Packet::default());
-        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batch[0].meta_mut().size = shred.payload().len();
-        let batch = PacketBatch::from(batch);
-        let mut batches = [batch];
+        let batch = PacketBatch::from(BytesPacketBatch::from(vec![shred.to_packet()]));
+        let batches = [batch];
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
@@ -620,7 +619,8 @@ mod tests {
         assert_eq!(rv, vec![vec![0]]);
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        batches[0].first_mut().unwrap().meta_mut().size = 0;
+        let batch = PacketBatch::from(BytesPacketBatch::from(vec![BytesPacket::empty()]));
+        let batches = [batch];
         let rv = verify_shreds_cpu(thread_pool, &batches, &leader_slots, &cache);
         assert_eq!(rv, vec![vec![0]]);
     }
@@ -636,7 +636,6 @@ mod tests {
         let recycler_cache = RecyclerCache::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
 
-        let mut batch = PinnedPacketBatch::default();
         let mut shred = Shred::new_from_data(
             slot,
             0xc0de,
@@ -649,11 +648,8 @@ mod tests {
         );
         let keypair = Keypair::new();
         shred.sign(&keypair);
-        batch.resize(1, Packet::default());
-        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batch[0].meta_mut().size = shred.payload().len();
-        let batch = PacketBatch::from(batch);
-        let mut batches = [batch];
+        let batch = PacketBatch::from(BytesPacketBatch::from(vec![shred.to_packet()]));
+        let batches = [batch];
 
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
         let rv = verify_shreds_gpu(
@@ -689,7 +685,8 @@ mod tests {
         );
         assert_eq!(rv, vec![vec![0]]);
 
-        batches[0].first_mut().unwrap().meta_mut().size = 0;
+        let batch = PacketBatch::from(BytesPacketBatch::from(vec![BytesPacket::empty()]));
+        let batches = [batch];
         let leader_slots = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
         let rv = verify_shreds_gpu(
             thread_pool,
@@ -714,22 +711,22 @@ mod tests {
 
         let num_packets = 32;
         let num_batches = 100;
-        let mut packet_batch = PinnedPacketBatch::with_capacity(num_packets);
-        packet_batch.resize(num_packets, Packet::default());
 
-        for (i, p) in packet_batch.iter_mut().enumerate() {
-            let shred = Shred::new_from_data(
-                slot,
-                0xc0de,
-                i as u16,
-                &[5; LEGACY_SHRED_DATA_CAPACITY],
-                ShredFlags::LAST_SHRED_IN_SLOT,
-                1,
-                2,
-                0xc0de,
-            );
-            shred.copy_to_packet(p);
-        }
+        let packet_batch = (0..num_packets)
+            .map(|i| {
+                Shred::new_from_data(
+                    slot,
+                    0xc0de,
+                    i as u16,
+                    &[5; LEGACY_SHRED_DATA_CAPACITY],
+                    ShredFlags::LAST_SHRED_IN_SLOT,
+                    1,
+                    2,
+                    0xc0de,
+                )
+                .to_packet()
+            })
+            .collect::<BytesPacketBatch>();
         let packet_batch = PacketBatch::from(packet_batch);
         let mut batches = vec![packet_batch; num_batches];
         let keypair = Keypair::new();
@@ -763,7 +760,6 @@ mod tests {
     fn run_test_sigverify_shreds_sign_cpu(thread_pool: &ThreadPool, slot: Slot) {
         solana_logger::setup();
 
-        let mut batch = PinnedPacketBatch::default();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
         let keypair = Keypair::new();
         let shred = Shred::new_from_data(
@@ -776,10 +772,7 @@ mod tests {
             0,
             0xc0de,
         );
-        batch.resize(1, Packet::default());
-        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batch[0].meta_mut().size = shred.payload().len();
-        let batch = PacketBatch::from(batch);
+        let batch = PacketBatch::from(BytesPacketBatch::from(vec![shred.to_packet()]));
         let mut batches = [batch];
 
         let pubkeys = HashMap::from([(slot, keypair.pubkey()), (u64::MAX, Pubkey::default())]);
@@ -885,15 +878,10 @@ mod tests {
     }
 
     fn make_packets<R: Rng>(rng: &mut R, shreds: &[Shred]) -> Vec<PacketBatch> {
-        let mut packets = shreds.iter().map(|shred| {
-            let mut packet = Packet::default();
-            shred.copy_to_packet(&mut packet);
-            packet
-        });
+        let mut packets = shreds.iter().map(|shred| shred.to_packet());
         let packets: Vec<PacketBatch> = repeat_with(|| {
             let size = rng.gen_range(0..16);
-            let packets = packets.by_ref().take(size).collect();
-            let batch = PinnedPacketBatch::new(packets);
+            let batch: BytesPacketBatch = packets.by_ref().take(size).collect();
             (size == 0 || !batch.is_empty()).then_some(batch.into())
         })
         .while_some()
@@ -937,7 +925,7 @@ mod tests {
         let out: Vec<_> = packets
             .iter_mut()
             .map(|packets| {
-                let PacketBatch::Pinned(packets) = packets else {
+                let PacketBatch::Bytes(packets) = packets else {
                     unreachable!()
                 };
                 packets

@@ -432,7 +432,11 @@ impl Shred {
             Payload::Unique(bytes) => bytes.as_ref(),
         };
         let buffer = Bytes::copy_from_slice(buffer);
-        BytesPacket::new(buffer, Meta::default())
+        let meta = Meta {
+            size: buffer.len(),
+            ..Default::default()
+        };
+        BytesPacket::new(buffer, meta)
     }
 
     // TODO: Should this sanitize output?
@@ -1051,6 +1055,7 @@ mod tests {
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
+        solana_perf::packet::bytes::BytesMut,
         solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
         test_case::test_case,
@@ -1196,8 +1201,7 @@ mod tests {
     #[test]
     fn test_invalid_parent_offset() {
         let shred = Shred::new_from_data(10, 0, 1000, &[1, 2, 3], ShredFlags::empty(), 0, 1, 0);
-        let mut packet = Packet::default();
-        shred.copy_to_packet(&mut packet);
+        let packet = shred.to_packet();
         let shred_res = Shred::new_from_serialized_shred(packet.data(..).unwrap().to_vec());
         assert_matches!(
             shred.parent(),
@@ -1240,13 +1244,13 @@ mod tests {
 
         let root = rng.gen_range(0..parent_slot);
         let max_slot = slot + rng.gen_range(1..65536);
-        let mut packet = Packet::default();
+
+        let shred = shreds.first().unwrap();
+        let packet = shred.to_packet();
 
         // Data shred sanity checks!
         {
-            let shred = shreds.first().unwrap();
             assert_eq!(shred.shred_type(), ShredType::Data);
-            shred.copy_to_packet(&mut packet);
             let mut stats = ShredFetchStats::default();
             assert!(!should_discard_shred(
                 &packet,
@@ -1258,9 +1262,9 @@ mod tests {
             ));
         }
         {
-            let mut packet = packet.clone();
+            let buffer = Bytes::from(Payload::unwrap_or_clone(shred.payload().to_owned()));
             let mut stats = ShredFetchStats::default();
-            packet.meta_mut().size = OFFSET_OF_SHRED_VARIANT;
+            let packet = BytesPacket::from_bytes(None, buffer.slice(..OFFSET_OF_SHRED_VARIANT));
             assert!(should_discard_shred(
                 &packet,
                 root,
@@ -1271,7 +1275,7 @@ mod tests {
             ));
             assert_eq!(stats.index_overrun, 1);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX;
+            let packet = BytesPacket::from_bytes(None, buffer.slice(..OFFSET_OF_SHRED_INDEX));
             assert!(should_discard_shred(
                 &packet,
                 root,
@@ -1282,7 +1286,7 @@ mod tests {
             ));
             assert_eq!(stats.index_overrun, 2);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + 1;
+            let packet = BytesPacket::from_bytes(None, buffer.slice(..OFFSET_OF_SHRED_INDEX + 1));
             assert!(should_discard_shred(
                 &packet,
                 root,
@@ -1293,7 +1297,10 @@ mod tests {
             ));
             assert_eq!(stats.index_overrun, 3);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1;
+            let packet = BytesPacket::from_bytes(
+                None,
+                buffer.slice(..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX - 1),
+            );
             assert!(should_discard_shred(
                 &packet,
                 root,
@@ -1304,7 +1311,10 @@ mod tests {
             ));
             assert_eq!(stats.index_overrun, 4);
 
-            packet.meta_mut().size = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2;
+            let packet = BytesPacket::from_bytes(
+                None,
+                buffer.slice(..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX + 2),
+            );
             assert!(should_discard_shred(
                 &packet,
                 root,
@@ -1340,12 +1350,16 @@ mod tests {
             assert_eq!(stats.slot_out_of_range, 1);
         }
         {
+            let mut buffer = BytesMut::from(Bytes::from(Payload::unwrap_or_clone(
+                shred.payload().to_owned(),
+            )));
             let parent_offset = 0u16;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut *buffer);
                 cursor.seek(SeekFrom::Start(83)).unwrap();
                 cursor.write_all(&parent_offset.to_le_bytes()).unwrap();
             }
+            let packet = BytesPacket::from_bytes(None, buffer.freeze());
             assert_eq!(
                 layout::get_parent_offset(packet.data(..).unwrap()),
                 Some(parent_offset)
@@ -1362,12 +1376,16 @@ mod tests {
             assert_eq!(stats.slot_out_of_range, 1);
         }
         {
+            let mut buffer = BytesMut::from(Bytes::from(Payload::unwrap_or_clone(
+                shred.payload().to_owned(),
+            )));
             let parent_offset = u16::try_from(slot + 1).unwrap();
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut *buffer);
                 cursor.seek(SeekFrom::Start(83)).unwrap();
                 cursor.write_all(&parent_offset.to_le_bytes()).unwrap();
             }
+            let packet = BytesPacket::from_bytes(None, buffer.freeze());
             assert_eq!(
                 layout::get_parent_offset(packet.data(..).unwrap()),
                 Some(parent_offset)
@@ -1384,14 +1402,18 @@ mod tests {
             assert_eq!(stats.bad_parent_offset, 1);
         }
         {
+            let mut buffer = BytesMut::from(Bytes::from(Payload::unwrap_or_clone(
+                shred.payload().to_owned(),
+            )));
             let index = u32::MAX - 10;
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut *buffer);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
+            let packet = BytesPacket::from_bytes(None, buffer.freeze());
             assert_eq!(layout::get_index(packet.data(..).unwrap()), Some(index));
             let mut stats = ShredFetchStats::default();
             assert!(should_discard_shred(
@@ -1409,7 +1431,7 @@ mod tests {
         {
             let shred = shreds.last().unwrap();
             assert_eq!(shred.shred_type(), ShredType::Code);
-            shreds.last().unwrap().copy_to_packet(&mut packet);
+            let packet = shred.to_packet();
             let mut stats = ShredFetchStats::default();
             assert!(!should_discard_shred(
                 &packet,
@@ -1445,14 +1467,18 @@ mod tests {
             assert_eq!(stats.slot_out_of_range, 1);
         }
         {
+            let mut buffer = BytesMut::from(Bytes::from(Payload::unwrap_or_clone(
+                shred.payload().to_owned(),
+            )));
             let index = u32::try_from(MAX_CODE_SHREDS_PER_SLOT).unwrap();
             {
-                let mut cursor = Cursor::new(packet.buffer_mut());
+                let mut cursor = Cursor::new(&mut *buffer);
                 cursor
                     .seek(SeekFrom::Start(OFFSET_OF_SHRED_INDEX as u64))
                     .unwrap();
                 cursor.write_all(&index.to_le_bytes()).unwrap();
             }
+            let packet = BytesPacket::from_bytes(None, buffer.freeze());
             assert_eq!(layout::get_index(packet.data(..).unwrap()), Some(index));
             let mut stats = ShredFetchStats::default();
             assert!(should_discard_shred(
@@ -1654,7 +1680,7 @@ mod tests {
         );
     }
 
-    fn verify_shred_layout(shred: &Shred, packet: &Packet) {
+    fn verify_shred_layout(shred: &Shred, packet: &BytesPacket) {
         let data = layout::get_shred(packet).unwrap();
         assert_eq!(data, packet.data(..).unwrap());
         assert_eq!(layout::get_slot(data), Some(shred.slot()));
@@ -1718,9 +1744,7 @@ mod tests {
             let skip = payload.len() - SIZE_OF_DATA_SHRED_HEADERS;
             data.iter().skip(skip).copied()
         });
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
+        let packet = BytesPacket::from_bytes(None, payload.clone());
         assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
         verify_shred_layout(&shred, &packet);
@@ -1753,9 +1777,7 @@ mod tests {
         assert!(shred.verify(&keypair.pubkey()));
         assert_matches!(shred.sanitize(), Ok(()));
         let payload = bs58_decode(PAYLOAD);
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
+        let packet = BytesPacket::from_bytes(None, payload.clone());
         assert_eq!(shred.bytes_to_store(), payload);
         assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
         verify_shred_layout(&shred, &packet);
