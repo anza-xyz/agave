@@ -279,6 +279,9 @@ impl MockAlpenglowConsensus {
 
     pub(crate) fn signal_new_slot(&mut self, slot: Slot) {
         let phase = slot % MOCK_VOTE_INTERVAL;
+        // this is currently set up to work over a course of 3 slots.
+        // it will only work correctly if we do not actually fork within those 3 slots, and
+        // are consistently casting votes for all 3.
         match phase {
             // Clear the stats for the previous slots in preparation for the new one
             0 => {
@@ -294,15 +297,20 @@ impl MockAlpenglowConsensus {
             }
             // report metrics
             2 => {
+                let mut lockguard = self.state.lock().unwrap();
                 let total_staked: Stake =
                     self.epoch_specs.current_epoch_staked_nodes().values().sum();
-                let mut lockguard = self.state.lock().unwrap();
                 Self::report_collected_votes(&lockguard.peers, total_staked);
                 lockguard.peers.clear();
                 lockguard.current_slot = 0; // block reception of votes
-                lockguard.current_slot_start = Instant::now();
             }
-            _ => {}
+            // in case we have missed previous slot, clean up and block reception
+            // but do not report stats (as they will be all garbled by now)
+            _ => {
+                let mut lockguard = self.state.lock().unwrap();
+                lockguard.current_slot = 0; // block reception of votes
+                lockguard.peers.clear();
+            }
         }
     }
 
