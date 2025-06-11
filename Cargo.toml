@@ -429,7 +429,7 @@ solana-file-download = "2.2.1"
 solana-frozen-abi = "2.3.0"
 solana-frozen-abi-macro = "2.2.1"
 solana-genesis = { path = "genesis", version = "=3.0.0" }
-solana-genesis-config = "2.2.1"
+solana-genesis-config = "2.3.0"
 solana-genesis-utils = { path = "genesis-utils", version = "=3.0.0" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=3.0.0" }
 solana-gossip = { path = "gossip", version = "=3.0.0" }

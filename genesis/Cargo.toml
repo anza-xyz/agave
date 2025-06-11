@@ -38,7 +38,7 @@ solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"
 solana-feature-gate-interface = "=2.2.2"
 solana-fee-calculator = "=2.2.1"
-solana-genesis-config = "=2.2.1"
+solana-genesis-config = "=2.3.0"
 solana-inflation = "=2.2.1"
 solana-keypair = "=2.2.1"
 solana-ledger = { workspace = true }
