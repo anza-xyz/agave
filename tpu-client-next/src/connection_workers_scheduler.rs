@@ -17,7 +17,7 @@ use {
     solana_keypair::Keypair,
     std::{
         net::{SocketAddr, UdpSocket},
-        sync::Arc,
+        sync::{atomic::Ordering, Arc},
     },
     thiserror::Error,
     tokio::sync::{mpsc, watch},
@@ -138,17 +138,18 @@ impl From<StakeIdentity> for QuicClientCertificate {
 /// accordingly.
 #[async_trait]
 pub trait WorkersBroadcaster {
-    /// Sends a `transaction_batch` to workers associated with the given
+    /// Sends a `transaction_batch` to the workers associated with the given
     /// `leaders` addresses.
     ///
-    /// Returns error if a critical issue occurs, e.g. the implementation
-    /// encounters an unrecoverable error. In this case, it will trigger
-    /// stopping the scheduler and cleaning all the data.
+    /// On success, returns the number of leaders that received the batch.
+    /// Returns an error only in the case of a critical issue, such as an
+    /// unrecoverable failure. In such cases, the scheduler will stop and
+    /// all data will be cleaned up.
     async fn send_to_workers(
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
-    ) -> Result<(), ConnectionWorkersSchedulerError>;
+    ) -> Result<usize, ConnectionWorkersSchedulerError>;
 }
 
 impl ConnectionWorkersScheduler {
@@ -283,11 +284,20 @@ impl ConnectionWorkersScheduler {
                 }
             }
 
-            if let Err(error) =
-                Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
+            let batch_size = transaction_batch.len() as u64;
+            match Broadcaster::send_to_workers(&mut workers, &send_leaders, transaction_batch).await
             {
-                last_error = Some(error);
-                break;
+                Ok(num_workers_received_batch) => {
+                    if num_workers_received_batch == 0 {
+                        stats
+                            .transaction_dropped
+                            .fetch_add(batch_size, Ordering::Relaxed);
+                    }
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    break;
+                }
             }
         }
 
@@ -331,7 +341,8 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
         workers: &mut WorkersCache,
         leaders: &[SocketAddr],
         transaction_batch: TransactionBatch,
-    ) -> Result<(), ConnectionWorkersSchedulerError> {
+    ) -> Result<usize, ConnectionWorkersSchedulerError> {
+        let mut num_sent = 0;
         for new_leader in leaders {
             if !workers.contains(new_leader) {
                 warn!("No existing worker for {new_leader:?}, skip sending to this leader.");
@@ -356,8 +367,9 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
                     // If we have failed to send batch, it will be dropped.
                 }
             }
+            num_sent += 1;
         }
-        Ok(())
+        Ok(num_sent)
     }
 }
 
