@@ -52,6 +52,8 @@ fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
     let (_, total_lamports) = accounts
         .accounts_db
         .update_accounts_hash_for_tests(0, &ancestors, false, false);
+    accounts.add_root(slot);
+    accounts.accounts_db.flush_accounts_cache(true, Some(slot));
     bencher.iter(|| {
         assert!(accounts
             .accounts_db
