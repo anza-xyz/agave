@@ -626,8 +626,6 @@ lto = "thin"
 
 [profile.release-with-lto]
 inherits = "release"
-split-debuginfo = "unpacked"
-lto = "thin"
 codegen-units = 1
 
 # curve25519-dalek uses the simd backend by default in v4 if possible,
