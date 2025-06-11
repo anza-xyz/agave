@@ -1265,21 +1265,6 @@ impl AccountStorageEntry {
         self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
     }
 
-    // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
-    // So also mark this function as DCOU to squelch an "unused function" clippy warning.
-    #[cfg(feature = "dev-context-only-utils")]
-    fn try_available(&self) -> bool {
-        let mut count_and_status = self.count_and_status.lock_write();
-        let (count, status) = *count_and_status;
-
-        if status == AccountStorageStatus::Available {
-            *count_and_status = (count, AccountStorageStatus::Candidate);
-            true
-        } else {
-            false
-        }
-    }
-
     /// returns # of accounts remaining in the storage
     fn remove_accounts(
         &self,
@@ -1771,9 +1756,8 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
         let some_data_len = 5;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
-        accounts_db.store_uncached(some_slot, &[(&key, &account)]);
-        accounts_db.add_root(0);
-
+        accounts_db.store_for_tests(some_slot, &[(&key, &account)]);
+        accounts_db.add_root_and_flush_write_cache(0);
         accounts_db
     }
 }
@@ -5116,44 +5100,6 @@ impl AccountsDb {
         }
     }
 
-    // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
-    // So also mark this function as DCOU to squelch an "unused function" clippy warning.
-    #[cfg(feature = "dev-context-only-utils")]
-    fn find_storage_candidate(&self, slot: Slot) -> Arc<AccountStorageEntry> {
-        let mut get_slot_stores = Measure::start("get_slot_stores");
-        let store = self.storage.get_slot_storage_entry(slot);
-        get_slot_stores.stop();
-        self.stats
-            .store_get_slot_store
-            .fetch_add(get_slot_stores.as_us(), Ordering::Relaxed);
-        let mut find_existing = Measure::start("find_existing");
-        if let Some(store) = store {
-            if store.try_available() {
-                let ret = store.clone();
-                drop(store);
-                find_existing.stop();
-                self.stats
-                    .store_find_existing
-                    .fetch_add(find_existing.as_us(), Ordering::Relaxed);
-                return ret;
-            }
-        }
-        find_existing.stop();
-        self.stats
-            .store_find_existing
-            .fetch_add(find_existing.as_us(), Ordering::Relaxed);
-
-        let store = self.create_store(slot, self.file_size, "store", &self.paths);
-
-        // try_available is like taking a lock on the store,
-        // preventing other threads from using it.
-        // It must succeed here and happen before insert,
-        // otherwise another thread could also grab it from the index.
-        assert!(store.try_available());
-        self.insert_store(slot, store.clone());
-        store
-    }
-
     fn has_space_available(&self, slot: Slot, size: u64) -> bool {
         let store = self.storage.get_slot_storage_entry(slot).unwrap();
         if store.status() == AccountStorageStatus::Available
@@ -7581,20 +7527,6 @@ impl AccountsDb {
             transactions,
             StoreReclaims::Default,
             UpdateIndexThreadSelection::Inline,
-        );
-    }
-
-    /// Store the account update.
-    /// only called by tests
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn store_uncached(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
-        let storage = self.find_storage_candidate(slot);
-        self.store(
-            (slot, accounts),
-            &StoreTo::Storage(&storage),
-            None,
-            StoreReclaims::Default,
-            UpdateIndexThreadSelection::PoolWithThreshold,
         );
     }
 
