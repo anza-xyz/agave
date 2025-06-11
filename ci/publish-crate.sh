@@ -1,21 +1,56 @@
 #!/usr/bin/env bash
-set -e
+
+# shellcheck disable=SC2317
+cleanup() {
+  ec=$?
+  docker container stop kellnr || true && docker container prune -f;
+  exit "$ec"
+}
+
+err_handler() {
+    ec=$?
+    echo "ERROR  line $1: $BASH_COMMAND"
+    exit "$ec"
+}
+
+trap cleanup EXIT
+trap err_handler ERR SIGINT
+
+set -Ee
+
 cd "$(dirname "$0")/.."
 source ci/semver_bash/semver.sh
 source ci/rust-version.sh stable
+
+DRY_RUN=false
+if [[ $1 = --dry-run ]]; then
+  DRY_RUN=true
+  export CRATE_PUBLISH_TEST=true
+  shift
+fi
 
 # shellcheck disable=SC2086
 is_crate_version_uploaded() {
   name=$1
   version=$2
-  curl https://crates.io/api/v1/crates/${name}/${version} | \
-  python3 -c "import sys,json; print('version' in json.load(sys.stdin));"
+  if $DRY_RUN; then
+    curl http://127.0.0.1:8000/api/v1/crates/${name}/crate_versions | \
+    python3 -c "import sys,json; print(len(json.load(sys.stdin)['versions']) > 0);"
+  else
+    curl https://crates.io/api/v1/crates/${name}/${version} | \
+    python3 -c "import sys,json; print('version' in json.load(sys.stdin));"
+  fi
 }
 
 # Only package/publish if this is a tagged release
 [[ -n $CI_TAG ]] || {
+if $DRY_RUN; then
+  CI_TAG=$(grep '^version = "' Cargo.toml | cut -d "=" -f2 | xargs)
+  CRATES_IO_TOKEN="test"
+else
   echo CI_TAG unset, skipped
   exit 0
+fi
 }
 
 semverParseInto "$CI_TAG" MAJOR MINOR PATCH SPECIAL
@@ -37,10 +72,16 @@ done
 
 Cargo_tomls=$(ci/order-crates-for-publishing.py)
 
+if $DRY_RUN; then
+  docker run -p 8000:8000 --name kellnr -d ghcr.io/kellnr/kellnr:5
+fi
+
+sleep 5
+
 for Cargo_toml in $Cargo_tomls; do
   echo "--- $Cargo_toml"
 
-  # check the version which doesn't inherit from worksapce
+  # check the version which doesn't inherit from workspace
   if ! grep -q "^version = { workspace = true }$" "$Cargo_toml"; then
     echo "Warn: $Cargo_toml doesn't use the inherited version"
     grep -q "^version = \"$expectedCrateVersion\"$" "$Cargo_toml" || {
@@ -62,10 +103,16 @@ for Cargo_toml in $Cargo_tomls; do
   fi
 
   (
-    set -x
-
     crate=$(dirname "$Cargo_toml")
-    cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
+    if $DRY_RUN; then
+      ci/change-crate-deps.py "$Cargo_toml" "$crate_name"
+
+      # token is a default value from the kellnr image https://kellnr.io/documentation#config-values
+      # registry value is defined in docker-run.sh script
+      cargoCommand="cargo publish --registry kellnr --token Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD --allow-dirty"
+    else
+      cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
+    fi
 
     numRetries=10
     for ((i = 1; i <= numRetries; i++)); do

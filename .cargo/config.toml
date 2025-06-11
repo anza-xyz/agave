@@ -1,3 +1,9 @@
 [target.x86_64-unknown-linux-gnu]
 # When building for linux, target the minimal supported CPU
 rustflags = ["-Ctarget-cpu=x86-64-v2"]
+
+# registry configuration for crate publish test
+[registries.kellnr]
+index = "sparse+http://127.0.0.1:8000/api/v1/crates/"
+credential-provider = ["cargo:token"]
+token = "Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD"
