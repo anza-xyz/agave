@@ -635,32 +635,19 @@ impl AccountsBackgroundService {
                             bank.force_flush_accounts_cache();
                             bank.clean_accounts();
                             last_cleaned_slot = bank.slot();
-                            // Do not 'shrink' until *after* the startup verification is complete.
-                            // This is because startup verification needs to get the snapshot
-                            // storages *as they existed at startup* (to calculate the accounts
-                            // hash).  If 'shrink' were to run, then it is possible startup
-                            // verification (1) could race with 'shrink', and fail to assert that
-                            // shrinking is not in progress, or (2) could get snapshot storages
-                            // that were newer than what was in the snapshot itself.
-                            if bank.is_startup_verification_complete() {
-                                bank.shrink_ancient_slots();
-                                bank.shrink_candidate_slots();
-                                previous_shrink_time = Instant::now();
-                            }
+                            bank.shrink_ancient_slots();
+                            bank.shrink_candidate_slots();
+                            previous_shrink_time = Instant::now();
                         } else {
                             // Note that the flush will do an internal clean of the
                             // cache up to bank.slot(), so should be safe as long
                             // as any later snapshots that are taken are of
                             // slots >= bank.slot()
                             bank.flush_accounts_cache_if_needed();
-
-                            // See justification above for why we skip 'shrink' here.
-                            if bank.is_startup_verification_complete() {
-                                let duration_since_previous_shrink = previous_shrink_time.elapsed();
-                                if duration_since_previous_shrink > SHRINK_INTERVAL {
-                                    bank.shrink_candidate_slots();
-                                    previous_shrink_time = Instant::now();
-                                }
+                            let duration_since_previous_shrink = previous_shrink_time.elapsed();
+                            if duration_since_previous_shrink > SHRINK_INTERVAL {
+                                bank.shrink_candidate_slots();
+                                previous_shrink_time = Instant::now();
                             }
                         }
                         stats.record_and_maybe_submit(start_time.elapsed());
