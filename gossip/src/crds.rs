@@ -27,6 +27,7 @@
 
 use {
     crate::{
+        cluster_info_metrics::should_report_message_signature,
         contact_info::ContactInfo,
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
@@ -44,7 +45,6 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_signature::Signature,
     std::{
         cmp::Ordering,
         collections::{hash_map, BTreeMap, HashMap, VecDeque},
@@ -712,7 +712,8 @@ impl CrdsDataStats {
             return;
         };
 
-        if should_report_message_signature(entry.value.signature()) {
+        if should_report_message_signature(entry.value.signature(), SIGNATURE_SAMPLE_LEADING_ZEROS)
+        {
             datapoint_info!(
                 "gossip_crds_sample",
                 (
@@ -777,15 +778,6 @@ impl CrdsStats {
             GossipRoute::PullResponse => self.pull.record_fail(entry),
         }
     }
-}
-
-/// check if first SIGNATURE_SAMPLE_LEADING_ZEROS bits of signature are 0
-#[inline]
-fn should_report_message_signature(signature: &Signature) -> bool {
-    let Some(Ok(bytes)) = signature.as_ref().get(..8).map(<[u8; 8]>::try_from) else {
-        return false;
-    };
-    u64::from_le_bytes(bytes).trailing_zeros() >= SIGNATURE_SAMPLE_LEADING_ZEROS
 }
 
 #[cfg(test)]
