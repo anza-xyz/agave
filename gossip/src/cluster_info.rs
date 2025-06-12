@@ -19,7 +19,7 @@ use {
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote, MAX_VOTES},
-        crds_filter::{should_retain_crds_value, GossipFilterDirection, MIN_STAKE_FOR_GOSSIP},
+        crds_filter::{should_retain_crds_value, GossipFilterDirection, MIN_STAKE_TO_SKIP_PING},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -2963,7 +2963,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         _ => return true, // If not a contact-info, nothing to verify.
     };
     // For (sufficiently) staked nodes, don't bother with ping/pong.
-    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_FOR_GOSSIP) {
+    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_TO_SKIP_PING) {
         return true;
     }
     // Invalid addresses are not verifiable.
