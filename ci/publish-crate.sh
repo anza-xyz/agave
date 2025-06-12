@@ -40,7 +40,7 @@ is_crate_version_uploaded() {
 [[ -n $CI_TAG ]] || {
 if $DRY_RUN; then
   CI_TAG=$(grep '^version = "' Cargo.toml | cut -d "=" -f2 | xargs)
-  echo "$CI_TAG"
+  CRATES_IO_TOKEN="test"
 else
   echo CI_TAG unset, skipped
   exit 0
