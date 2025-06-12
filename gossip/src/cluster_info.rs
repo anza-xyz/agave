@@ -2332,8 +2332,12 @@ pub struct Sockets {
 }
 
 pub struct NodeConfig {
-    pub gossip_addr: SocketAddr,
+    /// The IP address advertised to the cluster in gossip
+    pub advertised_ip: IpAddr,
+    /// The gossip port advertised to the cluster
+    pub gossip_port: u16,
     pub port_range: PortRange,
+    /// The IP address the node binds to
     pub bind_ip_addr: IpAddr,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
@@ -2660,7 +2664,8 @@ impl Node {
 
     pub fn new_with_external_ip(pubkey: &Pubkey, config: NodeConfig) -> Node {
         let NodeConfig {
-            gossip_addr,
+            advertised_ip,
+            gossip_port,
             port_range,
             bind_ip_addr,
             public_tpu_addr,
@@ -2670,6 +2675,7 @@ impl Node {
             num_quic_endpoints,
         } = config;
 
+        let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
         let (gossip_port, (gossip, ip_echo)) =
             bind_gossip_port_in_range(&gossip_addr, port_range, bind_ip_addr);
 
@@ -2771,22 +2777,24 @@ impl Node {
             timestamp(), // wallclock
             0u16,        // shred_version
         );
-        let addr = gossip_addr.ip();
         use contact_info::Protocol::{QUIC, UDP};
-        info.set_gossip((addr, gossip_port)).unwrap();
-        info.set_tvu(UDP, (addr, tvu_port)).unwrap();
-        info.set_tvu(QUIC, (addr, tvu_quic_port)).unwrap();
-        info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(addr, tpu_port)))
+        info.set_gossip((advertised_ip, gossip_port)).unwrap();
+        info.set_tvu(UDP, (advertised_ip, tvu_port)).unwrap();
+        info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
+        info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port)))
             .unwrap();
         info.set_tpu_forwards(
-            public_tpu_forwards_addr.unwrap_or_else(|| SocketAddr::new(addr, tpu_forwards_port)),
+            public_tpu_forwards_addr
+                .unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_forwards_port)),
         )
         .unwrap();
-        info.set_tpu_vote(UDP, (addr, tpu_vote_port)).unwrap();
-        info.set_tpu_vote(QUIC, (addr, tpu_vote_quic_port)).unwrap();
-        info.set_serve_repair(UDP, (addr, serve_repair_port))
+        info.set_tpu_vote(UDP, (advertised_ip, tpu_vote_port))
             .unwrap();
-        info.set_serve_repair(QUIC, (addr, serve_repair_quic_port))
+        info.set_tpu_vote(QUIC, (advertised_ip, tpu_vote_quic_port))
+            .unwrap();
+        info.set_serve_repair(UDP, (advertised_ip, serve_repair_port))
+            .unwrap();
+        info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
             .unwrap();
 
         trace!("new ContactInfo: {:?}", info);
@@ -3283,7 +3291,8 @@ mod tests {
         let ip = Ipv4Addr::LOCALHOST;
         let port_range = localhost_port_range_for_tests();
         let config = NodeConfig {
-            gossip_addr: socketaddr!(ip, 0),
+            advertised_ip: IpAddr::V4(ip),
+            gossip_port: 0,
             port_range,
             bind_ip_addr: IpAddr::V4(ip),
             public_tpu_addr: None,
@@ -3306,7 +3315,8 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port = port_range.0;
         let config = NodeConfig {
-            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port),
+            advertised_ip: ip,
+            gossip_port: port,
             port_range,
             bind_ip_addr: ip,
             public_tpu_addr: None,
