@@ -162,6 +162,9 @@ pub struct ReplicaTransactionInfoV2<'a> {
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct ReplicaTransactionInfoV3<'a> {
+    /// The transaction signature, used for identifying the transaction.
+    pub signature: &'a Signature,
+
     /// The transaction message hash, used for identifying the transaction.
     pub message_hash: &'a Hash,
 

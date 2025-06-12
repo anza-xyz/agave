@@ -207,10 +207,12 @@ impl TransactionStatusService {
                     if let Some(transaction_notifier) = transaction_notifier.as_ref() {
                         let is_vote = transaction.is_simple_vote_transaction();
                         let message_hash = transaction.message_hash();
+                        let signature = transaction.signature();
                         let transaction = transaction.to_versioned_transaction();
                         transaction_notifier.notify_transaction(
                             slot,
                             transaction_index,
+                            signature,
                             message_hash,
                             is_vote,
                             &transaction_status_meta,
@@ -346,6 +348,7 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_rent_debits::RentDebits,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
+        solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
         solana_system_transaction as system_transaction,
@@ -390,6 +393,7 @@ pub(crate) mod tests {
             &self,
             slot: Slot,
             transaction_index: usize,
+            _signature: &Signature,
             message_hash: &Hash,
             _is_vote: bool,
             transaction_status_meta: &TransactionStatusMeta,

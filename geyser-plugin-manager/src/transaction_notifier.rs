@@ -10,6 +10,7 @@ use {
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
+    solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::TransactionStatusMeta,
     std::sync::{Arc, RwLock},
@@ -28,6 +29,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         &self,
         slot: Slot,
         index: usize,
+        signature: &Signature,
         message_hash: &Hash,
         is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
@@ -36,6 +38,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
         let transaction_log_info = Self::build_replica_transaction_info(
             index,
+            signature,
             message_hash,
             is_vote,
             transaction_status_meta,
@@ -88,6 +91,7 @@ impl TransactionNotifierImpl {
 
     fn build_replica_transaction_info<'a>(
         index: usize,
+        signature: &'a Signature,
         message_hash: &'a Hash,
         is_vote: bool,
         transaction_status_meta: &'a TransactionStatusMeta,
@@ -96,6 +100,7 @@ impl TransactionNotifierImpl {
         ReplicaTransactionInfoV3 {
             index,
             message_hash,
+            signature,
             is_vote,
             transaction,
             transaction_status_meta,
