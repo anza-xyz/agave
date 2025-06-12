@@ -486,7 +486,7 @@ impl ElGamalSecretKey {
         ElGamal::decrypt(self, ciphertext)
     }
 
-    /// Decrypts a ciphertext using the ElGamal secret key interpretting the message as type `u32`.
+    /// Decrypts a ciphertext using the ElGamal secret key interpreting the message as type `u32`.
     pub fn decrypt_u32(&self, ciphertext: &ElGamalCiphertext) -> Option<u64> {
         ElGamal::decrypt_u32(self, ciphertext)
     }
