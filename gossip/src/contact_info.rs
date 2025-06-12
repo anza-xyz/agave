@@ -1,6 +1,11 @@
 pub use solana_client::connection_cache::Protocol;
 use {
-    crate::{crds_data::MAX_WALLCLOCK, legacy_contact_info::LegacyContactInfo},
+    crate::{
+        crds_data::MAX_WALLCLOCK,
+        define_tlv_enum,
+        legacy_contact_info::LegacyContactInfo,
+        tlv::{self, TlvDecodeError, TlvRecord},
+    },
     assert_matches::{assert_matches, debug_assert_matches},
     serde::{Deserialize, Deserializer, Serialize},
     solana_pubkey::Pubkey,
@@ -105,8 +110,19 @@ struct SocketEntry {
     offset: u16, // Port offset with respect to the previous entry.
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-enum Extension {}
+define_tlv_enum!(
+    /// TLV encoded Extensions in ContactInfo messages
+    ///
+    /// On the wire each record is: [type: u8][len: varint][bytes]
+    /// Extensions with unknown types are skipped by tlv::parse,
+    /// so new types can be added without breaking legacy code,
+    /// and support by all clients is not required.
+    ///
+    /// Always add new TLV records to the end of this enum.
+    /// Never reorder or reuse a type.
+    /// Ensure new type collisions do not happen.
+    pub(crate) enum Extension {}
+);
 
 // As part of deserialization, self.addrs and self.sockets should be cross
 // verified and self.cache needs to be populated. This type serves as a
@@ -124,8 +140,9 @@ struct ContactInfoLite {
     addrs: Vec<IpAddr>,
     #[serde(with = "short_vec")]
     sockets: Vec<SocketEntry>,
+    #[allow(dead_code)]
     #[serde(with = "short_vec")]
-    extensions: Vec<Extension>,
+    extensions: Vec<TlvRecord>,
 }
 
 macro_rules! get_socket {
@@ -212,7 +229,7 @@ impl ContactInfo {
             version: solana_version::Version::default(),
             addrs: Vec::<IpAddr>::default(),
             sockets: Vec::<SocketEntry>::default(),
-            extensions: Vec::<Extension>::default(),
+            extensions: Vec::default(),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         }
     }
@@ -541,7 +558,7 @@ impl TryFrom<ContactInfoLite> for ContactInfo {
             version,
             addrs,
             sockets,
-            extensions,
+            extensions: tlv::parse(&extensions),
             cache: EMPTY_SOCKET_ADDR_CACHE,
         };
         // Populate node.cache.
