@@ -168,8 +168,7 @@ impl<'a> CallerAccount<'a> {
                     return Err(SyscallError::InvalidPointer.into());
                 }
             }
-            let host_len_addr =
-                translate(memory_mapping, AccessType::Store, vm_len_addr, 8)? as *mut u64;
+            let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
 
             let serialized_data = if direct_mapping {
@@ -194,9 +193,7 @@ impl<'a> CallerAccount<'a> {
                     invoke_context.get_check_aligned(),
                 )?
             };
-            (serialized_data, vm_data_addr, unsafe {
-                &mut *host_len_addr
-            })
+            (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
         Ok(CallerAccount {
@@ -291,12 +288,7 @@ impl<'a> CallerAccount<'a> {
         let vm_len_addr = vm_addr
             .saturating_add(&account_info.data_len as *const u64 as u64)
             .saturating_sub(account_info as *const _ as *const u64 as u64);
-        let host_len_addr = translate(
-            memory_mapping,
-            AccessType::Store,
-            vm_len_addr,
-            size_of::<u64>() as u64,
-        )?;
+        let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
 
         Ok(CallerAccount {
             lamports,
@@ -304,7 +296,7 @@ impl<'a> CallerAccount<'a> {
             original_data_len: account_metadata.original_data_len,
             serialized_data,
             vm_data_addr: account_info.data_addr,
-            ref_to_len_in_vm: unsafe { &mut *(host_len_addr as *mut u64) },
+            ref_to_len_in_vm,
         })
     }
 
