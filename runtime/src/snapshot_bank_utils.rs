@@ -1251,6 +1251,107 @@ mod tests {
         assert_eq!(original_bank, roundtrip_bank);
     }
 
+    /// This tests handling of obsolete accounts during a full snapshot with obsolete accounts
+    /// marked in the accounts database. This test injects them directly
+    #[test]
+    fn test_roundtrip_bank_to_and_from_full_snapshot_with_obsolete_account() {
+        let collector = Pubkey::new_unique();
+        let key1 = Keypair::new();
+        let key2 = Keypair::new();
+        let key3 = Keypair::new();
+
+        // Create a few accounts
+        let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1_000_000.));
+        let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
+        bank0
+            .transfer(sol_to_lamports(1.), &mint_keypair, &key1.pubkey())
+            .unwrap();
+        bank0
+            .transfer(sol_to_lamports(2.), &mint_keypair, &key2.pubkey())
+            .unwrap();
+        bank0
+            .transfer(sol_to_lamports(3.), &mint_keypair, &key3.pubkey())
+            .unwrap();
+        bank0.fill_bank_with_ticks_for_tests();
+
+        // Force flush the bank to create the account storage entry
+        bank0.squash();
+        bank0.force_flush_accounts_cache();
+
+        // Find the account storage entry for slot 0
+        let target_slot = 0;
+        let account_storage_entry = bank0
+            .accounts()
+            .accounts_db
+            .storage
+            .get_slot_storage_entry(target_slot)
+            .unwrap();
+
+        // Find all the accounts in slot 0
+        let accounts = bank0
+            .accounts()
+            .accounts_db
+            .get_unique_accounts_from_storage(&account_storage_entry);
+
+        // Find the offset of pubkey `key1` in the accounts db slot0 and save the offset.
+        let offset = accounts
+            .stored_accounts
+            .iter()
+            .find(|account| key1.pubkey() == *account.pubkey())
+            .map(|account| account.index_info.offset())
+            .expect("Pubkey1 is present in Slot0");
+
+        // Create a new slot, and invalidate the account for key1 in slot0
+        let slot = 1;
+        let bank1 =
+            new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &collector, slot);
+        bank1
+            .transfer(sol_to_lamports(1.), &key3, &key1.pubkey())
+            .unwrap();
+
+        bank1.fill_bank_with_ticks_for_tests();
+
+        // Mark the entry for pubkey1 as obsolete in slot0
+        account_storage_entry.mark_account_obsolete(offset, 0, slot);
+
+        let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
+        let bank_snapshots_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_archives_dir = tempfile::TempDir::new().unwrap();
+        let snapshot_archive_format = SnapshotConfig::default().archive_format;
+
+        let full_snapshot_archive_info = bank_to_full_snapshot_archive(
+            bank_snapshots_dir.path(),
+            &bank1,
+            None,
+            snapshot_archives_dir.path(),
+            snapshot_archives_dir.path(),
+            snapshot_archive_format,
+        )
+        .unwrap();
+
+        let (roundtrip_bank, _) = bank_from_snapshot_archives(
+            &[accounts_dir],
+            bank_snapshots_dir.path(),
+            &full_snapshot_archive_info,
+            None,
+            &genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+        assert_eq!(*bank1, roundtrip_bank);
+    }
+
     /// Test roundtrip of bank to a full snapshot, then back again.  This test is more involved
     /// than the simple version above; creating multiple banks over multiple slots and doing
     /// multiple transfers.  So this full snapshot should contain more data.

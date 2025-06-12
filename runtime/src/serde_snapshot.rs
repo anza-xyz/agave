@@ -798,7 +798,7 @@ impl Serialize for SerializableAccountsDb<'_> {
                 x.first().unwrap().slot(),
                 utils::serialize_iter_as_seq(
                     x.iter()
-                        .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
+                        .map(|x| SerializableAccountStorageEntry::new(x.as_ref(), self.slot)),
                 ),
             )
         }));
