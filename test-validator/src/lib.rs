@@ -1194,7 +1194,7 @@ mod test {
         rpc_client.get_health().expect("health");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn nonblocking_get_health() {
         let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
         test_validator.set_startup_verification_complete_for_tests();
@@ -1202,14 +1202,14 @@ mod test {
         rpc_client.get_health().await.expect("health");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[should_panic]
     async fn document_tokio_panic() {
         // `start()` blows up when run within tokio
         let (_test_validator, _payer) = TestValidatorGenesis::default().start();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_deactivate_features() {
         let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
@@ -1253,7 +1253,7 @@ mod test {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_override_feature_account() {
         let with_deactivate_flag = agave_feature_set::deprecate_rewards_sysvar::id();
         let without_deactivate_flag = agave_feature_set::disable_fees_sysvar::id();
@@ -1291,7 +1291,7 @@ mod test {
         assert!(feature_state.activated_at.is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_core_bpf_programs() {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[

@@ -13,7 +13,7 @@ use {
     tokio::time::{sleep, Duration, Instant},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_tpu_send_transaction() {
     let (test_validator, mint_keypair) = TestValidatorGenesis::default().start_async().await;
     let rpc_client = Arc::new(test_validator.get_async_rpc_client());
@@ -47,7 +47,7 @@ async fn test_tpu_send_transaction() {
     tpu_client.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_tpu_cache_slot_updates() {
     let (test_validator, _) = TestValidatorGenesis::default().start_async().await;
     let rpc_client = Arc::new(test_validator.get_async_rpc_client());
