@@ -1734,7 +1734,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_identity_file_short_arg() {
+    fn verify_args_struct_by_command_run_with_identity() {
         let default_args = DefaultArgs::default();
         let default_run_args = RunArgs::default();
 
@@ -1744,38 +1744,28 @@ mod tests {
         let keypair = default_run_args.identity_keypair.insecure_clone();
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
-        let matches = create_app_and_get_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
-        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
-        assert_eq!(
-            args,
-            RunArgs {
-                identity_keypair: keypair,
-                ..default_run_args
-            }
-        );
-    }
+        let expected_args = RunArgs {
+            identity_keypair: keypair.insecure_clone(),
+            ..default_run_args
+        };
 
-    #[test]
-    fn verify_args_struct_by_command_run_with_identity_file_long_arg() {
-        let default_args = DefaultArgs::default();
-        let default_run_args = RunArgs::default();
+        // short arg
+        {
+            let matches =
+                create_app_and_get_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
+            let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+            assert_eq!(args, expected_args);
+        }
 
-        // generate a keypair
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let file = tmp_dir.path().join("id.json");
-        let keypair = default_run_args.identity_keypair.insecure_clone();
-        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
-
-        let matches =
-            create_app_and_get_matches(&default_args, vec!["--identity", file.to_str().unwrap()]);
-        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
-        assert_eq!(
-            args,
-            RunArgs {
-                identity_keypair: keypair,
-                ..default_run_args
-            }
-        );
+        // long arg
+        {
+            let matches = create_app_and_get_matches(
+                &default_args,
+                vec!["--identity", file.to_str().unwrap()],
+            );
+            let args = RunArgs::from_clap_arg_match(&matches).unwrap();
+            assert_eq!(args, expected_args);
+        }
     }
 
     fn test_run_command_with_identity_setup(
