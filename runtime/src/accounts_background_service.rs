@@ -26,10 +26,11 @@ use {
     stats::StatsManager,
     std::{
         boxed::Box,
-        fmt::{Debug, Formatter},
+        cmp,
+        fmt::{self, Debug, Formatter},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, RwLock,
+            Arc, LazyLock, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -68,8 +69,8 @@ impl PrunedBankQueueLenReporter {
     }
 }
 
-static BANK_DROP_QUEUE_REPORTER: std::sync::LazyLock<PrunedBankQueueLenReporter> =
-    std::sync::LazyLock::new(PrunedBankQueueLenReporter::default);
+static BANK_DROP_QUEUE_REPORTER: LazyLock<PrunedBankQueueLenReporter> =
+    LazyLock::new(PrunedBankQueueLenReporter::default);
 
 #[derive(Clone)]
 pub struct SendDroppedBankCallback {
@@ -90,7 +91,7 @@ impl DropCallback for SendDroppedBankCallback {
 }
 
 impl Debug for SendDroppedBankCallback {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "SendDroppedBankCallback({self:p})")
     }
 }
@@ -112,7 +113,7 @@ pub struct SnapshotRequest {
 }
 
 impl Debug for SnapshotRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SnapshotRequest")
             .field("request kind", &self.request_kind)
             .field("bank slot", &self.snapshot_root_bank.slot())
@@ -765,7 +766,7 @@ fn new_accounts_package_kind(snapshot_request: &SnapshotRequest) -> Option<Accou
 ///
 /// If two requests of the same kind are being compared, their bank slots are the tiebreaker.
 #[must_use]
-fn cmp_requests_by_priority(a: &SnapshotRequest, b: &SnapshotRequest) -> std::cmp::Ordering {
+fn cmp_requests_by_priority(a: &SnapshotRequest, b: &SnapshotRequest) -> cmp::Ordering {
     let slot_a = a.snapshot_root_bank.slot();
     let slot_b = b.snapshot_root_bank.slot();
     cmp_snapshot_request_kinds_by_priority(&a.request_kind, &b.request_kind)
@@ -782,9 +783,9 @@ fn cmp_requests_by_priority(a: &SnapshotRequest, b: &SnapshotRequest) -> std::cm
 fn cmp_snapshot_request_kinds_by_priority(
     a: &SnapshotRequestKind,
     b: &SnapshotRequestKind,
-) -> std::cmp::Ordering {
+) -> cmp::Ordering {
     use {
-        std::cmp::Ordering::{Equal, Greater, Less},
+        cmp::Ordering::{Equal, Greater, Less},
         SnapshotRequestKind as Kind,
     };
     match (a, b) {
@@ -1122,7 +1123,7 @@ mod test {
 
     #[test]
     fn test_cmp_snapshot_request_kinds_by_priority() {
-        use std::cmp::Ordering::{Equal, Greater, Less};
+        use cmp::Ordering::{Equal, Greater, Less};
         for (snapshot_request_kind_a, snapshot_request_kind_b, expected_result) in [
             (
                 SnapshotRequestKind::EpochAccountsHash,
