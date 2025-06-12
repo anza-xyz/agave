@@ -1,0 +1,28 @@
+[package]
+name = "solana_sbf_rust_deserialization_benchmark"
+version = "1.18.0"
+description = "Example Rust-based SBF program to benchmark deserialization costs"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
+repository = "https://github.com/anza-xyz/agave"
+license = "Apache-2.0"
+homepage = "https://anza.xyz/"
+documentation = "https://docs.rs/solana_sbf_rust_deserialization_benchmark"
+edition = "2021"
+
+[dependencies]
+solana-account-info = { workspace = true }
+solana-msg = { workspace = true }
+solana-program = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-error = { workspace = true }
+solana-pubkey = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "solana_sbf_rust_deserialization_benchmark"
+path = "src/main.rs"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"] 
