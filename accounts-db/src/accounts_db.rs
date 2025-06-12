@@ -7500,9 +7500,7 @@ impl AccountsDb {
     pub fn store_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
         self.store(
             accounts,
-            &StoreTo::Cache,
             None,
-            StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
     }
@@ -7512,21 +7510,13 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.store(
-            accounts,
-            &StoreTo::Cache,
-            transactions,
-            StoreReclaims::Default,
-            UpdateIndexThreadSelection::Inline,
-        );
+        self.store(accounts, transactions, UpdateIndexThreadSelection::Inline);
     }
 
     fn store<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        store_to: &StoreTo,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         // If all transactions in a batch are errored,
@@ -7544,13 +7534,7 @@ impl AccountsDb {
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
 
-        self.store_accounts_unfrozen(
-            accounts,
-            store_to,
-            transactions,
-            reclaim,
-            update_index_thread_selection,
-        );
+        self.store_accounts_unfrozen(accounts, transactions, update_index_thread_selection);
         self.report_store_timings();
     }
 
@@ -7698,9 +7682,7 @@ impl AccountsDb {
     fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        store_to: &StoreTo,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         // This path comes from a store to a non-frozen slot.
@@ -7711,9 +7693,16 @@ impl AccountsDb {
         // hold just 1 ref from this slot.
         let reset_accounts = true;
 
+        // We are storing accounts unfrozen accounts which
+        // will always be stored in the cache
+        let store_to = StoreTo::Cache;
+        // If the store is stored to the cache, reclaims are not needed
+        // Default behavior for cache stores is to ignore reclaims
+        let reclaim = StoreReclaims::Default;
+
         self.store_accounts_custom(
             accounts,
-            store_to,
+            &store_to,
             reset_accounts,
             transactions,
             reclaim,
@@ -8799,9 +8788,7 @@ impl AccountsDb {
     pub fn store_for_tests(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
         self.store(
             (slot, accounts),
-            &StoreTo::Cache,
             None,
-            StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
     }
