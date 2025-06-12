@@ -600,13 +600,25 @@ impl AccountsBackgroundService {
                             last_snapshot_end_time = Some(Instant::now());
                             match snapshot_handle_result {
                                 Ok(snapshot_block_height) => {
-                                    assert!(last_cleaned_block_height <= snapshot_block_height);
+                                    assert!(
+                                        last_cleaned_block_height <= snapshot_block_height,
+                                        "last cleaned block height: {last_cleaned_block_height}, \
+                                         snapshot request block height: {snapshot_block_height}, \
+                                         is startup verification complete: {}, \
+                                         enqueued snapshot requests: {:?}",
+                                        bank.is_startup_verification_complete(),
+                                        request_handlers
+                                            .snapshot_request_handler
+                                            .snapshot_request_receiver
+                                            .try_iter()
+                                            .collect::<Vec<_>>(),
+                                    );
                                     last_cleaned_block_height = snapshot_block_height;
                                 }
                                 Err(err) => {
                                     error!(
                                         "Stopping AccountsBackgroundService! \
-                                        Fatal error while handling snapshot requests: {err}",
+                                         Fatal error while handling snapshot requests: {err}",
                                     );
                                     exit.store(true, Ordering::Relaxed);
                                     break;
