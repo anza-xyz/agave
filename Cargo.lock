@@ -1315,7 +1315,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.12.3",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -8342,9 +8342,9 @@ dependencies = [
 
 [[package]]
 name = "solana-file-download"
-version = "2.2.1"
+version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96156c84b006ce3f00b37fa852a7d93de13ede4c40a58269663c3e01907453e3"
+checksum = "05a9744774fdbd7ae8575e5bd6d5df6946f321fb9b6019410b300a515369a37d"
 dependencies = [
  "console",
  "indicatif",
