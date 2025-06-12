@@ -3,7 +3,6 @@
 use {
     num_derive::FromPrimitive,
     solana_account_info::AccountInfo,
-    solana_decode_error::DecodeError,
     solana_msg::msg,
     solana_program_error::{ProgramError, ProgramResult, ToStr},
     solana_pubkey::{Pubkey, PubkeyError},
@@ -21,11 +20,6 @@ pub enum MyError {
 impl From<MyError> for ProgramError {
     fn from(e: MyError) -> Self {
         ProgramError::Custom(e as u32)
-    }
-}
-impl<T> DecodeError<T> for MyError {
-    fn type_of() -> &'static str {
-        "MyError"
     }
 }
 impl ToStr for MyError {

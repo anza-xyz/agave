@@ -123,7 +123,6 @@ solana-clock = { version = "=2.2.2", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=3.0.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=3.0.0" }
 solana-curve25519 = { path = "../../curves/curve25519", version = "=3.0.0" }
-solana-decode-error = "=2.2.1"
 solana-define-syscall = "=2.3.0"
 solana-fee = { path = "../../fee", version = "=3.0.0" }
 solana-hash = { version = "=2.3.0", features = ["bytemuck", "serde", "std"] }

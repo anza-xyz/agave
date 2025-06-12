@@ -52,7 +52,6 @@ solana-compute-budget-interface = { version = "=2.2.2", features = ["borsh"] }
 solana-config-interface = "=1.0.0"
 solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-connection-cache = { workspace = true }
-solana-decode-error = "=2.2.1"
 solana-epoch-schedule = "=2.2.1"
 solana-feature-gate-client = "=0.0.2"
 solana-feature-gate-interface = "=2.2.2"

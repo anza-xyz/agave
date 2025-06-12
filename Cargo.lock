@@ -7396,7 +7396,6 @@ dependencies = [
  "solana-config-interface",
  "solana-config-program-client",
  "solana-connection-cache",
- "solana-decode-error",
  "solana-epoch-schedule",
  "solana-faucet",
  "solana-feature-gate-client",
