@@ -367,7 +367,7 @@ impl Default for ValidatorConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             tvu_shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             delay_leader_block_for_pending_fork: false,
-            use_tpu_client_next: false,
+            use_tpu_client_next: true,
             retransmit_xdp: None,
         }
     }
