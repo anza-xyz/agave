@@ -18,7 +18,7 @@ serde_json = { workspace = true }
 solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-derivation-path = "=2.2.1"
-solana-instruction = { version = "=2.2.1", features = ["bincode"] }
+solana-instruction = { version = "=2.3.0", features = ["bincode"] }
 solana-keypair = "=2.2.1"
 solana-message = { version = "=2.4.0", features = ["bincode"] }
 solana-pubkey = { version = "=2.4.0", default-features = false }
