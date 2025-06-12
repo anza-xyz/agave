@@ -24,6 +24,7 @@ use {
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
+    ed25519_dalek::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
     rand::Rng,
     rayon::{ThreadPool, ThreadPoolBuilder},
@@ -10342,7 +10343,13 @@ fn test_call_precomiled_program() {
         ed25519_dalek::Keypair { secret, public }
     };
     let message_arr = b"hello";
-    let instruction = solana_ed25519_program::new_ed25519_instruction(&privkey, message_arr);
+    let signature = privkey.sign(message_arr).to_bytes();
+    let pubkey = privkey.public.to_bytes();
+    let instruction = solana_ed25519_program::new_ed25519_instruction_with_signature(
+        message_arr,
+        &signature,
+        &pubkey,
+    );
     let tx = Transaction::new_signed_with_payer(
         &[instruction],
         Some(&mint_keypair.pubkey()),
