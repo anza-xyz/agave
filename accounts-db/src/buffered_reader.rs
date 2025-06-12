@@ -194,10 +194,9 @@ pub fn large_file_buf_reader(
 ) -> IoResult<Box<dyn BufRead>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
-        let io_uring_reader = crate::io_uring::seq_file_reader::SequentialFileReader::with_capacity(
-            buf_size,
-            path.as_ref(),
-        );
+        use crate::io_uring::sequential_file_reader::SequentialFileReader;
+
+        let io_uring_reader = SequentialFileReader::with_capacity(buf_size, path.as_ref());
         match io_uring_reader {
             Ok(reader) => return Ok(Box::new(reader)),
             Err(error) => {
