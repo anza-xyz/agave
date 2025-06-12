@@ -5,6 +5,7 @@ use {
         cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+        recent_transaction_status_service::RecentTransactionStatusService,
         rpc::{rpc_accounts::*, rpc_accounts_scan::*, rpc_bank::*, rpc_full::*, rpc_minimal::*, *},
         rpc_cache::LargestAccountsCache,
         rpc_health::*,
@@ -486,6 +487,7 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub client_option: ClientOption<'a>,
+    pub recent_transaction_status_service: Arc<RecentTransactionStatusService>,
 }
 
 /// [`ClientOption`] enum represents the available client types for TPU
@@ -549,6 +551,7 @@ impl JsonRpcService {
                     config.max_complete_transaction_status_slot,
                     config.prioritization_fee_cache,
                     runtime,
+                    config.recent_transaction_status_service,
                 )?;
                 Ok(json_rpc_service)
             }
@@ -599,6 +602,7 @@ impl JsonRpcService {
                     config.max_complete_transaction_status_slot,
                     config.prioritization_fee_cache,
                     runtime,
+                    config.recent_transaction_status_service,
                 )?;
                 Ok(json_rpc_service)
             }
@@ -628,6 +632,7 @@ impl JsonRpcService {
         connection_cache: Arc<ConnectionCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+        recent_transaction_status_service: Arc<RecentTransactionStatusService>,
     ) -> Result<Self, String> {
         let runtime = service_runtime(
             config.rpc_threads,
@@ -676,6 +681,7 @@ impl JsonRpcService {
             max_complete_transaction_status_slot,
             prioritization_fee_cache,
             runtime,
+            recent_transaction_status_service,
         )?;
         Ok(json_rpc_service)
     }
@@ -710,6 +716,7 @@ impl JsonRpcService {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<TokioRuntime>,
+        recent_transaction_status_service: Arc<RecentTransactionStatusService>,
     ) -> Result<Self, String> {
         info!("rpc bound to {:?}", rpc_addr);
         info!("rpc configuration: {:?}", config);
@@ -802,6 +809,7 @@ impl JsonRpcService {
             max_complete_transaction_status_slot,
             prioritization_fee_cache,
             Arc::clone(&runtime),
+            recent_transaction_status_service,
         );
 
         let _send_transaction_service = Arc::new(SendTransactionService::new_with_client(

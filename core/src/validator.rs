@@ -60,6 +60,7 @@ use {
     solana_hard_forks::HardForks,
     solana_hash::Hash,
     solana_keypair::Keypair,
+    solana_ledger::blockstore_processor::TransactionStatusMessage,
     solana_ledger::{
         bank_forks_utils,
         blockstore::{
@@ -84,6 +85,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_rpc::recent_transaction_status_service::RecentTransactionStatusService,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -98,6 +100,7 @@ use {
         transaction_notifier_interface::TransactionNotifierArc,
         transaction_status_service::TransactionStatusService,
     },
+    solana_runtime::status_cache::StatusCache,
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
@@ -476,7 +479,6 @@ impl BlockstoreRootScan {
 
 #[derive(Default)]
 struct TransactionHistoryServices {
-    transaction_status_sender: Option<TransactionStatusSender>,
     transaction_status_service: Option<TransactionStatusService>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
 }
@@ -782,6 +784,18 @@ impl Validator {
             },
         ));
 
+        let (transaction_status_sender, transaction_status_receiver) = {
+            let enable_rpc_transaction_history =
+                config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history;
+            let is_plugin_transaction_history_required = transaction_notifier.as_ref().is_some();
+            if enable_rpc_transaction_history || is_plugin_transaction_history_required {
+                let (sender, receiver) = unbounded();
+                (Some(TransactionStatusSender { sender }), Some(receiver))
+            } else {
+                (None, None)
+            }
+        };
+
         let (
             bank_forks,
             blockstore,
@@ -790,7 +804,6 @@ impl Validator {
             leader_schedule_cache,
             starting_snapshot_hashes,
             TransactionHistoryServices {
-                transaction_status_sender,
                 transaction_status_service,
                 max_complete_transaction_status_slot,
             },
@@ -807,6 +820,8 @@ impl Validator {
             accounts_update_notifier,
             transaction_notifier,
             entry_notifier,
+            transaction_status_sender.as_ref(),
+            transaction_status_receiver.as_ref(),
         )
         .map_err(ValidatorError::Other)?;
 
@@ -1174,6 +1189,16 @@ impl Validator {
                 };
                 ClientOption::ConnectionCache(connection_cache.clone())
             };
+
+            let recent_transaction_status_service = Arc::new(RecentTransactionStatusService::new(
+                StatusCache::default(),
+                transaction_status_receiver.expect(
+                    "Expected a `Receiver<TransactionStatusMessage>` to have been constructed in \
+                    the event that RPC is enabled",
+                ),
+                exit.clone(),
+            ));
+
             let rpc_svc_config = JsonRpcServiceConfig {
                 rpc_addr,
                 rpc_config: config.rpc_config.clone(),
@@ -1196,6 +1221,7 @@ impl Validator {
                 max_complete_transaction_status_slot: max_complete_transaction_status_slot.clone(),
                 prioritization_fee_cache: prioritization_fee_cache.clone(),
                 client_option,
+                recent_transaction_status_service: recent_transaction_status_service.clone(),
             };
             let json_rpc_service =
                 JsonRpcService::new_with_config(rpc_svc_config).map_err(ValidatorError::Other)?;
@@ -1208,6 +1234,7 @@ impl Validator {
                 optimistically_confirmed_bank.clone(),
                 &config.pubsub_config,
                 None,
+                recent_transaction_status_service.clone(),
             ));
             let pubsub_service = if !config.rpc_config.full_api {
                 None
@@ -2029,6 +2056,7 @@ fn load_genesis(
     Ok(genesis_config)
 }
 
+#[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
 fn load_blockstore(
     config: &ValidatorConfig,
@@ -2039,6 +2067,8 @@ fn load_blockstore(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierArc>,
     entry_notifier: Option<EntryNotifierArc>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
+    transaction_status_receiver: Option<&Receiver<TransactionStatusMessage>>,
 ) -> Result<
     (
         Arc<RwLock<BankForks>>,
@@ -2088,17 +2118,15 @@ fn load_blockstore(
         ..blockstore_processor::ProcessOptions::default()
     };
 
-    let enable_rpc_transaction_history =
-        config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history;
-    let is_plugin_transaction_history_required = transaction_notifier.as_ref().is_some();
     let transaction_history_services =
-        if enable_rpc_transaction_history || is_plugin_transaction_history_required {
+        if let Some(transaction_status_receiver) = transaction_status_receiver {
             initialize_rpc_transaction_history_services(
                 blockstore.clone(),
                 exit.clone(),
-                enable_rpc_transaction_history,
+                config.rpc_addrs.is_some() && config.rpc_config.enable_rpc_transaction_history,
                 config.rpc_config.enable_extended_tx_metadata_storage,
                 transaction_notifier,
+                transaction_status_receiver,
             )
         } else {
             TransactionHistoryServices::default()
@@ -2114,9 +2142,7 @@ fn load_blockstore(
             config.account_paths.clone(),
             &config.snapshot_config,
             &process_options,
-            transaction_history_services
-                .transaction_status_sender
-                .as_ref(),
+            transaction_status_sender,
             entry_notifier_service
                 .as_ref()
                 .map(|service| service.sender()),
@@ -2520,14 +2546,11 @@ fn initialize_rpc_transaction_history_services(
     enable_rpc_transaction_history: bool,
     enable_extended_tx_metadata_storage: bool,
     transaction_notifier: Option<TransactionNotifierArc>,
+    transaction_status_receiver: &Receiver<TransactionStatusMessage>,
 ) -> TransactionHistoryServices {
     let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(blockstore.max_root()));
-    let (transaction_status_sender, transaction_status_receiver) = unbounded();
-    let transaction_status_sender = Some(TransactionStatusSender {
-        sender: transaction_status_sender,
-    });
     let transaction_status_service = Some(TransactionStatusService::new(
-        transaction_status_receiver,
+        transaction_status_receiver.clone(),
         max_complete_transaction_status_slot.clone(),
         enable_rpc_transaction_history,
         transaction_notifier,
@@ -2537,7 +2560,6 @@ fn initialize_rpc_transaction_history_services(
     ));
 
     TransactionHistoryServices {
-        transaction_status_sender,
         transaction_status_service,
         max_complete_transaction_status_slot,
     }

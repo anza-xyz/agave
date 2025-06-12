@@ -5,7 +5,9 @@ use {
     crate::{
         filter::filter_allows, max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        parsed_token_accounts::*, rpc_cache::LargestAccountsCache, rpc_health::*,
+        parsed_token_accounts::*,
+        recent_transaction_status_service::RecentTransactionStatusService,
+        rpc_cache::LargestAccountsCache, rpc_health::*,
     },
     base64::{prelude::BASE64_STANDARD, Engine},
     bincode::{config::Options, serialize},
@@ -255,6 +257,7 @@ pub struct JsonRpcRequestProcessor {
     max_complete_transaction_status_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     runtime: Arc<Runtime>,
+    recent_transaction_status_service: Arc<RecentTransactionStatusService>,
 }
 impl Metadata for JsonRpcRequestProcessor {}
 
@@ -418,6 +421,7 @@ impl JsonRpcRequestProcessor {
         max_complete_transaction_status_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<Runtime>,
+        recent_transaction_status_service: Arc<RecentTransactionStatusService>,
     ) -> (Self, Receiver<TransactionInfo>) {
         let (transaction_sender, transaction_receiver) = unbounded();
         (
@@ -440,6 +444,7 @@ impl JsonRpcRequestProcessor {
                 max_complete_transaction_status_slot,
                 prioritization_fee_cache,
                 runtime,
+                recent_transaction_status_service,
             },
             transaction_receiver,
         )
@@ -933,9 +938,11 @@ impl JsonRpcRequestProcessor {
         commitment: Option<CommitmentConfig>,
     ) -> Result<RpcResponse<bool>> {
         let bank = self.bank(commitment);
-        let status = bank.get_signature_status(signature);
+        let status = self
+            .recent_transaction_status_service
+            .get_transaction_status(signature, &bank.ancestors);
         match status {
-            Some(status) => Ok(new_response(&bank, status.is_ok())),
+            Some((_, status)) => Ok(new_response(&bank, status.is_ok())),
             None => Ok(new_response(&bank, false)),
         }
     }
@@ -1636,8 +1643,9 @@ impl JsonRpcRequestProcessor {
         commitment: Option<CommitmentConfig>,
     ) -> Result<Option<transaction::Result<()>>> {
         let bank = self.bank(commitment);
-        Ok(bank
-            .get_signature_status_slot(&signature)
+        Ok(self
+            .recent_transaction_status_service
+            .get_transaction_status(&signature, &bank.ancestors)
             .map(|(_, status)| status))
     }
 
@@ -1705,11 +1713,14 @@ impl JsonRpcRequestProcessor {
         signature: Signature,
         bank: &Bank,
     ) -> Option<TransactionStatus> {
-        let (slot, status) = bank.get_signature_status_slot(&signature)?;
+        let (slot, status) = self
+            .recent_transaction_status_service
+            .get_transaction_status(&signature, &bank.ancestors)?;
 
         let optimistically_confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
-        let optimistically_confirmed =
-            optimistically_confirmed_bank.get_signature_status_slot(&signature);
+        let optimistically_confirmed = self
+            .recent_transaction_status_service
+            .get_transaction_status(&signature, &optimistically_confirmed_bank.ancestors);
 
         let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
         let confirmations = if r_block_commitment_cache.root() >= slot

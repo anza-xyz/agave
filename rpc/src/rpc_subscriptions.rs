@@ -5,6 +5,7 @@ use {
         filter::filter_allows,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         parsed_token_accounts::{get_parsed_token_account, get_parsed_token_accounts},
+        recent_transaction_status_service::RecentTransactionStatusService,
         rpc_pubsub_service::PubSubConfig,
         rpc_subscription_tracker::{
             AccountSubscriptionParams, BlockSubscriptionKind, BlockSubscriptionParams,
@@ -536,6 +537,7 @@ impl RpcSubscriptions {
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        recent_transaction_status_service: Arc<RecentTransactionStatusService>,
     ) -> Self {
         Self::new_with_config(
             exit,
@@ -546,6 +548,7 @@ impl RpcSubscriptions {
             optimistically_confirmed_bank,
             &PubSubConfig::default(),
             None,
+            recent_transaction_status_service,
         )
     }
 
@@ -578,6 +581,7 @@ impl RpcSubscriptions {
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
     ) -> Self {
+        let recent_transaction_status_service = Arc::new(RecentTransactionStatusService::default());
         let rpc_notifier_ready = Arc::new(AtomicBool::new(false));
 
         let rpc_subscriptions = Self::new_with_config(
@@ -589,6 +593,7 @@ impl RpcSubscriptions {
             optimistically_confirmed_bank,
             &PubSubConfig::default_for_tests(),
             Some(rpc_notifier_ready.clone()),
+            recent_transaction_status_service,
         );
 
         // Ensure RPC notifier is ready to receive notifications before proceeding
@@ -613,6 +618,7 @@ impl RpcSubscriptions {
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
         config: &PubSubConfig,
         rpc_notifier_ready: Option<Arc<AtomicBool>>,
+        recent_transaction_status_service: Arc<RecentTransactionStatusService>,
     ) -> Self {
         let (notification_sender, notification_receiver) = crossbeam_channel::unbounded();
 
@@ -652,6 +658,7 @@ impl RpcSubscriptions {
                             bank_forks,
                             block_commitment_cache,
                             optimistically_confirmed_bank,
+                            recent_transaction_status_service,
                         )
                     });
                 })
@@ -682,6 +689,7 @@ impl RpcSubscriptions {
         let blockstore = Arc::new(blockstore);
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
+        let recent_transaction_status_service = Arc::new(RecentTransactionStatusService::default());
         Self::new(
             Arc::new(AtomicBool::new(false)),
             max_complete_transaction_status_slot,
@@ -689,6 +697,7 @@ impl RpcSubscriptions {
             bank_forks,
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
+            recent_transaction_status_service,
         )
     }
 
@@ -765,6 +774,7 @@ impl RpcSubscriptions {
         bank_forks: Arc<RwLock<BankForks>>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
         optimistically_confirmed_bank: Arc<RwLock<OptimisticallyConfirmedBank>>,
+        recent_transaction_status_service: Arc<RecentTransactionStatusService>,
     ) {
         let mut stats = PubsubNotificationStats::default();
 
@@ -848,6 +858,7 @@ impl RpcSubscriptions {
                                 &blockstore,
                                 &commitment_slots,
                                 &notifier,
+                                &recent_transaction_status_service,
                                 SOURCE,
                             );
                         }
@@ -864,6 +875,7 @@ impl RpcSubscriptions {
                                 &blockstore,
                                 &commitment_slots,
                                 &notifier,
+                                &recent_transaction_status_service,
                                 SOURCE,
                             );
                         }
@@ -918,6 +930,7 @@ impl RpcSubscriptions {
         blockstore: &Blockstore,
         commitment_slots: &CommitmentSlots,
         notifier: &RpcNotifier,
+        recent_transaction_status_service: &RecentTransactionStatusService,
         source: &'static str,
     ) {
         let mut total_time = Measure::start("notify_watchers");
@@ -1105,7 +1118,14 @@ impl RpcSubscriptions {
                             bank_forks,
                             slot,
                             |bank, params| {
-                                bank.get_signature_status_processed_since_parent(&params.signature)
+                                if let Some((slot, status)) = recent_transaction_status_service
+                                    .get_transaction_status(&params.signature, &bank.ancestors)
+                                {
+                                    if slot <= bank.slot() {
+                                        return Some(status);
+                                    }
+                                }
+                                None
                             },
                             filter_signature_result,
                             notifier,
