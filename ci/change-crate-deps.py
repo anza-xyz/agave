@@ -46,7 +46,8 @@ with open(cargo_toml, 'rb', 0) as file:
     for idx, line in enumerate(data):
         split_line = line.decode().split(" =", 1)
         if split_line[0] in deps and not split_line[1].startswith(' { registry'):
-            tmp = split_line[1].replace("workspace = true", "version = \"" + version + "\"")[3:]
+            tmp = split_line[1].replace("workspace = true", "version = \"" + version + "\"")
+            tmp = tmp.replace("{", '').lstrip()
             data[idx] = bytes(split_line[0] + ' = { registry = "kellnr", ' + tmp, 'utf-8')
 
 with open(cargo_toml, 'wb') as file:
