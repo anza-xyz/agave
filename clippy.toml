@@ -1,5 +1,10 @@
 too-many-arguments-threshold = 9
 
+# Set the result_large_err lint threshold based on the current sizes as of May 21 2025.
+# solana_rpc_client_api::client_error::Error is 256 bytes
+# solana_tps_client::TpsClientError uses the ClientError (above) and is 264 bytes
+large-error-threshold = 265
+
 # Disallow specific methods from being used
 disallowed-methods = [
     { path = "std::net::UdpSocket::bind", reason = "Use solana_net_utils::bind_with_config, bind_to, etc instead for proper socket configuration." },
