@@ -2,4 +2,4 @@
 
 pub mod dir_remover;
 pub mod memory;
-pub mod seq_file_reader;
+pub mod sequential_file_reader;

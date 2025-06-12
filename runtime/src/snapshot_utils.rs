@@ -1683,7 +1683,7 @@ pub fn verify_and_unarchive_snapshots(
 
 /// Spawns a thread for unpacking a snapshot
 fn spawn_unpack_snapshot_thread(
-    chunks_recv: crossbeam_channel::Receiver<MultiBytes>,
+    chunks_receiver: crossbeam_channel::Receiver<MultiBytes>,
     file_sender: Sender<PathBuf>,
     account_paths: Arc<Vec<PathBuf>>,
     ledger_dir: Arc<PathBuf>,
@@ -1693,7 +1693,7 @@ fn spawn_unpack_snapshot_thread(
         .name(format!("solUnpkSnpsht{thread_index:02}"))
         .spawn(move || {
             hardened_unpack::streaming_unpack_snapshot(
-                Archive::new(BytesChannelReader::new(chunks_recv)),
+                Archive::new(BytesChannelReader::new(chunks_receiver)),
                 ledger_dir.as_path(),
                 &account_paths,
                 &file_sender,
