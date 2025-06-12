@@ -1769,9 +1769,9 @@ mod tests {
         }
     }
 
-    fn test_run_command_with_identity_setup(
-        args: Vec<&str>,
+    fn verify_args_struct_by_command_run_with_identity_setup(
         default_run_args: RunArgs,
+        args: Vec<&str>,
         expected_args: RunArgs,
     ) {
         let default_args = DefaultArgs::default();
@@ -1798,7 +1798,11 @@ mod tests {
                     + ".log",
                 ..default_run_args.clone()
             };
-            test_run_command_with_identity_setup(vec![], default_run_args.clone(), expected_args);
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec![],
+                expected_args,
+            );
         }
 
         // short arg
@@ -1807,9 +1811,9 @@ mod tests {
                 logfile: "-".to_string(),
                 ..default_run_args.clone()
             };
-            test_run_command_with_identity_setup(
-                vec!["-o", "-"],
+            verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                vec!["-o", "-"],
                 expected_args,
             );
         }
@@ -1820,9 +1824,9 @@ mod tests {
                 logfile: "custom_log.log".to_string(),
                 ..default_run_args.clone()
             };
-            test_run_command_with_identity_setup(
-                vec!["--log", "custom_log.log"],
+            verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
+                vec!["--log", "custom_log.log"],
                 expected_args,
             );
         }
