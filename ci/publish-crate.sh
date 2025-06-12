@@ -37,8 +37,13 @@ fi
 is_crate_version_uploaded() {
   name=$1
   version=$2
-  curl https://crates.io/api/v1/crates/${name}/${version} | \
-  python3 -c "import sys,json; print('version' in json.load(sys.stdin));"
+  if $DRY_RUN; then
+    curl http://127.0.0.1:8000/api/v1/crates/${name}/crate_versions | \
+    python3 -c "import sys,json; print(len(json.load(sys.stdin)['versions']) > 0);"
+  else
+    curl https://crates.io/api/v1/crates/${name}/${version} | \
+    python3 -c "import sys,json; print('version' in json.load(sys.stdin));"
+  fi
 }
 
 # Only package/publish if this is a tagged release
