@@ -311,8 +311,7 @@ mod tests {
             );
 
             // Create a new AccountStorageEntry from the output file
-            let new_storage =
-                AccountStorageEntry::new_existing(slot, 0, accounts_file, num_accounts);
+            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file);
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());
@@ -401,13 +400,12 @@ mod tests {
             // Close the file
             drop(output_file);
 
-            let (accounts_file, num_accounts) =
+            let (accounts_file, _num_accounts) =
                 AccountsFile::new_from_file(temp_file_path, current_len, StorageAccess::File)
                     .unwrap();
 
             // Create a new AccountStorageEntry from the output file
-            let new_storage =
-                AccountStorageEntry::new_existing(slot, 0, accounts_file, num_accounts);
+            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file);
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());
