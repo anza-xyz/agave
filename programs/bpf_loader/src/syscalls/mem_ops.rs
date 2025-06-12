@@ -108,11 +108,6 @@ declare_builtin_function!(
                 n,
                 invoke_context.get_check_aligned(),
             )?;
-            let cmp_result = translate_type_mut::<i32>(
-                memory_mapping,
-                cmp_result_addr,
-                invoke_context.get_check_aligned(),
-            )?;
 
             debug_assert_eq!(s1.len(), n as usize);
             debug_assert_eq!(s2.len(), n as usize);
@@ -120,7 +115,13 @@ declare_builtin_function!(
             // memcmp is marked unsafe since it assumes that the inputs are at least
             // `n` bytes long. `s1` and `s2` are guaranteed to be exactly `n` bytes
             // long because `translate_slice` would have failed otherwise.
-            *cmp_result = unsafe { memcmp(s1, s2, n as usize) };
+            let result = unsafe { memcmp(s1, s2, n as usize) };
+
+            *translate_type_mut::<i32>(
+                memory_mapping,
+                cmp_result_addr,
+                invoke_context.get_check_aligned(),
+            )? = result;
         }
 
         Ok(0)

@@ -919,6 +919,12 @@ declare_builtin_function!(
         let cost = invoke_context.get_execution_cost().secp256k1_recover_cost;
         consume_compute_meter(invoke_context, cost)?;
 
+        let secp256k1_recover_result = translate_slice_mut::<u8>(
+            memory_mapping,
+            result_addr,
+            SECP256K1_PUBLIC_KEY_LENGTH as u64,
+            invoke_context.get_check_aligned(),
+        )?;
         let hash = translate_slice::<u8>(
             memory_mapping,
             hash_addr,
@@ -929,12 +935,6 @@ declare_builtin_function!(
             memory_mapping,
             signature_addr,
             SECP256K1_SIGNATURE_LENGTH as u64,
-            invoke_context.get_check_aligned(),
-        )?;
-        let secp256k1_recover_result = translate_slice_mut::<u8>(
-            memory_mapping,
-            result_addr,
-            SECP256K1_PUBLIC_KEY_LENGTH as u64,
             invoke_context.get_check_aligned(),
         )?;
 
@@ -1432,6 +1432,11 @@ declare_builtin_function!(
                 length,
                 invoke_context.get_check_aligned(),
             )?;
+            let program_id_result = translate_type_mut::<Pubkey>(
+                memory_mapping,
+                program_id_addr,
+                invoke_context.get_check_aligned(),
+            )?;
 
             let to_slice = return_data_result;
             let from_slice = return_data
@@ -1441,12 +1446,6 @@ declare_builtin_function!(
                 return Err(SyscallError::InvalidLength.into());
             }
             to_slice.copy_from_slice(from_slice);
-
-            let program_id_result = translate_type_mut::<Pubkey>(
-                memory_mapping,
-                program_id_addr,
-                invoke_context.get_check_aligned(),
-            )?;
 
             if !is_nonoverlapping(
                 to_slice.as_ptr() as usize,
@@ -1669,17 +1668,16 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, cost)?;
 
-        let input = translate_slice::<u8>(
-            memory_mapping,
-            input_addr,
-            input_size,
-            invoke_context.get_check_aligned(),
-        )?;
-
         let call_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
             output as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let input = translate_slice::<u8>(
+            memory_mapping,
+            input_addr,
+            input_size,
             invoke_context.get_check_aligned(),
         )?;
 
@@ -1935,17 +1933,16 @@ declare_builtin_function!(
 
         consume_compute_meter(invoke_context, cost)?;
 
-        let input = translate_slice::<u8>(
-            memory_mapping,
-            input_addr,
-            input_size,
-            invoke_context.get_check_aligned(),
-        )?;
-
         let call_result = translate_slice_mut::<u8>(
             memory_mapping,
             result_addr,
             output as u64,
+            invoke_context.get_check_aligned(),
+        )?;
+        let input = translate_slice::<u8>(
+            memory_mapping,
+            input_addr,
+            input_size,
             invoke_context.get_check_aligned(),
         )?;
 
