@@ -368,7 +368,9 @@ impl ReadOnlyAccountsCache {
                     .choose(rng)
                     .expect("number of shards should be greater than zero");
                 let shard = shard.read();
-                for (key, entry) in shard.iter().choose_multiple(rng, remaining_samples) {
+                for (key, entry) in unsafe { shard.iter().map(|bucket| bucket.as_ref()) }
+                    .choose_multiple(rng, remaining_samples)
+                {
                     let last_update_time = entry.get().last_update_time.load(Ordering::Relaxed);
                     if last_update_time < min_update_time {
                         min_update_time = last_update_time;
