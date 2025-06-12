@@ -5902,14 +5902,13 @@ fn test_invalid_forks_persisted_on_restart() {
         let version = solana_shred_version::version_from_hash(&last_hash);
         let dup_shreds = Shredder::new(dup_slot, parent, 0, version)
             .unwrap()
-            .entries_to_shreds(
+            .entries_to_merkle_shreds_for_tests(
                 &majority_keypair,
                 &entries,
                 true, // is_full_slot
                 None, // chained_merkle_root
                 0,    // next_shred_index,
                 0,    // next_code_index
-                true, // merkle_variant
                 &ReedSolomonCache::default(),
                 &mut ProcessShredsStats::default(),
             )
