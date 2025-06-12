@@ -25,6 +25,7 @@ source ci/rust-version.sh stable
 DRY_RUN=false
 if [[ $1 = --dry-run ]]; then
   DRY_RUN=true
+  export CRATE_PUBLISH_TEST=true
   shift
 fi
 
@@ -97,9 +98,11 @@ for Cargo_toml in $Cargo_tomls; do
   (
     crate=$(dirname "$Cargo_toml")
     if $DRY_RUN; then
+      ci/change-crate-deps.py "$Cargo_toml" "$crate_name"
+
       # token is a default value from the kellnr image https://kellnr.io/documentation#config-values
       # registry value is defined in docker-run.sh script
-      cargoCommand="cargo publish --registry KELLNR --token Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD"
+      cargoCommand="cargo publish --registry kellnr --token Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD --allow-dirty"
     else
       cargoCommand="cargo publish --token $CRATES_IO_TOKEN"
     fi

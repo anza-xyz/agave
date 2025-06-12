@@ -97,7 +97,7 @@ fi
 if [[ -n "$CRATE_PUBLISH_TEST" ]]; then
   ARGS+=(
     --network container:kellnr
-    --env CARGO_REGISTRIES_KELLNR_INDEX="sparse+http://127.0.0.1:8000/api/v1/crates/"
+    -v "$PWD/ci/cargo/config.toml:/usr/local/cargo/config.toml"
   )
 fi
 

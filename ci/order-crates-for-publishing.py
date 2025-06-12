@@ -10,7 +10,7 @@
 import os
 import json
 import subprocess
-import sys;
+import sys
 
 real_file = os.path.realpath(__file__)
 ci_path = os.path.dirname(real_file)
@@ -102,10 +102,10 @@ def get_packages():
     wrong_self_dev_dependencies = list()
 
     for pkg in metadata['packages']:
-        manifest_path[pkg['name']] = pkg['manifest_path'];
+        manifest_path[pkg['name']] = pkg['manifest_path']
         dependency_graph[pkg['name']] = [
             x['name'] for x in pkg['dependencies'] if should_add(pkg, x, wrong_self_dev_dependencies)
-        ];
+        ]
 
     # Check for direct circular dependencies
     circular_dependencies = set()
