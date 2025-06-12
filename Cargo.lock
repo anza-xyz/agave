@@ -1315,7 +1315,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.12.3",
+ "hashbrown 0.13.2",
 ]
 
 [[package]]
@@ -10056,6 +10056,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "blake3",
+ "boxcar",
  "bv",
  "bytemuck",
  "bzip2",
@@ -10090,6 +10091,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "serde_with",
+ "smallvec",
  "solana-account",
  "solana-account-info",
  "solana-accounts-db",
