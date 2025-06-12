@@ -2,8 +2,6 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate solana_program;
-
 #[derive(Debug)]
 pub struct Data<'a> {
     pub twentyone: u64,

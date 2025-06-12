@@ -1,10 +1,9 @@
 use {
     solana_account_info::{next_account_info, AccountInfo},
-    solana_cpi::invoke,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_msg::msg,
-    solana_program::instruction::get_stack_height,
+    solana_program::{instruction::get_stack_height, program::invoke},
     solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
     solana_program_test::{processor, ProgramTest},
     solana_pubkey::Pubkey,

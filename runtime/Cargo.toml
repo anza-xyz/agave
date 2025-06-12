@@ -98,7 +98,6 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-precompile-error = { workspace = true }
-solana-program = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }

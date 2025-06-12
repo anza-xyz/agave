@@ -36,8 +36,8 @@ solana-builtins-default-costs = { workspace = true, features = ["dev-context-onl
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
 solana-message = { workspace = true }
-solana-program = { workspace = true }
 solana-signer = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
 

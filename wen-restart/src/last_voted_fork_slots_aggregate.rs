@@ -244,9 +244,9 @@ mod tests {
         crate::{
             last_voted_fork_slots_aggregate::*, solana::wen_restart_proto::LastVotedForkSlotsRecord,
         },
+        solana_clock::Slot,
         solana_gossip::restart_crds_values::RestartLastVotedForkSlots,
         solana_hash::Hash,
-        solana_program::clock::Slot,
         solana_runtime::{
             bank::Bank,
             epoch_stakes::EpochStakes,

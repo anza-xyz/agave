@@ -1,8 +1,8 @@
 use {
     solana_account_info::{next_account_info, AccountInfo},
-    solana_cpi::invoke,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
+    solana_program::program::invoke,
     solana_program_error::ProgramResult,
     solana_program_test::{processor, ProgramTest},
     solana_pubkey::Pubkey,
