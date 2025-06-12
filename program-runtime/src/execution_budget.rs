@@ -67,18 +67,7 @@ pub struct SVMTransactionExecutionBudget {
 #[cfg(feature = "dev-context-only-utils")]
 impl Default for SVMTransactionExecutionBudget {
     fn default() -> Self {
-        SVMTransactionExecutionBudget {
-            compute_unit_limit: u64::from(MAX_COMPUTE_UNIT_LIMIT),
-            max_instruction_stack_depth: get_max_instruction_stack_depth(
-                /* simd_0296_active */ false,
-            ),
-            max_instruction_trace_length: 64,
-            sha256_max_slices: 20_000,
-            max_call_depth: MAX_CALL_DEPTH,
-            stack_frame_size: STACK_FRAME_SIZE,
-            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
-            heap_size: u32::try_from(solana_program_entrypoint::HEAP_LENGTH).unwrap(),
-        }
+        Self::new_with_defaults(/* simd_0296_active */ false)
     }
 }
 
