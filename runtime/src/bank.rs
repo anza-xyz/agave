@@ -3127,11 +3127,6 @@ impl Bank {
         self.register_tick_for_test(&Hash::default())
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn register_unique_tick(&self) {
-        self.register_tick_for_test(&Hash::new_unique())
-    }
-
     pub fn is_complete(&self) -> bool {
         self.tick_height() == self.max_tick_height()
     }

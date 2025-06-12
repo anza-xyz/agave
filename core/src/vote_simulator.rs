@@ -142,9 +142,8 @@ impl VoteSimulator {
                         .any(|lockout| lockout.slot() == parent));
                 }
             }
-            while new_bank.tick_height() < new_bank.max_tick_height() {
-                new_bank.register_unique_tick();
-            }
+
+            new_bank.fill_bank_with_ticks_for_tests();
             if !visit.node().has_no_child() || is_frozen {
                 new_bank.set_block_id(Some(Hash::new_unique()));
                 new_bank.freeze();
@@ -398,9 +397,7 @@ pub fn initialize_state(
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();
     }
 
-    while bank0.tick_height() < bank0.max_tick_height() {
-        bank0.register_unique_tick();
-    }
+    bank0.fill_bank_with_ticks_for_tests();
     bank0.freeze();
     let mut progress = ProgressMap::default();
     progress.insert(

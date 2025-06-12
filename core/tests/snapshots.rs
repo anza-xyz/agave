@@ -496,9 +496,7 @@ fn test_bank_forks_incremental_snapshot(
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            while !bank.is_complete() {
-                bank.register_unique_tick();
-            }
+            bank.fill_bank_with_ticks_for_tests();
 
             bank_scheduler
         };
@@ -783,9 +781,7 @@ fn test_snapshots_with_background_services(
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
             assert_eq!(bank.process_transaction(&tx), Ok(()));
 
-            while !bank.is_complete() {
-                bank.register_unique_tick();
-            }
+            bank.fill_bank_with_ticks_for_tests();
         }
 
         // Call `BankForks::set_root()` to cause snapshots to be taken

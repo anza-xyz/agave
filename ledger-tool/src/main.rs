@@ -2331,9 +2331,7 @@ fn main() {
                     }
 
                     if child_bank_required {
-                        while !bank.is_complete() {
-                            bank.register_unique_tick();
-                        }
+                        bank.fill_bank_with_ticks_for_tests();
                     }
 
                     let pre_capitalization = bank.capitalization();
