@@ -479,8 +479,6 @@ solana-nonce = "2.2.1"
 solana-nonce-account = "2.2.1"
 solana-notifier = { path = "notifier", version = "=2.3.0" }
 solana-offchain-message = "2.2.1"
-solana-package-metadata = "2.2.1"
-solana-package-metadata-macro = "2.2.1"
 solana-packet = "2.2.1"
 solana-perf = { path = "perf", version = "=2.3.0" }
 solana-poh = { path = "poh", version = "=2.3.0" }
