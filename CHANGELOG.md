@@ -53,7 +53,7 @@ Release channels have their own copy of this changelog:
 ### RPC
 
 #### Changes
-* `simulateTransaction` now includes `loadedAccountsDataSize` in its result that is total bytes for loading all accounts in this transaction.
+* `simulateTransaction` now includes `loadedAccountsDataSize` in its result. `loadedAccountsDataSize` is the total number of bytes loaded for all accounts in the simulated transaction.
 
 ## 2.2.0
 
