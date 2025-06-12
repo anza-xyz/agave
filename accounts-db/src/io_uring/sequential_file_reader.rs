@@ -453,59 +453,55 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
 mod tests {
     use {super::*, tempfile::NamedTempFile};
 
-    fn check_reading_file(
-        file_size: usize,
-        backing_buffer_size: usize,
-        read_capacity: usize,
-    ) -> io::Result<()> {
+    fn check_reading_file(file_size: usize, backing_buffer_size: usize, read_capacity: usize) {
         let pattern: Vec<u8> = (0..251).collect();
 
         // Create a temp file and write the pattern to it repeatedly
-        let mut temp_file = NamedTempFile::new()?;
+        let mut temp_file = NamedTempFile::new().unwrap();
         for _ in 0..file_size / pattern.len() {
-            io::Write::write_all(&mut temp_file, &pattern)?;
+            io::Write::write_all(&mut temp_file, &pattern).unwrap();
         }
-        io::Write::write_all(&mut temp_file, &pattern[..file_size % pattern.len()])?;
+        io::Write::write_all(&mut temp_file, &pattern[..file_size % pattern.len()]).unwrap();
 
         let buf = vec![0; backing_buffer_size];
-        let mut reader = SequentialFileReader::with_buffer(temp_file.path(), buf, read_capacity)?;
+        let mut reader =
+            SequentialFileReader::with_buffer(temp_file.path(), buf, read_capacity).unwrap();
 
         // Read contents from the reader and verify length
         let mut all_read_data = Vec::new();
-        reader.read_to_end(&mut all_read_data)?;
+        reader.read_to_end(&mut all_read_data).unwrap();
         assert_eq!(all_read_data.len(), file_size);
 
         // Verify the contents
         for (i, byte) in all_read_data.iter().enumerate() {
             assert_eq!(*byte, pattern[i % pattern.len()], "Mismatch - pos {}", i);
         }
-        Ok(())
     }
 
     /// Test with buffer larger than the whole file
     #[test]
     fn test_reading_small_file() {
-        check_reading_file(2500, 4096, 1024).unwrap();
-        check_reading_file(2500, 4096, 2048).unwrap();
-        check_reading_file(2500, 4096, 4096).unwrap();
+        check_reading_file(2500, 4096, 1024);
+        check_reading_file(2500, 4096, 2048);
+        check_reading_file(2500, 4096, 4096);
     }
 
     /// Test with buffer smaller than the whole file
     #[test]
     fn test_reading_file_in_chunks() {
-        check_reading_file(25_000, 16384, 1024).unwrap();
-        check_reading_file(25_000, 4096, 1024).unwrap();
-        check_reading_file(25_000, 4096, 2048).unwrap();
-        check_reading_file(25_000, 4096, 4096).unwrap();
+        check_reading_file(25_000, 16384, 1024);
+        check_reading_file(25_000, 4096, 1024);
+        check_reading_file(25_000, 4096, 2048);
+        check_reading_file(25_000, 4096, 4096);
     }
 
     /// Test with buffer much smaller than the whole file
     #[test]
     fn test_reading_large_file() {
-        check_reading_file(250_000, 32768, 1024).unwrap();
-        check_reading_file(250_000, 16384, 1024).unwrap();
-        check_reading_file(250_000, 4096, 1024).unwrap();
-        check_reading_file(250_000, 4096, 2048).unwrap();
-        check_reading_file(250_000, 4096, 4096).unwrap();
+        check_reading_file(250_000, 32768, 1024);
+        check_reading_file(250_000, 16384, 1024);
+        check_reading_file(250_000, 4096, 1024);
+        check_reading_file(250_000, 4096, 2048);
+        check_reading_file(250_000, 4096, 4096);
     }
 }
