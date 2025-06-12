@@ -162,7 +162,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("full_rpc_api")
             .long("full-rpc-api")
-            .conflicts_with("minimal_rpc_api")
             .takes_value(false)
             .help("Expose RPC methods for querying chain state and transaction history"),
     )
