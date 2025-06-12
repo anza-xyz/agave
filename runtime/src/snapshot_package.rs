@@ -2,6 +2,7 @@ use {
     crate::{
         bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::BankIncrementalSnapshotPersistence,
+        snapshot_blanked_out_status_cache::BankSlotDeltaWithAlwaysOkTransactionResult,
         snapshot_hash::SnapshotHash,
     },
     agave_feature_set as feature_set,
@@ -91,7 +92,11 @@ impl AccountsPackage {
             let bank_hash_stats = bank.get_bank_hash_stats();
             let bank_fields_to_serialize = bank.get_fields_to_serialize();
             SupplementalSnapshotInfo {
-                status_cache_slot_deltas,
+                status_cache_slot_deltas: status_cache_slot_deltas
+                    .into_iter()
+                    .map(BankSlotDeltaWithAlwaysOkTransactionResult::from)
+                    .map(Into::into)
+                    .collect(),
                 bank_fields_to_serialize,
                 bank_hash_stats,
                 accounts_delta_hash,
