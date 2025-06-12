@@ -1787,7 +1787,6 @@ impl Bank {
         additional_builtins: Option<&[BuiltinPrototype]>,
         debug_do_not_add_builtins: bool,
         accounts_data_size_initial: u64,
-        #[cfg(feature = "dev-context-only-utils")] feature_set: Option<FeatureSet>,
     ) -> Self {
         let now = Instant::now();
         let ancestors = Ancestors::from(&fields.ancestors);
@@ -1860,9 +1859,6 @@ impl Bank {
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
             ),
             transaction_log_collector: Arc::<RwLock<TransactionLogCollector>>::default(),
-            #[cfg(feature = "dev-context-only-utils")]
-            feature_set: Arc::new(feature_set.unwrap_or_default()),
-            #[cfg(not(feature = "dev-context-only-utils"))]
             feature_set: Arc::<FeatureSet>::default(),
             reserved_account_keys: Arc::<ReservedAccountKeys>::default(),
             drop_callback: RwLock::new(OptionalDropCallback(None)),
