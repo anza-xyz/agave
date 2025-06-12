@@ -368,39 +368,11 @@ pub fn execute(
         .ok()
         .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_address));
 
+    let tower_path = value_t!(matches, "tower", PathBuf)
+        .ok()
+        .unwrap_or_else(|| ledger_path.clone());
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
-        match value_t_or_exit!(matches, "tower_storage", String).as_str() {
-            "file" => {
-                let tower_path = value_t!(matches, "tower", PathBuf)
-                    .ok()
-                    .unwrap_or_else(|| ledger_path.clone());
-
-                Arc::new(tower_storage::FileTowerStorage::new(tower_path))
-            }
-            "etcd" => {
-                let endpoints = values_t_or_exit!(matches, "etcd_endpoint", String);
-                let domain_name = value_t_or_exit!(matches, "etcd_domain_name", String);
-                let ca_certificate_file = value_t_or_exit!(matches, "etcd_cacert_file", String);
-                let identity_certificate_file = value_t_or_exit!(matches, "etcd_cert_file", String);
-                let identity_private_key_file = value_t_or_exit!(matches, "etcd_key_file", String);
-
-                let read =
-                    |file| fs::read(&file).map_err(|err| format!("unable to read {file}: {err}"));
-
-                let tls_config = tower_storage::EtcdTlsConfig {
-                    domain_name,
-                    ca_certificate: read(ca_certificate_file)?,
-                    identity_certificate: read(identity_certificate_file)?,
-                    identity_private_key: read(identity_private_key_file)?,
-                };
-
-                Arc::new(
-                    tower_storage::EtcdTowerStorage::new(endpoints, Some(tls_config))
-                        .map_err(|err| format!("failed to connect to etcd: {err}"))?,
-                )
-            }
-            _ => unreachable!(),
-        };
+        Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
     let mut accounts_index_config = AccountsIndexConfig {
         num_flush_threads: Some(accounts_index_flush_threads),
@@ -641,8 +613,8 @@ pub fn execute(
         new_hard_forks: hardforks_of(matches, "hard_forks"),
         rpc_config: JsonRpcConfig {
             enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
-            enable_extended_tx_metadata_storage: matches.is_present("enable_cpi_and_log_storage")
-                || matches.is_present("enable_extended_tx_metadata_storage"),
+            enable_extended_tx_metadata_storage: matches
+                .is_present("enable_extended_tx_metadata_storage"),
             rpc_bigtable_config,
             faucet_addr: matches.value_of("rpc_faucet_addr").map(|address| {
                 solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
@@ -713,8 +685,7 @@ pub fn execute(
         gossip_validators,
         max_ledger_shreds,
         blockstore_options,
-        run_verification: !(matches.is_present("skip_poh_verify")
-            || matches.is_present("skip_startup_ledger_verification")),
+        run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
         contact_debug_interval,
         send_transaction_service_config: send_transaction_service::Config {
