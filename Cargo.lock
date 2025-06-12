@@ -242,6 +242,7 @@ dependencies = [
  "solana-gossip",
  "solana-hash",
  "solana-inflation",
+ "solana-instruction",
  "solana-keypair",
  "solana-ledger",
  "solana-loader-v3-interface 5.0.0",
