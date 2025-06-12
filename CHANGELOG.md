@@ -17,6 +17,18 @@ Release channels have their own copy of this changelog:
 
 ### Validator
 
+#### Breaking
+* Remove deprecated arguments
+  * `--accounts-index-memory-limit-mb`
+  * `--accountsdb-repl-bind-address`, `--accountsdb-repl-port`, `--accountsdb-repl-threads`, `--enable-accountsdb-repl`
+  * `--disable-quic-servers`, `--enable-quic-servers`
+  * `--etcd-cacert-file`, `--etcd-cert-file`, `--etcd-domain-name`, `--etcd-endpoint`, `--etcd-key-file`, `--tower-storage`
+  * `--no-check-vote-account`
+  * `--no-rocksdb-compaction`, `--rocksdb-compaction-interval-slots`, `--rocksdb-max-compaction-jitter-slots`
+  * `--replay-slots-concurrently`
+  * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
+  * `--skip-poh-verify`
+
 #### Changes
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
 
