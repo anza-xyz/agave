@@ -1789,13 +1789,12 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_log() {
         let default_run_args = RunArgs::default();
-        let identity_keypair = default_run_args.identity_keypair.insecure_clone();
 
         // default
         {
             let expected_args = RunArgs {
                 logfile: "agave-validator-".to_string()
-                    + &identity_keypair.pubkey().to_string()
+                    + &default_run_args.identity_keypair.pubkey().to_string()
                     + ".log",
                 ..default_run_args.clone()
             };
