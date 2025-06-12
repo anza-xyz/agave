@@ -45,13 +45,13 @@ impl SequentialFileReader<LargeBuffer> {
     ///
     /// See [SequentialFileReader::with_buffer] for more information.
     #[allow(dead_code)]
-    pub fn new(path: &Path) -> io::Result<Self> {
+    pub fn new(path: impl AsRef<Path>) -> io::Result<Self> {
         Self::with_capacity(DEFAULT_BUFFER_SIZE, path)
     }
 
     /// Create a new `SequentialFileReader` for the given `path` using internally allocated
     /// buffer of specified `buf_size` and default read size.
-    pub fn with_capacity(buf_size: usize, path: &Path) -> io::Result<Self> {
+    pub fn with_capacity(buf_size: usize, path: impl AsRef<Path>) -> io::Result<Self> {
         Self::with_buffer(path, LargeBuffer::new(buf_size), DEFAULT_READ_SIZE)
     }
 }
@@ -71,7 +71,11 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
     ///
     /// `buffer` is the internal buffer used for reading. It must be at least `read_capacity` long.
     /// The reader will execute multiple `read_capacity` sized reads in parallel to fill the buffer.
-    pub fn with_buffer(path: &Path, mut buffer: B, read_capacity: usize) -> io::Result<Self> {
+    pub fn with_buffer(
+        path: impl AsRef<Path>,
+        mut buffer: B,
+        read_capacity: usize,
+    ) -> io::Result<Self> {
         let buf_len = buffer.as_mut().len();
 
         // Let submission queue hold half of buffers before we explicitly syscall
@@ -90,7 +94,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
     fn with_buffer_and_ring(
         mut backing_buffer: B,
         ring: IoUring,
-        path: &Path,
+        path: impl AsRef<Path>,
         read_capacity: usize,
     ) -> io::Result<Self> {
         let buffer = backing_buffer.as_mut();

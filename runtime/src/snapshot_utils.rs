@@ -2475,14 +2475,14 @@ fn unpack_snapshot_local(
 ) -> Result<UnpackedAppendVecMap> {
     assert!(num_threads > 0);
 
-    let (chunk_sender, chunk_recv) = crossbeam_channel::bounded(num_threads);
+    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads);
     let handle = spawn_archive_chunker_thread(snapshot_path, archive_format, chunk_sender);
 
     // create 'num_threads' # of parallel workers, each receiving chunks of archive to extract.
     let all_unpacked_append_vec_map = (0..num_threads)
         .into_par_iter()
         .map(|_| {
-            let archive_subset = Archive::new(BytesChannelReader::new(chunk_recv.clone()));
+            let archive_subset = Archive::new(BytesChannelReader::new(chunk_receiver.clone()));
             hardened_unpack::unpack_snapshot(archive_subset, ledger_dir, account_paths)
         })
         .collect::<Vec<_>>();

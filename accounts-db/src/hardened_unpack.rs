@@ -5,7 +5,7 @@ use {
     solana_genesis_config::{GenesisConfig, DEFAULT_GENESIS_ARCHIVE, DEFAULT_GENESIS_FILE},
     solana_perf::packet::bytes::{Buf, Bytes, BytesMut},
     std::{
-        collections::HashMap,
+        collections::{HashMap, VecDeque},
         fs::{self, File},
         io::{BufReader, Read, Result as IoResult},
         path::{
@@ -47,11 +47,14 @@ pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
 /// Collection of shareable byte slices forming a chain of bytes to read (using `std::io::Read`)
-pub struct MultiBytes(pub std::collections::VecDeque<Bytes>);
+pub struct MultiBytes(VecDeque<Bytes>);
 
 impl MultiBytes {
     pub fn new() -> Self {
-        Self(std::collections::VecDeque::with_capacity(1))
+        // Typically we expect 2 entries:
+        // archive spanning until end of decode buffer +
+        // short continuation of last entry from next buffer
+        Self(VecDeque::with_capacity(2))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -70,7 +73,7 @@ impl Default for MultiBytes {
 }
 
 impl Read for MultiBytes {
-    fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, mut buf: &mut [u8]) -> IoResult<usize> {
         let mut copied_len = 0;
         while let Some(bytes) = self.0.front_mut() {
             let to_copy_len = bytes.len().min(buf.len());
@@ -91,14 +94,14 @@ impl Read for MultiBytes {
 
 pub struct BytesChannelReader {
     current_bytes: MultiBytes,
-    recv: crossbeam_channel::Receiver<MultiBytes>,
+    receiver: crossbeam_channel::Receiver<MultiBytes>,
 }
 
 impl BytesChannelReader {
-    pub fn new(recv: crossbeam_channel::Receiver<MultiBytes>) -> Self {
+    pub fn new(receiver: crossbeam_channel::Receiver<MultiBytes>) -> Self {
         Self {
             current_bytes: MultiBytes::new(),
-            recv,
+            receiver,
         }
     }
 }
@@ -106,7 +109,7 @@ impl BytesChannelReader {
 impl Read for BytesChannelReader {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
         while self.current_bytes.is_empty() {
-            let Ok(new_bytes) = self.recv.recv() else {
+            let Ok(new_bytes) = self.receiver.recv() else {
                 return Ok(0);
             };
             self.current_bytes = new_bytes;
@@ -127,6 +130,9 @@ pub struct ArchiveChunker<R> {
 
 impl<R: Read> ArchiveChunker<R> {
     const TAR_BLOCK_SIZE: usize = size_of::<tar::Header>();
+    // Buffer size will influence typical amount of bytes sent as single work item.
+    // Pick value significantly larger than majority of entries, yet not too large to keep
+    // the work-queue non-empty as much as possible.
     const DECODE_BUF_SIZE: usize = 64 * 1024 * 1024;
 
     pub fn new(input: R) -> Self {
@@ -410,7 +416,7 @@ where
     return Ok(());
 
     #[cfg(unix)]
-    fn set_perms(dst: &Path, mode: u32) -> std::io::Result<()> {
+    fn set_perms(dst: &Path, mode: u32) -> IoResult<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let perm = fs::Permissions::from_mode(mode as _);
@@ -418,7 +424,7 @@ where
     }
 
     #[cfg(windows)]
-    fn set_perms(dst: &Path, _mode: u32) -> std::io::Result<()> {
+    fn set_perms(dst: &Path, _mode: u32) -> IoResult<()> {
         let mut perm = fs::metadata(dst)?.permissions();
         // This is OK for Windows, but clippy doesn't realize we're doing this
         // only on Windows.
