@@ -168,17 +168,6 @@ impl AccountsCache {
             is_frozen: AtomicBool::default(),
         })
     }
-    fn unique_account_writes_size(&self) -> u64 {
-        self.cache
-            .iter()
-            .map(|item| {
-                let slot_cache = item.value();
-                slot_cache
-                    .unique_account_writes_size
-                    .load(Ordering::Relaxed)
-            })
-            .sum()
-    }
     pub fn size(&self) -> u64 {
         self.total_size.load(Ordering::Relaxed)
     }
@@ -191,11 +180,6 @@ impl AccountsCache {
                 i64
             ),
             ("num_slots", self.cache.len(), i64),
-            (
-                "total_unique_writes_size",
-                self.unique_account_writes_size(),
-                i64
-            ),
             ("total_size", self.size(), i64),
         );
     }
