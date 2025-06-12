@@ -200,6 +200,7 @@ all_test_steps() {
     cat >> "$output_file" <<"EOF"
   - command: "ci/publish-crate.sh --dry-run"
     name: "publish-crate-simulation"
+    key: "publish-crate-simulation"
     timeout_in_minutes: 20
     artifact_paths: "log-*.txt"
     env:

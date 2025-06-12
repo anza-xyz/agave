@@ -67,10 +67,6 @@ done
 
 Cargo_tomls=$(ci/order-crates-for-publishing.py)
 
-if $DRY_RUN; then
-  docker run --name kellnr -d ghcr.io/kellnr/kellnr:5
-fi
-
 for Cargo_toml in $Cargo_tomls; do
   echo "--- $Cargo_toml"
 
