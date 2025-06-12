@@ -7,6 +7,7 @@ use {
     solana_hash::Hash,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
+        marker::PhantomData,
         sync::{Arc, Mutex},
     },
 };
@@ -34,16 +35,18 @@ pub type SlotDelta<T> = (Slot, bool, Status<T>);
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Debug)]
-pub struct StatusCache<T: Serialize + Clone> {
+pub struct StatusCache<K: AsRef<[u8]>, T: Serialize + Clone> {
+    _key: PhantomData<K>,
     cache: KeyStatusMap<T>,
     roots: HashSet<Slot>,
     /// all keys seen during a fork/slot
     slot_deltas: SlotDeltaMap<T>,
 }
 
-impl<T: Serialize + Clone> Default for StatusCache<T> {
+impl<K: AsRef<[u8]>, T: Serialize + Clone> Default for StatusCache<K, T> {
     fn default() -> Self {
         Self {
+            _key: PhantomData::default(),
             cache: HashMap::default(),
             // 0 is always a root
             roots: HashSet::from([0]),
@@ -52,7 +55,7 @@ impl<T: Serialize + Clone> Default for StatusCache<T> {
     }
 }
 
-impl<T: Serialize + Clone + PartialEq> PartialEq for StatusCache<T> {
+impl<K: AsRef<[u8]>, T: Serialize + Clone + PartialEq> PartialEq for StatusCache<K, T> {
     fn eq(&self, other: &Self) -> bool {
         self.roots == other.roots
             && self
@@ -78,7 +81,7 @@ impl<T: Serialize + Clone + PartialEq> PartialEq for StatusCache<T> {
     }
 }
 
-impl<T: Serialize + Clone> StatusCache<T> {
+impl<K: AsRef<[u8]>, T: Serialize + Clone> StatusCache<K, T> {
     pub fn clear_slot_entries(&mut self, slot: Slot) {
         let slot_deltas = self.slot_deltas.remove(&slot);
         if let Some(slot_deltas) = slot_deltas {
@@ -117,9 +120,9 @@ impl<T: Serialize + Clone> StatusCache<T> {
 
     /// Check if the key is in any of the forks in the ancestors set and
     /// with a certain blockhash.
-    pub fn get_status<K: AsRef<[u8]>>(
+    pub fn get_status(
         &self,
-        key: K,
+        key: &K,
         transaction_blockhash: &Hash,
         ancestors: &Ancestors,
     ) -> Option<(Slot, T)> {
@@ -144,16 +147,12 @@ impl<T: Serialize + Clone> StatusCache<T> {
     /// Search for a key with any blockhash
     /// Prefer get_status for performance reasons, it doesn't need
     /// to search all blockhashes.
-    pub fn get_status_any_blockhash<K: AsRef<[u8]>>(
-        &self,
-        key: K,
-        ancestors: &Ancestors,
-    ) -> Option<(Slot, T)> {
+    pub fn get_status_any_blockhash(&self, key: &K, ancestors: &Ancestors) -> Option<(Slot, T)> {
         let keys: Vec<_> = self.cache.keys().copied().collect();
 
         for blockhash in keys.iter() {
             trace!("get_status_any_blockhash: trying {}", blockhash);
-            let status = self.get_status(&key, blockhash, ancestors);
+            let status = self.get_status(key, blockhash, ancestors);
             if status.is_some() {
                 return status;
             }
@@ -173,13 +172,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
     }
 
     /// Insert a new key for a specific slot.
-    pub fn insert<K: AsRef<[u8]>>(
-        &mut self,
-        transaction_blockhash: &Hash,
-        key: K,
-        slot: Slot,
-        res: T,
-    ) {
+    pub fn insert(&mut self, transaction_blockhash: &Hash, key: &K, slot: Slot, res: T) {
         let max_key_index = key.as_ref().len().saturating_sub(CACHED_KEY_SIZE + 1);
 
         // Get the cache entry for this blockhash.

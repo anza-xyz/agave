@@ -238,7 +238,7 @@ struct RentMetrics {
     count: AtomicUsize,
 }
 
-pub type BankStatusCache = StatusCache<Result<()>>;
+pub type BankStatusCache = StatusCache<Hash, Result<()>>;
 #[cfg_attr(
     feature = "frozen-abi",
     frozen_abi(digest = "5dfDCRGWPV7thfoZtLpTJAV8cC93vQUXgTm6BnrfeUsN")
