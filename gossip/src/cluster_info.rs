@@ -19,6 +19,7 @@ use {
         contact_info::{self, ContactInfo, ContactInfoQuery, Error as ContactInfoError},
         crds::{Crds, Cursor, GossipRoute},
         crds_data::{self, CrdsData, EpochSlotsIndex, LowestSlot, SnapshotHashes, Vote, MAX_VOTES},
+        crds_filter::{should_retain_crds_value, GossipFilterDirection, MIN_STAKE_FOR_GOSSIP},
         crds_gossip::CrdsGossip,
         crds_gossip_error::CrdsGossipError,
         crds_gossip_pull::{
@@ -133,11 +134,6 @@ pub const DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS: u64 = 10_000;
 pub const DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS: u64 = 60_000;
 // Limit number of unique pubkeys in the crds table.
 pub(crate) const CRDS_UNIQUE_PUBKEY_CAPACITY: usize = 8192;
-/// Minimum stake that a node should have so that its CRDS values are
-/// propagated through gossip (few types are exempted).
-const MIN_STAKE_FOR_GOSSIP: u64 = solana_native_token::LAMPORTS_PER_SOL;
-/// Minimum number of staked nodes for enforcing stakes in gossip.
-const MIN_NUM_STAKED_NODES: usize = 500;
 
 // Must have at least one socket to monitor the TVU port
 pub const MINIMUM_NUM_TVU_RECEIVE_SOCKETS: NonZeroUsize = NonZeroUsize::new(1).unwrap();
@@ -175,42 +171,6 @@ pub struct ClusterInfo {
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     contact_info_path: PathBuf,
     socket_addr_space: SocketAddrSpace,
-}
-
-// Returns false if the CRDS value should be discarded.
-#[inline]
-#[must_use]
-fn should_retain_crds_value(
-    value: &CrdsValue,
-    stakes: &HashMap<Pubkey, u64>,
-    drop_unstaked_node_instance: bool,
-) -> bool {
-    match value.data() {
-        CrdsData::ContactInfo(_) => true,
-        CrdsData::LegacyContactInfo(_) => true,
-        // May Impact new validators starting up without any stake yet.
-        CrdsData::Vote(_, _) => true,
-        // Unstaked nodes can still help repair.
-        CrdsData::EpochSlots(_, _) => true,
-        // Unstaked nodes can still serve snapshots.
-        CrdsData::LegacySnapshotHashes(_) | CrdsData::SnapshotHashes(_) => true,
-        // Otherwise unstaked voting nodes will show up with no version in
-        // the various dashboards.
-        CrdsData::Version(_) => true,
-        CrdsData::AccountsHashes(_) => true,
-        CrdsData::NodeInstance(_) if !drop_unstaked_node_instance => true,
-        CrdsData::LowestSlot(_, _)
-        | CrdsData::LegacyVersion(_)
-        | CrdsData::DuplicateShred(_, _)
-        | CrdsData::RestartHeaviestFork(_)
-        | CrdsData::RestartLastVotedForkSlots(_)
-        | CrdsData::NodeInstance(_) => {
-            stakes.len() < MIN_NUM_STAKED_NODES || {
-                let stake = stakes.get(&value.pubkey()).copied();
-                stake.unwrap_or_default() >= MIN_STAKE_FOR_GOSSIP
-            }
-        }
-    }
 }
 
 impl ClusterInfo {
@@ -1282,9 +1242,7 @@ impl ClusterInfo {
             self.flush_push_queue();
             self.gossip
                 .new_push_messages(&self_id, timestamp(), stakes, |value| {
-                    should_retain_crds_value(
-                        value, stakes, /*drop_unstaked_node_instance:*/ false,
-                    )
+                    should_retain_crds_value(value, stakes, GossipFilterDirection::EgressPush)
                 })
         };
         self.stats
@@ -1692,7 +1650,9 @@ impl ClusterInfo {
                 now,
                 |value| {
                     should_retain_crds_value(
-                        value, stakes, /*drop_unstaked_node_instance:*/ true,
+                        value,
+                        stakes,
+                        GossipFilterDirection::EgressPullResponse,
                     )
                 },
                 self.my_shred_version(),
@@ -2132,9 +2092,7 @@ impl ClusterInfo {
                 &mut protocol
             {
                 values.retain(|value| {
-                    should_retain_crds_value(
-                        value, stakes, /*drop_unstaked_node_instance:*/ false,
-                    )
+                    should_retain_crds_value(value, stakes, GossipFilterDirection::Ingress)
                 });
                 if values.is_empty() {
                     return None;
@@ -3003,7 +2961,7 @@ fn verify_gossip_addr<R: Rng + CryptoRng>(
         _ => return true, // If not a contact-info, nothing to verify.
     };
     // For (sufficiently) staked nodes, don't bother with ping/pong.
-    if stakes.get(pubkey) >= Some(&MIN_STAKE_FOR_GOSSIP) {
+    if stakes.get(pubkey).copied() >= Some(MIN_STAKE_FOR_GOSSIP) {
         return true;
     }
     // Invalid addresses are not verifiable.
