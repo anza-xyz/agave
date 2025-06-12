@@ -1722,8 +1722,8 @@ mod tests {
         }
     }
 
-    fn verify_args_struct_by_command<'a>(
-        default_args: &'a DefaultArgs,
+    fn verify_args_struct_by_command(
+        default_args: &DefaultArgs,
         args: Vec<&str>,
         expected_args: RunArgs,
     ) {
