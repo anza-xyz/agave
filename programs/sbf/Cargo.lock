@@ -6003,6 +6003,7 @@ dependencies = [
  "conditional-mod",
  "crossbeam-channel",
  "dashmap",
+ "derive_more 1.0.0",
  "etcd-client",
  "futures 0.3.31",
  "histogram",

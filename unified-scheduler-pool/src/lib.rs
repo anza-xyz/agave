@@ -85,6 +85,8 @@ enum CheckPoint<'a> {
     IdleSchedulerCleaned(usize),
     TrashedSchedulerCleaned(usize),
     TimeoutListenerTriggered(usize),
+    DiscardRequested,
+    Discarded(usize),
 }
 
 type CountOrDefault = Option<usize>;
@@ -171,6 +173,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new);
     }
 
+    fn peek_pooled(&self) -> Option<&S::Inner> {
+        match self {
+            Self::NotSpawned | Self::Taken(_) => None,
+            Self::Pooled(inner) => Some(inner),
+        }
+    }
+
     fn take_pooled(&mut self) -> S::Inner {
         let id = {
             let Self::Pooled(inner) = &self else {
@@ -250,6 +259,7 @@ struct BankingStageHandlerContext {
     #[debug("{banking_packet_handler:p}")]
     banking_packet_handler: Box<dyn BankingPacketHandler>,
     transaction_recorder: TransactionRecorder,
+    banking_stage_monitor: Box<dyn BankingStageMonitor>,
 }
 
 trait_set! {
@@ -419,6 +429,8 @@ where
                     idle_inner_count
                 };
 
+                let banking_stage_status = scheduler_pool.banking_stage_status();
+
                 let trashed_inner_count = {
                     let Ok(mut trashed_scheduler_inners) =
                         scheduler_pool.trashed_scheduler_inners.lock()
@@ -456,6 +468,22 @@ where
                     }
                     count
                 };
+
+                if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
+                    let inner = scheduler_pool
+                        .block_production_scheduler_inner
+                        .lock()
+                        .unwrap();
+                    if let Some(pooled) = inner.peek_pooled() {
+                        pooled.discard_buffer();
+                        // Prevent replay stage's OpenSubchannel from winning the race by holding
+                        // the inner lock for the duration of discard message sending just above.
+                        // The message (internally SubchanneledPayload::Reset) must be sent only
+                        // during gaps of subchannels of the new task channel.
+                        sleepless_testing::at(CheckPoint::DiscardRequested);
+                        drop(inner);
+                    }
+                }
 
                 info!(
                     "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
@@ -603,18 +631,28 @@ where
         banking_packet_receiver: BankingPacketReceiver,
         banking_packet_handler: Box<dyn BankingPacketHandler>,
         transaction_recorder: TransactionRecorder,
+        banking_stage_monitor: Box<dyn BankingStageMonitor>,
     ) {
         *self.banking_stage_handler_context.lock().unwrap() = Some(BankingStageHandlerContext {
             banking_thread_count,
             banking_packet_receiver,
             banking_packet_handler,
             transaction_recorder,
+            banking_stage_monitor,
         });
         // Immediately start a block production scheduler, so that the scheduler can start
         // buffering tasks, which are preprocessed as much as possible.
         self.spawn_block_production_scheduler(
             &mut self.block_production_scheduler_inner.lock().unwrap(),
         );
+    }
+
+    fn banking_stage_status(&self) -> Option<BankingStageStatus> {
+        self.banking_stage_handler_context
+            .lock()
+            .unwrap()
+            .as_mut()
+            .map(|respawner| respawner.banking_stage_monitor.status())
     }
 
     fn create_handler_context(
@@ -918,6 +956,7 @@ enum SubchanneledPayload<P1, P2> {
     OpenSubchannel(P2),
     UnpauseOpenedSubchannel,
     CloseSubchannel,
+    Reset,
 }
 
 type NewTaskPayload = SubchanneledPayload<Task, Box<(SchedulingContext, ResultWithTimings)>>;
@@ -1749,6 +1788,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                     Ok(
                                         NewTaskPayload::OpenSubchannel(_)
                                         | NewTaskPayload::UnpauseOpenedSubchannel
+                                        | NewTaskPayload::Reset
                                     ) => unreachable!(),
                                     Err(RecvError) => {
                                         // Mostly likely is that this scheduler is dropped for pruned blocks of
@@ -1804,7 +1844,20 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // session_result_sender just above
                     let mut new_result_with_timings = None;
 
+                    let mut discard_on_reset = false;
                     loop {
+                        if discard_on_reset {
+                            discard_on_reset = false;
+                            // Gracefully clear all buffered tasks to discard all outstanding stale
+                            // tasks; we're not aborting scheduler here. So, `state_machine` needs
+                            // to be reusable after this.
+                            //
+                            // As for panic safety of .clear_and_reinitialize(), it's safe because
+                            // there should be _no scheduled tasks (i.e. owned by us, not by
+                            // state_machine) on the call stack by now.
+                            let count = state_machine.clear_and_reinitialize();
+                            sleepless_testing::at(CheckPoint::Discarded(count));
+                        }
                         // Prepare for the new session.
                         match new_task_receiver.recv() {
                             Ok(NewTaskPayload::Payload(task)) => {
@@ -1848,6 +1901,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // This match arm can be hit if context.is_preallocated()
                                 // or abort is hinted from task results, before explicit
                                 // session ending is sent from the poh or the replay thread.
+                            }
+                            Ok(NewTaskPayload::Reset) => {
+                                assert_matches!(scheduling_mode, BlockProduction);
+                                discard_on_reset = true;
                             }
                             Err(RecvError) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
@@ -2128,6 +2185,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
             .expect("no new session after aborted");
     }
 
+    fn discard_buffered_tasks(&self) {
+        self.new_task_sender.send(NewTaskPayload::Reset).unwrap();
+    }
+
     fn disconnect_new_task_sender(&mut self) {
         self.new_task_sender = crossbeam_channel::unbounded().0;
     }
@@ -2136,6 +2197,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_trashed(&self) -> bool;
+    fn discard_buffer(&self);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2196,6 +2258,16 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
         };
         Self { inner, context }
     }
+}
+
+#[derive(Debug)]
+pub enum BankingStageStatus {
+    Active,
+    Inactive,
+}
+
+pub trait BankingStageMonitor: Send + Debug {
+    fn status(&mut self) -> BankingStageStatus;
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
@@ -2265,6 +2337,10 @@ where
     fn is_trashed(&self) -> bool {
         self.is_aborted() || self.is_overgrown()
     }
+
+    fn discard_buffer(&self) {
+        self.thread_manager.discard_buffered_tasks();
+    }
 }
 
 impl<S, TH> UninstalledScheduler for PooledSchedulerInner<S, TH>
@@ -2332,6 +2408,7 @@ mod tests {
         BeforeThreadManagerDrop,
         BeforeEndSession,
         AfterSession,
+        AfterDiscarded,
     }
 
     #[test]
@@ -3462,6 +3539,7 @@ mod tests {
                 banking_packet_receiver,
                 Box::new(|_, _| unreachable!()),
                 transaction_recorder,
+                Box::new(DummyBankingMinitor),
             );
         }
 
@@ -3589,6 +3667,7 @@ mod tests {
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         let bank = Arc::new(Bank::new_from_parent(
@@ -3836,6 +3915,10 @@ mod tests {
 
         fn is_trashed(&self) -> bool {
             false
+        }
+
+        fn discard_buffer(&self) {
+            unimplemented!()
         }
     }
 
@@ -4151,6 +4234,15 @@ mod tests {
         poh_service.join().unwrap();
     }
 
+    #[derive(Debug)]
+    struct DummyBankingMinitor;
+
+    impl BankingStageMonitor for DummyBankingMinitor {
+        fn status(&mut self) -> BankingStageStatus {
+            BankingStageStatus::Active
+        }
+    }
+
     #[test]
     fn test_block_production_scheduler_schedule_execution_success() {
         solana_logger::setup();
@@ -4185,6 +4277,7 @@ mod tests {
             // we don't use the banking packet channel in this test. so, pass panicking handler.
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         assert_eq!(bank.transaction_count(), 0);
@@ -4261,6 +4354,7 @@ mod tests {
             banking_packet_receiver,
             fixed_banking_packet_handler,
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         // Confirm the banking packet channel is cleared, even before taking scheduler
@@ -4329,6 +4423,7 @@ mod tests {
             banking_packet_receiver,
             fixed_banking_packet_handler,
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         // Quickly take and return the scheduler so that this test can test the behavior while
@@ -4404,6 +4499,7 @@ mod tests {
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         let context = SchedulingContext::for_production(bank.clone());
@@ -4457,6 +4553,7 @@ mod tests {
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         let context = SchedulingContext::for_production(bank);
@@ -4513,6 +4610,7 @@ mod tests {
             banking_packet_receiver,
             Box::new(|_, _| unreachable!()),
             transaction_recorder,
+            Box::new(DummyBankingMinitor),
         );
 
         // Make sure the assertion in BlockProductionSchedulerInner::can_put() doesn't cause false
@@ -4521,6 +4619,98 @@ mod tests {
         let scheduler = pool.take_scheduler(context);
         let bank_tmp = BankWithScheduler::new(bank, Some(scheduler));
         assert_matches!(bank_tmp.wait_for_completed_scheduler(), Some((Ok(()), _)));
+
+        exit.store(true, Ordering::Relaxed);
+        poh_service.join().unwrap();
+    }
+
+    #[test]
+    fn test_block_production_scheduler_discard_on_reset() {
+        #[derive(Debug)]
+        struct SimpleBankingMinitor;
+        static START_DISCARD: Mutex<bool> = Mutex::new(false);
+
+        impl BankingStageMonitor for SimpleBankingMinitor {
+            fn status(&mut self) -> BankingStageStatus {
+                if *START_DISCARD.lock().unwrap() {
+                    BankingStageStatus::Inactive
+                } else {
+                    BankingStageStatus::Active
+                }
+            }
+        }
+
+        solana_logger::setup();
+
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_genesis_config_for_block_production(10_000);
+
+        const DISCARDED_TASK_COUNT: usize = 3;
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::NewBufferedTask(DISCARDED_TASK_COUNT - 1),
+            &CheckPoint::DiscardRequested,
+            &CheckPoint::Discarded(DISCARDED_TASK_COUNT),
+            &TestCheckPoint::AfterDiscarded,
+        ]);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+        let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
+
+        let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
+        let pool = DefaultSchedulerPool::do_new(
+            None,
+            None,
+            None,
+            None,
+            ignored_prioritization_fee_cache,
+            SHORTENED_POOL_CLEANER_INTERVAL,
+            DEFAULT_MAX_POOLING_DURATION,
+            DEFAULT_MAX_USAGE_QUEUE_COUNT,
+            DEFAULT_TIMEOUT_DURATION,
+        );
+
+        let tx0 = RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
+            &mint_keypair,
+            &solana_pubkey::new_rand(),
+            2,
+            genesis_config.hash(),
+        ));
+        let fixed_banking_packet_handler =
+            Box::new(move |helper: &BankingStageHelper, _banking_packet| {
+                for index in 0..DISCARDED_TASK_COUNT {
+                    helper.send_new_task(helper.create_new_task(tx0.clone(), index))
+                }
+            });
+
+        let (banking_packet_sender, banking_packet_receiver) = crossbeam_channel::unbounded();
+        banking_packet_sender
+            .send(BankingPacketBatch::default())
+            .unwrap();
+        let (ledger_path, _blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
+        let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+        let (exit, _poh_recorder, transaction_recorder, poh_service, _signal_receiver) =
+            create_test_recorder_with_index_tracking(
+                bank.clone(),
+                blockstore.clone(),
+                None,
+                Some(leader_schedule_cache),
+            );
+        pool.register_banking_stage(
+            None,
+            banking_packet_receiver,
+            fixed_banking_packet_handler,
+            transaction_recorder,
+            Box::new(SimpleBankingMinitor),
+        );
+
+        // By now, there shuold be a bufferd transaction. Let's discard it.
+        *START_DISCARD.lock().unwrap() = true;
+
+        sleepless_testing::at(TestCheckPoint::AfterDiscarded);
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
