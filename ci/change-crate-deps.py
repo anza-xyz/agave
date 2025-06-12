@@ -10,7 +10,6 @@ import json
 import os
 import subprocess
 import sys
-import tomllib
 
 if len(sys.argv) != 3:
     print('Usage: %s <manifest path> <crate-name>' % sys.argv[0])
