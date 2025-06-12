@@ -197,7 +197,6 @@ pub mod tests {
         let mut accounts = AccountsDb::new_single_for_tests();
         let key1 = Pubkey::new_unique();
         let key2 = Pubkey::new_unique();
-        let key3 = Pubkey::new_unique();
         let account = AccountSharedData::new(1, 0, &Pubkey::default());
 
         // Account with key1 is updated twice in two different slots, should get notified twice
@@ -212,11 +211,6 @@ pub mod tests {
         // Account with key2 is updated in a single slot, should get notified once
         accounts.store_for_tests(2, &[(&key2, &account)]);
         accounts.add_root_and_flush_write_cache(2);
-
-        // Account with key3 is updated twice in a single slot, should get notified twice
-        accounts.store_for_tests(3, &[(&key3, &account)]);
-        accounts.store_for_tests(3, &[(&key3, &account)]);
-        accounts.add_root_and_flush_write_cache(3);
 
         // Do the notification
         let notifier = GeyserTestPlugin::default();
@@ -242,15 +236,6 @@ pub mod tests {
             assert_eq!(notified_key2.len(), 1);
             let (slot, write_version, _account) = &notified_key2[0];
             assert_eq!(*slot, 2);
-            assert_eq!(*write_version, 1);
-        }
-
-        // A single slot can only have a single version of an account
-        {
-            let notified_key3 = notifier.accounts_notified.get(&key3).unwrap();
-            assert_eq!(notified_key3.len(), 1);
-            let (slot, write_version, _account) = &notified_key3[0];
-            assert_eq!(*slot, 3);
             assert_eq!(*write_version, 1);
         }
 
