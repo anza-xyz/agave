@@ -3,29 +3,30 @@ use {
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
+    solana_transaction_context::TransactionAccount,
 };
 
 /// Captured account state used to rollback account state for nonce and fee
 /// payer accounts after a failed executed transaction.
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub enum RollbackAccounts {
-    FeePayerOnly {
-        fee_payer_account: AccountSharedData,
-    },
-    SameNonceAndFeePayer {
-        nonce: NonceInfo,
-    },
-    SeparateNonceAndFeePayer {
-        nonce: NonceInfo,
-        fee_payer_account: AccountSharedData,
-    },
+pub struct RollbackAccounts {
+    pub kind: RollbackAccountsKind,
+    pub accounts: Vec<TransactionAccount>,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum RollbackAccountsKind {
+    FeePayerOnly,
+    SameNonceAndFeePayer,
+    SeparateNonceAndFeePayer,
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 impl Default for RollbackAccounts {
     fn default() -> Self {
-        Self::FeePayerOnly {
-            fee_payer_account: AccountSharedData::default(),
+        Self {
+            kind: RollbackAccountsKind::FeePayerOnly,
+            accounts: vec![(Pubkey::default(), AccountSharedData::default())],
         }
     }
 }
@@ -45,13 +46,17 @@ impl RollbackAccounts {
                 // so we capture both the data change for the nonce and the lamports/rent epoch change for the fee payer
                 fee_payer_account.set_data_from_slice(nonce.account().data());
 
-                RollbackAccounts::SameNonceAndFeePayer {
-                    nonce: NonceInfo::new(fee_payer_address, fee_payer_account),
+                RollbackAccounts {
+                    kind: RollbackAccountsKind::SameNonceAndFeePayer,
+                    accounts: vec![(fee_payer_address, fee_payer_account)],
                 }
             } else {
-                RollbackAccounts::SeparateNonceAndFeePayer {
-                    nonce,
-                    fee_payer_account,
+                RollbackAccounts {
+                    kind: RollbackAccountsKind::SeparateNonceAndFeePayer,
+                    accounts: vec![
+                        (nonce.address, nonce.account),
+                        (fee_payer_address, fee_payer_account),
+                    ],
                 }
             }
         } else {
@@ -62,32 +67,26 @@ impl RollbackAccounts {
             // alter this behavior such that rent epoch updates are handled the
             // same for both nonce and non-nonce failed transactions.
             fee_payer_account.set_rent_epoch(fee_payer_loaded_rent_epoch);
-            RollbackAccounts::FeePayerOnly { fee_payer_account }
+            RollbackAccounts {
+                kind: RollbackAccountsKind::FeePayerOnly,
+                accounts: vec![(fee_payer_address, fee_payer_account)],
+            }
         }
     }
 
     /// Number of accounts tracked for rollback
     pub fn count(&self) -> usize {
-        match self {
-            Self::FeePayerOnly { .. } | Self::SameNonceAndFeePayer { .. } => 1,
-            Self::SeparateNonceAndFeePayer { .. } => 2,
-        }
+        self.accounts.len()
     }
 
     /// Size of accounts tracked for rollback, used when calculating the actual
     /// cost of transaction processing in the cost model.
     pub fn data_size(&self) -> usize {
-        match self {
-            Self::FeePayerOnly { fee_payer_account } => fee_payer_account.data().len(),
-            Self::SameNonceAndFeePayer { nonce } => nonce.account().data().len(),
-            Self::SeparateNonceAndFeePayer {
-                nonce,
-                fee_payer_account,
-            } => fee_payer_account
-                .data()
-                .len()
-                .saturating_add(nonce.account().data().len()),
+        let mut total_size: usize = 0;
+        for (_, account) in &self.accounts {
+            total_size = total_size.saturating_add(account.data().len());
         }
+        total_size
     }
 }
 
@@ -124,13 +123,12 @@ mod tests {
             fee_payer_rent_epoch,
         );
 
-        let expected_fee_payer_account = fee_payer_account;
-        match rollback_accounts {
-            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-                assert_eq!(expected_fee_payer_account, fee_payer_account);
-            }
-            _ => panic!("Expected FeePayerOnly variant"),
-        }
+        let expected_rollback_accounts = RollbackAccounts {
+            kind: RollbackAccountsKind::FeePayerOnly,
+            accounts: vec![(fee_payer_address, fee_payer_account)],
+        };
+
+        assert_eq!(expected_rollback_accounts, rollback_accounts);
     }
 
     #[test]
@@ -163,13 +161,12 @@ mod tests {
             u64::MAX, // ignored
         );
 
-        match rollback_accounts {
-            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                assert_eq!(nonce.address(), &nonce_address);
-                assert_eq!(nonce.account(), &nonce_account);
-            }
-            _ => panic!("Expected SameNonceAndFeePayer variant"),
-        }
+        let expected_rollback_accounts = RollbackAccounts {
+            kind: RollbackAccountsKind::SameNonceAndFeePayer,
+            accounts: vec![(nonce_address, nonce_account)],
+        };
+
+        assert_eq!(expected_rollback_accounts, rollback_accounts);
     }
 
     #[test]
@@ -205,17 +202,14 @@ mod tests {
             u64::MAX, // ignored
         );
 
-        let expected_fee_payer_account = fee_payer_account;
-        match rollback_accounts {
-            RollbackAccounts::SeparateNonceAndFeePayer {
-                nonce,
-                fee_payer_account,
-            } => {
-                assert_eq!(nonce.address(), &nonce_address);
-                assert_eq!(nonce.account(), &nonce_account);
-                assert_eq!(expected_fee_payer_account, fee_payer_account);
-            }
-            _ => panic!("Expected SeparateNonceAndFeePayer variant"),
-        }
+        let expected_rollback_accounts = RollbackAccounts {
+            kind: RollbackAccountsKind::SeparateNonceAndFeePayer,
+            accounts: vec![
+                (nonce_address, nonce_account),
+                (fee_payer_address, fee_payer_account),
+            ],
+        };
+
+        assert_eq!(expected_rollback_accounts, rollback_accounts);
     }
 }
