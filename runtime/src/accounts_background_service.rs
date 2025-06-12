@@ -16,7 +16,6 @@ use {
     },
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
-    rand::{thread_rng, Rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource, accounts_hash::CalcAccountsHashConfig,
@@ -38,7 +37,10 @@ use {
 };
 
 const INTERVAL_MS: u64 = 100;
-const CLEAN_INTERVAL_SLOTS: Slot = 100;
+// Set the clean interval duration to be approximately how long before the next incremental
+// snapshot request is received, plus some buffer.  The default incremental snapshot interval is
+// 100 slots, which ends up being 40 seconds plus buffer.
+const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
@@ -533,6 +535,7 @@ impl AccountsBackgroundService {
                     info!("AccountsBackgroundService has started");
                     let mut stats = StatsManager::new();
                     let mut last_snapshot_end_time = None;
+                    let mut previous_clean_time = Instant::now();
                     let mut previous_shrink_time = Instant::now();
 
                     loop {
@@ -614,6 +617,7 @@ impl AccountsBackgroundService {
                                             .collect::<Vec<_>>(),
                                     );
                                     last_cleaned_slot = snapshot_slot;
+                                    previous_clean_time = Instant::now();
                                     previous_shrink_time = Instant::now();
                                 }
                                 Err(err) => {
@@ -625,9 +629,7 @@ impl AccountsBackgroundService {
                                     break;
                                 }
                             }
-                        } else if bank.slot() - last_cleaned_slot
-                            > (CLEAN_INTERVAL_SLOTS + thread_rng().gen_range(0..10))
-                        {
+                        } else if previous_clean_time.elapsed() > CLEAN_INTERVAL {
                             // Note that the flush will do an internal clean of the
                             // cache up to bank.slot(), so should be safe as long
                             // as any later snapshots that are taken are of
@@ -635,6 +637,7 @@ impl AccountsBackgroundService {
                             bank.force_flush_accounts_cache();
                             bank.clean_accounts();
                             last_cleaned_slot = bank.slot();
+                            previous_clean_time = Instant::now();
                             bank.shrink_ancient_slots();
                             bank.shrink_candidate_slots();
                             previous_shrink_time = Instant::now();
