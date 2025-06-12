@@ -416,7 +416,8 @@ solana-compute-budget = { path = "compute-budget", version = "=2.3.0" }
 solana-compute-budget-instruction = { path = "compute-budget-instruction", version = "=2.3.0" }
 solana-compute-budget-interface = "2.2.2"
 solana-compute-budget-program = { path = "programs/compute-budget", version = "=2.3.0" }
-solana-config-program-client = "0.0.2"
+solana-config-interface = "1.0.0"
+solana-config-program-client = "1.1.0"
 solana-connection-cache = { path = "connection-cache", version = "=2.3.0", default-features = false }
 solana-core = { path = "core", version = "=2.3.0" }
 solana-cost-model = { path = "cost-model", version = "=2.3.0" }
