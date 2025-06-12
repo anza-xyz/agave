@@ -10,7 +10,14 @@
 //! be returned.
 use {
     crate::{append_vec::ValidSlice, file_io::read_more_buffer},
-    std::{fs::File, mem::MaybeUninit, ops::Range, slice},
+    std::{
+        fs::File,
+        io::{BufRead, BufReader, Result as IoResult},
+        mem::MaybeUninit,
+        ops::Range,
+        path::Path,
+        slice,
+    },
 };
 
 /// A trait that abstracts over the backing storage of the buffer.
@@ -121,7 +128,7 @@ where
     T: Backing,
 {
     /// read to make sure we have the minimum amount of data
-    pub fn read(&mut self) -> std::io::Result<BufferedReaderStatus> {
+    pub fn read(&mut self) -> IoResult<BufferedReaderStatus> {
         let must_read = self
             .read_requirements
             .unwrap_or(self.default_min_read_requirement);
@@ -182,13 +189,15 @@ impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
 /// Open file at `path` with buffering reader using `buf_size` memory and doing
 /// read-ahead IO reads (if `io_uring` is supported by the host)
 pub fn large_file_buf_reader(
-    path: &std::path::Path,
+    path: impl AsRef<Path>,
     buf_size: usize,
-) -> std::io::Result<Box<dyn std::io::BufRead>> {
+) -> IoResult<Box<dyn BufRead>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
-        let io_uring_reader =
-            crate::io_uring::seq_file_reader::SequentialFileReader::with_capacity(buf_size, path);
+        let io_uring_reader = crate::io_uring::seq_file_reader::SequentialFileReader::with_capacity(
+            buf_size,
+            path.as_ref(),
+        );
         match io_uring_reader {
             Ok(reader) => return Ok(Box::new(reader)),
             Err(error) => {
@@ -197,7 +206,7 @@ pub fn large_file_buf_reader(
         }
     }
     let file = File::open(path)?;
-    Ok(Box::new(std::io::BufReader::with_capacity(buf_size, file)))
+    Ok(Box::new(BufReader::with_capacity(buf_size, file)))
 }
 
 #[cfg(all(unix, test))]

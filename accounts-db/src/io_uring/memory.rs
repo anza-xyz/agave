@@ -39,7 +39,7 @@ impl AsMut<[u8]> for LargeBuffer {
 
 impl LargeBuffer {
     /// Allocare memory buffer optimized for io_uring operations, i.e.
-    /// using HugeTabled when it is available on the host.
+    /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
         if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
             log::info!("obtained hugetable io_uring buffer (len={size})");
