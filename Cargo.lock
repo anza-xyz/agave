@@ -7857,7 +7857,6 @@ dependencies = [
  "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",
- "solana-vortexor-receiver",
  "solana-vote",
  "solana-vote-program",
  "solana-wen-restart",
@@ -11565,6 +11564,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "solana-vortexor-receiver"
 version = "2.3.1"
 dependencies = [
@@ -11574,6 +11574,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 63cf093fb (Revert "Support receiving verified transactions from the vortexor (#5321)" (#6525))
 name = "solana-vote"
 version = "2.3.1"
 dependencies = [
