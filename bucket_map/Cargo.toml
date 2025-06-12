@@ -19,7 +19,7 @@ modular-bitfield = { workspace = true }
 num_enum = { workspace = true }
 rand = { workspace = true }
 solana-clock = { workspace = true }
-solana-measure = { registry = "kellnr", version = "2.3.0" }
+solana-measure = { workspace = true }
 solana-pubkey = { workspace = true }
 tempfile = { workspace = true }
 
