@@ -21,7 +21,9 @@ use {
         status_cache::MAX_CACHE_ENTRIES,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
+    agave_reserved_account_keys::ReservedAccount,
     agave_transaction_view::static_account_keys_frame::MAX_STATIC_ACCOUNTS_PER_PACKET,
+    ahash::AHashMap,
     assert_matches::assert_matches,
     crossbeam_channel::{bounded, unbounded},
     ed25519_dalek::ed25519::signature::Signer as EdSigner,
@@ -8047,25 +8049,32 @@ fn test_compute_active_feature_set() {
 fn test_reserved_account_keys() {
     let (bank0, _bank_forks) = create_simple_test_arc_bank(100_000);
     let mut bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
-    bank.feature_set = Arc::new(FeatureSet::default());
+    let test_feature_id = Pubkey::new_unique();
+    bank.feature_set = Arc::new(FeatureSet::new(
+        AHashMap::new(),
+        AHashSet::from([test_feature_id]),
+    ));
+    bank.reserved_account_keys = Arc::new(ReservedAccountKeys::new(&[
+        ReservedAccount::new_active(system_program::id()),
+        ReservedAccount::new_pending(Pubkey::new_unique(), test_feature_id),
+    ]));
 
     assert_eq!(
         bank.get_reserved_account_keys().len(),
-        20,
-        "before activating the new feature, bank should already have active reserved keys"
+        1,
+        "before activating the test feature, bank should already have an active reserved key"
     );
 
-    // Activate `add_new_reserved_account_keys` feature
     bank.store_account(
-        &feature_set::add_new_reserved_account_keys::id(),
+        &test_feature_id,
         &feature::create_account(&Feature::default(), 42),
     );
     bank.apply_feature_activations(ApplyFeatureActivationsCaller::NewFromParent, true);
 
     assert_eq!(
         bank.get_reserved_account_keys().len(),
-        30,
-        "after activating the new feature, bank should have new active reserved keys"
+        2,
+        "after activating the test feature, bank should have another active reserved key"
     );
 }
 
