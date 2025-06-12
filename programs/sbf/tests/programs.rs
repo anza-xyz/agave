@@ -20,7 +20,7 @@ use {
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
     solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_fee_calculator::FeeRateGovernor,
-    solana_fee_structure::{FeeBudgetLimits, FeeStructure},
+    solana_fee_structure::{FeeBin, FeeBudgetLimits, FeeStructure},
     solana_genesis_config::ClusterType,
     solana_hash::Hash,
     solana_instruction::{error::InstructionError, AccountMeta, Instruction},
@@ -3428,8 +3428,20 @@ fn test_program_fees() {
 
     genesis_config.fee_rate_governor = FeeRateGovernor::new(congestion_multiplier, 0);
     let mut bank = Bank::new_for_tests(&genesis_config);
-    let fee_structure =
-        FeeStructure::new(0.000005, 0.0, vec![(200, 0.0000005), (1400000, 0.000005)]);
+    let fee_structure = FeeStructure {
+        lamports_per_signature: 5000,
+        lamports_per_write_lock: 0,
+        compute_fee_bins: vec![
+            FeeBin {
+                limit: 200,
+                fee: 500,
+            },
+            FeeBin {
+                limit: 1400000,
+                fee: 5000,
+            },
+        ],
+    };
     bank.set_fee_structure(&fee_structure);
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let feature_set = bank.feature_set.clone();

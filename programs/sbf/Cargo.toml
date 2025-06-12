@@ -132,7 +132,7 @@ solana-compute-budget-instruction = { workspace = true, features = [
 solana-compute-budget-interface = "2.2.2"
 solana-fee = { workspace = true }
 solana-fee-calculator = "2.2.1"
-solana-fee-structure = "2.2.1"
+solana-fee-structure = "2.3.0"
 solana-genesis-config = "2.2.1"
 solana-hash = "2.2.1"
 solana-instruction = "2.2.1"
