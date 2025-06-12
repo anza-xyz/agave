@@ -1,10 +1,9 @@
 use {
     borsh::{BorshDeserialize, BorshSerialize},
-    solana_program::{
-        account_info::{next_account_info, AccountInfo},
-        entrypoint, msg,
-        pubkey::Pubkey,
-    },
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_msg::msg,
+    solana_program_entrypoint::entrypoint,
+    solana_pubkey::Pubkey,
 };
 
 /// The type of state managed by this program. The type defined here
@@ -21,7 +20,7 @@ pub fn process_instruction(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
     _instruction_data: &[u8],
-) -> entrypoint::ProgramResult {
+) -> solana_program_entrypoint::ProgramResult {
     // Get the account that stores greeting count information.
     let accounts_iter = &mut accounts.iter();
     let account = next_account_info(accounts_iter)?;
