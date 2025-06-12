@@ -948,7 +948,7 @@ pub struct Bank {
     /// The cache of epoch rewards calculation results
     /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
     /// The hashmap is keyed by parent_hash.
-    epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, PartitionedRewardsCalculation>>>,
+    epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, Arc<PartitionedRewardsCalculation>>>>,
 }
 
 #[derive(Debug)]

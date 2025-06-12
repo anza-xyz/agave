@@ -128,7 +128,7 @@ impl Bank {
                     "calculated rewards for epoch: {}, parent_slot: {}, parent_hash: {}",
                     self.epoch, self.parent_slot, self.parent_hash
                 );
-                calculation
+                Arc::new(calculation)
             })
             .clone();
         drop(epoch_rewards_calculation_cache);
@@ -141,10 +141,10 @@ impl Bank {
             prev_epoch_duration_in_years,
             capitalization,
             point_value,
-        } = rewards_calculation;
+        } = rewards_calculation.as_ref();
 
         let total_vote_rewards = vote_account_rewards.total_vote_rewards_lamports;
-        self.store_vote_accounts_partitioned(&vote_account_rewards, metrics);
+        self.store_vote_accounts_partitioned(vote_account_rewards, metrics);
 
         // update reward history of JUST vote_rewards, stake_rewards is vec![] here
         self.update_reward_history(vec![], &vote_account_rewards.rewards[..]);
@@ -182,12 +182,16 @@ impl Bank {
             "epoch_rewards",
             ("slot", self.slot, i64),
             ("epoch", prev_epoch, i64),
-            ("validator_rate", validator_rate, f64),
-            ("foundation_rate", foundation_rate, f64),
-            ("epoch_duration_in_years", prev_epoch_duration_in_years, f64),
+            ("validator_rate", *validator_rate, f64),
+            ("foundation_rate", *foundation_rate, f64),
+            (
+                "epoch_duration_in_years",
+                *prev_epoch_duration_in_years,
+                f64
+            ),
             ("validator_rewards", total_vote_rewards, i64),
             ("active_stake", active_stake, i64),
-            ("pre_capitalization", capitalization, i64),
+            ("pre_capitalization", *capitalization, i64),
             ("post_capitalization", self.capitalization(), i64),
             ("num_stake_accounts", num_stake_accounts, i64),
             ("num_vote_accounts", num_vote_accounts, i64),
@@ -195,8 +199,8 @@ impl Bank {
 
         CalculateRewardsAndDistributeVoteRewardsResult {
             distributed_rewards: total_vote_rewards,
-            point_value,
-            stake_rewards,
+            point_value: point_value.clone(),
+            stake_rewards: Arc::clone(stake_rewards),
         }
     }
 
@@ -245,7 +249,7 @@ impl Bank {
             .unwrap_or_default();
 
         PartitionedRewardsCalculation {
-            vote_account_rewards: Arc::new(vote_account_rewards),
+            vote_account_rewards,
             stake_rewards,
             validator_rate,
             foundation_rate,

@@ -90,7 +90,7 @@ pub(super) struct VoteRewardsAccounts {
     pub(super) total_vote_rewards_lamports: u64,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 /// result of calculating the stake rewards at end of epoch
 pub(super) struct StakeRewardCalculation {
     /// each individual stake account to reward
@@ -129,9 +129,9 @@ pub(super) struct EpochRewardCalculateParamInfo<'a> {
 /// Hold all results from calculating the rewards for partitioned distribution.
 /// This struct exists so we can have a function which does all the calculation with no
 /// side effects.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) struct PartitionedRewardsCalculation {
-    pub(super) vote_account_rewards: Arc<VoteRewardsAccounts>,
+    pub(super) vote_account_rewards: VoteRewardsAccounts,
     pub(super) stake_rewards: StakeRewardCalculation,
     pub(super) validator_rate: f64,
     pub(super) foundation_rate: f64,
@@ -366,7 +366,7 @@ mod tests {
         fn get_epoch_rewards_from_cache(
             &self,
             parent_hash: &Hash,
-        ) -> Option<PartitionedRewardsCalculation> {
+        ) -> Option<Arc<PartitionedRewardsCalculation>> {
             self.epoch_rewards_calculation_cache
                 .lock()
                 .unwrap()
