@@ -110,6 +110,7 @@ solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true, features = ["dev-context-only-utils"] }
 solana-sha256-hasher = { workspace = true }
 solana-stake-interface = { workspace = true }

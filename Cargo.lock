@@ -9795,6 +9795,7 @@ dependencies = [
  "solana-rpc-client-api",
  "solana-runtime",
  "solana-runtime-transaction",
+ "solana-sdk-ids",
  "solana-send-transaction-service",
  "solana-sha256-hasher",
  "solana-signature",
