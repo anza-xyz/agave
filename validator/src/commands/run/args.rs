@@ -1722,7 +1722,7 @@ mod tests {
         }
     }
 
-    fn get_run_command_matches<'a>(
+    fn create_app_and_get_matches<'a>(
         default_args: &'a DefaultArgs,
         args: Vec<&str>,
     ) -> ArgMatches<'a> {
@@ -1744,7 +1744,7 @@ mod tests {
         let keypair = default_run_args.identity_keypair.insecure_clone();
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
-        let matches = get_run_command_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
+        let matches = create_app_and_get_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
         let args = RunArgs::from_clap_arg_match(&matches).unwrap();
         assert_eq!(
             args,
@@ -1767,7 +1767,7 @@ mod tests {
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let matches =
-            get_run_command_matches(&default_args, vec!["--identity", file.to_str().unwrap()]);
+            create_app_and_get_matches(&default_args, vec!["--identity", file.to_str().unwrap()]);
         let args = RunArgs::from_clap_arg_match(&matches).unwrap();
         assert_eq!(
             args,
@@ -1792,7 +1792,7 @@ mod tests {
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
-        let matches = get_run_command_matches(&default_args, args);
+        let matches = create_app_and_get_matches(&default_args, args);
         let args = RunArgs::from_clap_arg_match(&matches).unwrap();
         assert_eq!(args, expected_args);
     }
