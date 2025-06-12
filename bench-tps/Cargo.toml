@@ -8,6 +8,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 chrono = { workspace = true }
 clap = { workspace = true }
@@ -74,9 +80,3 @@ solana-sdk-ids = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tps-client = { workspace = true, features = ["bank-client"] }
 tempfile = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = []

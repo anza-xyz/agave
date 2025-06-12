@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 Inflector = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
@@ -51,6 +54,3 @@ thiserror = { workspace = true }
 bytemuck = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 spl-token-confidential-transfer-proof-extraction = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

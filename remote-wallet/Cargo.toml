@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["linux-static-hidraw", "hidapi"]
+linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
+linux-shared-libusb = ["hidapi/linux-shared-libusb"]
+linux-static-hidraw = ["hidapi/linux-static-hidraw"]
+linux-static-libusb = ["hidapi/linux-static-libusb"]
+
 [dependencies]
 console = { workspace = true }
 dialoguer = { workspace = true }
@@ -30,13 +40,3 @@ uriparse = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[features]
-default = ["linux-static-hidraw", "hidapi"]
-linux-shared-hidraw = ["hidapi/linux-shared-hidraw"]
-linux-shared-libusb = ["hidapi/linux-shared-libusb"]
-linux-static-hidraw = ["hidapi/linux-static-hidraw"]
-linux-static-libusb = ["hidapi/linux-static-libusb"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_banks_server"
+
 [dependencies]
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
@@ -32,10 +39,3 @@ solana-transaction-error = { workspace = true }
 tarpc = { workspace = true, features = ["full"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-serde = { workspace = true, features = ["bincode"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_banks_server"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

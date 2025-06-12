@@ -9,6 +9,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = ["solana-net-utils"]
+
 [dependencies]
 async-trait = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -43,9 +49,3 @@ solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-system-transaction = { workspace = true }
-
-[features]
-dev-context-only-utils = ["solana-net-utils"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

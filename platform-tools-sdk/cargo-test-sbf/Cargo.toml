@@ -9,6 +9,10 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[[bin]]
+name = "cargo-test-sbf"
+path = "src/main.rs"
+
 [dependencies]
 cargo_metadata = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo"] }
@@ -16,7 +20,3 @@ itertools = { workspace = true }
 log = { workspace = true, features = ["std"] }
 regex = { workspace = true }
 solana-logger = "=2.3.1"
-
-[[bin]]
-name = "cargo-test-sbf"
-path = "src/main.rs"
