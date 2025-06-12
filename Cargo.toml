@@ -221,7 +221,7 @@ bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
-cfg-if = "1.0.0"
+cfg-if = "1.0.1"
 cfg_eval = "0.1.2"
 chrono = { version = "0.4.41", default-features = false }
 chrono-humanize = "0.2.3"
