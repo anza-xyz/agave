@@ -94,7 +94,7 @@ fn process_instruction(
             let (bytes, _) = remaining_data.split_at(std::mem::size_of::<usize>());
             let extend_len = usize::from_le_bytes(bytes.try_into().unwrap());
             msg!("realloc extend {} byte(s)", extend_len);
-            account.realloc(new_len.saturating_add(extend_len), false)?;
+            account.realloc(new_len.saturating_add(extend_len), true)?;
             assert_eq!(new_len.saturating_add(extend_len), account.data_len());
         }
         INVOKE_REALLOC_MAX_TWICE => {
@@ -110,7 +110,7 @@ fn process_instruction(
             )?;
             let new_len = pre_len.saturating_add(MAX_PERMITTED_DATA_INCREASE);
             assert_eq!(new_len, account.data_len());
-            account.realloc(new_len.saturating_add(MAX_PERMITTED_DATA_INCREASE), false)?;
+            account.realloc(new_len.saturating_add(MAX_PERMITTED_DATA_INCREASE), true)?;
             assert_eq!(
                 new_len.saturating_add(MAX_PERMITTED_DATA_INCREASE),
                 account.data_len()
@@ -162,7 +162,7 @@ fn process_instruction(
         }
         INVOKE_REALLOC_INVOKE_CHECK => {
             msg!("realloc invoke check size");
-            account.realloc(100, false)?;
+            account.realloc(100, true)?;
             assert_eq!(100, account.data_len());
             account.try_borrow_mut_data()?[pre_len..].fill(2);
             invoke(
@@ -178,7 +178,7 @@ fn process_instruction(
             let (bytes, _) = instruction_data[2..].split_at(std::mem::size_of::<usize>());
             let new_len = usize::from_le_bytes(bytes.try_into().unwrap());
             msg!("realloc to {}", new_len);
-            account.realloc(new_len, false)?;
+            account.realloc(new_len, true)?;
             assert_eq!(new_len, account.data_len());
             if pre_len < new_len {
                 account.try_borrow_mut_data()?[pre_len..].fill(instruction_data[1]);
@@ -188,7 +188,7 @@ fn process_instruction(
             msg!("realloc invoke recursive");
             let (bytes, _) = instruction_data[2..].split_at(std::mem::size_of::<usize>());
             let new_len = usize::from_le_bytes(bytes.try_into().unwrap());
-            account.realloc(new_len, false)?;
+            account.realloc(new_len, true)?;
             assert_eq!(new_len, account.data_len());
             account.try_borrow_mut_data()?[pre_len..].fill(instruction_data[1]);
             let final_len: usize = 200;
@@ -229,7 +229,7 @@ fn process_instruction(
                 accounts,
             )?;
             assert_eq!(pre_len, accounts[1].data_len());
-            accounts[1].realloc(pre_len.saturating_add(1), false)?;
+            accounts[1].realloc(pre_len.saturating_add(1), true)?;
             assert_eq!(pre_len.saturating_add(1), accounts[1].data_len());
             assert_eq!(accounts[1].owner, program_id);
             let final_len: usize = 200;
@@ -275,7 +275,7 @@ fn process_instruction(
             )?;
             assert_eq!(account.owner, program_id);
             assert_eq!(account.data_len(), 0);
-            account.realloc(new_len, false)?;
+            account.realloc(new_len, true)?;
             assert_eq!(account.data_len(), new_len);
             {
                 let data = account.try_borrow_mut_data()?;
@@ -287,7 +287,7 @@ fn process_instruction(
         INVOKE_REALLOC_MAX_INVOKE_MAX => {
             msg!("invoke realloc max invoke max");
             assert_eq!(0, account.data_len());
-            account.realloc(MAX_PERMITTED_DATA_INCREASE, false)?;
+            account.realloc(MAX_PERMITTED_DATA_INCREASE, true)?;
             assert_eq!(MAX_PERMITTED_DATA_INCREASE, account.data_len());
             account.assign(invoke_program_id);
             assert_eq!(account.owner, invoke_program_id);

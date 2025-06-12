@@ -50,7 +50,7 @@ fn process_instruction(
         // reallocate account
         3 => {
             let new_size = usize::from_le_bytes(data[1..9].try_into().unwrap());
-            target_account_info.realloc(new_size, false)?;
+            target_account_info.realloc(new_size, true)?;
         }
         // bad ixn
         _ => {

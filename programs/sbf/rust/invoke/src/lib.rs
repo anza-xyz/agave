@@ -770,7 +770,7 @@ fn process_instruction<'a>(
             let account = &accounts[ARGUMENT_INDEX];
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            account.realloc(0, false).unwrap();
+            account.realloc(0, true).unwrap();
             account.assign(realloc_program_id);
 
             // Place a RcBox<RefCell<&mut [u8]>> in the account data. This
@@ -859,9 +859,9 @@ fn process_instruction<'a>(
             let target_account = &accounts[target_account_index];
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            account.realloc(0, false).unwrap();
+            account.realloc(0, true).unwrap();
             account.assign(realloc_program_id);
-            target_account.realloc(0, false).unwrap();
+            target_account.realloc(0, true).unwrap();
             target_account.assign(realloc_program_id);
 
             let rc_box_addr =
@@ -968,7 +968,7 @@ fn process_instruction<'a>(
             let expected = {
                 let data = &instruction_data[1..];
                 let prev_len = account.data_len();
-                account.realloc(prev_len + data.len(), false)?;
+                account.realloc(prev_len + data.len(), true)?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
                 account.data.borrow().to_vec()
             };
@@ -1076,7 +1076,7 @@ fn process_instruction<'a>(
             let prev_data = {
                 let data = &instruction_data[9..];
                 let prev_len = account.data_len();
-                account.realloc(prev_len + data.len(), false)?;
+                account.realloc(prev_len + data.len(), true)?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
                 unsafe {
                     // write a sentinel value just outside the account data to
@@ -1130,7 +1130,7 @@ fn process_instruction<'a>(
             const ARGUMENT_INDEX: usize = 0;
             let account = &accounts[ARGUMENT_INDEX];
             let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            account.realloc(new_len, false).unwrap();
+            account.realloc(new_len, true).unwrap();
         }
         TEST_CPI_INVALID_KEY_POINTER => {
             msg!("TEST_CPI_INVALID_KEY_POINTER");
@@ -1398,7 +1398,7 @@ fn process_instruction<'a>(
             let account = &accounts[ARGUMENT_INDEX];
 
             if resize != 0 {
-                account.realloc(resize, false).unwrap();
+                account.realloc(resize, true).unwrap();
             }
 
             if pre_write_offset != 0 {
