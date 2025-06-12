@@ -35,23 +35,27 @@ const INCLUDE_KEY: &str = "account-index-include-key";
 
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
-    pub identity: Keypair,
+    pub identity_keypair: Keypair,
     pub logfile: String,
 }
 
 impl FromClapArgMatches for RunArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
-        let identity = keypair_of(matches, "identity").ok_or(clap::Error::with_description(
-            "The --identity <KEYPAIR> argument is required",
-            clap::ErrorKind::ArgumentNotFound,
-        ))?;
+        let identity_keypair =
+            keypair_of(matches, "identity").ok_or(clap::Error::with_description(
+                "The --identity <KEYPAIR> argument is required",
+                clap::ErrorKind::ArgumentNotFound,
+            ))?;
 
         let logfile = matches
             .value_of("logfile")
             .map(|s| s.into())
-            .unwrap_or_else(|| format!("agave-validator-{}.log", identity.pubkey()));
+            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
 
-        Ok(RunArgs { identity, logfile })
+        Ok(RunArgs {
+            identity_keypair,
+            logfile,
+        })
     }
 }
 
@@ -1699,17 +1703,20 @@ mod tests {
 
     impl Default for RunArgs {
         fn default() -> Self {
-            let identity = Keypair::new();
-            let logfile = format!("agave-validator-{}.log", identity.pubkey());
+            let identity_keypair = Keypair::new();
+            let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
 
-            RunArgs { identity, logfile }
+            RunArgs {
+                identity_keypair,
+                logfile,
+            }
         }
     }
 
     impl Clone for RunArgs {
         fn clone(&self) -> Self {
             RunArgs {
-                identity: self.identity.insecure_clone(),
+                identity_keypair: self.identity_keypair.insecure_clone(),
                 logfile: self.logfile.clone(),
             }
         }
@@ -1734,7 +1741,7 @@ mod tests {
         // generate a keypair
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
-        let keypair = default_run_args.identity.insecure_clone();
+        let keypair = default_run_args.identity_keypair.insecure_clone();
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let matches = get_run_command_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
@@ -1742,7 +1749,7 @@ mod tests {
         assert_eq!(
             args,
             RunArgs {
-                identity: keypair,
+                identity_keypair: keypair,
                 ..default_run_args
             }
         );
@@ -1756,7 +1763,7 @@ mod tests {
         // generate a keypair
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
-        let keypair = default_run_args.identity.insecure_clone();
+        let keypair = default_run_args.identity_keypair.insecure_clone();
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let matches =
@@ -1765,7 +1772,7 @@ mod tests {
         assert_eq!(
             args,
             RunArgs {
-                identity: keypair,
+                identity_keypair: keypair,
                 ..default_run_args
             }
         );
@@ -1781,7 +1788,7 @@ mod tests {
         // generate a keypair
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
-        let keypair = default_run_args.identity.insecure_clone();
+        let keypair = default_run_args.identity_keypair.insecure_clone();
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
@@ -1793,9 +1800,11 @@ mod tests {
     #[test]
     fn verify_args_struct_by_command_run_with_log_default() {
         let default_run_args = RunArgs::default();
-        let identity = default_run_args.identity.insecure_clone();
+        let identity_keypair = default_run_args.identity_keypair.insecure_clone();
         let expected_args = RunArgs {
-            logfile: "agave-validator-".to_string() + &identity.pubkey().to_string() + ".log",
+            logfile: "agave-validator-".to_string()
+                + &identity_keypair.pubkey().to_string()
+                + ".log",
             ..default_run_args.clone()
         };
         test_run_command_with_identity_setup(vec![], default_run_args, expected_args);

@@ -119,7 +119,7 @@ pub fn execute(
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
-    let identity_keypair = Arc::new(run_args.identity);
+    let identity_keypair = Arc::new(run_args.identity_keypair);
 
     let logfile = run_args.logfile;
     let logfile = if logfile == "-" {
