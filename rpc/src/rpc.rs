@@ -253,7 +253,6 @@ pub struct JsonRpcRequestProcessor {
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
-    max_complete_rewards_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     runtime: Arc<Runtime>,
 }
@@ -417,7 +416,6 @@ impl JsonRpcRequestProcessor {
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<Runtime>,
     ) -> (Self, Receiver<TransactionInfo>) {
@@ -440,7 +438,6 @@ impl JsonRpcRequestProcessor {
                 max_slots,
                 leader_schedule_cache,
                 max_complete_transaction_status_slot,
-                max_complete_rewards_slot,
                 prioritization_fee_cache,
                 runtime,
             },
@@ -528,7 +525,6 @@ impl JsonRpcRequestProcessor {
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
-            max_complete_rewards_slot: Arc::new(AtomicU64::default()),
             prioritization_fee_cache: Arc::new(PrioritizationFeeCache::default()),
             runtime,
         }
@@ -1282,7 +1278,6 @@ impl JsonRpcRequestProcessor {
             > self
                 .max_complete_transaction_status_slot
                 .load(Ordering::SeqCst)
-            || slot > self.max_complete_rewards_slot.load(Ordering::SeqCst)
         {
             Err(RpcCustomError::BlockStatusNotAvailableYet { slot }.into())
         } else {
@@ -4778,7 +4773,6 @@ pub mod tests {
             let max_slots = Arc::new(MaxSlots::default());
             // note that this means that slot 0 will always be considered complete
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
-            let max_complete_rewards_slot = Arc::new(AtomicU64::new(0));
             let optimistically_confirmed_bank =
                 OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
 
@@ -4804,7 +4798,6 @@ pub mod tests {
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
-                max_complete_rewards_slot,
                 Arc::new(PrioritizationFeeCache::default()),
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
             )
@@ -6816,7 +6809,6 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
             runtime.clone(),
         );
@@ -7119,7 +7111,6 @@ pub mod tests {
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
-            Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
             runtime,
@@ -8790,11 +8781,9 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let mut pending_optimistically_confirmed_banks = HashSet::new();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
             exit,
             max_complete_transaction_status_slot.clone(),
-            max_complete_rewards_slot.clone(),
             bank_forks.clone(),
             block_commitment_cache.clone(),
             optimistically_confirmed_bank.clone(),
@@ -8823,7 +8812,6 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             Arc::new(PrioritizationFeeCache::default()),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
         );

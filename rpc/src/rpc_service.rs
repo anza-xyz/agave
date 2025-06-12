@@ -484,7 +484,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
-    pub max_complete_rewards_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub client_option: ClientOption<'a>,
 }
@@ -548,7 +547,6 @@ impl JsonRpcService {
                     config.leader_schedule_cache,
                     client.clone(),
                     config.max_complete_transaction_status_slot,
-                    config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
                     runtime,
                 )?;
@@ -599,7 +597,6 @@ impl JsonRpcService {
                     config.leader_schedule_cache,
                     client,
                     config.max_complete_transaction_status_slot,
-                    config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
                     runtime,
                 )?;
@@ -630,7 +627,6 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         connection_cache: Arc<ConnectionCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Result<Self, String> {
         let runtime = service_runtime(
@@ -678,7 +674,6 @@ impl JsonRpcService {
             leader_schedule_cache,
             client.clone(),
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
             runtime,
         )?;
@@ -713,7 +708,6 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         client: Client,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
@@ -766,7 +760,6 @@ impl JsonRpcService {
                                 blockstore.clone(),
                                 block_commitment_cache.clone(),
                                 max_complete_transaction_status_slot.clone(),
-                                max_complete_rewards_slot.clone(),
                                 ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
                             )))
@@ -807,7 +800,6 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
             Arc::clone(&runtime),
         );
@@ -1022,7 +1014,6 @@ mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             connection_cache,
-            Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         )

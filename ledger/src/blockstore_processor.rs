@@ -929,7 +929,6 @@ pub fn test_process_blockstore(
         opts,
         None,
         None,
-        None,
         Some(&snapshot_controller),
     )
     .unwrap();
@@ -945,7 +944,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     blockstore: &Blockstore,
     account_paths: Vec<PathBuf>,
     opts: &ProcessOptions,
-    block_meta_sender: Option<&BlockMetaSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -979,8 +978,8 @@ pub(crate) fn process_blockstore_for_bank_0(
         blockstore,
         &replay_tx_thread_pool,
         opts,
+        transaction_status_sender,
         &VerifyRecyclers::default(),
-        block_meta_sender,
         entry_notification_sender,
     )?;
 
@@ -995,7 +994,6 @@ pub fn process_blockstore_from_root(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     snapshot_controller: Option<&SnapshotController>,
 ) -> result::Result<(), BlockstoreProcessorError> {
@@ -1061,7 +1059,6 @@ pub fn process_blockstore_from_root(
             leader_schedule_cache,
             opts,
             transaction_status_sender,
-            block_meta_sender,
             entry_notification_sender,
             &mut timing,
             snapshot_controller,
@@ -1771,8 +1768,8 @@ fn process_bank_0(
     blockstore: &Blockstore,
     replay_tx_thread_pool: &ThreadPool,
     opts: &ProcessOptions,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     recyclers: &VerifyRecyclers,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
 ) -> result::Result<(), BlockstoreProcessorError> {
     assert_eq!(bank0.slot(), 0);
@@ -1797,7 +1794,10 @@ fn process_bank_0(
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
     }
-    send_block_meta(bank0, block_meta_sender);
+
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_transaction_status_freeze_message(bank0);
+    }
 
     Ok(())
 }
@@ -1874,7 +1874,6 @@ fn load_frozen_forks(
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     timing: &mut ExecuteTimings,
     snapshot_controller: Option<&SnapshotController>,
@@ -1958,7 +1957,6 @@ fn load_frozen_forks(
                 &recyclers,
                 &mut progress,
                 transaction_status_sender,
-                block_meta_sender,
                 entry_notification_sender,
                 None,
                 timing,
@@ -2149,7 +2147,6 @@ pub fn process_single_slot(
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut ExecuteTimings,
@@ -2214,7 +2211,10 @@ pub fn process_single_slot(
     if blockstore.is_primary_access() {
         blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     }
-    send_block_meta(bank, block_meta_sender);
+
+    if let Some(transaction_status_sender) = transaction_status_sender {
+        transaction_status_sender.send_transaction_status_freeze_message(bank);
+    }
 
     Ok(())
 }
@@ -2223,7 +2223,7 @@ pub fn process_single_slot(
 #[derive(Debug)]
 pub enum TransactionStatusMessage {
     Batch(TransactionStatusBatch),
-    Freeze(Slot),
+    Freeze(Arc<Bank>),
 }
 
 #[derive(Debug)]
@@ -2274,24 +2274,16 @@ impl TransactionStatusSender {
     }
 
     pub fn send_transaction_status_freeze_message(&self, bank: &Arc<Bank>) {
-        let slot = bank.slot();
-        if let Err(e) = self.sender.send(TransactionStatusMessage::Freeze(slot)) {
-            trace!(
-                "Slot {} transaction_status send freeze message failed: {:?}",
-                slot,
+        if let Err(e) = self
+            .sender
+            .send(TransactionStatusMessage::Freeze(bank.clone()))
+        {
+            let slot = bank.slot();
+            warn!(
+                "Slot {slot} transaction_status send freeze message failed: {:?}",
                 e
             );
         }
-    }
-}
-
-pub type BlockMetaSender = Sender<Arc<Bank>>;
-
-pub fn send_block_meta(bank: &Arc<Bank>, block_meta_sender: Option<&BlockMetaSender>) {
-    if let Some(block_meta_sender) = block_meta_sender {
-        block_meta_sender
-            .send(bank.clone())
-            .unwrap_or_else(|err| warn!("block_meta_sender failed: {:?}", err));
     }
 }
 
@@ -4262,8 +4254,8 @@ pub mod tests {
             &blockstore,
             &replay_tx_thread_pool,
             &opts,
-            &recyclers,
             None,
+            &recyclers,
             None,
         )
         .unwrap();
@@ -4296,7 +4288,6 @@ pub mod tests {
             &bank_forks,
             &leader_schedule_cache,
             &opts,
-            None,
             None,
             None,
             None, // snapshot_controller
