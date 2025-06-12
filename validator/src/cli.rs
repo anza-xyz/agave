@@ -882,6 +882,19 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
+            Arg::with_name("deep_clone_address_lookup_table")
+                .long("deep-clone-address-lookup-table")
+                .takes_value(true)
+                .validator(is_pubkey_or_keypair)
+                .multiple(true)
+                .requires("json_rpc_url")
+                .help(
+                    "Copy an address lookup table and all accounts it references from the cluster referenced by the --url \
+                     argument in the genesis configuration. If the ledger already exists then this \
+                     parameter is silently ignored",
+                ),
+        )
+        .arg(
             Arg::with_name("maybe_clone_account")
                 .long("maybe-clone")
                 .value_name("ADDRESS")

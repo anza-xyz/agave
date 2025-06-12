@@ -50,6 +50,7 @@ use {
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
     },
+    solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
@@ -370,6 +371,55 @@ impl TestValidatorGenesis {
                 Ok(account_shared_data)
             },
         )
+    }
+
+    pub fn deep_clone_address_lookup_table_accounts<T>(
+        &mut self,
+        addresses: T,
+        rpc_client: &RpcClient,
+    ) -> Result<&mut Self, String>
+    where
+        T: IntoIterator<Item = Pubkey>,
+    {
+        const LOOKUP_TABLE_META_SIZE: usize = 56;
+        let addresses: Vec<Pubkey> = addresses.into_iter().collect();
+        let mut alt_entries: Vec<Pubkey> = Vec::new();
+
+        for chunk in addresses.chunks(MAX_MULTIPLE_ACCOUNTS) {
+            info!("Fetching {:?} over RPC...", chunk);
+            let responses = rpc_client
+                .get_multiple_accounts(chunk)
+                .map_err(|err| format!("Failed to fetch: {err}"))?;
+            for (address, res) in chunk.iter().zip(responses) {
+                if let Some(account) = res {
+                    if address_lookup_table::check_id(account.owner()) {
+                        let raw_addresses_data = account
+                            .data()
+                            .get(LOOKUP_TABLE_META_SIZE..)
+                            .ok_or(format!("Failed to get addresses data from {address}"))?;
+
+                        if raw_addresses_data.len() % std::mem::size_of::<Pubkey>() != 0 {
+                            return Err(format!("Invalid alt account data length for {address}"));
+                        }
+
+                        for address_slice in
+                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        {
+                            // safe because size was checked earlier
+                            let address = Pubkey::try_from(address_slice).unwrap();
+                            alt_entries.push(address);
+                        }
+                        self.add_account(*address, AccountSharedData::from(account));
+                    } else {
+                        return Err(format!("Account {address} is not an address lookup table"));
+                    }
+                } else {
+                    return Err(format!("Failed to fetch {address}"));
+                }
+            }
+        }
+
+        self.clone_accounts(alt_entries, rpc_client, true)
     }
 
     pub fn clone_programdata_accounts<T>(
