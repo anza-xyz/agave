@@ -1189,7 +1189,9 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
         let now = timestamp();
-        let self_info = CrdsValue::new(CrdsData::from(self.my_contact_info()), &self.keypair());
+        let mut contact_info = self.my_contact_info();
+        contact_info.set_wallclock(now);
+        let self_info = CrdsValue::new(CrdsData::from(contact_info), &self.keypair());
         let max_bloom_filter_bytes = get_max_bloom_filter_bytes(&self_info);
         let mut pings = Vec::new();
         let pulls = {
