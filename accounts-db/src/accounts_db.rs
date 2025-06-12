@@ -1126,12 +1126,7 @@ impl AccountStorageEntry {
         })
     }
 
-    pub fn new_existing(
-        slot: Slot,
-        id: AccountsFileId,
-        accounts: AccountsFile,
-        _num_accounts: usize,
-    ) -> Self {
+    pub fn new_existing(slot: Slot, id: AccountsFileId, accounts: AccountsFile) -> Self {
         Self {
             id,
             slot,

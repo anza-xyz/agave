@@ -69,7 +69,7 @@ mod tests {
             std::fs::copy(storage_path, &output_path)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, num_accounts) = AccountsFile::new_from_file(
+            let (accounts_file, _num_accounts) = AccountsFile::new_from_file(
                 output_path,
                 storage_entry.accounts.len(),
                 storage_access,
@@ -78,7 +78,6 @@ mod tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
-                num_accounts,
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
