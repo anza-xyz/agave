@@ -1788,39 +1788,45 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_run_with_log_default() {
+    fn verify_args_struct_by_command_run_with_log() {
         let default_run_args = RunArgs::default();
         let identity_keypair = default_run_args.identity_keypair.insecure_clone();
-        let expected_args = RunArgs {
-            logfile: "agave-validator-".to_string()
-                + &identity_keypair.pubkey().to_string()
-                + ".log",
-            ..default_run_args.clone()
-        };
-        test_run_command_with_identity_setup(vec![], default_run_args, expected_args);
-    }
 
-    #[test]
-    fn verify_args_struct_by_command_run_with_log_short_arg() {
-        let default_run_args = RunArgs::default();
-        let expected_args = RunArgs {
-            logfile: "-".to_string(),
-            ..default_run_args.clone()
-        };
-        test_run_command_with_identity_setup(vec!["-o", "-"], default_run_args, expected_args);
-    }
+        // default
+        {
+            let expected_args = RunArgs {
+                logfile: "agave-validator-".to_string()
+                    + &identity_keypair.pubkey().to_string()
+                    + ".log",
+                ..default_run_args.clone()
+            };
+            test_run_command_with_identity_setup(vec![], default_run_args.clone(), expected_args);
+        }
 
-    #[test]
-    fn verify_args_struct_by_command_run_with_log_long_arg() {
-        let default_run_args = RunArgs::default();
-        let expected_args = RunArgs {
-            logfile: "custom_log.log".to_string(),
-            ..default_run_args.clone()
-        };
-        test_run_command_with_identity_setup(
-            vec!["--log", "custom_log.log"],
-            default_run_args,
-            expected_args,
-        );
+        // short arg
+        {
+            let expected_args = RunArgs {
+                logfile: "-".to_string(),
+                ..default_run_args.clone()
+            };
+            test_run_command_with_identity_setup(
+                vec!["-o", "-"],
+                default_run_args.clone(),
+                expected_args,
+            );
+        }
+
+        // long arg
+        {
+            let expected_args = RunArgs {
+                logfile: "custom_log.log".to_string(),
+                ..default_run_args.clone()
+            };
+            test_run_command_with_identity_setup(
+                vec!["--log", "custom_log.log"],
+                default_run_args.clone(),
+                expected_args,
+            );
+        }
     }
 }
