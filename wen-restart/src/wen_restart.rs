@@ -1450,7 +1450,7 @@ mod tests {
         },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            epoch_stakes::EpochStakes,
+            epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
@@ -2018,8 +2018,8 @@ mod tests {
                 )
             })
             .collect();
-        let epoch2_eopch_stakes = EpochStakes::new_for_tests(vote_accounts_hash_map, 2);
-        new_root_bank.set_epoch_stakes_for_test(2, epoch2_eopch_stakes);
+        let epoch2_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts_hash_map, 2);
+        new_root_bank.set_epoch_stakes_for_test(2, epoch2_epoch_stakes);
         let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             0,

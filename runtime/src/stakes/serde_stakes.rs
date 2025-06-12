@@ -5,10 +5,9 @@ use {
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
     solana_stake_program::stake_state::Stake,
     solana_vote::vote_account::VoteAccounts,
-    std::sync::Arc,
+    std::{collections::HashMap, sync::Arc},
 };
 
 /// Wrapper struct with custom serialization to support serializing
@@ -19,6 +18,22 @@ use {
 pub enum SerdeStakesToStakeFormat {
     Stake(Stakes<Stake>),
     Account(Stakes<StakeAccount>),
+}
+
+impl SerdeStakesToStakeFormat {
+    pub fn vote_accounts(&self) -> &VoteAccounts {
+        match self {
+            Self::Stake(stakes) => stakes.vote_accounts(),
+            Self::Account(stakes) => stakes.vote_accounts(),
+        }
+    }
+
+    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+        match self {
+            Self::Stake(stakes) => stakes.staked_nodes(),
+            Self::Account(stakes) => stakes.staked_nodes(),
+        }
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -34,6 +49,12 @@ impl PartialEq<Self> for SerdeStakesToStakeFormat {
                 other == &Stakes::<Stake>::from(stakes.clone())
             }
         }
+    }
+}
+
+impl From<Stakes<StakeAccount>> for SerdeStakesToStakeFormat {
+    fn from(stakes: Stakes<StakeAccount>) -> Self {
+        Self::Account(stakes)
     }
 }
 
@@ -73,7 +94,7 @@ impl<'de> Deserialize<'de> for SerdeStakesToStakeFormat {
 pub(crate) mod serde_stakes_to_delegation_format {
     use {
         super::*,
-        serde::{Deserialize, Deserializer, Serialize, Serializer},
+        serde::{Serialize, Serializer},
     };
 
     pub(crate) fn serialize<S>(stakes: &StakesEnum, serializer: S) -> Result<S::Ok, S::Error>
@@ -89,10 +110,12 @@ pub(crate) mod serde_stakes_to_delegation_format {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<StakesEnum>, D::Error>
     where
-        D: Deserializer<'de>,
+        D: serde::Deserializer<'de>,
     {
+        use {serde::Deserialize, solana_stake_interface::state::Delegation};
         let stakes = Stakes::<Delegation>::deserialize(deserializer)?;
         Ok(Arc::new(StakesEnum::Delegations(stakes)))
     }
@@ -258,7 +281,8 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 mod tests {
     use {
         super::*, crate::stakes::StakesCache, rand::Rng, solana_rent::Rent,
-        solana_stake_program::stake_state, solana_vote_program::vote_state,
+        solana_stake_interface::state::Delegation, solana_stake_program::stake_state,
+        solana_vote_program::vote_state,
     };
 
     #[test]

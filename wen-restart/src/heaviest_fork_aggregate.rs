@@ -6,7 +6,7 @@ use {
     solana_gossip::restart_crds_values::RestartHeaviestFork,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime::epoch_stakes::EpochStakes,
+    solana_runtime::epoch_stakes::VersionedEpochStakes,
     std::{
         collections::{HashMap, HashSet},
         str::FromStr,
@@ -18,7 +18,7 @@ pub(crate) struct HeaviestForkAggregate {
     my_pubkey: Pubkey,
     // We use the epoch_stakes of the Epoch our heaviest bank is in. Proceed and exit only if
     // enough validator agree with me.
-    epoch_stakes: EpochStakes,
+    epoch_stakes: VersionedEpochStakes,
     heaviest_forks: HashMap<Pubkey, RestartHeaviestFork>,
     block_stake_map: HashMap<(Slot, Hash), u64>,
     active_peers: HashSet<Pubkey>,
@@ -36,7 +36,7 @@ pub enum HeaviestForkAggregateResult {
 impl HeaviestForkAggregate {
     pub(crate) fn new(
         my_shred_version: u16,
-        epoch_stakes: &EpochStakes,
+        epoch_stakes: &VersionedEpochStakes,
         my_heaviest_fork_slot: Slot,
         my_heaviest_fork_hash: Hash,
         my_pubkey: &Pubkey,

@@ -557,14 +557,6 @@ impl Accounts {
         collector
     }
 
-    /// Slow because lock is held for 1 operation instead of many.
-    /// WARNING: This noncached version is only to be used for tests/benchmarking
-    /// as bypassing the cache in general is not supported
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn store_slow_uncached(&self, slot: Slot, pubkey: &Pubkey, account: &AccountSharedData) {
-        self.accounts_db.store_uncached(slot, &[(pubkey, account)]);
-    }
-
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time, possibly excluding transactions based on prior results
     #[must_use]
@@ -784,7 +776,8 @@ mod tests {
         let invalid_table_key = Pubkey::new_unique();
         let mut invalid_table_account = AccountSharedData::default();
         invalid_table_account.set_lamports(1);
-        accounts.store_slow_uncached(0, &invalid_table_key, &invalid_table_account);
+        accounts.store_for_tests(0, &invalid_table_key, &invalid_table_account);
+        accounts.add_root_and_flush_write_cache(0);
 
         let address_table_lookup = MessageAddressTableLookup {
             account_key: invalid_table_key,
@@ -811,7 +804,8 @@ mod tests {
         let invalid_table_key = Pubkey::new_unique();
         let invalid_table_account =
             AccountSharedData::new(1, 0, &address_lookup_table::program::id());
-        accounts.store_slow_uncached(0, &invalid_table_key, &invalid_table_account);
+        accounts.store_for_tests(0, &invalid_table_key, &invalid_table_account);
+        accounts.add_root_and_flush_write_cache(0);
 
         let address_table_lookup = MessageAddressTableLookup {
             account_key: invalid_table_key,
@@ -850,7 +844,8 @@ mod tests {
                 0,
             )
         };
-        accounts.store_slow_uncached(0, &table_key, &table_account);
+        accounts.store_for_tests(0, &table_key, &table_account);
+        accounts.add_root_and_flush_write_cache(0);
 
         let address_table_lookup = MessageAddressTableLookup {
             account_key: table_key,
@@ -882,13 +877,14 @@ mod tests {
         // Load accounts owned by various programs into AccountsDb
         let pubkey0 = solana_pubkey::new_rand();
         let account0 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
-        accounts.store_slow_uncached(0, &pubkey0, &account0);
+        accounts.store_for_tests(0, &pubkey0, &account0);
         let pubkey1 = solana_pubkey::new_rand();
         let account1 = AccountSharedData::new(1, 0, &Pubkey::from([2; 32]));
-        accounts.store_slow_uncached(0, &pubkey1, &account1);
+        accounts.store_for_tests(0, &pubkey1, &account1);
         let pubkey2 = solana_pubkey::new_rand();
         let account2 = AccountSharedData::new(1, 0, &Pubkey::from([3; 32]));
-        accounts.store_slow_uncached(0, &pubkey2, &account2);
+        accounts.store_for_tests(0, &pubkey2, &account2);
+        accounts.add_root_and_flush_write_cache(0);
 
         let loaded = accounts.load_by_program_slot(0, Some(&Pubkey::from([2; 32])));
         assert_eq!(loaded.len(), 2);

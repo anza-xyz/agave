@@ -867,23 +867,6 @@ impl AppendVec {
         }
     }
 
-    /// Returns the `IndexInfo` for the account at `offset`.
-    ///
-    /// Only intended to be used with the accounts index.
-    pub(crate) fn get_account_index_info(&self, offset: usize) -> Option<IndexInfo> {
-        self.get_stored_account_no_data_callback(offset, |account| IndexInfo {
-            stored_size_aligned: account.stored_size,
-            index_info: IndexInfoInner {
-                pubkey: *account.pubkey(),
-                lamports: account.lamports(),
-                offset: account.offset(),
-                data_len: account.data_len(),
-                executable: account.executable(),
-                rent_epoch: account.rent_epoch(),
-            },
-        })
-    }
-
     /// Return Ok(index_of_matching_owner) if the account owner at `offset` is one of the pubkeys in `owners`.
     /// Return Err(MatchAccountOwnerError::NoMatch) if the account has 0 lamports or the owner is not one of
     /// the pubkeys in `owners`.

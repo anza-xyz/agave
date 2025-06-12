@@ -7909,7 +7909,6 @@ dependencies = [
  "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",
- "solana-vortexor-receiver",
  "solana-vote",
  "solana-vote-program",
  "solana-wen-restart",
@@ -11631,15 +11630,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-vortexor-receiver"
-version = "3.0.0"
-dependencies = [
- "assert_matches",
- "solana-perf",
- "solana-streamer",
-]
-
-[[package]]
 name = "solana-vote"
 version = "3.0.0"
 dependencies = [
@@ -11780,6 +11770,7 @@ dependencies = [
 name = "solana-zk-elgamal-proof-program"
 version = "3.0.0"
 dependencies = [
+ "agave-feature-set",
  "bytemuck",
  "criterion",
  "curve25519-dalek 4.1.3",

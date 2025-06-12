@@ -30,7 +30,7 @@ use {
         bank_forks::BankForks,
         bank_hash_cache::{BankHashCache, DumpedSlotSubscription},
         commitment::VOTE_THRESHOLD_SIZE,
-        epoch_stakes::EpochStakes,
+        epoch_stakes::VersionedEpochStakes,
         root_bank_cache::RootBankCache,
         vote_sender_types::ReplayVoteReceiver,
     },
@@ -720,7 +720,7 @@ impl ClusterInfoVoteListener {
             .add_vote_pubkey(pubkey, stake, total_epoch_stake, &THRESHOLDS_TO_CHECK)
     }
 
-    fn sum_stake(sum: &mut u64, epoch_stakes: Option<&EpochStakes>, pubkey: &Pubkey) {
+    fn sum_stake(sum: &mut u64, epoch_stakes: Option<&VersionedEpochStakes>, pubkey: &Pubkey) {
         if let Some(stakes) = epoch_stakes {
             *sum += stakes.stakes().vote_accounts().get_delegated_stake(pubkey)
         }

@@ -7,7 +7,7 @@ use {
 use {
     crate::{
         bank::{Bank, BankSlotDelta},
-        epoch_stakes::EpochStakes,
+        epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{bank_from_streams, BankIncrementalSnapshotPersistence},
         snapshot_archive_info::{
@@ -860,7 +860,7 @@ fn verify_epoch_stakes(bank: &Bank) -> std::result::Result<(), VerifyEpochStakes
 /// This version of the function exists to facilitate testing.
 /// Normal callers should use `verify_epoch_stakes()`.
 fn _verify_epoch_stakes(
-    epoch_stakes_map: &HashMap<Epoch, EpochStakes>,
+    epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
     required_epochs: RangeInclusive<Epoch>,
 ) -> std::result::Result<(), VerifyEpochStakesError> {
     // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.

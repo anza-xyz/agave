@@ -678,7 +678,6 @@ impl AccountsBackgroundService {
                                     Some(max_clean_slot_inclusive),
                                     false,
                                     bank.epoch_schedule(),
-                                    bank.clean_accounts_old_storages_policy(),
                                 );
                                 last_cleaned_slot = max_clean_slot_inclusive;
                                 previous_clean_time = Instant::now();

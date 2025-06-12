@@ -10,7 +10,7 @@ use {
     solana_account::from_account,
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
+    solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     solana_sysvar::{self as sysvar, slot_hashes::SlotHashes},
     std::{cmp, sync::Arc},
 };
@@ -42,7 +42,7 @@ impl VoteBatchInsertionMetrics {
 pub struct VoteStorage {
     latest_vote_per_vote_pubkey: HashMap<Pubkey, LatestValidatorVotePacket>,
     num_unprocessed_votes: usize,
-    cached_epoch_stakes: EpochStakes,
+    cached_epoch_stakes: VersionedEpochStakes,
     deprecate_legacy_vote_ixs: bool,
     current_epoch: Epoch,
 }
@@ -68,7 +68,7 @@ impl VoteStorage {
             .iter()
             .map(|pubkey| (*pubkey, (1u64, VoteAccount::new_random())))
             .collect();
-        let epoch_stakes = EpochStakes::new_for_tests(vote_accounts, 0);
+        let epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts, 0);
 
         Self {
             latest_vote_per_vote_pubkey: HashMap::default(),
