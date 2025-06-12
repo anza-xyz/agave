@@ -3,7 +3,7 @@
 # shellcheck disable=SC2317
 cleanup() {
   ec=$?
-  docker container stop kellnr && docker container prune -f;
+  docker container stop kellnr || true && docker container prune -f;
   exit "$ec"
 }
 
@@ -38,8 +38,13 @@ is_crate_version_uploaded() {
 
 # Only package/publish if this is a tagged release
 [[ -n $CI_TAG ]] || {
+if $DRY_RUN; then
+  CI_TAG=$(grep '^version = "' Cargo.toml | cut -d "=" -f2 | xargs)
+  echo "$CI_TAG"
+else
   echo CI_TAG unset, skipped
   exit 0
+fi
 }
 
 semverParseInto "$CI_TAG" MAJOR MINOR PATCH SPECIAL
@@ -68,7 +73,7 @@ fi
 for Cargo_toml in $Cargo_tomls; do
   echo "--- $Cargo_toml"
 
-  # check the version which doesn't inherit from worksapce
+  # check the version which doesn't inherit from workspace
   if ! grep -q "^version = { workspace = true }$" "$Cargo_toml"; then
     echo "Warn: $Cargo_toml doesn't use the inherited version"
     grep -q "^version = \"$expectedCrateVersion\"$" "$Cargo_toml" || {
