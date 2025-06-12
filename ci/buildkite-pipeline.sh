@@ -198,13 +198,14 @@ all_test_steps() {
               ^ci/publish-crate.sh \
       ; then
     cat >> "$output_file" <<"EOF"
-   - command: "ci/publish-crate.sh --dry-run"
-     name: "publish-crate-simulation"
-     timeout_in_minutes: 20
-     env:
+  - command: "ci/publish-crate.sh --dry-run"
+    name: "publish-crate-simulation"
+    timeout_in_minutes: 20
+    artifact_paths: "log-*.txt"
+    env:
       CRATE_PUBLISH_TEST: "true"
-     agents:
-       queue: "check"
+    agents:
+      queue: "check"
 EOF
   fi
 
