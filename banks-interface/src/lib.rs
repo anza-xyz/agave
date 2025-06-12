@@ -38,6 +38,7 @@ pub struct TransactionStatus {
 pub struct TransactionSimulationDetails {
     pub logs: Vec<String>,
     pub units_consumed: u64,
+    pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }

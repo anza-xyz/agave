@@ -8,6 +8,7 @@ use {
 };
 
 #[derive(ThisError, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ErrorKind {
     #[error(transparent)]
     Io(#[from] io::Error),

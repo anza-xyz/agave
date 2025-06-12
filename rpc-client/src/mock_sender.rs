@@ -352,6 +352,7 @@ impl RpcSender for MockSender {
                     logs: None,
                     accounts: None,
                     units_consumed: None,
+                    loaded_accounts_data_size: None,
                     return_data: None,
                     inner_instructions: None,
                     replacement_blockhash: None

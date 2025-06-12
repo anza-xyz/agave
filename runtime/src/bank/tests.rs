@@ -13098,6 +13098,8 @@ fn test_failed_simulation_compute_units() {
     const TEST_UNITS: u64 = 10_000;
     const MOCK_BUILTIN_UNITS: u64 = 1;
     let expected_consumed_units = TEST_UNITS + MOCK_BUILTIN_UNITS;
+    let expected_loaded_program_account_data_size =
+        bank.get_account(&program_id).unwrap().data().len() as u32;
     declare_process_instruction!(MockBuiltin, MOCK_BUILTIN_UNITS, |invoke_context| {
         invoke_context.consume_checked(TEST_UNITS).unwrap();
         Err(InstructionError::InvalidInstructionData)
@@ -13113,6 +13115,10 @@ fn test_failed_simulation_compute_units() {
     let sanitized = RuntimeTransaction::from_transaction_for_tests(transaction);
     let simulation = bank.simulate_transaction(&sanitized, false);
     assert_eq!(expected_consumed_units, simulation.units_consumed);
+    assert_eq!(
+        expected_loaded_program_account_data_size,
+        simulation.loaded_accounts_data_size
+    );
 }
 
 /// Test that simulations report the load error of fees-only transactions
@@ -13142,6 +13148,7 @@ fn test_failed_simulation_load_error() {
             logs: vec![],
             post_simulation_accounts: vec![],
             units_consumed: 0,
+            loaded_accounts_data_size: 0,
             return_data: None,
             inner_instructions: None,
         }
