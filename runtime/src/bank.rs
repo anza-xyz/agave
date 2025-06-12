@@ -5238,18 +5238,6 @@ impl Bank {
         self.signature_count.fetch_add(signature_count, Relaxed);
     }
 
-    pub fn get_signature_status_processed_since_parent(
-        &self,
-        signature: &Signature,
-    ) -> Option<Result<()>> {
-        if let Some((slot, status)) = self.get_signature_status_slot(signature) {
-            if slot <= self.slot() {
-                return Some(status);
-            }
-        }
-        None
-    }
-
     pub fn get_signature_status_with_blockhash(
         &self,
         signature: &Signature,
