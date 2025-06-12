@@ -29,6 +29,10 @@ if [[ $1 = --dry-run ]]; then
   shift
 fi
 
+if $DRY_RUN; then
+  cp ci/cargo/config.toml .cargo/config.toml
+fi
+
 # shellcheck disable=SC2086
 is_crate_version_uploaded() {
   name=$1
@@ -66,6 +70,10 @@ for cargo_toml in "${workspace_cargo_tomls[@]}"; do
 done
 
 Cargo_tomls=$(ci/order-crates-for-publishing.py)
+
+if $DRY_RUN; then
+  docker run --name kellnr -d ghcr.io/kellnr/kellnr:5
+fi
 
 for Cargo_toml in $Cargo_tomls; do
   echo "--- $Cargo_toml"
