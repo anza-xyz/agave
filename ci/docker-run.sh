@@ -97,7 +97,6 @@ fi
 if [[ -n "$CRATE_PUBLISH_TEST" ]]; then
   ARGS+=(
     --network container:kellnr
-    -v "$PWD/ci/cargo/config.toml:/usr/local/cargo/config.toml"
   )
 fi
 

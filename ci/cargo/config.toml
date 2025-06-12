@@ -1,4 +1,0 @@
-[registries.kellnr]
-index = "sparse+http://127.0.0.1:8000/api/v1/crates/"
-credential-provider = ["cargo:token"]
-token = "Zy9HhJ02RJmg0GCrgLfaCVfU6IwDfhXD"
