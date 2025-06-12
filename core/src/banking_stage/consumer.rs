@@ -833,8 +833,8 @@ mod tests {
                     if let Ok(record) = record {
                         let record_response = poh_recorder.write().unwrap().record(
                             record.slot,
-                            record.mixin,
-                            record.transactions,
+                            record.mixins,
+                            record.transaction_batches,
                         );
                         poh_recorder.write().unwrap().tick();
                         if record.sender.send(record_response).is_err() {

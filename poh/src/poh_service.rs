@@ -197,8 +197,8 @@ impl PohService {
                 .sender
                 .send(poh_recorder.write().unwrap().record(
                     record.slot,
-                    record.mixin,
-                    record.transactions,
+                    record.mixins,
+                    record.transaction_batches,
                 ))
                 .is_err()
             {
@@ -260,8 +260,8 @@ impl PohService {
                 loop {
                     let res = poh_recorder_l.record(
                         record.slot,
-                        record.mixin,
-                        std::mem::take(&mut record.transactions),
+                        record.mixins,
+                        std::mem::take(&mut record.transaction_batches),
                     );
                     let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
                     debug_assert!(send_res.is_ok(), "Record wasn't sent.");
@@ -464,11 +464,11 @@ mod tests {
                     loop {
                         // send some data
                         let mut time = Measure::start("record");
-                        let res =
-                            poh_recorder
-                                .write()
-                                .unwrap()
-                                .record(bank.slot(), h1, vec![tx.clone()]);
+                        let res = poh_recorder.write().unwrap().record(
+                            bank.slot(),
+                            vec![h1],
+                            vec![vec![tx.clone()]],
+                        );
                         if let Err(MaxHeightReached) = res {
                             // Advance to the next slot.
                             poh_recorder
