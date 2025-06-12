@@ -1722,15 +1722,16 @@ mod tests {
         }
     }
 
-    fn create_app_and_get_matches<'a>(
+    fn verify_args_struct_by_command<'a>(
         default_args: &'a DefaultArgs,
         args: Vec<&str>,
-    ) -> ArgMatches<'a> {
-        let app_name = "run_command";
-        let app = App::new(app_name);
-        let app = add_args(app, default_args);
-        let args = [&[app_name], &args[..]].concat();
-        app.get_matches_from(args)
+        expected_args: RunArgs,
+    ) {
+        crate::commands::tests::verify_args_struct_by_command::<RunArgs>(
+            add_args(App::new("run_command"), default_args),
+            [&["run_command"], &args[..]].concat(),
+            expected_args,
+        );
     }
 
     #[test]
@@ -1751,20 +1752,20 @@ mod tests {
 
         // short arg
         {
-            let matches =
-                create_app_and_get_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
-            let args = RunArgs::from_clap_arg_match(&matches).unwrap();
-            assert_eq!(args, expected_args);
+            verify_args_struct_by_command(
+                &default_args,
+                vec!["-i", file.to_str().unwrap()],
+                expected_args.clone(),
+            );
         }
 
         // long arg
         {
-            let matches = create_app_and_get_matches(
+            verify_args_struct_by_command(
                 &default_args,
                 vec!["--identity", file.to_str().unwrap()],
+                expected_args.clone(),
             );
-            let args = RunArgs::from_clap_arg_match(&matches).unwrap();
-            assert_eq!(args, expected_args);
         }
     }
 
@@ -1782,9 +1783,7 @@ mod tests {
         solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
-        let matches = create_app_and_get_matches(&default_args, args);
-        let args = RunArgs::from_clap_arg_match(&matches).unwrap();
-        assert_eq!(args, expected_args);
+        verify_args_struct_by_command(&default_args, args, expected_args);
     }
 
     #[test]
