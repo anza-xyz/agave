@@ -19,12 +19,13 @@ use {
         banking_trace::DirByteLimit,
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
+    solana_keypair::Keypair,
     solana_ledger::use_snapshot_archives_at_startup,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
-    solana_sdk::signature::{Keypair, Signer},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
+    solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     std::str::FromStr,
 };
@@ -1734,7 +1735,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
         let keypair = default_run_args.identity.insecure_clone();
-        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let matches = get_run_command_matches(&default_args, vec!["-i", file.to_str().unwrap()]);
         let args = RunArgs::from_clap_arg_match(&matches).unwrap();
@@ -1756,7 +1757,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
         let keypair = default_run_args.identity.insecure_clone();
-        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let matches =
             get_run_command_matches(&default_args, vec!["--identity", file.to_str().unwrap()]);
@@ -1781,7 +1782,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().unwrap();
         let file = tmp_dir.path().join("id.json");
         let keypair = default_run_args.identity.insecure_clone();
-        solana_sdk::signature::write_keypair_file(&keypair, &file).unwrap();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
 
         let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
         let matches = get_run_command_matches(&default_args, args);
