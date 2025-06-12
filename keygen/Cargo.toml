@@ -17,7 +17,7 @@ name = "solana-keygen"
 path = "src/keygen.rs"
 
 [dependencies]
-bs58 = { workspace = true }
+bs58 = { workspace = true, features = ["alloc"] }
 clap = { version = "3.1.5", features = ["cargo"] }
 dirs-next = { workspace = true }
 num_cpus = { workspace = true }
@@ -26,7 +26,7 @@ solana-clap-v3-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-derivation-path = "=2.2.1"
 solana-instruction = { version = "=2.3.0", features = ["bincode"] }
-solana-keypair = "=2.2.1"
+solana-keypair = "=2.2.3"
 solana-message = { version = "=2.4.0", features = ["bincode"] }
 solana-pubkey = { version = "=2.4.0", default-features = false }
 solana-remote-wallet = { workspace = true, features = ["default"] }

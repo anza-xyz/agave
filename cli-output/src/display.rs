@@ -740,7 +740,7 @@ mod test {
         let secret = ed25519_dalek::SecretKey::from_bytes(&[0u8; 32]).unwrap();
         let public = ed25519_dalek::PublicKey::from(&secret);
         let keypair = ed25519_dalek::Keypair { secret, public };
-        Keypair::from_bytes(&keypair.to_bytes()).unwrap()
+        Keypair::try_from(&keypair.to_bytes()[..]).unwrap()
     }
 
     fn new_test_v0_transaction() -> VersionedTransaction {

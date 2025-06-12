@@ -34,7 +34,7 @@ where
             .into_iter()
             .for_each(|(keypair, primordial_account)| {
                 let bytes: Vec<u8> = serde_json::from_str(keypair.as_str()).unwrap();
-                keypairs.push(Keypair::from_bytes(&bytes).unwrap());
+                keypairs.push(Keypair::try_from(&bytes[..]).unwrap());
                 last_balance = primordial_account.balance;
             });
 

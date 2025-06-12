@@ -35,7 +35,7 @@ solana-clap-utils = { workspace = true }
 solana-config-interface = "=1.0.0"
 solana-config-program-client = { version = "=1.1.0", features = ["serde"] }
 solana-hash = "=2.3.0"
-solana-keypair = "=2.2.1"
+solana-keypair = "=2.2.3"
 solana-logger = "=2.3.1"
 solana-message = "=2.4.0"
 solana-pubkey = { version = "=2.4.0", default-features = false }

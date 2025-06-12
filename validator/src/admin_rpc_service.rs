@@ -463,7 +463,7 @@ impl AdminRpc for AdminRpcImpl {
     ) -> Result<()> {
         debug!("add_authorized_voter_from_bytes request received");
 
-        let authorized_voter = Keypair::from_bytes(&keypair).map_err(|err| {
+        let authorized_voter = Keypair::try_from(&keypair[..]).map_err(|err| {
             jsonrpc_core::error::Error::invalid_params(format!(
                 "Failed to read authorized voter keypair from provided byte array: {err}"
             ))
@@ -503,7 +503,7 @@ impl AdminRpc for AdminRpcImpl {
     ) -> Result<()> {
         debug!("set_identity_from_bytes request received");
 
-        let identity_keypair = Keypair::from_bytes(&identity_keypair).map_err(|err| {
+        let identity_keypair = Keypair::try_from(&identity_keypair[..]).map_err(|err| {
             jsonrpc_core::error::Error::invalid_params(format!(
                 "Failed to read identity keypair from provided byte array: {err}"
             ))

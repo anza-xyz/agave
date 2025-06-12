@@ -391,7 +391,7 @@ fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [P
 fn sign_shreds_gpu_pinned_keypair(keypair: &Keypair, cache: &RecyclerCache) -> PinnedVec<u8> {
     let mut vec = cache.buffer().allocate("pinned_keypair");
     let pubkey = keypair.pubkey().to_bytes();
-    let secret = keypair.secret().to_bytes();
+    let secret = keypair.secret_bytes();
     let mut hasher = Sha512::default();
     hasher.update(secret);
     let mut result = hasher.finalize();

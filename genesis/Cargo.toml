@@ -40,7 +40,7 @@ solana-feature-gate-interface = "=2.2.2"
 solana-fee-calculator = "=2.2.1"
 solana-genesis-config = "=2.3.0"
 solana-inflation = "=2.2.1"
-solana-keypair = "=2.2.1"
+solana-keypair = "=2.2.3"
 solana-ledger = { workspace = true }
 solana-loader-v3-interface = "5.0.0"
 solana-logger = "=2.3.1"

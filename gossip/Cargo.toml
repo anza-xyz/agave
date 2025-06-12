@@ -66,7 +66,7 @@ solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [
     "frozen-abi",
 ] }
 solana-hash = "=2.3.0"
-solana-keypair = "=2.2.1"
+solana-keypair = "=2.2.3"
 solana-ledger = { workspace = true }
 solana-logger = "=2.3.1"
 solana-measure = { workspace = true }

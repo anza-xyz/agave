@@ -65,7 +65,7 @@ fn pubkey_from_str(key_str: &str) -> Result<Pubkey, Box<dyn error::Error>> {
     Pubkey::from_str(key_str).or_else(|_| {
         let bytes: Vec<u8> = serde_json::from_str(key_str)?;
         let keypair =
-            Keypair::from_bytes(&bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+            Keypair::try_from(&bytes[..]).map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(keypair.pubkey())
     })
 }

@@ -31,7 +31,7 @@ pub fn new_dummy_x509_certificate(
     ];
 
     let key_pkcs8_der = {
-        let keypair_secret_bytes = keypair.secret().as_bytes();
+        let keypair_secret_bytes = keypair.secret_bytes();
         let keypair_secret_len = keypair_secret_bytes.len();
         if keypair_secret_len != 32 {
             panic!("Unexpected secret key length!");

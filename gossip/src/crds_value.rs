@@ -371,7 +371,7 @@ mod test {
         );
         let values: Vec<CrdsValue> = vec![
             {
-                let keypair = Keypair::generate(&mut rng);
+                let keypair = Keypair::new();
                 let lockouts: [Lockout; 4] = [
                     Lockout::new_with_confirmation_count(302_388_991, 11),
                     Lockout::new_with_confirmation_count(302_388_995, 7),
@@ -389,8 +389,8 @@ mod test {
                     tower_sync,
                     Hash::new_from_array(rng.gen()), // blockhash
                     &keypair,                        // node_keypair
-                    &Keypair::generate(&mut rng),    // vote_keypair
-                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
+                    &Keypair::new(),                 // vote_keypair
+                    &Keypair::new(),                 // authorized_voter_keypair
                     None,                            // switch_proof_hash
                 );
                 let vote = Vote::new(
@@ -402,7 +402,7 @@ mod test {
                 CrdsValue::new(CrdsData::Vote(5, vote), &keypair)
             },
             {
-                let keypair = Keypair::generate(&mut rng);
+                let keypair = Keypair::new();
                 let lockouts: [Lockout; 3] = [
                     Lockout::new_with_confirmation_count(302_410_500, 9),
                     Lockout::new_with_confirmation_count(302_410_505, 5),
@@ -419,8 +419,8 @@ mod test {
                     tower_sync,
                     Hash::new_from_array(rng.gen()), // blockhash
                     &keypair,                        // node_keypair
-                    &Keypair::generate(&mut rng),    // vote_keypair
-                    &Keypair::generate(&mut rng),    // authorized_voter_keypair
+                    &Keypair::new(),                 // vote_keypair
+                    &Keypair::new(),                 // authorized_voter_keypair
                     None,                            // switch_proof_hash
                 );
                 let vote = Vote::new(
