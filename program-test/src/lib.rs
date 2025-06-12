@@ -365,7 +365,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
 
             // Resize account_info data
             if account_info.data_len() != new_len {
-                account_info.realloc(new_len, true)?;
+                account_info.resize(new_len)?;
             }
 
             // Clone the data
