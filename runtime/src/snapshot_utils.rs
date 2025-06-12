@@ -16,9 +16,7 @@ use {
             RebuiltSnapshotStorage, SnapshotStorageRebuilder,
         },
     },
-    bzip2::read::BzDecoder,
     crossbeam_channel::Sender,
-    flate2::read::GzDecoder,
     log::*,
     regex::Regex,
     solana_accounts_db::{
@@ -83,8 +81,9 @@ pub const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
     NonZeroUsize::new(2).unwrap();
 pub const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
     NonZeroUsize::new(4).unwrap();
-pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz|tar\.lz4)$";
-pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar|tar\.bz2|tar\.zst|tar\.gz|tar\.lz4)$";
+pub const FULL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str =
+    r"^snapshot-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar\.zst|tar\.lz4)$";
+pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-snapshot-(?P<base>[[:digit:]]+)-(?P<slot>[[:digit:]]+)-(?P<hash>[[:alnum:]]+)\.(?P<ext>tar\.zst|tar\.lz4)$";
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
@@ -1152,7 +1151,6 @@ fn archive_snapshot(
                 let (_output, result) = encoder.finish();
                 result.map_err(E::FinishEncoder)?;
             }
-            _ => panic!("archiving snapshot with '{archive_format}' is not supported"),
         };
     }
 
@@ -2315,13 +2313,10 @@ fn untar_snapshot_create_shared_buffer(
     };
     // Apply buffered reader for decoders that do not buffer internally.
     match archive_format {
-        ArchiveFormat::TarBzip2 => SharedBuffer::new(BzDecoder::new(open_file())),
-        ArchiveFormat::TarGzip => SharedBuffer::new(GzDecoder::new(open_file())),
         ArchiveFormat::TarZstd { .. } => {
             SharedBuffer::new(zstd::stream::read::Decoder::new(open_file()).unwrap())
         }
         ArchiveFormat::TarLz4 => SharedBuffer::new(lz4::Decoder::new(open_file()).unwrap()),
-        ArchiveFormat::Tar => SharedBuffer::new(BufReader::new(open_file())),
     }
 }
 
@@ -2771,14 +2766,6 @@ mod tests {
     fn test_parse_full_snapshot_archive_filename() {
         assert_eq!(
             parse_full_snapshot_archive_filename(&format!(
-                "snapshot-42-{}.tar.bz2",
-                Hash::default()
-            ))
-            .unwrap(),
-            (42, SnapshotHash(Hash::default()), ArchiveFormat::TarBzip2)
-        );
-        assert_eq!(
-            parse_full_snapshot_archive_filename(&format!(
                 "snapshot-43-{}.tar.zst",
                 Hash::default()
             ))
@@ -2790,11 +2777,6 @@ mod tests {
                     config: ZstdConfig::default(),
                 }
             )
-        );
-        assert_eq!(
-            parse_full_snapshot_archive_filename(&format!("snapshot-44-{}.tar", Hash::default()))
-                .unwrap(),
-            (44, SnapshotHash(Hash::default()), ArchiveFormat::Tar)
         );
         assert_eq!(
             parse_full_snapshot_archive_filename(&format!(
@@ -2818,7 +2800,9 @@ mod tests {
             Hash::new_unique()
         ))
         .is_err());
-        assert!(parse_full_snapshot_archive_filename("snapshot-12345678-bad!hash.tar").is_err());
+        assert!(
+            parse_full_snapshot_archive_filename("snapshot-12345678-bad!hash.tar.zst").is_err()
+        );
 
         assert!(parse_full_snapshot_archive_filename(&format!(
             "snapshot-bad!slot-{}.bad!ext",
@@ -2831,15 +2815,19 @@ mod tests {
         ))
         .is_err());
         assert!(parse_full_snapshot_archive_filename(&format!(
-            "snapshot-bad!slot-{}.tar",
+            "snapshot-bad!slot-{}.tar.zst",
             Hash::new_unique()
         ))
         .is_err());
 
-        assert!(parse_full_snapshot_archive_filename("snapshot-bad!slot-bad!hash.tar").is_err());
-        assert!(parse_full_snapshot_archive_filename("snapshot-12345678-bad!hash.tar").is_err());
+        assert!(
+            parse_full_snapshot_archive_filename("snapshot-bad!slot-bad!hash.tar.zst").is_err()
+        );
+        assert!(
+            parse_full_snapshot_archive_filename("snapshot-12345678-bad!hash.tar.zst").is_err()
+        );
         assert!(parse_full_snapshot_archive_filename(&format!(
-            "snapshot-bad!slot-{}.tar",
+            "snapshot-bad!slot-{}.tar.zst",
             Hash::new_unique()
         ))
         .is_err());
@@ -2847,19 +2835,6 @@ mod tests {
 
     #[test]
     fn test_parse_incremental_snapshot_archive_filename() {
-        assert_eq!(
-            parse_incremental_snapshot_archive_filename(&format!(
-                "incremental-snapshot-42-123-{}.tar.bz2",
-                Hash::default()
-            ))
-            .unwrap(),
-            (
-                42,
-                123,
-                SnapshotHash(Hash::default()),
-                ArchiveFormat::TarBzip2
-            )
-        );
         assert_eq!(
             parse_incremental_snapshot_archive_filename(&format!(
                 "incremental-snapshot-43-234-{}.tar.zst",
@@ -2877,14 +2852,6 @@ mod tests {
         );
         assert_eq!(
             parse_incremental_snapshot_archive_filename(&format!(
-                "incremental-snapshot-44-345-{}.tar",
-                Hash::default()
-            ))
-            .unwrap(),
-            (44, 345, SnapshotHash(Hash::default()), ArchiveFormat::Tar)
-        );
-        assert_eq!(
-            parse_incremental_snapshot_archive_filename(&format!(
                 "incremental-snapshot-45-456-{}.tar.lz4",
                 Hash::default()
             ))
@@ -2899,7 +2866,7 @@ mod tests {
 
         assert!(parse_incremental_snapshot_archive_filename("invalid").is_err());
         assert!(parse_incremental_snapshot_archive_filename(&format!(
-            "snapshot-42-{}.tar",
+            "snapshot-42-{}.tar.zst",
             Hash::new_unique()
         ))
         .is_err());
@@ -2909,19 +2876,19 @@ mod tests {
         .is_err());
 
         assert!(parse_incremental_snapshot_archive_filename(&format!(
-            "incremental-snapshot-bad!slot-56785678-{}.tar",
+            "incremental-snapshot-bad!slot-56785678-{}.tar.zst",
             Hash::new_unique()
         ))
         .is_err());
 
         assert!(parse_incremental_snapshot_archive_filename(&format!(
-            "incremental-snapshot-12345678-bad!slot-{}.tar",
+            "incremental-snapshot-12345678-bad!slot-{}.tar.zst",
             Hash::new_unique()
         ))
         .is_err());
 
         assert!(parse_incremental_snapshot_archive_filename(
-            "incremental-snapshot-12341234-56785678-bad!HASH.tar"
+            "incremental-snapshot-12341234-56785678-bad!HASH.tar.zst"
         )
         .is_err());
 
@@ -2939,7 +2906,7 @@ mod tests {
         let slot3: Slot = 999_999;
 
         let full_snapshot_archive_info = FullSnapshotArchiveInfo::new_from_path(PathBuf::from(
-            format!("/dir/snapshot-{}-{}.tar", slot1, Hash::new_unique()),
+            format!("/dir/snapshot-{}-{}.tar.zst", slot1, Hash::new_unique()),
         ))
         .unwrap();
 
@@ -2947,7 +2914,7 @@ mod tests {
 
         let incremental_snapshot_archive_info =
             IncrementalSnapshotArchiveInfo::new_from_path(PathBuf::from(format!(
-                "/dir/incremental-snapshot-{}-{}-{}.tar",
+                "/dir/incremental-snapshot-{}-{}-{}.tar.zst",
                 slot1,
                 slot2,
                 Hash::new_unique()
@@ -2962,7 +2929,7 @@ mod tests {
 
         let incremental_snapshot_archive_info =
             IncrementalSnapshotArchiveInfo::new_from_path(PathBuf::from(format!(
-                "/dir/incremental-snapshot-{}-{}-{}.tar",
+                "/dir/incremental-snapshot-{}-{}-{}.tar.zst",
                 slot2,
                 slot3,
                 Hash::new_unique()
@@ -3044,7 +3011,7 @@ mod tests {
                 min_incremental_snapshot_slot..max_incremental_snapshot_slot
             {
                 let snapshot_filename = format!(
-                    "incremental-snapshot-{}-{}-{}.tar",
+                    "incremental-snapshot-{}-{}-{}.tar.zst",
                     full_snapshot_slot,
                     incremental_snapshot_slot,
                     Hash::default()
@@ -3053,14 +3020,17 @@ mod tests {
                 fs::File::create(snapshot_filepath).unwrap();
             }
 
-            let snapshot_filename =
-                format!("snapshot-{}-{}.tar", full_snapshot_slot, Hash::default());
+            let snapshot_filename = format!(
+                "snapshot-{}-{}.tar.zst",
+                full_snapshot_slot,
+                Hash::default()
+            );
             let snapshot_filepath = full_snapshot_archives_dir.join(snapshot_filename);
             fs::File::create(snapshot_filepath).unwrap();
 
             // Add in an incremental snapshot with a bad filename and high slot to ensure filename are filtered and sorted correctly
             let bad_filename = format!(
-                "incremental-snapshot-{}-{}-bad!hash.tar",
+                "incremental-snapshot-{}-{}-bad!hash.tar.zst",
                 full_snapshot_slot,
                 max_incremental_snapshot_slot + 1,
             );
@@ -3070,7 +3040,7 @@ mod tests {
 
         // Add in a snapshot with a bad filename and high slot to ensure filename are filtered and
         // sorted correctly
-        let bad_filename = format!("snapshot-{}-bad!hash.tar", max_full_snapshot_slot + 1);
+        let bad_filename = format!("snapshot-{}-bad!hash.tar.zst", max_full_snapshot_slot + 1);
         let bad_filepath = full_snapshot_archives_dir.join(bad_filename);
         fs::File::create(bad_filepath).unwrap();
     }
@@ -3322,7 +3292,7 @@ mod tests {
 
         for slot in (starting_slot..).take(100) {
             let full_snapshot_archive_file_name =
-                format!("snapshot-{}-{}.tar", slot, Hash::default());
+                format!("snapshot-{}-{}.tar.zst", slot, Hash::default());
             let full_snapshot_archive_path = full_snapshot_archives_dir
                 .as_ref()
                 .join(full_snapshot_archive_file_name);
@@ -3384,8 +3354,11 @@ mod tests {
                     .get(),
             )
             .for_each(|full_snapshot_slot| {
-                let snapshot_filename =
-                    format!("snapshot-{}-{}.tar", full_snapshot_slot, Hash::default());
+                let snapshot_filename = format!(
+                    "snapshot-{}-{}.tar.zst",
+                    full_snapshot_slot,
+                    Hash::default()
+                );
                 let snapshot_path = full_snapshot_archives_dir.path().join(&snapshot_filename);
                 fs::File::create(snapshot_path).unwrap();
                 snapshot_filenames.push(snapshot_filename);
@@ -3396,7 +3369,7 @@ mod tests {
                     .skip(1)
                     .for_each(|incremental_snapshot_slot| {
                         let snapshot_filename = format!(
-                            "incremental-snapshot-{}-{}-{}.tar",
+                            "incremental-snapshot-{}-{}-{}.tar.zst",
                             full_snapshot_slot,
                             incremental_snapshot_slot,
                             Hash::default()
@@ -3495,14 +3468,14 @@ mod tests {
         let incremental_snapshot_archives_dir = tempfile::TempDir::new().unwrap();
 
         for snapshot_filenames in [
-            format!("incremental-snapshot-100-120-{}.tar", Hash::default()),
-            format!("incremental-snapshot-100-140-{}.tar", Hash::default()),
-            format!("incremental-snapshot-100-160-{}.tar", Hash::default()),
-            format!("incremental-snapshot-100-180-{}.tar", Hash::default()),
-            format!("incremental-snapshot-200-220-{}.tar", Hash::default()),
-            format!("incremental-snapshot-200-240-{}.tar", Hash::default()),
-            format!("incremental-snapshot-200-260-{}.tar", Hash::default()),
-            format!("incremental-snapshot-200-280-{}.tar", Hash::default()),
+            format!("incremental-snapshot-100-120-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-100-140-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-100-160-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-100-180-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-200-220-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-200-240-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-200-260-{}.tar.zst", Hash::default()),
+            format!("incremental-snapshot-200-280-{}.tar.zst", Hash::default()),
         ] {
             let snapshot_path = incremental_snapshot_archives_dir
                 .path()

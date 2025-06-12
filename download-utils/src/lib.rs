@@ -71,10 +71,7 @@ pub fn download_snapshot_archive(
         ArchiveFormat::TarZstd {
             config: ZstdConfig::default(),
         },
-        ArchiveFormat::TarGzip,
-        ArchiveFormat::TarBzip2,
         ArchiveFormat::TarLz4,
-        ArchiveFormat::Tar,
     ] {
         let destination_path = match snapshot_kind {
             SnapshotKind::FullSnapshot => snapshot_utils::build_full_snapshot_archive_path(

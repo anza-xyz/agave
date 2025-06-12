@@ -15,6 +15,10 @@ Release channels have their own copy of this changelog:
 <a name="edge-channel"></a>
 ## 3.0.0 - Unreleased
 
+### Validator
+
+#### Changes
+* Deprecated snapshot archive formats have been removed and are no longer loadable.
 
 ## 2.3.0
 
