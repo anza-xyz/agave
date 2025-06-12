@@ -6147,7 +6147,6 @@ dependencies = [
  "solana-unified-scheduler-pool",
  "solana-validator-exit",
  "solana-version",
- "solana-vortexor-receiver",
  "solana-vote",
  "solana-vote-program",
  "solana-wen-restart",
@@ -9688,14 +9687,6 @@ dependencies = [
  "serde_derive",
  "solana-sanitize",
  "solana-serde-varint",
-]
-
-[[package]]
-name = "solana-vortexor-receiver"
-version = "3.0.0"
-dependencies = [
- "solana-perf",
- "solana-streamer",
 ]
 
 [[package]]
