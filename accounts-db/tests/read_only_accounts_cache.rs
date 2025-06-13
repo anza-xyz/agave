@@ -55,6 +55,7 @@ fn test_read_only_accounts_cache_eviction(num_accounts: (usize, usize), evict_sa
     let mut evicted = vec![];
     for _ in 0..1000 {
         cache.evict_in_foreground(evict_sample_size, &mut rng, |pubkey, entry| {
+            let entry = entry.unwrap();
             evicts = evicts.saturating_add(1);
             if newer_half.contains(pubkey) {
                 evicts_from_newer_half = evicts_from_newer_half.saturating_add(1);
