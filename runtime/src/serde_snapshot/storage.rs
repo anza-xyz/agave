@@ -33,7 +33,7 @@ impl SerializableAccountStorageEntry {
     }
 }
 
-pub(super) trait SerializableStorage {
+pub(crate) trait SerializableStorage {
     fn id(&self) -> SerializedAccountsFileId;
     fn current_len(&self) -> usize;
 }

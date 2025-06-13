@@ -5,7 +5,6 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
-        serde_snapshot::storage::SerializableAccountStorageEntry,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stake_account::StakeAccount,
         stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
@@ -64,7 +63,7 @@ pub(crate) use {
     solana_accounts_db::accounts_hash::{
         SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
     },
-    storage::SerializedAccountsFileId,
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -316,11 +315,21 @@ pub struct SnapshotAccountsDbFields<T> {
 }
 
 impl<T> SnapshotAccountsDbFields<T> {
+    pub fn new(
+        full_snapshot_accounts_db_fields: AccountsDbFields<T>,
+        incremental_snapshot_accounts_db_fields: Option<AccountsDbFields<T>>,
+    ) -> Self {
+        Self {
+            full_snapshot_accounts_db_fields,
+            incremental_snapshot_accounts_db_fields,
+        }
+    }
+
     /// Collapse the SnapshotAccountsDbFields into a single AccountsDbFields.  If there is no
     /// incremental snapshot, this returns the AccountsDbFields from the full snapshot.
     /// Otherwise, use the AccountsDbFields from the incremental snapshot, and a combination
     /// of the storages from both the full and incremental snapshots.
-    fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
+    pub fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
         match self.incremental_snapshot_accounts_db_fields {
             None => Ok(self.full_snapshot_accounts_db_fields),
             Some(AccountsDbFields(
@@ -834,14 +843,8 @@ impl Serialize for SerializableAccountsDb<'_> {
 #[cfg(feature = "frozen-abi")]
 impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'_> {}
 
-/// This struct contains side-info while reconstructing the bank from fields
-#[derive(Debug)]
-struct ReconstructedBankInfo {
-    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
-}
-
 #[allow(clippy::too_many_arguments)]
-fn reconstruct_bank_from_fields<E>(
+pub(crate) fn reconstruct_bank_from_fields<E>(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     genesis_config: &GenesisConfig,
@@ -855,7 +858,7 @@ fn reconstruct_bank_from_fields<E>(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Bank, ReconstructedBankInfo), Error>
+) -> Result<(Bank, BankFromStreamsInfo), Error>
 where
     E: SerializableStorage + std::marker::Sync,
 {
@@ -903,7 +906,7 @@ where
     info!("rent_collector: {:?}", bank.rent_collector());
     Ok((
         bank,
-        ReconstructedBankInfo {
+        BankFromStreamsInfo {
             duplicates_lt_hash: reconstructed_accounts_db_info.duplicates_lt_hash,
         },
     ))
