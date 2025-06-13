@@ -3858,13 +3858,12 @@ impl Bank {
                 let processing_result = processing_result?;
                 let executed_units = processing_result.executed_units();
                 let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
-
                 match processing_result {
                     ProcessedTransaction::Executed(executed_tx) => {
                         let execution_details = executed_tx.execution_details;
                         let LoadedTransaction {
                             rent_debits,
-                            accounts: loaded_accounts,
+                            accounts: mut loaded_accounts,
                             fee_details,
                             ..
                         } = executed_tx.loaded_transaction;
@@ -3889,6 +3888,12 @@ impl Bank {
                                 loaded_accounts_data_size,
                             },
                             post_accounts_states: if is_geyser_present {
+                                //Mutate zero lamports accounts to default state to be in line with current Geyser Account Notification implementation
+                                loaded_accounts.iter_mut().for_each(|(_, acc)| {
+                                    if acc.lamports() == 0 {
+                                        *acc = AccountSharedData::default()
+                                    }
+                                });
                                 Some(loaded_accounts)
                             } else {
                                 None
