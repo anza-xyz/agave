@@ -7124,7 +7124,7 @@ impl AccountsDb {
         let len = std::cmp::min(accounts.len(), infos.len());
 
         let update = |start, end| {
-            let mut reclaims = Vec::with_capacity((end - start) / 2);
+            let mut reclaims = Vec::new();
 
             (start..end).for_each(|i| {
                 let info = infos[i];
