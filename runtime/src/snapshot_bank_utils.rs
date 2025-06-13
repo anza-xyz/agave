@@ -37,7 +37,7 @@ use {
         },
         accounts_hash::MerkleOrLatticeAccountsHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::delete_contents_of_path,
+        utils::remove_dir_contents,
     },
     solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot},
@@ -384,7 +384,7 @@ pub fn bank_from_snapshot_dir(
     // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
     // files will be extracted from the snapshot hardlink directories into these run/ directories.
     for path in account_paths {
-        delete_contents_of_path(path);
+        remove_dir_contents(path);
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));

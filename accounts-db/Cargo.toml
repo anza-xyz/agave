@@ -33,6 +33,7 @@ rayon = { workspace = true }
 seqlock = { workspace = true }
 serde = { workspace = true, features = ["rc"] }
 serde_derive = { workspace = true }
+slab = { workspace = true }
 smallvec = { workspace = true, features = ["const_generics"] }
 solana-account = { workspace = true, features = ["serde"] }
 solana-address-lookup-table-interface = { workspace = true, features = [
@@ -80,9 +81,15 @@ tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
+<<<<<<< HEAD
 [lib]
 crate-type = ["lib"]
 name = "solana_accounts_db"
+=======
+[target.'cfg(target_os = "linux")'.dependencies]
+agave-io-uring = { workspace = true }
+io-uring = { workspace = true }
+>>>>>>> 1ecf04237 (accounts-db: use io_uring when available to remove large directories (#262))
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
