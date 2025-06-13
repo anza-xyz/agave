@@ -87,8 +87,10 @@ if [[ -n $CI ]]; then
       fi
     fi
 
+    # Disable seccomp to allow io_uring operations ()
     ARGS+=(--security-opt seccomp=unconfined)
-    ARGS+=(--ulimit memlock=1024)
+    # Adjust memlock limit to let io_uring register buffers
+    ARGS+=(--ulimit memlock=8000:8000)
   fi
 fi
 
