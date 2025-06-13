@@ -11714,6 +11714,7 @@ dependencies = [
 name = "solana-zk-elgamal-proof-program"
 version = "2.3.0"
 dependencies = [
+ "agave-feature-set",
  "bytemuck",
  "criterion",
  "curve25519-dalek 4.1.3",

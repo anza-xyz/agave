@@ -155,6 +155,10 @@ impl FeatureSet {
             enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
             formalize_loaded_transaction_data_size: self
                 .is_active(&formalize_loaded_transaction_data_size::id()),
+            disable_zk_elgamal_proof_program: self
+                .is_active(&disable_zk_elgamal_proof_program::id()),
+            reenable_zk_elgamal_proof_program: self
+                .is_active(&reenable_zk_elgamal_proof_program::id()),
         }
     }
 }
@@ -1101,6 +1105,14 @@ pub mod formalize_loaded_transaction_data_size {
     solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
 }
 
+pub mod disable_zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("zkdoVwnSFnSLtGJG7irJPEYUpmb4i7sGMGcnN6T9rnC");
+}
+
+pub mod reenable_zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1337,6 +1349,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
         (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
+        (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
+        (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
