@@ -108,9 +108,6 @@ struct DeprecatedArg {
 }
 
 fn deprecated_arguments() -> Vec<DeprecatedArg> {
-    // Allow unused mutability as this list will be added to and emptied over
-    // the course of release cycles
-    #[allow(unused_mut)]
     let mut res = vec![];
 
     // This macro reduces indentation and removes some noise from the argument declaration list.
