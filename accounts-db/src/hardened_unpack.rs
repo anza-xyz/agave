@@ -182,6 +182,7 @@ impl<R: Read> ArchiveChunker<R> {
         for entry in archive.entries()? {
             let entry = entry?;
             // End of file data
+            assert_ne!(tar::EntryType::GNUSparse, entry.header().entry_type());
             entry_end = (entry.raw_file_position() + entry.size()) as usize;
 
             // Padding to block size
