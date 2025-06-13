@@ -125,7 +125,7 @@ pub struct ArchiveChunker<R> {
     current_decoded: Bytes,
     /// Number of bytes from last entry that were not available in decoded buffer
     num_started_entry_bytes: usize,
-    mempool: std::collections::VecDeque<Bytes>,
+    mempool: VecDeque<Bytes>,
 }
 
 impl<R: Read> ArchiveChunker<R> {
@@ -140,7 +140,7 @@ impl<R: Read> ArchiveChunker<R> {
             input,
             current_decoded: Bytes::new(),
             num_started_entry_bytes: 0,
-            mempool: std::collections::VecDeque::new(),
+            mempool: VecDeque::new(),
         }
     }
 
@@ -183,6 +183,7 @@ impl<R: Read> ArchiveChunker<R> {
             let entry = entry?;
             // End of file data
             entry_end = (entry.raw_file_position() + entry.size()) as usize;
+
             // Padding to block size
             entry_end = Self::TAR_BLOCK_SIZE * entry_end.div_ceil(Self::TAR_BLOCK_SIZE);
             if entry_end <= self.current_decoded.len() {
@@ -256,8 +257,8 @@ impl<R: Read> ArchiveChunker<R> {
                 break;
             }
             current_len += new_bytes;
-            unsafe { decode_buf.set_len(current_len) };
         }
+        unsafe { decode_buf.set_len(current_len) };
         let bytes: Bytes = decode_buf.into();
         self.mempool.push_back(bytes.clone());
         Ok(bytes)

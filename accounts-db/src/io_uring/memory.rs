@@ -41,12 +41,13 @@ impl LargeBuffer {
     /// Allocare memory buffer optimized for io_uring operations, i.e.
     /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
-        if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
-            log::info!("obtained hugetable io_uring buffer (len={size})");
-            Self::HugeTable(alloc)
-        } else {
-            Self::Vec(vec![0; size])
+        if size > PageAlignedMemory::page_size() {
+            if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
+                log::info!("obtained hugetable io_uring buffer (len={size})");
+                return Self::HugeTable(alloc);
+            }
         }
+        Self::Vec(vec![0; size])
     }
 }
 
@@ -61,10 +62,10 @@ pub struct PageAlignedMemory {
 impl PageAlignedMemory {
     fn alloc_huge_table(memory_size: usize) -> Result<Self, AllocError> {
         // Safety: just a libc wrapper
-        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+        let page_size = Self::page_size();
         debug_assert!(memory_size.is_power_of_two());
         debug_assert!(page_size.is_power_of_two());
-        let aligned_size = (memory_size + page_size - 1) & !(page_size - 1);
+        let aligned_size = memory_size.next_multiple_of(page_size);
 
         // Safety:
         // doing an ANONYMOUS alloc. addr=NULL is ok, fd is not used.
@@ -87,6 +88,10 @@ impl PageAlignedMemory {
             ptr: ptr as *mut u8,
             len: aligned_size,
         })
+    }
+
+    fn page_size() -> usize {
+        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
     }
 }
 
@@ -120,14 +125,13 @@ impl DerefMut for PageAlignedMemory {
 /// Fixed mutable view into externally allocated bytes buffer
 ///
 /// It is an unsafe (no lifetime tracking) equivalent of `&mut [u8]`
-#[derive(Clone)]
 pub struct BorrowedBytesMut {
     ptr: *mut u8,
     size: usize,
 }
 
 impl BorrowedBytesMut {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             ptr: std::ptr::null_mut(),
             size: 0,
