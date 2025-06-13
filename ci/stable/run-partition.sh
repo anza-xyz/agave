@@ -12,6 +12,8 @@ source "$here"/../common/limit-threads.sh
 #shellcheck source=ci/stable/common.sh
 source "$here"/common.sh
 
+ulimit -l 1024
+
 # check partition info
 INDEX=${1:-"$BUILDKITE_PARALLEL_JOB"} # BUILDKITE_PARALLEL_JOB from 0 to (BUILDKITE_PARALLEL_JOB_COUNT - 1)
 : "${INDEX:?}"
