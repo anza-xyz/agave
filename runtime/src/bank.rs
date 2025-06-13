@@ -5266,6 +5266,15 @@ impl Bank {
             .map(|v| v.1)
     }
 
+    pub fn get_committed_transaction_status_slot(
+        &self,
+        message_hash: &Hash,
+        transaction_blockhash: &Hash,
+    ) -> Option<(Slot, Result<()>)> {
+        let rcache = self.status_cache.read().unwrap();
+        rcache.get_status(message_hash, transaction_blockhash, &self.ancestors)
+    }
+
     pub fn get_signature_status_slot(&self, signature: &Signature) -> Option<(Slot, Result<()>)> {
         let rcache = self.status_cache.read().unwrap();
         rcache.get_status_any_blockhash(signature, &self.ancestors)

@@ -209,6 +209,7 @@ fn simulate_transaction(
 #[tarpc::server]
 impl Banks for BanksServer {
     async fn send_transaction_with_context(self, _: Context, transaction: VersionedTransaction) {
+        let message_hash = transaction.message.hash();
         let blockhash = transaction.message.recent_blockhash();
         let last_valid_block_height = self
             .bank_forks
@@ -219,7 +220,9 @@ impl Banks for BanksServer {
             .unwrap();
         let signature = transaction.signatures.first().cloned().unwrap_or_default();
         let info = TransactionInfo::new(
+            message_hash,
             signature,
+            *blockhash,
             serialize(&transaction).unwrap(),
             last_valid_block_height,
             None,
@@ -322,6 +325,7 @@ impl Banks for BanksServer {
             return Some(Err(err));
         }
 
+        let message_hash = sanitized_transaction.message_hash();
         let blockhash = transaction.message.recent_blockhash();
         let last_valid_block_height = self
             .bank(commitment)
@@ -329,7 +333,9 @@ impl Banks for BanksServer {
             .unwrap();
         let signature = sanitized_transaction.signature();
         let info = TransactionInfo::new(
+            *message_hash,
             *signature,
+            *blockhash,
             serialize(&transaction).unwrap(),
             last_valid_block_height,
             None,
