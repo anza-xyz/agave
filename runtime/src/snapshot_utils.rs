@@ -1717,7 +1717,7 @@ fn streaming_unarchive_snapshot(
 
     let mut handles = vec![];
 
-    let (chunk_sender, chunk_recv) = crossbeam_channel::bounded(num_threads * 2);
+    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads * 2);
     handles.push(spawn_archive_chunker_thread(
         snapshot_archive_path,
         archive_format,
@@ -1726,7 +1726,7 @@ fn streaming_unarchive_snapshot(
 
     for thread_index in 0..num_threads {
         handles.push(spawn_unpack_snapshot_thread(
-            chunk_recv.clone(),
+            chunk_receiver.clone(),
             file_sender.clone(),
             account_paths.clone(),
             ledger_dir.clone(),
@@ -1760,7 +1760,7 @@ fn spawn_archive_chunker_thread(
 ) -> JoinHandle<Result<()>> {
     let archive_path = archive_path.as_ref().to_path_buf();
     Builder::new()
-        .name("solTarDecompress".to_string())
+        .name("solTarDecompr".to_string())
         .spawn(move || {
             let chunker = archive_chunker_from_path(&archive_path, archive_format)?;
             chunker.decode_and_send_chunks(chunk_sender)?;
