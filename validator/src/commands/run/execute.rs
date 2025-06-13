@@ -1112,13 +1112,11 @@ pub fn execute(
     let gossip_host = matches
         .value_of("gossip_host")
         .map(|gossip_host| {
+            warn!("--gossip-host is deprecated. Use --bind-address or rely on automatic public IP discovery instead.");
             solana_net_utils::parse_host(gossip_host)
                 .map_err(|err| format!("failed to parse --gossip-host: {err}"))
         })
         .transpose()?;
-    if gossip_host.is_some() {
-        warn!("--gossip-host is deprecated. Use --bind-address or rely on automatic public IP discovery instead.");
-    }
 
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
