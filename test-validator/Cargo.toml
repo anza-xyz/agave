@@ -52,6 +52,7 @@ solana-sdk-ids = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-transaction = { workspace = true }
 solana-validator-exit = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
