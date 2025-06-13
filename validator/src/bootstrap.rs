@@ -24,7 +24,7 @@ use {
         snapshot_utils,
     },
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{atomic_udp_socket::SocketKind, socket::SocketAddrSpace},
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
         net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
@@ -161,7 +161,7 @@ fn start_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        SocketKind::Static(gossip_socket),
         gossip_validators,
         should_check_duplicate_instance,
         None,
