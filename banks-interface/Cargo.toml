@@ -13,7 +13,7 @@ edition = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 solana-sdk = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["serde"] }
 tarpc = { workspace = true, features = ["full"] }
 
 [lib]
