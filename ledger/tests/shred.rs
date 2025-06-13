@@ -87,19 +87,10 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
             .filter_map(|(i, b)| if i % 2 != 0 { Some(b.clone()) } else { None })
             .collect();
 
-        let recovered_data = match recover(shred_info.clone(), &reed_solomon_cache) {
-            Ok(iterator) => {
-                let recovered: Vec<_> = iterator
-                    .filter_map(|result| result.ok())
-                    .filter(|shred| shred.is_data())
-                    .collect();
-                recovered
-            }
-            Err(_) => {
-                shred_info = fec_set_shreds;
-                vec![]
-            }
-        };
+        let recovered_data = recover(shred_info.clone(), &reed_solomon_cache)
+            .unwrap()
+            .map(|result| result.unwrap())
+            .filter(|shred| shred.is_data());
 
         for (i, recovered_shred) in recovered_data.into_iter().enumerate() {
             let index = shred_start_index + (i * 2);
