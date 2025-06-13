@@ -3,7 +3,8 @@
 # shellcheck disable=SC2317
 cleanup() {
   ec=$?
-  docker container stop kellnr || true && docker container prune -f;
+  docker container stop kellnr || true
+  docker container prune -f
   exit "$ec"
 }
 
