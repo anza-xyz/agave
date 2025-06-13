@@ -52,7 +52,7 @@ solana-sdk-ids = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
 solana-timings = { workspace = true }
-solana-transaction-context = { workspace = true }
+solana-transaction-context = { workspace = true, features = ["debug-signature"] }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
 thiserror = { workspace = true }
@@ -97,7 +97,7 @@ solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
 solana-transaction = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["dev-context-only-utils" ] }
+solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
 [package.metadata.docs.rs]
