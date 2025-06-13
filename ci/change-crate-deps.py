@@ -25,7 +25,7 @@ version = os.environ.get('CI_TAG')
 def load_metadata():
     cmd = f'{src_root}/cargo metadata --no-deps --format-version=1'
     return json.loads(subprocess.Popen(
-        cmd, shell=True, stdout=subprocess.PIPE).communicate()[0])
+        [f"{src_root}/cargo", "metadata", "--no-deps", "--format-version=1"], stdout=subprocess.PIPE).communicate()[0])
 
 
 def get_pkg_deps(package_name):
