@@ -86,6 +86,8 @@ if [[ -n $CI ]]; then
         )
       fi
     fi
+
+    ARGS+=(--security-opt seccomp=unconfined)
   fi
 fi
 
