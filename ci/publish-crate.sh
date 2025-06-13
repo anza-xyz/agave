@@ -16,7 +16,7 @@ err_handler() {
 trap cleanup EXIT
 trap err_handler ERR SIGINT
 
-set -Ee
+set -Eeuo pipefail
 
 cd "$(dirname "$0")/.."
 source ci/semver_bash/semver.sh
