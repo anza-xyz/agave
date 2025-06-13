@@ -14,7 +14,7 @@ use {
         repair::cluster_slot_state_verifier::{
             DuplicateConfirmedSlots, DuplicateSlotsTracker, EpochSlotsFrozenSlots,
         },
-        replay_stage::{HeaviestForkFailures, ReplayStage},
+        replay_stage::{HeaviestForkFailures, ReplayStage, TowerBFTStructures},
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     crossbeam_channel::unbounded,
@@ -229,22 +229,26 @@ impl VoteSimulator {
 
     pub fn set_root(&mut self, new_root: Slot) {
         let (drop_bank_sender, _drop_bank_receiver) = unbounded();
+        let mut tbft_structs = TowerBFTStructures {
+            heaviest_subtree_fork_choice: self.heaviest_subtree_fork_choice.clone(),
+            duplicate_slots_tracker: DuplicateSlotsTracker::default(),
+            duplicate_confirmed_slots: DuplicateConfirmedSlots::default(),
+            unfrozen_gossip_verified_vote_hashes: UnfrozenGossipVerifiedVoteHashes::default(),
+            epoch_slots_frozen_slots: EpochSlotsFrozenSlots::default(),
+        };
         ReplayStage::handle_new_root(
             new_root,
             &self.bank_forks,
             &mut self.progress,
             None, // snapshot_controller
             None,
-            &mut self.heaviest_subtree_fork_choice,
-            &mut DuplicateSlotsTracker::default(),
-            &mut DuplicateConfirmedSlots::default(),
-            &mut UnfrozenGossipVerifiedVoteHashes::default(),
             &mut true,
             &mut Vec::new(),
-            &mut EpochSlotsFrozenSlots::default(),
             &drop_bank_sender,
+            Some(&mut tbft_structs),
         )
-        .unwrap()
+        .unwrap();
+        self.heaviest_subtree_fork_choice = tbft_structs.heaviest_subtree_fork_choice;
     }
 
     pub fn create_and_vote_new_branch(
