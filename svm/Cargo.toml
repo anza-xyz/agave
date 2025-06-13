@@ -17,7 +17,10 @@ crate-type = ["lib"]
 name = "solana_svm"
 
 [features]
-dev-context-only-utils = ["dep:qualifier_attr"]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "solana-program-runtime/dev-context-only-utils",
+]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",

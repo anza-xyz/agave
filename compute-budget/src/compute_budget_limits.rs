@@ -1,5 +1,3 @@
-#[cfg(feature = "dev-context-only-utils")]
-use qualifier_attr::qualifiers;
 pub use solana_program_runtime::execution_budget::{
     DEFAULT_HEAP_COST, DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT,
     MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT, MAX_COMPUTE_UNIT_LIMIT, MAX_HEAP_FRAME_BYTES,
@@ -42,12 +40,13 @@ impl ComputeBudgetLimits {
         &self,
         loaded_accounts_data_size_limit: NonZeroU32,
         fee_details: FeeDetails,
+        simd_0296_active: bool,
     ) -> SVMTransactionExecutionAndFeeBudgetLimits {
         SVMTransactionExecutionAndFeeBudgetLimits {
             budget: SVMTransactionExecutionBudget {
                 compute_unit_limit: u64::from(self.compute_unit_limit),
                 heap_size: self.updated_heap_bytes,
-                ..SVMTransactionExecutionBudget::default()
+                ..SVMTransactionExecutionBudget::new_with_defaults(simd_0296_active)
             },
             loaded_accounts_data_size_limit,
             fee_details,
