@@ -287,7 +287,10 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     ) {
         let fee_payer_address = message.fee_payer();
         match rollback_accounts {
-            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+            RollbackAccounts::FeePayerOnly {
+                fee_payer_account,
+                fee_payer_address: _,
+            } => {
                 self.loaded_accounts
                     .insert(*fee_payer_address, fee_payer_account.clone());
             }
@@ -298,6 +301,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce,
                 fee_payer_account,
+                fee_payer_address: _,
             } => {
                 self.loaded_accounts
                     .insert(*nonce.address(), nonce.account().clone());
@@ -2969,7 +2973,10 @@ mod tests {
         fee_payer_account.set_lamports(0);
         account_loader.update_accounts_for_failed_tx(
             &sanitized_message,
-            &RollbackAccounts::FeePayerOnly { fee_payer_account },
+            &RollbackAccounts::FeePayerOnly {
+                fee_payer_account,
+                fee_payer_address: fee_payer,
+            },
         );
 
         assert_eq!(
