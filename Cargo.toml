@@ -500,7 +500,7 @@ solana-sbpf = "=0.11.1"
 solana-sdk-ids = "2.2.1"
 solana-secp256k1-program = "2.2.3"
 solana-secp256k1-recover = "2.2.1"
-solana-secp256r1-program = "2.2.3"
+solana-secp256r1-program = "2.2.4"
 solana-seed-derivable = "2.2.1"
 solana-seed-phrase = "2.2.1"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=3.0.0" }
