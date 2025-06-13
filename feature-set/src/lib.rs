@@ -1021,6 +1021,14 @@ pub mod enable_extend_program_checked {
     solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
 }
 
+pub mod disable_zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("zkdoVwnSFnSLtGJG7irJPEYUpmb4i7sGMGcnN6T9rnC");
+}
+
+pub mod reenable_zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1252,6 +1260,8 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
         (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
         (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
+        (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
+        (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

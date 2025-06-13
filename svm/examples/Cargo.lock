@@ -8439,6 +8439,7 @@ dependencies = [
 name = "solana-zk-elgamal-proof-program"
 version = "2.2.16"
 dependencies = [
+ "agave-feature-set",
  "bytemuck",
  "num-derive",
  "num-traits",
