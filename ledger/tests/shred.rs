@@ -92,7 +92,7 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
             .map(|result| result.unwrap())
             .filter(|shred| shred.is_data());
 
-        for (i, recovered_shred) in recovered_data.into_iter().enumerate() {
+        for (i, recovered_shred) in recovered_data.enumerate() {
             let index = shred_start_index + (i * 2);
             verify_test_data_shred(
                 &recovered_shred,
