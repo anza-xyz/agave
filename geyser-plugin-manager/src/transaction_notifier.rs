@@ -2,15 +2,16 @@
 use {
     crate::geyser_plugin_manager::GeyserPluginManager,
     agave_geyser_plugin_interface::geyser_plugin_interface::{
-        ReplicaTransactionInfoV2, ReplicaTransactionInfoVersions,
+        ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
     log::*,
     solana_clock::Slot,
+    solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_metrics::*,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
-    solana_transaction::sanitized::SanitizedTransaction,
+    solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::TransactionStatusMeta,
     std::sync::{Arc, RwLock},
 };
@@ -29,13 +30,17 @@ impl TransactionNotifier for TransactionNotifierImpl {
         slot: Slot,
         index: usize,
         signature: &Signature,
+        message_hash: &Hash,
+        is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
-        transaction: &SanitizedTransaction,
+        transaction: &VersionedTransaction,
     ) {
         let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
         let transaction_log_info = Self::build_replica_transaction_info(
             index,
             signature,
+            message_hash,
+            is_vote,
             transaction_status_meta,
             transaction,
         );
@@ -51,7 +56,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
                 continue;
             }
             match plugin.notify_transaction(
-                ReplicaTransactionInfoVersions::V0_0_2(&transaction_log_info),
+                ReplicaTransactionInfoVersions::V0_0_3(&transaction_log_info),
                 slot,
             ) {
                 Err(err) => {
@@ -87,13 +92,16 @@ impl TransactionNotifierImpl {
     fn build_replica_transaction_info<'a>(
         index: usize,
         signature: &'a Signature,
+        message_hash: &'a Hash,
+        is_vote: bool,
         transaction_status_meta: &'a TransactionStatusMeta,
-        transaction: &'a SanitizedTransaction,
-    ) -> ReplicaTransactionInfoV2<'a> {
-        ReplicaTransactionInfoV2 {
+        transaction: &'a VersionedTransaction,
+    ) -> ReplicaTransactionInfoV3<'a> {
+        ReplicaTransactionInfoV3 {
             index,
+            message_hash,
             signature,
-            is_vote: transaction.is_simple_vote_transaction(),
+            is_vote,
             transaction,
             transaction_status_meta,
         }
