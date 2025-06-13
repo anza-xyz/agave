@@ -37,7 +37,7 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{Node, NodeConfig},
+        cluster_info::{BindIpAddrs, Node, NodeConfig},
         contact_info::ContactInfo,
     },
     solana_hash::Hash,
@@ -303,15 +303,22 @@ pub fn execute(
         "--gossip-validator",
     )?;
 
-    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
-        .expect("invalid bind_address");
+    let bind_addresses = {
+        let parsed = matches
+            .values_of("bind_address")
+            .expect("bind_address should always be present due to default")
+            .map(solana_net_utils::parse_host)
+            .collect::<Result<Vec<_>, _>>()?;
+        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
+    };
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
     } else if private_rpc {
         solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
-        bind_address
+        bind_addresses.primary()
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
@@ -366,7 +373,7 @@ pub fn execute(
     // version can then be deleted from gossip and get_rpc_node above.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_address));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.primary()));
 
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         match value_t_or_exit!(matches, "tower_storage", String).as_str() {
@@ -1127,16 +1134,17 @@ pub fn execute(
                         "Contacting {} to determine the validator's public IP address",
                         entrypoint_addr
                     );
-                    solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
-                        .map_or_else(
-                            |err| {
-                                warn!(
-                                    "Failed to contact cluster entrypoint {entrypoint_addr}: {err}"
-                                );
-                                None
-                            },
-                            Some,
-                        )
+                    solana_net_utils::get_public_ip_addr_with_binding(
+                        entrypoint_addr,
+                        bind_addresses.primary(),
+                    )
+                    .map_or_else(
+                        |err| {
+                            warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                            None
+                        },
+                        Some,
+                    )
                 })
             } else {
                 Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
@@ -1144,7 +1152,7 @@ pub fn execute(
         })
         .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?;
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_address, (0, 1))
+        solana_net_utils::find_available_port_in_range(bind_addresses.primary(), (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
     let gossip_addr = SocketAddr::new(gossip_host, gossip_port);
@@ -1185,7 +1193,7 @@ pub fn execute(
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,
-        bind_ip_addr: bind_address,
+        bind_ip_addrs: bind_addresses,
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_receive_sockets: tvu_receive_threads,
