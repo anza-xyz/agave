@@ -9,6 +9,32 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_accounts_db"
+
+[features]
+dev-context-only-utils = [
+    "dep:qualifier_attr",
+    "dep:solana-keypair",
+    "dep:solana-rent",
+    "dep:solana-signer",
+    "dep:solana-stake-program",
+    "dep:solana-vote-program",
+    "solana-account/dev-context-only-utils",
+    "solana-pubkey/rand",
+    "solana-transaction/dev-context-only-utils",
+]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-fee-calculator/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
+
 [dependencies]
 ahash = { workspace = true }
 bincode = { workspace = true }
@@ -80,10 +106,6 @@ tar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_accounts_db"
-
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
@@ -104,28 +126,6 @@ static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 test-case = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = [
-    "dep:qualifier_attr",
-    "dep:solana-keypair",
-    "dep:solana-rent",
-    "dep:solana-signer",
-    "dep:solana-stake-program",
-    "dep:solana-vote-program",
-    "solana-account/dev-context-only-utils",
-    "solana-pubkey/rand",
-    "solana-transaction/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-fee-calculator/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
 
 [[bench]]
 name = "bench_accounts_file"

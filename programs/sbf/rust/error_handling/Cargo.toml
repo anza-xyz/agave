@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 num-derive = { workspace = true }
 num-traits = { workspace = true }
@@ -18,9 +21,6 @@ solana-program-entrypoint = { workspace = true }
 solana-program-error = { workspace = true }
 solana-pubkey = { workspace = true }
 thiserror = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

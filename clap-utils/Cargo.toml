@@ -9,6 +9,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_clap_utils"
+
 [dependencies]
 chrono = { workspace = true, features = ["default"] }
 clap = "2.33.0"
@@ -37,9 +43,3 @@ assert_matches = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 tempfile = { workspace = true }
-
-[lib]
-name = "solana_clap_utils"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

@@ -10,8 +10,35 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[badges]
-codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = [
+    "solana-perf/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
+    "solana-streamer/dev-context-only-utils",
+]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-accounts-db/frozen-abi",
+    "solana-bloom/frozen-abi",
+    "solana-compute-budget/frozen-abi",
+    "solana-cost-model/frozen-abi",
+    "solana-frozen-abi/frozen-abi",
+    "solana-gossip/frozen-abi",
+    "solana-ledger/frozen-abi",
+    "solana-packet/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-program-runtime/frozen-abi",
+    "solana-runtime/frozen-abi",
+    "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-svm/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
@@ -136,7 +163,7 @@ solana-vortexor-receiver = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-wen-restart = { workspace = true }
-static_assertions ={ workspace = true }
+static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 sys-info = { workspace = true }
@@ -145,6 +172,12 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 trees = { workspace = true }
+
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
@@ -177,38 +210,8 @@ spl-memo = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
-[target."cfg(unix)".dependencies]
-sysctl = { workspace = true }
-
-[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
-jemallocator = { workspace = true }
-
-[features]
-dev-context-only-utils = [
-    "solana-perf/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
-    "solana-streamer/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-accounts-db/frozen-abi",
-    "solana-bloom/frozen-abi",
-    "solana-compute-budget/frozen-abi",
-    "solana-cost-model/frozen-abi",
-    "solana-frozen-abi/frozen-abi",
-    "solana-gossip/frozen-abi",
-    "solana-ledger/frozen-abi",
-    "solana-packet/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-program-runtime/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-signature/frozen-abi",
-    "solana-svm/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
+[badges]
+codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
 
 [[bench]]
 name = "banking_stage"
@@ -226,9 +229,6 @@ harness = false
 [[bench]]
 name = "scheduler"
 harness = false
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

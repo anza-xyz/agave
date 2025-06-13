@@ -29,22 +29,44 @@ jsonrpc-http-server = "18.0.0"
 log = "0.4.22"
 serde = "1.0.214"
 serde_json = "1.0.132"
+solana-account = "2.2.1"
 solana-account-decoder = { path = "../../account-decoder" }
 solana-bpf-loader-program = { path = "../../programs/bpf_loader" }
 solana-client = { path = "../../client" }
+solana-clock = "2.2.1"
+solana-commitment-config = "2.2.1"
 solana-compute-budget = { path = "../../compute-budget" }
+solana-compute-budget-interface = "2.2.2"
+solana-epoch-schedule = "2.2.1"
+solana-hash = "2.2.1"
+solana-instruction = "2.2.1"
+solana-keypair = "2.2.1"
 solana-logger = "=2.3.1"
+solana-message = "2.3.0"
+solana-nonce = "2.2.1"
 solana-perf = { path = "../../perf" }
+solana-program-pack = "2.2.1"
 solana-program-runtime = { path = "../../program-runtime" }
+solana-pubkey = "2.3.0"
+solana-rent-collector = "2.2.1"
 solana-rpc-client-api = { path = "../../rpc-client-api" }
+solana-sdk-ids = "2.2.1"
+solana-signature = "2.2.1"
+solana-signer = "2.2.1"
 solana-svm = { path = "../" }
 solana-svm-callback = { path = "../../svm-callback" }
 solana-svm-feature-set = { path = "../../svm-feature-set" }
+solana-system-interface = "1.0"
 solana-system-program = { path = "../../programs/system" }
-solana-version = { path = "../../version" }
+solana-sysvar = "2.2.1"
+solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "../../test-validator" }
+solana-transaction = "2.2.2"
 solana-transaction-context = { path = "../../transaction-context" }
+solana-transaction-error = "2.2.1"
 solana-transaction-status = { path = "../../transaction-status" }
+solana-validator-exit = "2.2.1"
+solana-version = { path = "../../version" }
 spl-associated-token-account = "7.0.0"
 spl-token = "8.0.0"
 spl-token-2022 = "8.0.0"
@@ -53,28 +75,6 @@ thiserror = "1.0.68"
 tokio = "1.29.1"
 tokio-util = "0.7"
 yaml-rust = "0.4"
-solana-account = "2.2.1"
-solana-clock = "2.2.1"
-solana-commitment-config = "2.2.1"
-solana-compute-budget-interface = "2.2.2"
-solana-message = "2.3.0"
-solana-nonce = "2.2.1"
-solana-pubkey = "2.3.0"
-solana-sdk-ids = "2.2.1"
-solana-signature = "2.2.1"
-solana-system-interface = "1.0"
-solana-sysvar = "2.2.1"
-solana-sysvar-id = "2.2.1"
-solana-transaction = "2.2.2"
-solana-transaction-error = "2.2.1"
-solana-validator-exit = "2.2.1"
-solana-instruction = "2.2.1"
-solana-keypair = "2.2.1"
-solana-signer = "2.2.1"
-solana-hash = "2.2.1"
-solana-rent-collector = "2.2.1"
-solana-epoch-schedule = "2.2.1"
-solana-program-pack = "2.2.1"
 
 [patch.crates-io]
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }

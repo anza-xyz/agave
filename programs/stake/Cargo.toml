@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_stake_program"
+
 [dependencies]
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
@@ -46,13 +53,6 @@ solana-svm-feature-set = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-vote-program = { workspace = true, default-features = false }
 test-case = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_stake_program"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [[bench]]
 name = "stake"

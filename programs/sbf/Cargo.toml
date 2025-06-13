@@ -1,3 +1,77 @@
+
+[package]
+name = "solana-sbf-programs"
+description = "Blockchain, Rebuilt for Scale"
+documentation = "https://docs.rs/solana"
+readme = "README.md"
+publish = false
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[workspace]
+members = [
+    "rust/128bit",
+    "rust/128bit_dep",
+    "rust/account_mem",
+    "rust/account_mem_deprecated",
+    "rust/alloc",
+    "rust/alt_bn128",
+    "rust/alt_bn128_compression",
+    "rust/big_mod_exp",
+    "rust/call_args",
+    "rust/call_depth",
+    "rust/caller_access",
+    "rust/curve25519",
+    "rust/custom_heap",
+    "rust/dep_crate",
+    "rust/deprecated_loader",
+    "rust/divide_by_zero",
+    "rust/dup_accounts",
+    "rust/error_handling",
+    "rust/external_spend",
+    "rust/get_minimum_delegation",
+    "rust/inner_instruction_alignment_check",
+    "rust/instruction_introspection",
+    "rust/invoke",
+    "rust/invoke_and_error",
+    "rust/invoke_and_ok",
+    "rust/invoke_and_return",
+    "rust/invoked",
+    "rust/iter",
+    "rust/log_data",
+    "rust/many_args",
+    "rust/many_args_dep",
+    "rust/mem",
+    "rust/mem_dep",
+    "rust/membuiltins",
+    "rust/noop",
+    "rust/panic",
+    "rust/param_passing",
+    "rust/param_passing_dep",
+    "rust/poseidon",
+    "rust/rand",
+    "rust/realloc",
+    "rust/realloc_invoke",
+    "rust/remaining_compute_units",
+    "rust/ro_account_modify",
+    "rust/ro_modify",
+    "rust/sanity",
+    "rust/secp256k1_recover",
+    "rust/sha",
+    "rust/sibling_inner_instructions",
+    "rust/sibling_instructions",
+    "rust/simulation",
+    "rust/spoof1",
+    "rust/spoof1_system",
+    "rust/syscall-get-epoch-stake",
+    "rust/sysvar",
+    "rust/upgradeable",
+    "rust/upgraded",
+]
 [workspace.package]
 version = "2.3.1"
 description = "Solana SBF test program written in Rust"
@@ -12,12 +86,13 @@ level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
     'cfg(feature, values("custom-panic", "custom-heap"))',
-    'cfg(target_feature, values("dynamic-frames"))'
+    'cfg(target_feature, values("dynamic-frames"))',
 ]
 
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=2.3.1" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.1" }
+agave-validator = { path = "../../validator", version = "=2.3.1" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
@@ -39,16 +114,22 @@ serde_json = "1.0.56"
 solana-account-decoder = { path = "../../account-decoder", version = "=2.3.1" }
 solana-account-info = "=2.2.1"
 solana-accounts-db = { path = "../../accounts-db", version = "=2.3.1" }
+solana-big-mod-exp = "=2.2.1"
+solana-blake3-hasher = { version = "=2.2.1", features = ["blake3"] }
 solana-bn254 = "=2.2.2"
 solana-bpf-loader-program = { path = "../bpf_loader", version = "=2.3.1" }
 solana-cli-output = { path = "../../cli-output", version = "=2.3.1" }
+solana-clock = { version = "=2.2.2", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=2.3.1" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=2.3.1" }
 solana-curve25519 = { path = "../../curves/curve25519", version = "=2.3.1" }
 solana-decode-error = "=2.2.1"
 solana-define-syscall = "=2.3.0"
 solana-fee = { path = "../../fee", version = "=2.3.1" }
+solana-hash = { version = "=2.3.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "=2.3.0"
+solana-instructions-sysvar = "=2.2.2"
+solana-keccak-hasher = { version = "=2.2.1", features = ["sha3"] }
 solana-ledger = { path = "../../ledger", version = "=2.3.1" }
 solana-log-collector = { path = "../../log-collector", version = "=2.3.1" }
 solana-logger = "=2.3.1"
@@ -72,11 +153,15 @@ solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version =
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.1" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.1" }
 solana-sbpf = "=0.11.1"
+solana-sdk-ids = "=2.2.1"
 solana-secp256k1-recover = "=2.2.1"
+solana-sha256-hasher = { version = "=2.2.1", features = ["sha2"] }
+solana-stake-interface = { version = "=1.2.1", features = ["bincode"] }
 solana-svm = { path = "../../svm", version = "=2.3.1" }
 solana-svm-callback = { path = "../../svm-callback", version = "=2.3.1" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=2.3.1" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=2.3.1" }
+solana-system-interface = { version = "=1.0", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
 solana-timings = { path = "../../timings", version = "=2.3.1" }
 solana-transaction-context = { path = "../../transaction-context", version = "=2.3.1" }
@@ -84,37 +169,8 @@ solana-transaction-status = { path = "../../transaction-status", version = "=2.3
 solana-type-overrides = { path = "../../type-overrides", version = "=2.3.1" }
 solana-vote = { path = "../../vote", version = "=2.3.1" }
 solana-vote-program = { path = "../../programs/vote", version = "=2.3.1" }
-agave-validator = { path = "../../validator", version = "=2.3.1" }
 solana-zk-sdk = "=2.2.1"
 thiserror = "1.0"
-solana-stake-interface = { version = "=1.2.1", features = ["bincode"] }
-solana-clock = { version = "=2.2.2", features = ["serde", "sysvar"] }
-solana-system-interface = { version = "=1.0", features = ["bincode"] }
-solana-big-mod-exp = "=2.2.1"
-solana-blake3-hasher = { version = "=2.2.1", features = ["blake3"] }
-solana-hash = { version = "=2.3.0", features = ["bytemuck", "serde", "std"] }
-solana-keccak-hasher = { version = "=2.2.1", features = ["sha3"] }
-solana-sha256-hasher = { version = "=2.2.1", features = ["sha2"] }
-solana-instructions-sysvar = "=2.2.2"
-solana-sdk-ids = "=2.2.1"
-
-[package]
-name = "solana-sbf-programs"
-description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana"
-readme = "README.md"
-publish = false
-version = { workspace = true }
-authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
-license = { workspace = true }
-edition = { workspace = true }
-
-[profile.release]
-# The test programs are build in release mode
-# Minimize their file size so that they fit into the account size limit
-strip = true
 
 [features]
 sbf_c = []
@@ -194,69 +250,13 @@ solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 
+[profile.release]
+# The test programs are build in release mode
+# Minimize their file size so that they fit into the account size limit
+strip = true
+
 [[bench]]
 name = "bpf_loader"
-
-[workspace]
-members = [
-    "rust/128bit",
-    "rust/128bit_dep",
-    "rust/account_mem",
-    "rust/account_mem_deprecated",
-    "rust/alloc",
-    "rust/alt_bn128",
-    "rust/alt_bn128_compression",
-    "rust/big_mod_exp",
-    "rust/call_args",
-    "rust/call_depth",
-    "rust/caller_access",
-    "rust/curve25519",
-    "rust/custom_heap",
-    "rust/dep_crate",
-    "rust/deprecated_loader",
-    "rust/divide_by_zero",
-    "rust/dup_accounts",
-    "rust/error_handling",
-    "rust/external_spend",
-    "rust/get_minimum_delegation",
-    "rust/inner_instruction_alignment_check",
-    "rust/instruction_introspection",
-    "rust/invoke",
-    "rust/invoke_and_error",
-    "rust/invoke_and_ok",
-    "rust/invoke_and_return",
-    "rust/invoked",
-    "rust/iter",
-    "rust/log_data",
-    "rust/many_args",
-    "rust/many_args_dep",
-    "rust/mem",
-    "rust/mem_dep",
-    "rust/membuiltins",
-    "rust/noop",
-    "rust/panic",
-    "rust/param_passing",
-    "rust/param_passing_dep",
-    "rust/poseidon",
-    "rust/rand",
-    "rust/realloc",
-    "rust/realloc_invoke",
-    "rust/remaining_compute_units",
-    "rust/ro_account_modify",
-    "rust/ro_modify",
-    "rust/sanity",
-    "rust/secp256k1_recover",
-    "rust/sha",
-    "rust/sibling_inner_instructions",
-    "rust/sibling_instructions",
-    "rust/simulation",
-    "rust/spoof1",
-    "rust/spoof1_system",
-    "rust/syscall-get-epoch-stake",
-    "rust/sysvar",
-    "rust/upgradeable",
-    "rust/upgraded",
-]
 
 [patch.crates-io]
 # We include the following crates as our dependencies from crates.io:

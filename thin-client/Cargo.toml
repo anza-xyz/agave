@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 bincode = { workspace = true }
 log = { workspace = true }
@@ -34,6 +37,3 @@ solana-transaction-error = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

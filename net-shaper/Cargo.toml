@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[bin]]
+name = "solana-net-shaper"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "3.1.5", features = ["cargo"] }
 rand = { workspace = true }
@@ -16,10 +23,3 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-logger = "=2.3.1"
-
-[[bin]]
-name = "solana-net-shaper"
-path = "src/main.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

@@ -9,6 +9,21 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_ledger"
+
+[features]
+dev-context-only-utils = []
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-runtime/frozen-abi",
+]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
@@ -131,27 +146,12 @@ spl-generic-token = { workspace = true }
 spl-pod = { workspace = true }
 test-case = { workspace = true }
 
-[features]
-dev-context-only-utils = []
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-runtime/frozen-abi",
-]
-
-[lib]
-crate-type = ["lib"]
-name = "solana_ledger"
-
 [[bench]]
 name = "blockstore"
 
 [[bench]]
 name = "make_shreds_from_entries"
 harness = false
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

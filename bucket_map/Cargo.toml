@@ -10,6 +10,10 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["lib"]
+name = "solana_bucket_map"
+
 [dependencies]
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
@@ -28,10 +32,6 @@ fs_extra = { workspace = true }
 rayon = { workspace = true }
 solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_bucket_map"
 
 [[bench]]
 name = "bucket_map"

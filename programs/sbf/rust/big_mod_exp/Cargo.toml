@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 array-bytes = { workspace = true }
 serde = { workspace = true }
@@ -16,9 +19,6 @@ serde_json = { workspace = true }
 solana-big-mod-exp = { workspace = true }
 solana-msg = { workspace = true }
 solana-program-entrypoint = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

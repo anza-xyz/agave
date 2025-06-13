@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_entry"
+
 [dependencies]
 bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -42,12 +49,5 @@ solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_entry"
-
 [[bench]]
 name = "entry_sigverify"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

@@ -9,6 +9,27 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+
+[features]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-bloom/frozen-abi",
+    "solana-ledger/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-runtime/frozen-abi",
+    "solana-short-vec/frozen-abi",
+    "solana-version/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 arrayvec = { workspace = true }
@@ -92,20 +113,6 @@ solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
-[features]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-bloom/frozen-abi",
-    "solana-ledger/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
-
 [[bench]]
 name = "crds"
 
@@ -118,13 +125,6 @@ name = "crds_shards"
 [[bench]]
 name = "weighted_shuffle"
 harness = false
-
-[[bin]]
-name = "solana-gossip"
-path = "src/main.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

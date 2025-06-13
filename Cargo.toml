@@ -1,18 +1,3 @@
-[profile.release-with-debug]
-inherits = "release"
-debug = true
-strip = false
-split-debuginfo = "off"
-
-[profile.release]
-split-debuginfo = "unpacked"
-lto = "thin"
-
-[profile.release-with-lto]
-inherits = "release"
-split-debuginfo = "unpacked"
-lto = "thin"
-codegen-units = 1
 
 [workspace]
 members = [
@@ -172,15 +157,15 @@ homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2021"
 
+[workspace.lints.rust]
+warnings = "deny"
+
 [workspace.lints.rust.unexpected_cfgs]
 level = "warn"
 check-cfg = [
     'cfg(target_os, values("solana"))',
     'cfg(feature, values("frozen-abi", "no-entrypoint"))',
 ]
-
-[workspace.lints.rust]
-warnings = "deny"
 
 # Clippy lint configuration that can not be applied in clippy.toml
 [workspace.lints.clippy]
@@ -191,18 +176,19 @@ used_underscore_binding = "deny"
 
 [workspace.dependencies]
 Inflector = "0.11.4"
-axum = "0.7.9"
-aya = "0.13"
+aes-gcm-siv = "0.11.1"
 agave-banking-stage-ingress-types = { path = "banking-stage-ingress-types", version = "=2.3.1" }
+agave-cargo-registry = { path = "cargo-registry", version = "=2.3.1" }
 agave-feature-set = { path = "feature-set", version = "=2.3.1" }
+agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.3.1" }
 agave-precompiles = { path = "precompiles", version = "=2.3.1" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=2.3.1" }
+agave-thread-manager = { path = "thread-manager", version = "=2.3.1" }
 agave-transaction-view = { path = "transaction-view", version = "=2.3.1" }
 agave-xdp = { path = "xdp", version = "=2.3.1" }
-aquamarine = "0.6.0"
-aes-gcm-siv = "0.11.1"
 ahash = "0.8.11"
 anyhow = "1.0.98"
+aquamarine = "0.6.0"
 arbitrary = "1.4.1"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
@@ -217,6 +203,8 @@ async-channel = "1.9.0"
 async-lock = "3.4.0"
 async-trait = "0.1.88"
 atty = "0.2.11"
+axum = "0.7.9"
+aya = "0.13"
 backoff = "0.4.0"
 base64 = "0.22.1"
 bincode = "1.3.3"
@@ -233,18 +221,18 @@ bytes = "1.10"
 bzip2 = "0.4.4"
 caps = "0.5.5"
 cargo_metadata = "0.15.4"
-cfg_eval = "0.1.2"
 cfg-if = "1.0.0"
+cfg_eval = "0.1.2"
 chrono = { version = "0.4.41", default-features = false }
 chrono-humanize = "0.2.3"
 clap = "2.33.1"
+# Remove this dependency when procedural macros will support non-inline modules.
+conditional-mod = "0.1.0"
 console = "0.15.11"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.34"
 core_affinity = "0.5.10"
-# Remove this dependency when procedural macros will support non-inline modules.
-conditional-mod = "0.1.0"
 criterion = "0.5.1"
 criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"
@@ -269,8 +257,8 @@ env_logger = "0.9.3"
 etcd-client = "0.11.1"
 fast-math = "0.1"
 fd-lock = "3.0.13"
-flate2 = "1.0.31"
 five8_const = "0.1.4"
+flate2 = "1.0.31"
 fnv = "1.0.7"
 fs_extra = "1.3.0"
 futures = "0.3.31"
@@ -400,8 +388,6 @@ solana-bpf-loader-program = { path = "programs/bpf_loader", version = "=2.3.1" }
 solana-bucket-map = { path = "bucket_map", version = "=2.3.1" }
 solana-builtins = { path = "builtins", version = "=2.3.1" }
 solana-builtins-default-costs = { path = "builtins-default-costs", version = "=2.3.1" }
-agave-cargo-registry = { path = "cargo-registry", version = "=2.3.1" }
-agave-thread-manager = { path = "thread-manager", version = "=2.3.1" }
 solana-clap-utils = { path = "clap-utils", version = "=2.3.1" }
 solana-clap-v3-utils = { path = "clap-v3-utils", version = "=2.3.1" }
 solana-cli = { path = "cli", version = "=2.3.1" }
@@ -428,7 +414,6 @@ solana-derivation-path = "2.2.1"
 solana-download-utils = { path = "download-utils", version = "=2.3.1" }
 solana-ed25519-program = "2.2.3"
 solana-entry = { path = "entry", version = "=2.3.1" }
-solana-program-entrypoint = "2.2.1"
 solana-epoch-info = "2.2.1"
 solana-epoch-rewards = "2.2.1"
 solana-epoch-rewards-hasher = "2.2.1"
@@ -437,17 +422,15 @@ solana-example-mocks = "2.2.1"
 solana-faucet = { path = "faucet", version = "=2.3.1" }
 solana-feature-gate-client = "0.0.2"
 solana-feature-gate-interface = "2.2.2"
-solana-fee-calculator = "2.2.1"
 solana-fee = { path = "fee", version = "=2.3.1" }
+solana-fee-calculator = "2.2.1"
 solana-fee-structure = "2.3.0"
+solana-file-download = "2.2.1"
 solana-frozen-abi = "2.2.2"
 solana-frozen-abi-macro = "2.2.1"
-solana-tps-client = { path = "tps-client", version = "=2.3.1" }
-solana-file-download = "2.2.1"
 solana-genesis = { path = "genesis", version = "=2.3.1" }
 solana-genesis-config = "2.2.1"
 solana-genesis-utils = { path = "genesis-utils", version = "=2.3.1" }
-agave-geyser-plugin-interface = { path = "geyser-plugin-interface", version = "=2.3.1" }
 solana-geyser-plugin-manager = { path = "geyser-plugin-manager", version = "=2.3.1" }
 solana-gossip = { path = "gossip", version = "=2.3.1" }
 solana-hard-forks = "2.2.1"
@@ -487,6 +470,7 @@ solana-poseidon = { path = "poseidon", version = "=2.3.1" }
 solana-precompile-error = "2.2.2"
 solana-presigner = "2.2.1"
 solana-program = { version = "2.2.1", default-features = false }
+solana-program-entrypoint = "2.2.1"
 solana-program-error = "2.2.1"
 solana-program-memory = "2.2.1"
 solana-program-option = "2.2.1"
@@ -503,37 +487,32 @@ solana-rent = "2.2.1"
 solana-rent-collector = "2.2.1"
 solana-rent-debits = "2.2.1"
 solana-reward-info = "2.2.1"
-solana-sanitize = "2.2.1"
-solana-secp256r1-program = "2.2.3"
-solana-seed-derivable = "2.2.1"
-solana-seed-phrase = "2.2.1"
-solana-serde = "2.2.1"
-solana-serde-varint = "2.2.2"
-solana-serialize-utils = "2.2.1"
-solana-sha256-hasher = "2.2.1"
-solana-signature = { version = "2.3.0", default-features = false }
-solana-signer = "2.2.1"
-solana-slot-hashes = "2.2.1"
-solana-slot-history = "2.2.1"
-solana-time-utils = "2.2.1"
-solana-timings = { path = "timings", version = "=2.3.1" }
-solana-tls-utils = { path = "tls-utils", version = "=2.3.1" }
-solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.3.1" }
-solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.3.1" }
 solana-rpc = { path = "rpc", version = "=2.3.1" }
 solana-rpc-client = { path = "rpc-client", version = "=2.3.1", default-features = false }
 solana-rpc-client-api = { path = "rpc-client-api", version = "=2.3.1" }
-solana-rpc-client-types = { path = "rpc-client-types", version = "=2.3.1" }
 solana-rpc-client-nonce-utils = { path = "rpc-client-nonce-utils", version = "=2.3.1" }
+solana-rpc-client-types = { path = "rpc-client-types", version = "=2.3.1" }
 solana-runtime = { path = "runtime", version = "=2.3.1" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=2.3.1" }
+solana-sanitize = "2.2.1"
 solana-sbpf = "=0.11.1"
 solana-sdk-ids = "2.2.1"
 solana-secp256k1-program = "2.2.1"
 solana-secp256k1-recover = "2.2.1"
+solana-secp256r1-program = "2.2.3"
+solana-seed-derivable = "2.2.1"
+solana-seed-phrase = "2.2.1"
 solana-send-transaction-service = { path = "send-transaction-service", version = "=2.3.1" }
+solana-serde = "2.2.1"
+solana-serde-varint = "2.2.2"
+solana-serialize-utils = "2.2.1"
+solana-sha256-hasher = "2.2.1"
 solana-short-vec = "2.2.1"
 solana-shred-version = "2.2.1"
+solana-signature = { version = "2.3.0", default-features = false }
+solana-signer = "2.2.1"
+solana-slot-hashes = "2.2.1"
+solana-slot-history = "2.2.1"
 solana-stable-layout = "2.2.1"
 solana-stake-interface = { version = "1.2.1" }
 solana-stake-program = { path = "programs/stake", version = "=2.3.1" }
@@ -553,17 +532,23 @@ solana-sysvar = "2.2.2"
 solana-sysvar-id = "2.2.1"
 solana-test-validator = { path = "test-validator", version = "=2.3.1" }
 solana-thin-client = { path = "thin-client", version = "=2.3.1" }
-solana-transaction = "2.2.2"
-solana-transaction-error = "2.2.1"
+solana-time-utils = "2.2.1"
+solana-timings = { path = "timings", version = "=2.3.1" }
+solana-tls-utils = { path = "tls-utils", version = "=2.3.1" }
+solana-tps-client = { path = "tps-client", version = "=2.3.1" }
 solana-tpu-client = { path = "tpu-client", version = "=2.3.1", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=2.3.1" }
+solana-transaction = "2.2.2"
 solana-transaction-context = { path = "transaction-context", version = "=2.3.1", features = ["bincode", "debug-signature"] }
+solana-transaction-error = "2.2.1"
+solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.3.1" }
 solana-transaction-status = { path = "transaction-status", version = "=2.3.1" }
 solana-transaction-status-client-types = { path = "transaction-status-client-types", version = "=2.3.1" }
-solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=2.3.1" }
 solana-turbine = { path = "turbine", version = "=2.3.1" }
 solana-type-overrides = { path = "type-overrides", version = "=2.3.1" }
 solana-udp-client = { path = "udp-client", version = "=2.3.1" }
+solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "=2.3.1" }
+solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=2.3.1" }
 solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=2.3.1" }
 solana-vortexor-receiver = { path = "vortexor-receiver", version = "=2.3.1" }
@@ -627,6 +612,21 @@ x509-parser = "0.14.0"
 # See "zeroize versioning issues" below if you are updating this version.
 zeroize = { version = "1.7", default-features = false }
 zstd = "0.13.3"
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+split-debuginfo = "off"
+
+[profile.release]
+split-debuginfo = "unpacked"
+lto = "thin"
+
+[profile.release-with-lto]
+inherits = "release"
+split-debuginfo = "unpacked"
+lto = "thin"
+codegen-units = 1
 
 # curve25519-dalek uses the simd backend by default in v4 if possible,
 # which has very slow performance on some platforms with opt-level 0,

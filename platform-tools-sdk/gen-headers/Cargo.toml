@@ -8,10 +8,10 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-log = { workspace = true, features = ["std"] }
-regex = { workspace = true }
-
 [[bin]]
 name = "gen-headers"
 path = "src/main.rs"
+
+[dependencies]
+log = { workspace = true, features = ["std"] }
+regex = { workspace = true }

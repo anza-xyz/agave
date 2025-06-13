@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_compute_budget_instruction"
+
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 log = { workspace = true }
@@ -24,10 +34,6 @@ solana-svm-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_compute_budget_instruction"
-
 [dev-dependencies]
 bincode = { workspace = true }
 criterion = { workspace = true }
@@ -40,12 +46,6 @@ solana-signer = { workspace = true }
 solana-stake-interface = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = []
 
 [[bench]]
 name = "process_compute_budget_instructions"

@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
@@ -31,9 +34,6 @@ solana-signature = { workspace = true, features = ["serde"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-transaction = { workspace = true, features = ["bincode"] }
-
-[features]
-dev-context-only-utils = []
 
 [[bench]]
 name = "bytes"

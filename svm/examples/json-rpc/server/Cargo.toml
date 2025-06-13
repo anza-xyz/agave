@@ -5,6 +5,10 @@ version = { workspace = true }
 edition = { workspace = true }
 publish = false
 
+[features]
+dummy-for-ci-check = []
+frozen-abi = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
@@ -52,7 +56,3 @@ solana-version = { workspace = true }
 spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
-
-[features]
-dummy-for-ci-check = []
-frozen-abi = []

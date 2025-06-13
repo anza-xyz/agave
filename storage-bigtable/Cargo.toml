@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_storage_bigtable"
+
 [dependencies]
 agave-reserved-account-keys = { workspace = true }
 backoff = { workspace = true, features = ["tokio"] }
@@ -53,10 +60,3 @@ solana-keypair = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_storage_bigtable"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
