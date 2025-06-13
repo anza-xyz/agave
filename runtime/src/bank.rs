@@ -1886,6 +1886,13 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
+        // TODO: Only create the thread pool if we need to recalculate rewards,
+        // i.e. epoch_reward_status is active. Currently, this thread pool is
+        // always created and used for recalculate_partitioned_rewards and
+        // lt_hash calculation. Once lt_hash feature is active, lt_hash won't
+        // need the thread pool. Thereby, after lt_hash feature activation, we
+        // can change to create the thread pool only when we need to recalculate
+        // rewards.
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
             .build()
