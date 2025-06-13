@@ -1,7 +1,9 @@
 use {
     super::*,
     crate::serialization::account_data_region_memory_state,
-    agave_feature_set::enable_bpf_loader_set_authority_checked_ix,
+    agave_feature_set::{
+        enable_bpf_loader_set_authority_checked_ix, enable_extend_program_checked,
+    },
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
@@ -1065,6 +1067,12 @@ fn check_authorized_program(
                     .get_feature_set()
                     .is_active(&enable_bpf_loader_set_authority_checked_ix::id())
                     && bpf_loader_upgradeable::is_set_authority_checked_instruction(
+                        instruction_data,
+                    ))
+                || (invoke_context
+                    .get_feature_set()
+                    .is_active(&enable_extend_program_checked::id())
+                    && bpf_loader_upgradeable::is_extend_program_checked_instruction(
                         instruction_data,
                     ))
                 || bpf_loader_upgradeable::is_close_instruction(instruction_data)))

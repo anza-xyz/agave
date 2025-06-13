@@ -346,7 +346,7 @@ impl ReadOnlyAccountsCache {
         rng: &mut R,
         #[cfg(feature = "dev-context-only-utils")] mut callback: impl FnMut(
             &Pubkey,
-            ReadOnlyAccountCacheEntry,
+            Option<ReadOnlyAccountCacheEntry>,
         ),
     ) -> u64
     where
@@ -387,7 +387,7 @@ impl ReadOnlyAccountsCache {
             #[cfg(feature = "dev-context-only-utils")]
             {
                 let entry = Self::do_remove(&key, cache, data_size);
-                callback(&key, entry.unwrap());
+                callback(&key, entry);
             }
             num_evicts = num_evicts.saturating_add(1);
         }
@@ -412,7 +412,7 @@ impl ReadOnlyAccountsCache {
     ) -> u64
     where
         R: Rng,
-        C: FnMut(&Pubkey, ReadOnlyAccountCacheEntry),
+        C: FnMut(&Pubkey, Option<ReadOnlyAccountCacheEntry>),
     {
         #[allow(clippy::used_underscore_binding)]
         let target_data_size = self._max_data_size_lo;
