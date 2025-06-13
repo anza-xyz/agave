@@ -259,18 +259,15 @@ fn sanitize_path(
         return SKIP;
     };
 
-    match cache.binary_search_by(|(dst_cache, parent_cache)| {
-        parent.cmp(parent_cache).then_with(|| dst.cmp(dst_cache))
+    if let Err(insert_at) = cache.binary_search_by(|(dst_cached, parent_cached)| {
+        parent.cmp(parent_cached).then_with(|| dst.cmp(dst_cached))
     }) {
-        Ok(_) => (),
-        Err(insert_at) => {
-            fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
 
-            // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
-            // ignore return value here
-            validate_inside_dst(dst, parent)?;
-            cache.insert(insert_at, (dst.to_path_buf(), parent.to_path_buf()));
-        }
+        // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
+        // ignore return value here
+        validate_inside_dst(dst, parent)?;
+        cache.insert(insert_at, (dst.to_path_buf(), parent.to_path_buf()));
     }
     let target = parent.join(entry_path.file_name().unwrap());
 
