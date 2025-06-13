@@ -88,6 +88,20 @@ impl AccountsFile {
         Ok((Self::AppendVec(av), num_accounts))
     }
 
+    /// Creates a new AccountsFile for the underlying storage at `path`
+    ///
+    /// This version of `new()` may only be called when reconstructing storages as part of startup.
+    /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
+    /// accounts verification to ensure it is valid.
+    pub fn new_for_startup(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<Self> {
+        let av = AppendVec::new_for_startup(path, current_len, storage_access)?;
+        Ok(Self::AppendVec(av))
+    }
+
     /// true if this storage can possibly be appended to (independent of capacity check)
     //
     // NOTE: Only used by ancient append vecs "append" method, which is test-only now.

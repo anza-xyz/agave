@@ -99,6 +99,9 @@ pub enum AppendVecError {
 
     #[error("offset ({0}) is larger than file size ({1})")]
     OffsetOutOfBounds(usize, usize),
+
+    #[error("file size ({1}) and current length ({0}) do not match for '{0}'")]
+    SizeMismatch(PathBuf, usize, u64),
 }
 
 /// A slice whose contents are known to be valid.
@@ -441,6 +444,35 @@ impl AppendVec {
         }
 
         Ok((new, num_accounts))
+    }
+
+    /// Creates a new AppendVec for the underlying storage at `path`
+    ///
+    /// This version of `new()` may only be called when reconstructing storages as part of startup.
+    /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
+    /// accounts verification to ensure it is valid.
+    pub fn new_for_startup(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<Self> {
+        let new = Self::new_from_file_unchecked(path, current_len, storage_access)?;
+
+        // The current_len is allowed to be either exactly the same as file_size, or
+        // u64-aligned-equivalent to file_size.  This is because `flush` and `shink` compute the
+        // required file size with *aligned* stored size per account, including the very last
+        // account.  So the file size may have padding to the next u64-alignment.
+        // For our usage, this is still safe as these padding bytes could never be used for an
+        // account.  This renders the `get_` and `scan_` functions safe.
+        if (current_len as u64 == new.file_size)
+            || (u64_align!(current_len) as u64 == new.file_size)
+        {
+            Ok(new)
+        } else {
+            Err(AccountsFileError::AppendVecError(
+                AppendVecError::SizeMismatch(new.path.clone(), current_len, new.file_size),
+            ))
+        }
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
