@@ -86,6 +86,9 @@ pub(crate) fn configure_server(
         tls_server_config_builder().with_single_cert(vec![cert], priv_key)?;
     server_tls_config.alpn_protocols = vec![ALPN_TPU_PROTOCOL_ID.to_vec()];
     server_tls_config.key_log = Arc::new(KeyLogFile::new());
+    // enable 0rtt on the server side
+    server_tls_config.max_early_data_size = u32::MAX;
+
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
