@@ -88,6 +88,7 @@ if [[ -n $CI ]]; then
     fi
 
     ARGS+=(--security-opt seccomp=unconfined)
+    ARGS+=(--ulimit memlock=1024)
   fi
 fi
 
