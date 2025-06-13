@@ -212,7 +212,7 @@ impl TransactionStatusService {
                             transaction.signature(),
                             &transaction_status_meta,
                             &transaction,
-                            &post_accounts_states,
+                            post_accounts_states.as_ref().expect("post_accounts_states should be available because the TransactionNotifier service is on"),
                         );
                     }
 
@@ -329,7 +329,7 @@ pub(crate) mod tests {
         agave_reserved_account_keys::ReservedAccountKeys,
         crossbeam_channel::unbounded,
         dashmap::DashMap,
-        solana_account::state_traits::StateMut,
+        solana_account::{state_traits::StateMut, AccountSharedData},
         solana_account_decoder::{
             parse_account_data::SplTokenAdditionalDataV2, parse_token::token_amount_to_ui_amount_v3,
         },
@@ -344,7 +344,6 @@ pub(crate) mod tests {
         solana_pubkey::Pubkey,
         solana_rent_debits::RentDebits,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
-        solana_sdk::account::AccountSharedData,
         solana_signature::Signature,
         solana_signer::Signer,
         solana_svm::transaction_execution_result::TransactionLoadedAccountsStats,
@@ -471,7 +470,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            post_accounts_states: post_accounts_states.clone(),
+            post_accounts_states: Some(post_accounts_states.clone()),
         });
 
         let balances = TransactionBalancesSet {
@@ -600,7 +599,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             rent_debits: RentDebits::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
-            post_accounts_states: vec![],
+            post_accounts_states: Some(vec![]),
         });
 
         let balances = TransactionBalancesSet {

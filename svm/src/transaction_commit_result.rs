@@ -20,7 +20,8 @@ pub struct CommittedTransaction {
     pub fee_details: FeeDetails,
     pub rent_debits: RentDebits,
     pub loaded_account_stats: TransactionLoadedAccountsStats,
-    pub post_accounts_states: Vec<TransactionAccount>,
+    ///This is None only if no Geyser plugins are detected.
+    pub post_accounts_states: Option<Vec<TransactionAccount>>,
 }
 
 pub trait TransactionCommitResultExtensions {

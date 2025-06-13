@@ -3731,6 +3731,7 @@ impl Bank {
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
+        is_geyser_present: bool,
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
@@ -3844,11 +3845,12 @@ impl Bank {
             update_transaction_statuses_us,
         );
 
-        Self::create_commit_results(processing_results)
+        Self::create_commit_results(processing_results, is_geyser_present)
     }
 
     fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
+        is_geyser_present: bool,
     ) -> Vec<TransactionCommitResult> {
         processing_results
             .into_iter()
@@ -3886,31 +3888,35 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
-                            post_accounts_states: loaded_accounts,
+                            post_accounts_states: if is_geyser_present {
+                                Some(loaded_accounts)
+                            } else {
+                                None
+                            },
                         })
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => {
                         let loaded_accounts_count = fees_only_tx.rollback_accounts.count();
-                        let post_accounts_states = {
+                        let post_accounts_states = if is_geyser_present {
                             match fees_only_tx.rollback_accounts {
                                 RollbackAccounts::FeePayerOnly {
                                     fee_payer_account,
                                     fee_payer_address,
-                                } => {
-                                    vec![(fee_payer_address, fee_payer_account)]
-                                }
+                                } => Some(vec![(fee_payer_address, fee_payer_account)]),
                                 RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                                    vec![(nonce.address, nonce.account)]
+                                    Some(vec![(nonce.address, nonce.account)])
                                 }
                                 RollbackAccounts::SeparateNonceAndFeePayer {
                                     nonce,
                                     fee_payer_account,
                                     fee_payer_address,
-                                } => vec![
+                                } => Some(vec![
                                     (fee_payer_address, fee_payer_account),
                                     (nonce.address, nonce.account),
-                                ],
+                                ]),
                             }
+                        } else {
+                            None
                         };
                         Ok(CommittedTransaction {
                             status: Err(fees_only_tx.load_error),
@@ -4695,6 +4701,7 @@ impl Bank {
             processing_results,
             &processed_counts,
             timings,
+            recording_config.enable_transaction_balance_recording,
         );
         drop(freeze_lock);
         Ok((commit_results, balance_collector))
