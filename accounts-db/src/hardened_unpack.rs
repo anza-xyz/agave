@@ -260,7 +260,7 @@ fn sanitize_path(
     };
 
     match cache.binary_search_by(|(dst_cache, parent_cache)| {
-        dst.cmp(dst_cache).then(parent.cmp(parent_cache))
+        parent.cmp(parent_cache).then_with(|| dst.cmp(dst_cache))
     }) {
         Ok(_) => (),
         Err(insert_at) => {
