@@ -4,7 +4,7 @@ use {
     itertools::Either,
     lazy_lru::LruCache,
     rand::{seq::SliceRandom, Rng, SeedableRng},
-    rand_chacha::ChaChaRng,
+    rand_chacha::{ChaCha8Rng, ChaChaRng},
     solana_clock::{Epoch, Slot},
     solana_cluster_type::ClusterType,
     solana_gossip::{
@@ -85,6 +85,7 @@ pub struct ClusterNodes<T> {
     // Reverse index from nodes pubkey to their index in self.nodes.
     index: HashMap<Pubkey, /*index:*/ usize>,
     weighted_shuffle: WeightedShuffle</*stake:*/ u64>,
+    use_cha_cha_8: bool,
     _phantom: PhantomData<T>,
 }
 
@@ -210,8 +211,13 @@ impl ClusterNodes<BroadcastStage> {
     }
 
     pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
-        let mut rng = get_seeded_rng(/*leader:*/ &self.pubkey, shred);
-        let index = self.weighted_shuffle.first(&mut rng)?;
+        let index = if self.use_cha_cha_8 {
+            let mut rng = get_seeded_rng(/*leader:*/ &self.pubkey, shred);
+            self.weighted_shuffle.first(&mut rng)?
+        } else {
+            let mut rng = get_seeded_legacy_rng(&self.pubkey, shred);
+            self.weighted_shuffle.first(&mut rng)?
+        };
         self.nodes[index].contact_info()
     }
 }
@@ -320,6 +326,7 @@ pub fn new_cluster_nodes<T: 'static>(
         index,
         weighted_shuffle,
         _phantom: PhantomData,
+        use_cha_cha_8: true,
     }
 }
 
@@ -440,9 +447,14 @@ fn dedup_tvu_addrs(nodes: &mut Vec<Node>) {
     })
 }
 
-fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
+fn get_seeded_legacy_rng(leader: &Pubkey, shred: &ShredId) -> ChaChaRng {
     let seed = shred.seed(leader);
     ChaChaRng::from_seed(seed)
+}
+
+fn get_seeded_rng(leader: &Pubkey, shred: &ShredId) -> ChaCha8Rng {
+    let seed = shred.seed(leader);
+    ChaCha8Rng::from_seed(seed)
 }
 
 // root     : [0]
