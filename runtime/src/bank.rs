@@ -4676,10 +4676,7 @@ impl Bank {
     /// Process a Transaction. This is used for unit tests and simply calls the vector
     /// Bank::process_transactions method.
     pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
-        self.try_process_transactions(std::iter::once(tx))?[0].clone()?;
-        tx.signatures
-            .first()
-            .map_or(Ok(()), |sig| self.get_signature_status(sig).unwrap())
+        self.try_process_transactions(std::iter::once(tx))?[0].clone()
     }
 
     /// Process a Transaction and store metadata. This is used for tests and the banks services. It
@@ -4743,7 +4740,7 @@ impl Bank {
         )
         .0
         .into_iter()
-        .map(|commit_result| commit_result.map(|_| ()))
+        .map(|commit_result| commit_result.and_then(|committed_tx| committed_tx.status))
         .collect()
     }
 
