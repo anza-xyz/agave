@@ -118,10 +118,11 @@ use {
     },
     solana_transaction_context::TransactionAccount,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_vote_interface::state::TowerSync,
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_account_with_authorized, BlockTimestamp, Vote, VoteInit, VoteState,
+            self, create_account_with_authorized, BlockTimestamp, VoteInit, VoteState,
             VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
@@ -503,14 +504,15 @@ fn test_credit_debit_rent_no_side_effect_on_hash() {
 
     assert_eq!(bank.last_blockhash(), genesis_config.hash());
 
-    let plenty_of_lamports = 264;
+    let min_balance = genesis_config.rent.minimum_balance(0);
+    let plenty_of_lamports = min_balance + 1;
     let too_few_lamports = 10;
     // Initialize credit-debit and credit only accounts
     let accounts = [
         AccountSharedData::new(plenty_of_lamports, 0, &Pubkey::default()),
-        AccountSharedData::new(plenty_of_lamports, 1, &Pubkey::default()),
         AccountSharedData::new(plenty_of_lamports, 0, &Pubkey::default()),
-        AccountSharedData::new(plenty_of_lamports, 1, &Pubkey::default()),
+        AccountSharedData::new(plenty_of_lamports, 0, &Pubkey::default()),
+        AccountSharedData::new(plenty_of_lamports, 0, &Pubkey::default()),
         // Transaction between these two accounts will fail
         AccountSharedData::new(too_few_lamports, 0, &Pubkey::default()),
         AccountSharedData::new(too_few_lamports, 1, &Pubkey::default()),
@@ -3087,6 +3089,9 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     if !relax_intrabatch_account_locks {
         bank.deactivate_feature(&feature_set::relax_intrabatch_account_locks::id());
     }
+
+    let next_slot = bank.slot() + 1;
+    let bank = Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), next_slot);
     let (bank, _bank_forks) = bank.wrap_with_bank_forks_for_tests();
 
     let vote_pubkey0 = solana_pubkey::new_rand();
@@ -3097,12 +3102,27 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     let payer1 = Keypair::new();
 
     // Create vote accounts
-    let vote_account0 =
-        vote_state::create_account(&vote_pubkey0, &authorized_voter.pubkey(), 0, 100);
-    let vote_account1 =
-        vote_state::create_account(&vote_pubkey1, &authorized_voter.pubkey(), 0, 100);
-    let vote_account2 =
-        vote_state::create_account(&vote_pubkey2, &authorized_voter.pubkey(), 0, 100);
+    let vote_account0 = vote_state::create_account_with_authorized(
+        &vote_pubkey0,
+        &authorized_voter.pubkey(),
+        &authorized_voter.pubkey(),
+        0,
+        100,
+    );
+    let vote_account1 = vote_state::create_account_with_authorized(
+        &vote_pubkey1,
+        &authorized_voter.pubkey(),
+        &authorized_voter.pubkey(),
+        0,
+        100,
+    );
+    let vote_account2 = vote_state::create_account_with_authorized(
+        &vote_pubkey2,
+        &authorized_voter.pubkey(),
+        &authorized_voter.pubkey(),
+        0,
+        100,
+    );
     bank.store_account(&vote_pubkey0, &vote_account0);
     bank.store_account(&vote_pubkey1, &vote_account1);
     bank.store_account(&vote_pubkey2, &vote_account2);
@@ -3113,15 +3133,15 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     bank.transfer(1, &mint_keypair, &authorized_voter.pubkey())
         .unwrap();
 
-    let vote = Vote::new(vec![1], Hash::default());
-    let ix0 = vote_instruction::vote(&vote_pubkey0, &authorized_voter.pubkey(), vote.clone());
+    let vote = TowerSync::new_from_slot(bank.parent_slot, bank.parent_hash);
+    let ix0 = vote_instruction::tower_sync(&vote_pubkey0, &authorized_voter.pubkey(), vote.clone());
     let tx0 = Transaction::new_signed_with_payer(
         &[ix0],
         Some(&payer0.pubkey()),
         &[&payer0, &authorized_voter],
         bank.last_blockhash(),
     );
-    let ix1 = vote_instruction::vote(&vote_pubkey1, &authorized_voter.pubkey(), vote.clone());
+    let ix1 = vote_instruction::tower_sync(&vote_pubkey1, &authorized_voter.pubkey(), vote.clone());
     let tx1 = Transaction::new_signed_with_payer(
         &[ix1],
         Some(&payer1.pubkey()),
@@ -3136,7 +3156,7 @@ fn test_readonly_accounts(relax_intrabatch_account_locks: bool) {
     assert_eq!(results[0], Ok(()));
     assert_eq!(results[1], Ok(()));
 
-    let ix0 = vote_instruction::vote(&vote_pubkey2, &authorized_voter.pubkey(), vote);
+    let ix0 = vote_instruction::tower_sync(&vote_pubkey2, &authorized_voter.pubkey(), vote);
     let tx0 = Transaction::new_signed_with_payer(
         &[ix0],
         Some(&payer0.pubkey()),
@@ -10153,6 +10173,7 @@ fn test_failed_compute_request_instruction() {
     bank.transfer(10, &mint_keypair, &payer1_keypair.pubkey())
         .unwrap();
 
+    const TEST_COMPUTE_UNIT_LIMIT: u32 = 500u32;
     declare_process_instruction!(MockBuiltin, 1, |invoke_context| {
         let compute_budget = ComputeBudget::from_budget_and_cost(
             invoke_context.get_compute_budget(),
@@ -10161,9 +10182,7 @@ fn test_failed_compute_request_instruction() {
         assert_eq!(
             compute_budget,
             ComputeBudget {
-                compute_unit_limit: u64::from(
-                    execution_budget::DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT
-                ),
+                compute_unit_limit: u64::from(TEST_COMPUTE_UNIT_LIMIT),
                 heap_size: 48 * 1024,
                 ..ComputeBudget::default()
             }
@@ -10182,7 +10201,7 @@ fn test_failed_compute_request_instruction() {
     // This message will be processed successfully
     let message1 = Message::new(
         &[
-            ComputeBudgetInstruction::set_compute_unit_limit(1),
+            ComputeBudgetInstruction::set_compute_unit_limit(TEST_COMPUTE_UNIT_LIMIT),
             ComputeBudgetInstruction::request_heap_frame(48 * 1024),
             Instruction::new_with_bincode(program_id, &0, vec![]),
         ],

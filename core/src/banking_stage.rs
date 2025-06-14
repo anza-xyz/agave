@@ -1095,9 +1095,9 @@ mod tests {
 
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         for entry in entries {
-            bank.process_entry_transactions(entry.transactions)
-                .iter()
-                .for_each(|x| assert_eq!(*x, Ok(())));
+            let _ = bank
+                .try_process_entry_transactions(entry.transactions)
+                .expect("All transactions should be processed");
         }
 
         // Assert the user doesn't hold three lamports. If the stage only outputs one
