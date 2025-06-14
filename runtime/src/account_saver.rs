@@ -140,7 +140,10 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
 ) {
     let fee_payer_address = transaction.fee_payer();
     match rollback_accounts {
-        RollbackAccounts::FeePayerOnly { fee_payer_account } => {
+        RollbackAccounts::FeePayerOnly {
+            fee_payer_account,
+            fee_payer_address: _,
+        } => {
             collected_accounts.push((fee_payer_address, fee_payer_account));
             if let Some(collected_account_transactions) = collected_account_transactions {
                 collected_account_transactions
@@ -157,6 +160,7 @@ fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
         RollbackAccounts::SeparateNonceAndFeePayer {
             nonce,
             fee_payer_account,
+            fee_payer_address: _,
         } => {
             collected_accounts.push((fee_payer_address, fee_payer_account));
             if let Some(collected_account_transactions) = collected_account_transactions {
@@ -283,6 +287,7 @@ mod tests {
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let loaded1 = LoadedTransaction {
@@ -294,6 +299,7 @@ mod tests {
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx0.clone(), tx1.clone()];
@@ -352,11 +358,13 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer_account: from_account_pre.clone(),
+                fee_payer_address: from_address,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx];
@@ -447,11 +455,13 @@ mod tests {
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: nonce.clone(),
                 fee_payer_account: from_account_pre.clone(),
+                fee_payer_address: from_address,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx];
@@ -560,6 +570,7 @@ mod tests {
             rent: 0,
             rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx];
@@ -623,6 +634,7 @@ mod tests {
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer_account: from_account_pre.clone(),
+                    fee_payer_address: from_address,
                 },
             },
         )))];
