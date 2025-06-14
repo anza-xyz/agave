@@ -178,7 +178,10 @@ pub struct ReplicaTransactionInfoV3<'a> {
     /// The transaction's index in the block
     pub index: usize,
 
-    /// States of accounts that were involved in the transaction
+    /// States of accounts that were involved in the transaction before transaction execution
+    pub pre_accounts_states: &'a [(Pubkey, AccountSharedData)],
+
+    /// States of accounts that were involved in the transaction after transaction execution
     pub post_accounts_states: &'a [(Pubkey, AccountSharedData)],
 }
 

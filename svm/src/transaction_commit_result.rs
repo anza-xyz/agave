@@ -21,6 +21,8 @@ pub struct CommittedTransaction {
     pub rent_debits: RentDebits,
     pub loaded_account_stats: TransactionLoadedAccountsStats,
     ///This is None only if no Geyser plugins are detected.
+    pub pre_accounts_states: Option<Vec<TransactionAccount>>,
+    ///This is None only if no Geyser plugins are detected.
     pub post_accounts_states: Option<Vec<TransactionAccount>>,
 }
 

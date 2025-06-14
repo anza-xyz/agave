@@ -3296,6 +3296,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
                 ),
                 (nonce_pubkey, bank.get_account(&nonce_pubkey).unwrap())
             ]),
+            pre_accounts_states: Some(vec![])
         })]
     );
 }

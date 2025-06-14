@@ -33,6 +33,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         signature: &Signature,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &SanitizedTransaction,
+        pre_accounts_states: &[(Pubkey, AccountSharedData)],
         post_accounts_states: &[(Pubkey, AccountSharedData)],
     ) {
         let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
@@ -41,6 +42,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             signature,
             transaction_status_meta,
             transaction,
+            pre_accounts_states,
             post_accounts_states,
         );
 
@@ -93,6 +95,7 @@ impl TransactionNotifierImpl {
         signature: &'a Signature,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a SanitizedTransaction,
+        pre_accounts_states: &'a [(Pubkey, AccountSharedData)],
         post_accounts_states: &'a [(Pubkey, AccountSharedData)],
     ) -> ReplicaTransactionInfoV3<'a> {
         ReplicaTransactionInfoV3 {
@@ -101,6 +104,7 @@ impl TransactionNotifierImpl {
             is_vote: transaction.is_simple_vote_transaction(),
             transaction,
             transaction_status_meta,
+            pre_accounts_states,
             post_accounts_states,
         }
     }
