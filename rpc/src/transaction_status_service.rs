@@ -459,12 +459,7 @@ pub(crate) mod tests {
         let mut rent_debits = RentDebits::default();
         rent_debits.insert(&pubkey, 123, 456);
 
-        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = transaction
-            .message()
-            .account_keys()
-            .iter()
-            .map(|key| (*key, bank.get_account(key).unwrap()))
-            .collect();
+        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = vec![(pubkey, nonce_account)];
         let pre_accounts_states = post_accounts_states.clone();
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),
