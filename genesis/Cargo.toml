@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_genesis"
+
+[[bin]]
+name = "solana-genesis"
+path = "src/main.rs"
+
 [dependencies]
 agave-feature-set = { workspace = true }
 base64 = { workspace = true }
@@ -36,13 +46,3 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-
-[[bin]]
-name = "solana-genesis"
-path = "src/main.rs"
-
-[lib]
-name = "solana_genesis"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

@@ -9,13 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-serde_json = { workspace = true }
-solana-metrics = { workspace = true }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [[bin]]
 name = "solana-upload-perf"
 path = "src/upload-perf.rs"
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dependencies]
+serde_json = { workspace = true }
+solana-metrics = { workspace = true }

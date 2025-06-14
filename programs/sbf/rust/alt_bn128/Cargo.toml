@@ -8,13 +8,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 array-bytes = { workspace = true }
 solana-bn254 = { workspace = true }
 solana-program = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

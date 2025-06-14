@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 atty = { workspace = true }
 bincode = { workspace = true }
@@ -49,6 +52,3 @@ url = { workspace = true }
 [target."cfg(windows)".dependencies]
 winapi = { workspace = true, features = ["minwindef", "winuser"] }
 winreg = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

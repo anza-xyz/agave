@@ -11,6 +11,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_vortexor"
+
 [dependencies]
 async-channel = { workspace = true }
 bytes = { workspace = true }
@@ -53,10 +60,3 @@ x509-parser = { workspace = true }
 assert_matches = { workspace = true }
 solana-logger = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_vortexor"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

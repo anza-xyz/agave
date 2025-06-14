@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 base64 = { workspace = true }
 bytemuck = { workspace = true }
@@ -20,10 +23,6 @@ solana-instruction = { workspace = true, features = ["std"] }
 solana-pubkey = { workspace = true, features = ["bytemuck"] }
 solana-sdk-ids = { workspace = true }
 thiserror = { workspace = true }
-
-[dev-dependencies]
-solana-keypair = { workspace = true }
-tiny-bip39 = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 aes-gcm-siv = { workspace = true }
@@ -45,8 +44,9 @@ solana-signer = { workspace = true }
 subtle = { workspace = true }
 zeroize = { workspace = true, features = ["zeroize_derive"] }
 
-[lib]
-crate-type = ["cdylib", "rlib"]
+[dev-dependencies]
+solana-keypair = { workspace = true }
+tiny-bip39 = { workspace = true }
 
 [lints]
 workspace = true

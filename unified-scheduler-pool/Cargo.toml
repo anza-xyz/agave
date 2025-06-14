@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 aquamarine = { workspace = true }
@@ -45,6 +48,3 @@ solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-system-transaction = { workspace = true }
 test-case = { workspace = true }
-
-[features]
-dev-context-only-utils = []

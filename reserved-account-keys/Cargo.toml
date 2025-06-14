@@ -9,6 +9,14 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 lazy_static = { workspace = true }
@@ -24,14 +32,6 @@ solana-sdk-ids = { workspace = true }
 [dev-dependencies]
 solana-message = { workspace = true }
 solana-sysvar = { workspace = true }
-
-[features]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-all-features = true
-rustdoc-args = ["--cfg=docsrs"]
 
 [lints]
 workspace = true

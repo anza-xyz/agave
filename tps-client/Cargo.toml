@@ -8,6 +8,14 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+all-features = true
+rustdoc-args = ["--cfg=docsrs"]
+
+[features]
+bank-client = ["dep:solana-client-traits", "dep:solana-runtime"]
+
 [dependencies]
 log = { workspace = true }
 solana-account = { workspace = true }
@@ -39,11 +47,3 @@ serial_test = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-test-validator = { workspace = true }
 tempfile = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-all-features = true
-rustdoc-args = ["--cfg=docsrs"]
-
-[features]
-bank-client = ["dep:solana-client-traits", "dep:solana-runtime"]

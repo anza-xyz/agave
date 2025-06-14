@@ -9,6 +9,17 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_vote"
+
+[features]
+dev-context-only-utils = ["dep:rand"]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
 [dependencies]
 itertools = { workspace = true }
 log = { workspace = true }
@@ -35,10 +46,6 @@ solana-transaction = { workspace = true }
 solana-vote-interface = { workspace = true, features = ["bincode"] }
 thiserror = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_vote"
-
 [dev-dependencies]
 bincode = { workspace = true }
 rand = { workspace = true }
@@ -46,13 +53,6 @@ solana-keypair = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction = { workspace = true, features = ["bincode"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = ["dep:rand"]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [lints]
 workspace = true

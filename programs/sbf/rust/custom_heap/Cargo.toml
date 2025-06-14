@@ -8,15 +8,15 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-solana-program = { workspace = true }
+[lib]
+crate-type = ["cdylib"]
 
 [features]
 default = ["custom-heap"]
 custom-heap = []
 
-[lib]
-crate-type = ["cdylib"]
+[dependencies]
+solana-program = { workspace = true }
 
 [lints]
 workspace = true

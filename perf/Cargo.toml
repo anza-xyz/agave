@@ -9,6 +9,29 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_perf"
+
+[features]
+dev-context-only-utils = [
+    "dep:solana-clock",
+    "dep:solana-keypair",
+    "dep:solana-signer",
+    "dep:solana-system-interface",
+    "dep:solana-system-transaction",
+    "dep:solana-transaction",
+    "dep:solana-vote-program",
+]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-short-vec/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
+
 [dependencies]
 ahash = { workspace = true }
 bincode = { workspace = true }
@@ -50,9 +73,6 @@ caps = { workspace = true }
 libc = { workspace = true }
 nix = { workspace = true, features = ["user"] }
 
-[lib]
-name = "solana_perf"
-
 [dev-dependencies]
 assert_matches = { workspace = true }
 rand_chacha = { workspace = true }
@@ -60,31 +80,11 @@ solana-logger = { workspace = true }
 solana-perf = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
-[features]
-dev-context-only-utils = [
-    "dep:solana-clock",
-    "dep:solana-keypair",
-    "dep:solana-signer",
-    "dep:solana-system-interface",
-    "dep:solana-system-transaction",
-    "dep:solana-transaction",
-    "dep:solana-vote-program",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-short-vec/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
-
 [[bench]]
 name = "sigverify"
 
 [[bench]]
 name = "discard"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [lints.rust.unexpected_cfgs]
 level = "warn"

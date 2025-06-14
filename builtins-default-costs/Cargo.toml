@@ -9,6 +9,19 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+# Add additional builtin programs here
+
+[lib]
+crate-type = ["lib"]
+name = "solana_builtins_default_costs"
+
+[features]
+frozen-abi = ["dep:solana-frozen-abi", "solana-vote-program/frozen-abi"]
+dev-context-only-utils = []
+svm-internal = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 ahash = { workspace = true }
@@ -28,27 +41,11 @@ solana-sdk-ids = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-vote-program = { workspace = true }
-# Add additional builtin programs here
-
-[lib]
-crate-type = ["lib"]
-name = "solana_builtins_default_costs"
 
 [dev-dependencies]
 rand = "0.8.5"
 solana-builtins-default-costs = { path = ".", features = ["svm-internal"] }
 static_assertions = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
-dev-context-only-utils = []
-svm-internal = []
 
 [lints]
 workspace = true

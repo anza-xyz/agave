@@ -10,6 +10,12 @@ license = { workspace = true }
 edition = { workspace = true }
 publish = true
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_wen_restart"
+
 [dependencies]
 anyhow = { workspace = true }
 log = { workspace = true }
@@ -29,6 +35,14 @@ solana-time-utils = { workspace = true }
 solana-timings = { workspace = true }
 solana-vote-program = { workspace = true }
 
+[build-dependencies]
+prost-build = { workspace = true }
+
+# windows users should install the protobuf compiler manually and set the PROTOC
+# envar to point to the installed binary
+[target."cfg(not(windows))".build-dependencies]
+protobuf-src = { workspace = true }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
 rand = { workspace = true }
@@ -42,17 +56,3 @@ solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-vote = { workspace = true }
 tempfile = { workspace = true }
-
-[build-dependencies]
-prost-build = { workspace = true }
-
-# windows users should install the protobuf compiler manually and set the PROTOC
-# envar to point to the installed binary
-[target."cfg(not(windows))".build-dependencies]
-protobuf-src = { workspace = true }
-
-[lib]
-name = "solana_wen_restart"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

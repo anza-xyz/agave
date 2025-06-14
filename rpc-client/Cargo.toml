@@ -9,6 +9,15 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["spinner"]
+# Support rpc-client methods that feature a spinner progress bar for
+# command-line interfaces
+spinner = ["dep:indicatif"]
+
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true }
@@ -54,12 +63,3 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 static_assertions = { workspace = true }
-
-[features]
-default = ["spinner"]
-# Support rpc-client methods that feature a spinner progress bar for
-# command-line interfaces
-spinner = ["dep:indicatif"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

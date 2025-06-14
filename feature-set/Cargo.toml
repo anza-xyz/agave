@@ -9,6 +9,9 @@ license = { workspace = true }
 edition = { workspace = true }
 readme = false
 
+[features]
+frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
+
 [dependencies]
 ahash = { workspace = true }
 solana-epoch-schedule = { workspace = true }
@@ -21,9 +24,6 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-pubkey = { workspace = true, default-features = false }
 solana-sha256-hasher = { workspace = true }
-
-[features]
-frozen-abi = ["dep:solana-frozen-abi", "dep:solana-frozen-abi-macro"]
 
 [lints]
 workspace = true

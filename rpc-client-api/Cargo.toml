@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }
@@ -37,6 +40,3 @@ thiserror = { workspace = true }
 [dev-dependencies]
 const_format = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

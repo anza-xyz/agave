@@ -8,12 +8,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+shuttle-test = ["dep:shuttle"]
+executor = ["dep:futures"]
+
 [dependencies]
 futures = { workspace = true, optional = true }
 lazy_static = { workspace = true }
 rand = { workspace = true }
 shuttle = { workspace = true, optional = true }
-
-[features]
-shuttle-test = ["dep:shuttle"]
-executor = ["dep:futures"]

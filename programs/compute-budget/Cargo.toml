@@ -9,9 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-qualifier_attr = { workspace = true }
-solana-program-runtime = { workspace = true }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lib]
 crate-type = ["lib"]
@@ -20,5 +19,6 @@ name = "solana_compute_budget_program"
 [features]
 svm-internal = []
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dependencies]
+qualifier_attr = { workspace = true }
+solana-program-runtime = { workspace = true }

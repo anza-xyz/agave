@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 assert_matches = { workspace = true }
@@ -15,6 +18,3 @@ ed25519-dalek = { workspace = true }
 rand = { workspace = true }
 solana-program-test = { workspace = true }
 solana-sdk = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

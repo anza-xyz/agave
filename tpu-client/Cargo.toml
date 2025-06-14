@@ -9,6 +9,19 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+default = ["spinner"]
+# Support tpu-client methods that feature a spinner progress bar for
+# command-line interfaces
+spinner = [
+    "dep:indicatif",
+    "dep:solana-message",
+    "solana-rpc-client/spinner",
+]
+
 [dependencies]
 async-trait = { workspace = true }
 bincode = { workspace = true }
@@ -36,16 +49,3 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-
-[features]
-default = ["spinner"]
-# Support tpu-client methods that feature a spinner progress bar for
-# command-line interfaces
-spinner = [
-    "dep:indicatif",
-    "dep:solana-message",
-    "solana-rpc-client/spinner"
-]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

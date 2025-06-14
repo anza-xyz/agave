@@ -9,6 +9,23 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_vote_program"
+
+[features]
+default = ["metrics"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-program-runtime/frozen-abi",
+    "solana-vote-interface/frozen-abi",
+]
+metrics = ["dep:solana-metrics"]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
@@ -60,23 +77,6 @@ test-case = { workspace = true }
 [[bench]]
 name = "vote_instructions"
 harness = false
-
-[lib]
-crate-type = ["lib"]
-name = "solana_vote_program"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-default = ["metrics"]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-program-runtime/frozen-abi",
-    "solana-vote-interface/frozen-abi"
-]
-metrics = ["dep:solana-metrics"]
 
 [lints]
 workspace = true

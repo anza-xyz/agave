@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_system_program"
+
 [dependencies]
 bincode = { workspace = true }
 log = { workspace = true }
@@ -41,13 +48,6 @@ solana-rent = { workspace = true }
 solana-sdk = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_system_program"
-
 [[bench]]
 name = "system"
 harness = false
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

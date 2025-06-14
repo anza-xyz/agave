@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 clap = { workspace = true }
 humantime = { workspace = true }
@@ -25,6 +28,3 @@ solana-pubkey = { version = "=2.2.1", default-features = false }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-version = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

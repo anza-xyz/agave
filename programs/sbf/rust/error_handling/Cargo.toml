@@ -8,15 +8,15 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 num-derive = { workspace = true }
 num-traits = { workspace = true }
 solana-decode-error = { workspace = true }
 solana-program = { workspace = true }
 thiserror = { workspace = true }
-
-[lib]
-crate-type = ["cdylib"]
 
 [lints]
 workspace = true

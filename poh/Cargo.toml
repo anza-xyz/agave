@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_poh"
+
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 core_affinity = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -39,15 +49,5 @@ solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 
-[features]
-dev-context-only-utils = []
-
-[lib]
-crate-type = ["lib"]
-name = "solana_poh"
-
 [[bench]]
 name = "poh"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

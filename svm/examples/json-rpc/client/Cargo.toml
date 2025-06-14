@@ -5,6 +5,10 @@ version = { workspace = true }
 edition = { workspace = true }
 publish = false
 
+[features]
+dummy-for-ci-check = []
+frozen-abi = []
+
 [dependencies]
 borsh = { workspace = true }
 clap = { workspace = true }
@@ -13,7 +17,3 @@ solana-client = { workspace = true }
 solana-sdk = { workspace = true }
 thiserror = { workspace = true }
 yaml-rust = { workspace = true }
-
-[features]
-dummy-for-ci-check = []
-frozen-abi = []
