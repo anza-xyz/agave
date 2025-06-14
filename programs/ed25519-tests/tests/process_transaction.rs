@@ -22,11 +22,11 @@ fn generate_keypair() -> ed25519_dalek::Keypair {
 
 #[tokio::test]
 async fn test_success() {
-    let mut context = ProgramTest::default().start_with_context().await;
+    let context = ProgramTest::default().start_with_context().await;
 
-    let client = &mut context.banks_client;
+    
     let payer = &context.payer;
-    let recent_blockhash = context.last_blockhash;
+    let recent_blockhash = context.bank.last_blockhash();
 
     let privkey = generate_keypair();
     let message_arr = b"hello";
@@ -41,16 +41,16 @@ async fn test_success() {
         recent_blockhash,
     );
 
-    assert_matches!(client.process_transaction(transaction).await, Ok(()));
+    assert_matches!(context.bank.process_transaction(&transaction), Ok(()));
 }
 
 #[tokio::test]
 async fn test_failure() {
-    let mut context = ProgramTest::default().start_with_context().await;
+    let context = ProgramTest::default().start_with_context().await;
 
-    let client = &mut context.banks_client;
+    
     let payer = &context.payer;
-    let recent_blockhash = context.last_blockhash;
+    let recent_blockhash = context.bank.last_blockhash();
 
     let privkey = generate_keypair();
     let message_arr = b"hello";
@@ -68,10 +68,8 @@ async fn test_failure() {
     );
 
     assert_matches!(
-        client.process_transaction(transaction).await,
-        Err(BanksClientError::TransactionError(
-            TransactionError::InstructionError(0, InstructionError::Custom(3))
-        ))
+        context.bank.process_transaction(&transaction),
+        Err(TransactionError::InstructionError(0, InstructionError::Custom(3)))
     );
     // this assert is for documenting the matched error code above
     assert_eq!(3, PrecompileError::InvalidDataOffsets as u32);

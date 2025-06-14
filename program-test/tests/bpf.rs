@@ -1,5 +1,6 @@
 use {
     agave_feature_set as feature_set,
+    solana_account::ReadableAccount,
     solana_instruction::{AccountMeta, Instruction},
     solana_program_test::ProgramTest,
     solana_pubkey::Pubkey,
@@ -20,13 +21,8 @@ async fn test_add_bpf_program() {
     let context = program_test.start_with_context().await;
 
     // Assert the program is a BPF Loader 2 program.
-    let program_account = context
-        .banks_client
-        .get_account(program_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(program_account.owner, bpf_loader::id());
+    let program_account = context.bank.get_account(&program_id).unwrap();
+    assert_eq!(program_account.owner(), &bpf_loader::id());
 
     // Invoke the program.
     let instruction = Instruction::new_with_bytes(program_id, &[], Vec::new());
@@ -34,13 +30,9 @@ async fn test_add_bpf_program() {
         &[instruction],
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }
 
 #[test_case(64, true, true; "success with 64 accounts and without feature")]
@@ -71,21 +63,13 @@ async fn test_max_accounts(num_accounts: u8, deactivate_feature: bool, expect_su
         &[instruction],
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
 
     // Invoke the program.
     if expect_success {
-        context
-            .banks_client
-            .process_transaction(transaction)
-            .await
-            .unwrap();
+        context.bank.process_transaction(&transaction).unwrap();
     } else {
-        context
-            .banks_client
-            .process_transaction(transaction)
-            .await
-            .unwrap_err();
+        context.bank.process_transaction(&transaction).unwrap_err();
     }
 }

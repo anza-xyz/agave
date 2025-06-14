@@ -44,7 +44,7 @@ fn sysvar_last_restart_slot_process_instruction(
     Ok(())
 }
 
-async fn check_with_program(
+fn check_with_program(
     context: &mut ProgramTestContext,
     program_id: Pubkey,
     expected_last_restart_slot: u64,
@@ -59,14 +59,10 @@ async fn check_with_program(
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
 
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }
 
 #[tokio::test]
@@ -80,23 +76,23 @@ async fn get_sysvar_last_restart_slot() {
 
     let mut context = program_test.start_with_context().await;
 
-    check_with_program(&mut context, program_id, 0).await;
+    check_with_program(&mut context, program_id, 0);
     context.warp_to_slot(40).unwrap();
     context.register_hard_fork(41 as Slot);
-    check_with_program(&mut context, program_id, 0).await;
+    check_with_program(&mut context, program_id, 0);
     context.warp_to_slot(41).unwrap();
-    check_with_program(&mut context, program_id, 41).await;
+    check_with_program(&mut context, program_id, 41);
     // check for value lower than previous hardfork
     context.register_hard_fork(40 as Slot);
     context.warp_to_slot(45).unwrap();
-    check_with_program(&mut context, program_id, 41).await;
+    check_with_program(&mut context, program_id, 41);
     context.register_hard_fork(47 as Slot);
     context.register_hard_fork(48 as Slot);
     context.warp_to_slot(46).unwrap();
-    check_with_program(&mut context, program_id, 41).await;
+    check_with_program(&mut context, program_id, 41);
     context.register_hard_fork(50 as Slot);
     context.warp_to_slot(48).unwrap();
-    check_with_program(&mut context, program_id, 48).await;
+    check_with_program(&mut context, program_id, 48);
     context.warp_to_slot(50).unwrap();
-    check_with_program(&mut context, program_id, 50).await;
+    check_with_program(&mut context, program_id, 50);
 }
