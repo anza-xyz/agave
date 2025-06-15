@@ -3869,6 +3869,7 @@ impl AccountsDb {
 define_accounts_db_test!(test_alive_bytes, |accounts_db| {
     let slot: Slot = 0;
     let num_keys = 10;
+    let mut num_obsolete_accounts = 0;
 
     for data_size in 0..num_keys {
         let account = AccountSharedData::new(1, data_size, &Pubkey::default());
@@ -3894,15 +3895,23 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
             [0];
         assert_eq!(account_info.0, slot);
         let reclaims = [account_info];
-        accounts_db.remove_dead_accounts(reclaims.iter(), None, true);
+        num_obsolete_accounts += reclaims.len();
+        accounts_db.remove_dead_accounts(
+            reclaims.iter(),
+            None,
+            true,
+            MarkAccountsObsolete::Yes(slot),
+        );
         let after_size = storage0.alive_bytes();
-        if storage0.count() == 0
-            && AccountsFileProvider::HotStorage == accounts_db.accounts_file_provider
-        {
+        if storage0.count() == 0 {
             // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
             assert_eq!(after_size, 0);
         } else {
             assert_eq!(before_size, after_size + account.stored_size_aligned);
+            assert_eq!(
+                storage0.get_obsolete_accounts(None).len(),
+                num_obsolete_accounts
+            );
         }
     });
 });

@@ -2091,6 +2091,7 @@ impl AccountsDb {
             reset_accounts,
             pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
+            MarkAccountsObsolete::No,
         );
         measure.stop();
         debug!("{}", measure);
@@ -2946,6 +2947,7 @@ impl AccountsDb {
             reset_accounts,
             &pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
+            MarkAccountsObsolete::No,
         );
 
         reclaims_time.stop();
@@ -3123,6 +3125,11 @@ impl AccountsDb {
     ///   cleaned up/removed via `process_dead_slots`. For instance, on store, no slots should
     ///   be cleaned up, but during the background clean accounts purges accounts from old rooted
     ///   slots, so outdated slots may be removed.
+    /// * 'mark_accounts_obsolete' - Whether to mark accounts as obsolete or not. If `Yes`, then
+    ///   obsolete account entry will be marked in the storage so snapshots/accounts hash can
+    ///   determine the state of the account at a specified slot. This should only be done if the
+    ///   account is already unrefed and removed from the accounts index
+    ///   It must be unrefed and removed to avoid double counting or missed counting in shrink
     fn handle_reclaims<'a, I>(
         &'a self,
         reclaims: Option<I>,
@@ -3130,14 +3137,19 @@ impl AccountsDb {
         reset_accounts: bool,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
         handle_reclaims: HandleReclaims<'a>,
+        mark_accounts_obsolete: MarkAccountsObsolete,
     ) -> ReclaimResult
     where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
     {
         let mut reclaim_result = ReclaimResult::default();
         if let Some(reclaims) = reclaims {
-            let (dead_slots, reclaimed_offsets) =
-                self.remove_dead_accounts(reclaims, expected_single_dead_slot, reset_accounts);
+            let (dead_slots, reclaimed_offsets) = self.remove_dead_accounts(
+                reclaims,
+                expected_single_dead_slot,
+                reset_accounts,
+                mark_accounts_obsolete,
+            );
             reclaim_result.1 = reclaimed_offsets;
 
             if let HandleReclaims::ProcessDeadSlots(purge_stats) = handle_reclaims {
@@ -5375,6 +5387,7 @@ impl AccountsDb {
         // storage entries
         let mut handle_reclaims_elapsed = Measure::start("handle_reclaims_elapsed");
         // Slot should be dead after removing all its account entries
+        // There is no reason to mark accounts obsolete as the slot storage is being purged
         let expected_dead_slot = Some(remove_slot);
         self.handle_reclaims(
             (!reclaims.is_empty()).then(|| reclaims.iter()),
@@ -5382,6 +5395,7 @@ impl AccountsDb {
             false,
             &pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(purge_stats),
+            MarkAccountsObsolete::No,
         );
         handle_reclaims_elapsed.stop();
         purge_stats
@@ -7215,6 +7229,7 @@ impl AccountsDb {
         reclaims: I,
         expected_slot: Option<Slot>,
         reset_accounts: bool,
+        mark_accounts_obsolete: MarkAccountsObsolete,
     ) -> (IntSet<Slot>, SlotOffsets)
     where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
@@ -7270,6 +7285,22 @@ impl AccountsDb {
                             .map(|len| store.accounts.calculate_stored_size(*len))
                             .sum();
                         store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
+
+                        if let MarkAccountsObsolete::Yes(slot_marked_obsolete) =
+                            mark_accounts_obsolete
+                        {
+                            offsets
+                                .into_iter()
+                                .zip(data_lens)
+                                .for_each(|(offset, data_len)| {
+                                    store.mark_account_obsolete(
+                                        offset,
+                                        data_len,
+                                        slot_marked_obsolete,
+                                    );
+                                });
+                        }
+
                         if Self::is_shrinking_productive(&store)
                             && self.is_candidate_for_shrink(&store)
                         {
@@ -7811,6 +7842,7 @@ impl AccountsDb {
                 &HashSet::default(),
                 // this callsite does NOT process dead slots
                 HandleReclaims::DoNotProcessDeadSlots,
+                MarkAccountsObsolete::No,
             );
             handle_reclaims_time.stop();
             handle_reclaims_elapsed = handle_reclaims_time.as_us();
@@ -8673,6 +8705,16 @@ pub enum CalcAccountsHashDataSource {
 enum HandleReclaims<'a> {
     ProcessDeadSlots(&'a PurgeStats),
     DoNotProcessDeadSlots,
+}
+
+/// Specify whether obsolete accounts should be marked or not during reclaims
+/// They should only be marked if they are also getting unreffed in the index
+/// Temporariliy allow dead code until the feature is implemented
+#[derive(Debug, Copy, Clone)]
+enum MarkAccountsObsolete {
+    #[allow(dead_code)]
+    Yes(Slot),
+    No,
 }
 
 /// Which accounts hash calculation is being performed?
