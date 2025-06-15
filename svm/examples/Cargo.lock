@@ -8097,6 +8097,7 @@ dependencies = [
 name = "solana-streamer"
 version = "3.0.0"
 dependencies = [
+ "arc-swap",
  "async-channel",
  "bytes",
  "crossbeam-channel",

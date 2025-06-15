@@ -18,6 +18,7 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
+    solana_net_utils::bind_to,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -27,7 +28,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::SocketAddr,
+        net::{IpAddr, SocketAddr},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -214,6 +215,9 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
+
+    #[rpc(meta, name = "setGossipSocket")]
+    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -532,6 +536,33 @@ impl AdminRpc for AdminRpcImpl {
 
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo> {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
+    }
+
+    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()> {
+        let ip: IpAddr = ip
+            .parse()
+            .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid IP address: {e}")))?;
+        let new_addr = SocketAddr::new(ip, port);
+
+        meta.with_post_init(|post_init| {
+            if let Some(socket) = &post_init.gossip_socket {
+                let new_socket = bind_to(new_addr.ip(), new_addr.port(), false).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
+                })?;
+
+                // hot-swap new socket
+                socket.swap(new_socket);
+            }
+            post_init
+                .cluster_info
+                .set_gossip_socket(new_addr)
+                .map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!(
+                        "Failed to refresh gossip ContactInfo: {e}"
+                    ))
+                })?;
+            Ok(())
+        })
     }
 
     fn repair_shred_from_peer(
@@ -990,6 +1021,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
+                    gossip_socket: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
