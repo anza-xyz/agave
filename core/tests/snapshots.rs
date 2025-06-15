@@ -32,11 +32,11 @@ use {
         genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
         snapshot_archive_info::FullSnapshotArchiveInfo,
-        snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
+        snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         snapshot_utils::{
-            self,
+            self, SnapshotInterval,
             SnapshotVersion::{self, V1_2_0},
         },
         status_cache::MAX_CACHE_ENTRIES,
@@ -47,6 +47,7 @@ use {
     solana_system_transaction as system_transaction,
     solana_time_utils::timestamp,
     std::{
+        num::NonZeroU64,
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -75,8 +76,8 @@ impl SnapshotTestConfig {
     fn new(
         snapshot_version: SnapshotVersion,
         cluster_type: ClusterType,
-        full_snapshot_archive_interval_slots: Slot,
-        incremental_snapshot_archive_interval_slots: Slot,
+        full_snapshot_archive_interval: SnapshotInterval,
+        incremental_snapshot_archive_interval: SnapshotInterval,
     ) -> SnapshotTestConfig {
         let (accounts_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = TempDir::new().unwrap();
@@ -103,8 +104,8 @@ impl SnapshotTestConfig {
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
 
         let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
+            full_snapshot_archive_interval,
+            incremental_snapshot_archive_interval,
             full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
             incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
                 .path()
@@ -189,8 +190,8 @@ fn run_bank_forks_snapshot_n<F>(
     let snapshot_test_config = SnapshotTestConfig::new(
         snapshot_version,
         cluster_type,
-        set_root_interval,
-        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+        SnapshotInterval::Slots(NonZeroU64::new(set_root_interval).unwrap()),
+        SnapshotInterval::Disabled,
     );
 
     let bank_forks = snapshot_test_config.bank_forks.clone();
@@ -310,8 +311,10 @@ fn test_slots_to_snapshot(snapshot_version: SnapshotVersion, cluster_type: Clust
         let snapshot_test_config = SnapshotTestConfig::new(
             snapshot_version,
             cluster_type,
-            (*add_root_interval * num_set_roots * 2) as Slot,
-            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+            SnapshotInterval::Slots(
+                NonZeroU64::new((*add_root_interval * num_set_roots * 2) as Slot).unwrap(),
+            ),
+            SnapshotInterval::Disabled,
         );
         let bank_forks = snapshot_test_config.bank_forks.clone();
         let bank_forks_r = bank_forks.read().unwrap();
@@ -445,8 +448,10 @@ fn test_bank_forks_incremental_snapshot(
     let snapshot_test_config = SnapshotTestConfig::new(
         snapshot_version,
         cluster_type,
-        FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        SnapshotInterval::Slots(NonZeroU64::new(FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS).unwrap()),
+        SnapshotInterval::Slots(
+            NonZeroU64::new(INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS).unwrap(),
+        ),
     );
     trace!(
         "SnapshotTestConfig:\naccounts_dir: {}\nbank_snapshots_dir: \
@@ -682,8 +687,10 @@ fn test_snapshots_with_background_services(
     let snapshot_test_config = SnapshotTestConfig::new(
         snapshot_version,
         cluster_type,
-        FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        SnapshotInterval::Slots(NonZeroU64::new(FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS).unwrap()),
+        SnapshotInterval::Slots(
+            NonZeroU64::new(INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS).unwrap(),
+        ),
     );
 
     let node_keypair = Arc::new(Keypair::new());

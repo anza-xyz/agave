@@ -38,9 +38,7 @@ use {
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::{
-        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
-    },
+    solana_runtime::{snapshot_config::SnapshotConfig, snapshot_utils::SnapshotInterval},
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
@@ -48,7 +46,7 @@ use {
     std::{
         collections::HashSet,
         fs, iter,
-        num::NonZeroUsize,
+        num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -536,15 +534,12 @@ pub struct SnapshotValidatorConfig {
 
 impl SnapshotValidatorConfig {
     pub fn new(
-        full_snapshot_archive_interval_slots: Slot,
-        incremental_snapshot_archive_interval_slots: Slot,
+        full_snapshot_archive_interval: SnapshotInterval,
+        incremental_snapshot_archive_interval: SnapshotInterval,
         num_account_paths: usize,
     ) -> SnapshotValidatorConfig {
-        // Interval values must be nonzero
-        assert!(full_snapshot_archive_interval_slots > 0);
-        assert!(incremental_snapshot_archive_interval_slots > 0);
         // Ensure that some snapshots will be created
-        assert!(full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL);
+        assert_ne!(full_snapshot_archive_interval, SnapshotInterval::Disabled);
 
         // Create the snapshot config
         let _ = fs::create_dir_all(farf_dir());
@@ -552,8 +547,8 @@ impl SnapshotValidatorConfig {
         let full_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let incremental_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
+            full_snapshot_archive_interval,
+            incremental_snapshot_archive_interval,
             full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
             incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
                 .path()
@@ -592,12 +587,12 @@ impl SnapshotValidatorConfig {
 }
 
 pub fn setup_snapshot_validator_config(
-    snapshot_interval_slots: Slot,
+    snapshot_interval_slots: NonZeroU64,
     num_account_paths: usize,
 ) -> SnapshotValidatorConfig {
     SnapshotValidatorConfig::new(
-        snapshot_interval_slots,
-        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+        SnapshotInterval::Slots(snapshot_interval_slots),
+        SnapshotInterval::Disabled,
         num_account_paths,
     )
 }

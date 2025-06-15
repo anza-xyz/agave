@@ -60,9 +60,8 @@ use {
     },
     solana_runtime::{
         runtime_config::RuntimeConfig,
-        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
-        snapshot_utils::{self, ArchiveFormat, SnapshotVersion},
+        snapshot_utils::{self, ArchiveFormat, SnapshotInterval, SnapshotVersion},
     },
     solana_send_transaction_service::send_transaction_service,
     solana_signer::Signer,
@@ -76,7 +75,7 @@ use {
         collections::HashSet,
         fs::{self, File},
         net::{IpAddr, Ipv4Addr, SocketAddr},
-        num::NonZeroUsize,
+        num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
@@ -904,35 +903,23 @@ pub fn execute(
         .transpose()?
         .unwrap_or(SnapshotVersion::default());
 
-    let (full_snapshot_archive_interval_slots, incremental_snapshot_archive_interval_slots) =
+    let (full_snapshot_archive_interval, incremental_snapshot_archive_interval) =
         if matches.is_present("no_snapshots") {
             // snapshots are disabled
-            (
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-            )
+            (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
         } else {
             match (
                 !matches.is_present("no_incremental_snapshots"),
-                value_t_or_exit!(matches, "snapshot_interval_slots", u64),
+                value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
             ) {
-                (_, 0) => {
-                    // snapshots are disabled
-                    warn!(
-                        "Snapshot generation was disabled with `--snapshot-interval-slots 0`, \
-                         which is now deprecated. Use `--no-snapshots` instead.",
-                    );
-                    (
-                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-                    )
-                }
                 (true, incremental_snapshot_interval_slots) => {
                     // incremental snapshots are enabled
                     // use --snapshot-interval-slots for the incremental snapshot interval
+                    let full_snapshot_interval_slots =
+                        value_t_or_exit!(matches, "full_snapshot_interval_slots", NonZeroU64);
                     (
-                        value_t_or_exit!(matches, "full_snapshot_interval_slots", u64),
-                        incremental_snapshot_interval_slots,
+                        SnapshotInterval::Slots(full_snapshot_interval_slots),
+                        SnapshotInterval::Slots(incremental_snapshot_interval_slots),
                     )
                 }
                 (false, full_snapshot_interval_slots) => {
@@ -941,27 +928,29 @@ pub fn execute(
                     // also warn if --full-snapshot-interval-slots was specified
                     if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
                         warn!(
-                            "Incremental snapshots are disabled, yet --full-snapshot-interval-slots was specified! \
-                             Note that --full-snapshot-interval-slots is *ignored* when incremental snapshots are disabled. \
+                            "Incremental snapshots are disabled, yet \
+                             --full-snapshot-interval-slots was specified! \
+                             Note that --full-snapshot-interval-slots is *ignored* \
+                             when incremental snapshots are disabled. \
                              Use --snapshot-interval-slots instead.",
                         );
                     }
                     (
-                        full_snapshot_interval_slots,
-                        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+                        SnapshotInterval::Slots(full_snapshot_interval_slots),
+                        SnapshotInterval::Disabled,
                     )
                 }
             }
         };
 
     validator_config.snapshot_config = SnapshotConfig {
-        usage: if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
+        usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
             SnapshotUsage::LoadOnly
         } else {
             SnapshotUsage::LoadAndGenerate
         },
-        full_snapshot_archive_interval_slots,
-        incremental_snapshot_archive_interval_slots,
+        full_snapshot_archive_interval,
+        incremental_snapshot_archive_interval,
         bank_snapshots_dir,
         full_snapshot_archives_dir: full_snapshot_archives_dir.clone(),
         incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.clone(),
@@ -974,28 +963,27 @@ pub fn execute(
 
     info!(
         "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
-        if full_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-            "disabled".to_string()
-        } else {
-            format!("{full_snapshot_archive_interval_slots} slots")
+        match full_snapshot_archive_interval {
+            SnapshotInterval::Disabled => "disabled".to_string(),
+            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
         },
-        if incremental_snapshot_archive_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-            "disabled".to_string()
-        } else {
-            format!("{incremental_snapshot_archive_interval_slots} slots")
+        match incremental_snapshot_archive_interval {
+            SnapshotInterval::Disabled => "disabled".to_string(),
+            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
         },
     );
 
     // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
     // Minimally we should warn the user in case this was a mistake.
-    if full_snapshot_archive_interval_slots > DEFAULT_SLOTS_PER_EPOCH
-        && full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-    {
-        warn!(
-            "The full snapshot interval is excessively large: {}! This will negatively \
-            impact the background cleanup tasks in accounts-db. Consider a smaller value.",
-            full_snapshot_archive_interval_slots,
-        );
+    if let SnapshotInterval::Slots(full_snapshot_interval_slots) = full_snapshot_archive_interval {
+        let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
+        if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
+            warn!(
+                "The full snapshot interval is excessively large: {}! This will negatively \
+                impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+                full_snapshot_interval_slots,
+            );
+        }
     }
 
     if !is_snapshot_config_valid(&validator_config.snapshot_config) {

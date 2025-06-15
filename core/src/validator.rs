@@ -109,11 +109,11 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         runtime_config::RuntimeConfig,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils::{self, DISABLED_SNAPSHOT_ARCHIVE_INTERVAL},
+        snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         snapshot_hash::StartingSnapshotHashes,
-        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs},
+        snapshot_utils::{self, clean_orphaned_account_snapshot_dirs, SnapshotInterval},
     },
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
@@ -2779,16 +2779,18 @@ pub fn is_snapshot_config_valid(snapshot_config: &SnapshotConfig) -> bool {
         return true;
     }
 
-    let full_snapshot_interval_slots = snapshot_config.full_snapshot_archive_interval_slots;
-    let incremental_snapshot_interval_slots =
-        snapshot_config.incremental_snapshot_archive_interval_slots;
+    let SnapshotInterval::Slots(full_snapshot_interval_slots) =
+        snapshot_config.full_snapshot_archive_interval
+    else {
+        // if we *are* generating snapshots, then the full snapshot interval cannot be disabled
+        return false;
+    };
 
-    if incremental_snapshot_interval_slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-        true
-    } else if incremental_snapshot_interval_slots == 0 {
-        false
-    } else {
-        full_snapshot_interval_slots > incremental_snapshot_interval_slots
+    match snapshot_config.incremental_snapshot_archive_interval {
+        SnapshotInterval::Disabled => true,
+        SnapshotInterval::Slots(incremental_snapshot_interval_slots) => {
+            full_snapshot_interval_slots > incremental_snapshot_interval_slots
+        }
     }
 }
 
@@ -2807,7 +2809,7 @@ mod tests {
         solana_poh_config::PohConfig,
         solana_sha256_hasher::hash,
         solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-        std::{fs::remove_dir_all, thread, time::Duration},
+        std::{fs::remove_dir_all, num::NonZeroU64, thread, time::Duration},
     };
 
     #[test]
@@ -3163,60 +3165,61 @@ mod tests {
     }
 
     #[test]
-    fn test_interval_check() {
+    fn test_is_snapshot_config_valid() {
         fn new_snapshot_config(
             full_snapshot_archive_interval_slots: Slot,
             incremental_snapshot_archive_interval_slots: Slot,
         ) -> SnapshotConfig {
             SnapshotConfig {
-                full_snapshot_archive_interval_slots,
-                incremental_snapshot_archive_interval_slots,
+                full_snapshot_archive_interval: SnapshotInterval::Slots(
+                    NonZeroU64::new(full_snapshot_archive_interval_slots).unwrap(),
+                ),
+                incremental_snapshot_archive_interval: SnapshotInterval::Slots(
+                    NonZeroU64::new(incremental_snapshot_archive_interval_slots).unwrap(),
+                ),
                 ..SnapshotConfig::default()
             }
         }
 
-        assert!(is_snapshot_config_valid(&new_snapshot_config(300, 200)));
+        // default config must be valid
+        assert!(is_snapshot_config_valid(&SnapshotConfig::default()));
 
-        assert!(is_snapshot_config_valid(&new_snapshot_config(
-            snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
-        )));
-        assert!(is_snapshot_config_valid(&new_snapshot_config(
-            snapshot_bank_utils::DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-        )));
-        assert!(is_snapshot_config_valid(&new_snapshot_config(
-            snapshot_bank_utils::DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-        )));
-        assert!(is_snapshot_config_valid(&new_snapshot_config(
-            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-            DISABLED_SNAPSHOT_ARCHIVE_INTERVAL
-        )));
+        // disabled incremental snapshot must be valid
+        assert!(is_snapshot_config_valid(&SnapshotConfig {
+            incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
+            ..SnapshotConfig::default()
+        }));
 
-        // Full snaphot intervals used to be required to be a multiple of
-        // incremental snapshot intervals, but that's no longer the case
-        // so test that the check is relaxed.
+        // disabled full snapshot must be invalid though (if generating snapshots)
+        assert!(!is_snapshot_config_valid(&SnapshotConfig {
+            full_snapshot_archive_interval: SnapshotInterval::Disabled,
+            ..SnapshotConfig::default()
+        }));
+
+        // simple config must be valid
+        assert!(is_snapshot_config_valid(&new_snapshot_config(400, 200)));
         assert!(is_snapshot_config_valid(&new_snapshot_config(100, 42)));
         assert!(is_snapshot_config_valid(&new_snapshot_config(444, 200)));
         assert!(is_snapshot_config_valid(&new_snapshot_config(400, 222)));
 
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 100)));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 0)));
-        assert!(!is_snapshot_config_valid(&new_snapshot_config(0, 0)));
+        // config where full interval is not larger than incremental interval must be invalid
         assert!(!is_snapshot_config_valid(&new_snapshot_config(42, 100)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 100)));
         assert!(!is_snapshot_config_valid(&new_snapshot_config(100, 200)));
 
+        // config with snapshots disabled (or load-only) must be valid
+        assert!(is_snapshot_config_valid(&SnapshotConfig::new_disabled()));
         assert!(is_snapshot_config_valid(&SnapshotConfig::new_load_only()));
         assert!(is_snapshot_config_valid(&SnapshotConfig {
-            full_snapshot_archive_interval_slots: 37,
-            incremental_snapshot_archive_interval_slots: 41,
+            full_snapshot_archive_interval: SnapshotInterval::Slots(NonZeroU64::new(37).unwrap()),
+            incremental_snapshot_archive_interval: SnapshotInterval::Slots(
+                NonZeroU64::new(41).unwrap()
+            ),
             ..SnapshotConfig::new_load_only()
         }));
         assert!(is_snapshot_config_valid(&SnapshotConfig {
-            full_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
-            incremental_snapshot_archive_interval_slots: DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+            full_snapshot_archive_interval: SnapshotInterval::Disabled,
+            incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
             ..SnapshotConfig::new_load_only()
         }));
     }

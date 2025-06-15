@@ -6,6 +6,7 @@ use {
         bank::{epoch_accounts_hash_utils, Bank, SquashTiming},
         bank_forks::SetRootError,
         snapshot_config::SnapshotConfig,
+        snapshot_utils::SnapshotInterval,
     },
     log::*,
     solana_clock::Slot,
@@ -20,8 +21,8 @@ use {
 };
 
 struct SnapshotGenerationIntervals {
-    full_snapshot_interval: Slot,
-    incremental_snapshot_interval: Slot,
+    full_snapshot_interval: SnapshotInterval,
+    incremental_snapshot_interval: SnapshotInterval,
 }
 
 pub struct SnapshotController {
@@ -80,11 +81,26 @@ impl SnapshotController {
         }) = self.snapshot_generation_intervals()
         {
             if let Some((bank, request_kind)) = banks.iter().find_map(|bank| {
+                let should_request_full_snapshot =
+                    if let SnapshotInterval::Slots(snapshot_interval) = full_snapshot_interval {
+                        bank.block_height() % snapshot_interval == 0
+                    } else {
+                        false
+                    };
+                let should_request_incremental_snapshot =
+                    if let SnapshotInterval::Slots(snapshot_interval) =
+                        incremental_snapshot_interval
+                    {
+                        bank.block_height() % snapshot_interval == 0
+                    } else {
+                        false
+                    };
+
                 if bank.slot() <= self.latest_abs_request_slot() {
                     None
-                } else if bank.block_height() % full_snapshot_interval == 0 {
+                } else if should_request_full_snapshot {
                     Some((bank, SnapshotRequestKind::FullSnapshot))
-                } else if bank.block_height() % incremental_snapshot_interval == 0 {
+                } else if should_request_incremental_snapshot {
                     Some((bank, SnapshotRequestKind::IncrementalSnapshot))
                 } else {
                     None
@@ -132,10 +148,10 @@ impl SnapshotController {
         self.snapshot_config
             .should_generate_snapshots()
             .then_some(SnapshotGenerationIntervals {
-                full_snapshot_interval: self.snapshot_config.full_snapshot_archive_interval_slots,
+                full_snapshot_interval: self.snapshot_config.full_snapshot_archive_interval,
                 incremental_snapshot_interval: self
                     .snapshot_config
-                    .incremental_snapshot_archive_interval_slots,
+                    .incremental_snapshot_archive_interval,
             })
     }
 

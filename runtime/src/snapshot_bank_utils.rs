@@ -53,10 +53,6 @@ use {
     },
 };
 
-pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 50_000;
-pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 100;
-pub const DISABLED_SNAPSHOT_ARCHIVE_INTERVAL: Slot = Slot::MAX;
-
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
     status_cache_path: &Path,

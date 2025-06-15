@@ -69,9 +69,12 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_package::SnapshotKind,
-        snapshot_utils,
+        commitment::VOTE_THRESHOLD_SIZE,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils,
+        snapshot_config::SnapshotConfig,
+        snapshot_package::SnapshotKind,
+        snapshot_utils::{self, SnapshotInterval},
     },
     solana_signer::Signer,
     solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
@@ -90,6 +93,7 @@ use {
         fs,
         io::Read,
         iter,
+        num::NonZeroU64,
         path::Path,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -479,7 +483,7 @@ fn test_mainnet_beta_cluster_type() {
 fn test_snapshot_download() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
-    let snapshot_interval_slots = 50;
+    let snapshot_interval_slots = NonZeroU64::new(50).unwrap();
     let num_account_paths = 3;
 
     let leader_snapshot_test_config =
@@ -559,13 +563,13 @@ fn test_incremental_snapshot_download() {
     let num_account_paths = 3;
 
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
     let validator_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
 
@@ -730,13 +734,13 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let num_account_paths = 3;
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
     let mut validator_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
     // The test has asserts that require the validator always boots from snapshot archives
@@ -756,7 +760,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     info!(
-        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}",
+        "snapshot config:\n\tfull snapshot interval: {:?}\n\tincremental snapshot interval: {:?}",
         full_snapshot_interval, incremental_snapshot_interval,
     );
     debug!(
@@ -1174,8 +1178,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // And lastly, startup another node with the new snapshots to ensure they work
     let final_validator_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
 
@@ -1215,7 +1219,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 fn test_snapshot_restart_tower() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
-    let snapshot_interval_slots = 10;
+    let snapshot_interval_slots = NonZeroU64::new(10).unwrap();
     let num_account_paths = 2;
 
     let leader_snapshot_test_config =
@@ -1288,7 +1292,7 @@ fn test_snapshot_restart_tower() {
 fn test_snapshots_blockstore_floor() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 snapshotting leader
-    let snapshot_interval_slots = 100;
+    let snapshot_interval_slots = NonZeroU64::new(100).unwrap();
     let num_account_paths = 4;
 
     let leader_snapshot_test_config =
@@ -1400,7 +1404,7 @@ fn test_snapshots_blockstore_floor() {
 #[serial]
 fn test_snapshots_restart_validity() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
-    let snapshot_interval_slots = 100;
+    let snapshot_interval_slots = NonZeroU64::new(100).unwrap();
     let num_account_paths = 1;
     let mut snapshot_test_config =
         setup_snapshot_validator_config(snapshot_interval_slots, num_account_paths);
@@ -4986,8 +4990,10 @@ fn test_duplicate_with_pruned_ancestor() {
 #[serial]
 fn test_boot_from_local_state() {
     solana_logger::setup_with_default("error,local_cluster=info");
-    const FULL_SNAPSHOT_INTERVAL: Slot = 100;
-    const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
+    const FULL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(100).unwrap());
+    const INCREMENTAL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(10).unwrap());
 
     let validator1_config =
         SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 2);
@@ -5266,8 +5272,10 @@ fn test_boot_from_local_state() {
 #[serial]
 fn test_boot_from_local_state_missing_archive() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
-    const FULL_SNAPSHOT_INTERVAL: Slot = 20;
-    const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
+    const FULL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(20).unwrap());
+    const INCREMENTAL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(10).unwrap());
 
     let validator_config =
         SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 7);

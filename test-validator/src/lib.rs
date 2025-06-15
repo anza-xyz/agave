@@ -49,6 +49,7 @@ use {
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
+        snapshot_utils::SnapshotInterval,
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
@@ -62,6 +63,7 @@ use {
         fs::{self, remove_dir_all, File},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        num::NonZeroU64,
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, RwLock},
@@ -1061,8 +1063,10 @@ impl TestValidator {
             ],
             run_verification: false, // Skip PoH verification of ledger on startup for speed
             snapshot_config: SnapshotConfig {
-                full_snapshot_archive_interval_slots: 100,
-                incremental_snapshot_archive_interval_slots: Slot::MAX,
+                full_snapshot_archive_interval: SnapshotInterval::Slots(
+                    NonZeroU64::new(100).unwrap(),
+                ),
+                incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
                 bank_snapshots_dir: ledger_path.join("snapshot"),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),

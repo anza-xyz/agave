@@ -39,7 +39,7 @@ use {
         fmt, fs,
         io::{BufReader, BufWriter, Error as IoError, Read, Result as IoResult, Seek, Write},
         mem,
-        num::NonZeroUsize,
+        num::{NonZeroU64, NonZeroUsize},
         ops::RangeInclusive,
         path::{Path, PathBuf},
         process::ExitStatus,
@@ -58,8 +58,9 @@ use {
 };
 
 mod archive_format;
+mod snapshot_interval;
 pub mod snapshot_storage_rebuilder;
-pub use archive_format::*;
+pub use {archive_format::*, snapshot_interval::SnapshotInterval};
 
 pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const SNAPSHOT_VERSION_FILENAME: &str = "version";
@@ -77,6 +78,10 @@ pub const BANK_SNAPSHOT_PRE_FILENAME_EXTENSION: &str = "pre";
 // - Safe because the values are fixed, known non-zero constants
 // - Necessary in order to have a plain NonZeroUsize as the constant, NonZeroUsize
 //   returns an Option<NonZeroUsize> and we can't .unwrap() at compile time
+pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
+    NonZeroU64::new(50_000).unwrap();
+pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
+    NonZeroU64::new(100).unwrap();
 pub const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
     NonZeroUsize::new(2).unwrap();
 pub const DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =

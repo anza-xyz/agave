@@ -24,16 +24,11 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
-    solana_runtime::{
-        snapshot_bank_utils::{
-            DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        },
-        snapshot_utils::{
-            SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION,
-            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-        },
+    solana_runtime::snapshot_utils::{
+        SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
     },
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
@@ -307,9 +302,12 @@ impl DefaultArgs {
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN.to_string(),
             snapshot_packager_niceness_adjustment: "0".to_string(),
             full_snapshot_archive_interval_slots: DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
+                .get()
                 .to_string(),
             incremental_snapshot_archive_interval_slots:
-                DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS.to_string(),
+                DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
+                    .get()
+                    .to_string(),
             min_snapshot_download_speed: DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED.to_string(),
             max_snapshot_download_abort: MAX_SNAPSHOT_DOWNLOAD_ABORT.to_string(),
             snapshot_archive_format: DEFAULT_ARCHIVE_COMPRESSION.to_string(),

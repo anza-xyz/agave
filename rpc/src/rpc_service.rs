@@ -32,12 +32,14 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
+        bank::Bank,
+        bank_forks::BankForks,
+        commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
-        snapshot_utils,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils::{self, SnapshotInterval},
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
@@ -280,14 +282,17 @@ impl RpcRequestMiddleware {
         }
         let snapshot_timeout = self.snapshot_config.as_ref().and_then(|config| {
             snapshot_type.map(|st| {
-                let slots = match st {
-                    SnapshotKind::Full => config.full_snapshot_archive_interval_slots,
-                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval_slots,
+                let interval = match st {
+                    SnapshotKind::Full => config.full_snapshot_archive_interval,
+                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval,
                 };
-                let computed = if slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-                    Duration::ZERO
-                } else {
-                    Duration::from_millis(slots.saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT))
+                let computed = match interval {
+                    SnapshotInterval::Disabled => Duration::ZERO,
+                    SnapshotInterval::Slots(slots) => Duration::from_millis(
+                        slots
+                            .get()
+                            .saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT),
+                    ),
                 };
                 let fallback = match st {
                     SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
