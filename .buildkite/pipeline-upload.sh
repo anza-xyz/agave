@@ -8,11 +8,11 @@
 #
 
 set -e
-cd "$(dirname "$0")"/..
-source ci/_
 
-_ ci/buildkite-pipeline.sh pipeline.yml
-echo +++ pipeline
-cat pipeline.yml
+gitroot=$(git rev-parse --show-toplevel)
+"$gitroot"/ci/docker-run-default-image.sh sh -c "cd ci/buildkitegen && go run main.go > pipeline.json"
 
-_ buildkite-agent pipeline upload pipeline.yml
+pipeline_json_path="$gitroot"/ci/buildkitegen/pipeline.json
+echo "+++ pipeline"
+cat "$pipeline_json_path"
+buildkite-agent pipeline upload "$pipeline_json_path"

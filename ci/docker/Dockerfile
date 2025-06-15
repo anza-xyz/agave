@@ -4,6 +4,7 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
+  GOLANG_VERSION= \
   NODE_MAJOR= \
   SCCACHE_VERSION= \
   GRCOV_VERSION=
@@ -14,6 +15,9 @@ ENV \
   DEBIAN_FRONTEND=noninteractive \
   TZ=UTC
 
+# golang
+ENV PATH="/usr/local/go/bin:$PATH"
+
 # rust
 ENV \
   RUSTUP_HOME=/usr/local/rustup \
@@ -23,6 +27,7 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
+  if [ -z "$GOLANG_VERSION" ]; then echo "ERROR: The GOLANG_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
   if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
@@ -101,6 +106,10 @@ RUN \
   rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
   curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
+  # golang
+  curl -LOsS "https://golang.org/dl/go$GOLANG_VERSION.linux-amd64.tar.gz" && \
+  tar -C /usr/local -xzf "go$GOLANG_VERSION.linux-amd64.tar.gz" && \
+  rm "go$GOLANG_VERSION.linux-amd64.tar.gz" && \
   # nodejs
   sudo mkdir -p /etc/apt/keyrings && \
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
@@ -114,6 +123,8 @@ RUN \
   chmod -R a+w /.config && \
   mkdir /.npm && \
   chmod -R a+w /.npm && \
+  mkdir /go && \
+  chmod -R a+w /go && \
   # grcov
   curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" && \
   tar -xf grcov-x86_64-unknown-linux-musl.tar.bz2 && \
