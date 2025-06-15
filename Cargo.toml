@@ -279,7 +279,7 @@ hyper-proxy = "0.9.1"
 im = "15.1.0"
 indexmap = "2.9.0"
 indicatif = "0.17.11"
-io-uring = "0.7.4"
+io-uring = "0.7.7"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
@@ -540,7 +540,10 @@ solana-tps-client = { path = "tps-client", version = "=3.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.0.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.0.0" }
 solana-transaction = "2.2.3"
-solana-transaction-context = { path = "transaction-context", version = "=3.0.0", features = ["bincode", "debug-signature"] }
+solana-transaction-context = { path = "transaction-context", version = "=3.0.0", features = [
+    "bincode",
+    "debug-signature",
+] }
 solana-transaction-error = "2.2.1"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=3.0.0" }
 solana-transaction-status = { path = "transaction-status", version = "=3.0.0" }
