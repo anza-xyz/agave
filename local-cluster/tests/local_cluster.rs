@@ -3388,7 +3388,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         let a_blockstore = open_blockstore(&val_a_ledger_path);
         copy_blocks(next_slot_on_a, &b_blockstore, &a_blockstore, false);
 
-        // Purge uneccessary slots
+        // Purge unnecessary slots
         purge_slots_with_count(&a_blockstore, next_slot_on_a + 1, truncated_slots);
     }
 
