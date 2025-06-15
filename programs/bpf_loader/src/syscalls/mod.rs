@@ -581,10 +581,10 @@ fn address_is_aligned<T>(address: u64) -> bool {
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
+    ($memory_mapping:expr, $map:ident, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
         Result::<u64, Error>::from(
             $memory_mapping
-                .map($access_type, $vm_addr, $len)
+                .$map($access_type, $vm_addr, $len)
                 .map_err(|err| err.into()),
         )
     };
@@ -595,6 +595,7 @@ macro_rules! translate_type_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         let host_addr = translate_inner!(
             $memory_mapping,
+            map,
             $access_type,
             $vm_addr,
             size_of::<$T>() as u64
@@ -619,7 +620,7 @@ macro_rules! translate_slice_inner {
         if isize::try_from(total_size).is_err() {
             return Err(SyscallError::InvalidLength.into());
         }
-        let host_addr = translate_inner!($memory_mapping, $access_type, $vm_addr, total_size)?;
+        let host_addr = translate_inner!($memory_mapping, map, $access_type, $vm_addr, total_size)?;
         if $check_aligned && !address_is_aligned::<$T>(host_addr) {
             return Err(SyscallError::UnalignedPointer.into());
         }
@@ -693,12 +694,52 @@ fn translate_slice_mut<'a, T>(
     )
 }
 
-// Safety: This will invalidate previously translated references.
-// No other translated references shall be live when calling this.
+fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result<(), Error> {
+    translate_inner!(
+        memory_mapping,
+        map_with_access_violation_handler,
+        AccessType::Store,
+        vm_addr,
+        size_of::<T>() as u64,
+    )
+    .map(|_| ())
+}
+fn touch_slice_mut<T>(
+    memory_mapping: &mut MemoryMapping,
+    vm_addr: u64,
+    element_count: u64,
+) -> Result<(), Error> {
+    if element_count == 0 {
+        return Ok(());
+    }
+    translate_inner!(
+        memory_mapping,
+        map_with_access_violation_handler,
+        AccessType::Store,
+        vm_addr,
+        element_count.saturating_mul(size_of::<T>() as u64),
+    )
+    .map(|_| ())
+}
+
+// No other translated references can be live when calling this.
 // Meaning it should generally be at the beginning or end of a syscall and
 // it should only be called once with all translations passed in one call.
 #[macro_export]
 macro_rules! translate_mut {
+    (internal, $memory_mapping:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {
+        touch_slice_mut::<$T>(
+            $memory_mapping,
+            $vm_addr_and_element_count.0,
+            $vm_addr_and_element_count.1,
+        )?
+    };
+    (internal, $memory_mapping:expr, &mut $T:ty, $vm_addr:expr) => {
+        touch_type_mut::<$T>(
+            $memory_mapping,
+            $vm_addr,
+        )?
+    };
     (internal, $memory_mapping:expr, $check_aligned:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {{
         let slice = translate_slice_mut::<$T>(
             $memory_mapping,
@@ -722,6 +763,7 @@ macro_rules! translate_mut {
         // This ensures that all the parameters are collected first so that if they depend on previous translations
         $(let $binding = ($vm_addr $(, $element_count)?);)+
         // they are not invalidated by the following translations here:
+        $(translate_mut!(internal, $memory_mapping, &mut $T, $binding);)+
         $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $T, $binding);)+
         let host_ranges = [
             $(($binding.1, $binding.2),)+
@@ -2236,11 +2278,15 @@ mod tests {
         for (ok, start, length, value) in cases {
             if ok {
                 assert_eq!(
-                    translate_inner!(&memory_mapping, AccessType::Load, start, length).unwrap(),
+                    translate_inner!(&memory_mapping, map, AccessType::Load, start, length)
+                        .unwrap(),
                     value
                 )
             } else {
-                assert!(translate_inner!(&memory_mapping, AccessType::Load, start, length).is_err())
+                assert!(
+                    translate_inner!(&memory_mapping, map, AccessType::Load, start, length)
+                        .is_err()
+                )
             }
         }
     }

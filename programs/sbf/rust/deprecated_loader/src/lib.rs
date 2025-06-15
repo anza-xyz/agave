@@ -144,7 +144,8 @@ fn process_instruction(
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let realloc_program_owner = accounts[REALLOC_PROGRAM_INDEX].owner;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let direct_mapping = instruction_data[1];
+            let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             let prev_len = account.data_len();
             let expected = account.data.borrow()[..new_len].to_vec();
             let mut instruction_data = vec![REALLOC, 0];
@@ -165,7 +166,9 @@ fn process_instruction(
 
             // deserialize_parameters_unaligned predates realloc support, and
             // hardcodes the account data length to the original length.
-            if !solana_sdk_ids::bpf_loader_deprecated::check_id(realloc_program_owner) {
+            if !solana_program::bpf_loader_deprecated::check_id(realloc_program_owner)
+                && direct_mapping == 0
+            {
                 assert_eq!(&*account.data.borrow(), &expected);
                 assert_eq!(
                     unsafe {
@@ -187,7 +190,7 @@ fn process_instruction(
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
 
             let prev_data = {
-                let data = &instruction_data[9..];
+                let data = &instruction_data[10..];
                 let prev_len = account.data_len();
                 account.resize(prev_len + data.len())?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
@@ -205,8 +208,9 @@ fn process_instruction(
             };
 
             let mut expected = account.data.borrow().to_vec();
-            let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            expected.extend_from_slice(&instruction_data[9..]);
+            let direct_mapping = instruction_data[1];
+            let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
+            expected.extend_from_slice(&instruction_data[10..]);
             let mut instruction_data =
                 vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED];
             instruction_data.extend_from_slice(&new_len.to_le_bytes());
@@ -224,19 +228,21 @@ fn process_instruction(
             .unwrap();
 
             assert_eq!(*account.data.borrow(), &prev_data[..new_len]);
-            assert_eq!(
-                unsafe {
-                    std::slice::from_raw_parts(
-                        account.data.borrow().as_ptr().add(new_len),
-                        prev_data.len() - new_len,
-                    )
-                },
-                &vec![0; prev_data.len() - new_len]
-            );
-            assert_eq!(
-                unsafe { *account.data.borrow().as_ptr().add(prev_data.len()) },
-                SENTINEL
-            );
+            if direct_mapping == 0 {
+                assert_eq!(
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            account.data.borrow().as_ptr().add(new_len),
+                            prev_data.len() - new_len,
+                        )
+                    },
+                    &vec![0; prev_data.len() - new_len]
+                );
+                assert_eq!(
+                    unsafe { *account.data.borrow().as_ptr().add(prev_data.len()) },
+                    SENTINEL
+                );
+            }
         }
         Some(&TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED) => {
             msg!("DEPRECATED LOADER TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED");
