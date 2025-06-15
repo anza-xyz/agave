@@ -449,6 +449,15 @@ where
         .map_err(|e| format!("{err_prefix} {e}"))
 }
 
+pub fn is_non_zero(value: impl AsRef<str>) -> Result<(), String> {
+    let value = value.as_ref();
+    if value.eq("0") {
+        Err(String::from("cannot be zero"))
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
