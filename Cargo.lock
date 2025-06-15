@@ -9940,6 +9940,7 @@ dependencies = [
  "serde_json",
  "solana-account-decoder-client-types",
  "solana-clock",
+ "solana-message",
  "solana-rpc-client-types",
  "solana-signer",
  "solana-transaction-error",
