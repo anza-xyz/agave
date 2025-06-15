@@ -9306,6 +9306,7 @@ dependencies = [
  "solana-signer",
  "solana-streamer",
  "solana-tpu-client",
+ "solana-transaction",
  "solana-validator-exit",
  "tokio",
 ]
