@@ -78,6 +78,18 @@ fn cast_socket_addr(addr: &sockaddr_storage, hdr: &mmsghdr) -> Option<SocketAddr
     None
 }
 
+/** Receive multiple messages from `sock` into buffer provided in `packets`.
+This is a wrapper around recvmmsg(7) call.
+
+The buffer provided in packets should have all `meta()` fields cleared before calling
+this function
+
+
+ This function is *supposed to* timeout in 1 second and *may* block forever
+ due to a bug in the linux kernel.
+ You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
+ prior to calling this function if you require this to actually time out after 1 second.
+*/
 #[cfg(target_os = "linux")]
 pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     // Should never hit this, but bail if the caller didn't provide any Packets
