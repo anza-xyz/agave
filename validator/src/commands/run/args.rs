@@ -444,8 +444,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .default_value(&default_args.full_snapshot_archive_interval_slots)
             .help("Number of slots between generating full snapshots")
             .long_help(
-                "Number of slots between generating full snapshots. Must be a multiple of the \
-                 incremental snapshot interval. Only used when incremental snapshots are enabled.",
+                "Number of slots between generating full snapshots. \
+                 Only used when incremental snapshots are enabled.",
             ),
     )
     .arg(
