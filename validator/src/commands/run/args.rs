@@ -4,8 +4,8 @@ use {
     solana_clap_utils::{
         hidden_unless_forced,
         input_validators::{
-            is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
-            is_slot, is_within_range, validate_cpu_ranges,
+            is_keypair_or_ask_keyword, is_non_zero, is_parsable, is_pow2, is_pubkey,
+            is_pubkey_or_keypair, is_slot, is_within_range, validate_cpu_ranges,
             validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
@@ -428,12 +428,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .takes_value(true)
             .default_value(&default_args.incremental_snapshot_archive_interval_slots)
+            .validator(is_non_zero)
             .help("Number of slots between generating snapshots")
             .long_help(
                 "Number of slots between generating snapshots. \
                  If incremental snapshots are enabled, this sets the incremental snapshot interval. \
                  If incremental snapshots are disabled, this sets the full snapshot interval. \
-                 To disable all snapshot generation, see --no-snapshots.",
+                 Must be greater than zero.",
             ),
     )
     .arg(
@@ -442,11 +443,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .takes_value(true)
             .default_value(&default_args.full_snapshot_archive_interval_slots)
+            .validator(is_non_zero)
             .help("Number of slots between generating full snapshots")
             .long_help(
                 "Number of slots between generating full snapshots. \
                  Only used when incremental snapshots are enabled. \
-                 Must be greater than the incremental snapshot interval.",
+                 Must be greater than the incremental snapshot interval. \
+                 Must be greater than zero.",
             ),
     )
     .arg(

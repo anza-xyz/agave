@@ -29,6 +29,7 @@ Release channels have their own copy of this changelog:
   * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
   * `--skip-poh-verify`
 * Deprecated snapshot archive formats have been removed and are no longer loadable.
+* Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
 
 ## 2.3.0
 
