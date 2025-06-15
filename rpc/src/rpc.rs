@@ -3469,8 +3469,13 @@ pub mod rpc_accounts_scan {
 pub mod rpc_full {
     use {
         super::*,
+        solana_ledger::transaction_balances::compile_collected_balances,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::parse_ui_inner_instructions,
+        solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
+        solana_transaction_status::{
+            option_serializer::OptionSerializer, parse_ui_inner_instructions,
+            UiTransactionStatusMeta,
+        },
     };
     #[rpc]
     pub trait Full {
@@ -3532,6 +3537,14 @@ pub mod rpc_full {
             data: String,
             config: Option<RpcSimulateTransactionConfig>,
         ) -> Result<RpcResponse<RpcSimulateTransactionResult>>;
+
+        #[rpc(meta, name = "simulateTransactionAsStatusMeta")]
+        fn simulate_transaction_as_status_meta(
+            &self,
+            meta: Self::Metadata,
+            data: String,
+            config: Option<RpcSimulateTransactionConfig>,
+        ) -> Result<RpcResponse<UiTransactionStatusMeta>>;
 
         #[rpc(meta, name = "minimumLedgerSlot")]
         fn minimum_ledger_slot(&self, meta: Self::Metadata) -> Result<Slot>;
@@ -3902,6 +3915,8 @@ pub mod rpc_full {
                     loaded_accounts_data_size,
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
+                    fee: _,
+                    balance_collector: _,
                 } = preflight_bank.simulate_transaction(&transaction, false)
                 {
                     match err {
@@ -4002,6 +4017,8 @@ pub mod rpc_full {
                 loaded_accounts_data_size,
                 return_data,
                 inner_instructions,
+                fee: _,
+                balance_collector: _,
             } = bank.simulate_transaction(&transaction, enable_cpi_recording);
 
             let account_keys = transaction.message().account_keys();
@@ -4070,6 +4087,135 @@ pub mod rpc_full {
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
                     replacement_blockhash: blockhash,
+                },
+            ))
+        }
+
+        fn simulate_transaction_as_status_meta(
+            &self,
+            meta: Self::Metadata,
+            data: String,
+            config: Option<RpcSimulateTransactionConfig>,
+        ) -> Result<RpcResponse<UiTransactionStatusMeta>> {
+            debug!("simulate_transaction_as_status_meta rpc request received");
+            let RpcSimulateTransactionConfig {
+                sig_verify,
+                replace_recent_blockhash,
+                commitment,
+                encoding,
+                accounts: _,
+                min_context_slot,
+                inner_instructions: enable_cpi_recording,
+            } = config.unwrap_or_default();
+            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+                Error::invalid_params(format!(
+                    "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+                ))
+            })?;
+            let (_, mut unsanitized_tx) =
+                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
+
+            let bank = &*meta.get_bank_with_config(RpcContextConfig {
+                commitment,
+                min_context_slot,
+            })?;
+            let mut blockhash: Option<RpcBlockhash> = None;
+            if replace_recent_blockhash {
+                if sig_verify {
+                    return Err(Error::invalid_params(
+                        "sigVerify may not be used with replaceRecentBlockhash",
+                    ));
+                }
+                let recent_blockhash = bank.last_blockhash();
+                unsanitized_tx
+                    .message
+                    .set_recent_blockhash(recent_blockhash);
+                let last_valid_block_height = bank
+                    .get_blockhash_last_valid_block_height(&recent_blockhash)
+                    .expect("bank blockhash queue should contain blockhash");
+                blockhash.replace(RpcBlockhash {
+                    blockhash: recent_blockhash.to_string(),
+                    last_valid_block_height,
+                });
+            }
+
+            let transaction =
+                sanitize_transaction(unsanitized_tx, bank, bank.get_reserved_account_keys())?;
+            if sig_verify {
+                verify_transaction(&transaction)?;
+            }
+
+            let TransactionSimulationResult {
+                result,
+                logs,
+                post_simulation_accounts: _,
+                units_consumed,
+                loaded_accounts_data_size: _,
+                return_data,
+                inner_instructions,
+                fee,
+                balance_collector,
+            } = bank.simulate_transaction(&transaction, enable_cpi_recording);
+
+            let account_keys = transaction.message().account_keys();
+            let (balances, token_balances) =
+                compile_collected_balances(balance_collector.unwrap_or_default());
+
+            let loaded_addresses = transaction
+                .as_sanitized_transaction()
+                .get_loaded_addresses();
+
+            let inner_instructions = inner_instructions.map(|info| {
+                map_inner_instructions(info)
+                    .map(|converted| parse_ui_inner_instructions(converted, &account_keys))
+                    .collect()
+            });
+
+            assert_eq!(balances.pre_balances.len(), 1);
+            assert_eq!(balances.post_balances.len(), 1);
+            assert_eq!(token_balances.pre_token_balances.len(), 1);
+            assert_eq!(token_balances.post_token_balances.len(), 1);
+
+            Ok(new_response(
+                bank,
+                UiTransactionStatusMeta {
+                    err: result.clone().err(),
+                    status: result,
+                    fee: fee.unwrap_or(0),
+                    pre_balances: balances.pre_balances.into_iter().next().unwrap(),
+                    post_balances: balances.post_balances.into_iter().next().unwrap(),
+                    inner_instructions: match inner_instructions {
+                        Some(inner_instructions) => OptionSerializer::Some(inner_instructions),
+                        None => OptionSerializer::None,
+                    },
+                    log_messages: OptionSerializer::Some(logs),
+                    pre_token_balances: OptionSerializer::Some(
+                        token_balances
+                            .pre_token_balances
+                            .into_iter()
+                            .next()
+                            .unwrap()
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                    ),
+                    post_token_balances: OptionSerializer::Some(
+                        token_balances
+                            .post_token_balances
+                            .into_iter()
+                            .next()
+                            .unwrap()
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                    ),
+                    rewards: OptionSerializer::Skip,
+                    loaded_addresses: OptionSerializer::Some((&loaded_addresses).into()),
+                    return_data: return_data.map(|return_data| return_data.into()).into(),
+                    compute_units_consumed: OptionSerializer::Some(units_consumed),
+                    // NOTE: deliberately skipped as we might not want this on simulation
+                    cost_units: OptionSerializer::Skip,
                 },
             ))
         }

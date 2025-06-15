@@ -23,6 +23,7 @@ serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-clock = { workspace = true }
 solana-rpc-client-types = { workspace = true }
+solana-message = { workspace = true }
 solana-signer = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-transaction-status-client-types = { workspace = true }

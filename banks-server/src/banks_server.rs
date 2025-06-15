@@ -191,6 +191,8 @@ fn simulate_transaction(
         loaded_accounts_data_size,
         return_data,
         inner_instructions,
+        fee: _,
+        balance_collector: _,
     } = bank.simulate_transaction_unchecked(&sanitized_transaction, true);
 
     let simulation_details = TransactionSimulationDetails {
