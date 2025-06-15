@@ -9083,9 +9083,9 @@ dependencies = [
 
 [[package]]
 name = "solana-native-token"
-version = "2.2.2"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "307fb2f78060995979e9b4f68f833623565ed4e55d3725f100454ce78a99a1a3"
+checksum = "61515b880c36974053dd499c0510066783f0cc6ac17def0c7ef2a244874cf4a9"
 
 [[package]]
 name = "solana-net-shaper"
