@@ -25,9 +25,8 @@ pub async fn assert_ix_error(
     expected_err: InstructionError,
     assertion_failed_msg: &str,
 ) {
-    let client = &mut context.banks_client;
     let fee_payer = &context.payer;
-    let recent_blockhash = context.last_blockhash;
+    let recent_blockhash = context.bank.last_blockhash();
 
     let mut signers = vec![fee_payer];
     if let Some(additional_payer) = additional_payer_keypair {
@@ -42,11 +41,7 @@ pub async fn assert_ix_error(
     );
 
     assert_eq!(
-        client
-            .process_transaction(transaction)
-            .await
-            .unwrap_err()
-            .unwrap(),
+        context.bank.process_transaction(&transaction).unwrap_err(),
         TransactionError::InstructionError(0, expected_err),
         "{assertion_failed_msg}",
     );
@@ -59,7 +54,7 @@ pub async fn add_upgradeable_loader_account(
     account_data_len: usize,
     account_callback: impl Fn(&mut AccountSharedData),
 ) {
-    let rent = context.banks_client.get_rent().await.unwrap();
+    let rent = &context.bank.rent_collector().rent;
     let mut account = AccountSharedData::new(
         rent.minimum_balance(account_data_len),
         account_data_len,

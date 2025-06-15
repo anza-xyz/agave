@@ -34,13 +34,9 @@ pub async fn setup_stake(
         ),
         Some(&context.payer.pubkey()),
         &vec![&context.payer, &stake_keypair, user],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
     stake_keypair.pubkey()
 }
 
@@ -76,13 +72,9 @@ pub async fn setup_vote(context: &mut ProgramTestContext) -> Pubkey {
         &instructions,
         Some(&context.payer.pubkey()),
         &vec![&context.payer, &validator_keypair, &vote_keypair],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 
     vote_keypair.pubkey()
 }

@@ -1,7 +1,6 @@
 use {
+    solana_account::ReadableAccount,
     solana_account_info::AccountInfo,
-    solana_banks_client::BanksClient,
-    solana_hash::Hash,
     solana_instruction::Instruction,
     solana_keypair::Keypair,
     solana_msg::msg,
@@ -9,9 +8,11 @@ use {
     solana_program_test::{processor, ProgramTest},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
+    solana_runtime::bank::Bank,
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
     solana_transaction::Transaction,
+    std::sync::Arc,
 };
 
 fn process_instruction(
@@ -34,15 +35,14 @@ fn simulate_fuzz() {
         processor!(process_instruction),
     );
 
-    let (mut banks_client, payer, last_blockhash) = rt.block_on(program_test.start());
+    let (bank, payer) = rt.block_on(program_test.start());
 
     // the honggfuzz `fuzz!` macro does not allow for async closures,
     // so we have to use the runtime directly to run async functions
     rt.block_on(run_fuzz_instructions(
         &[1, 2, 3, 4, 5],
-        &mut banks_client,
+        &bank,
         &payer,
-        last_blockhash,
         &program_id,
     ));
 }
@@ -58,24 +58,22 @@ fn simulate_fuzz_with_context() {
         processor!(process_instruction),
     );
 
-    let mut context = rt.block_on(program_test.start_with_context());
+    let context = rt.block_on(program_test.start_with_context());
 
     // the honggfuzz `fuzz!` macro does not allow for async closures,
     // so we have to use the runtime directly to run async functions
     rt.block_on(run_fuzz_instructions(
         &[1, 2, 3, 4, 5],
-        &mut context.banks_client,
+        &context.bank,
         &context.payer,
-        context.last_blockhash,
         &program_id,
     ));
 }
 
 async fn run_fuzz_instructions(
     fuzz_instruction: &[u8],
-    banks_client: &mut BanksClient,
+    bank: &Arc<Bank>,
     payer: &Keypair,
-    last_blockhash: Hash,
     program_id: &Pubkey,
 ) {
     let mut instructions = vec![];
@@ -100,16 +98,12 @@ async fn run_fuzz_instructions(
         .copied()
         .chain(signer_keypairs.iter())
         .collect::<Vec<&Keypair>>();
-    transaction.partial_sign(&signers, last_blockhash);
+    transaction.partial_sign(&signers, bank.last_blockhash());
 
-    banks_client.process_transaction(transaction).await.unwrap();
+    bank.process_transaction(&transaction).unwrap();
     for keypair in signer_keypairs {
-        let account = banks_client
-            .get_account(keypair.pubkey())
-            .await
-            .expect("account exists")
-            .unwrap();
-        assert!(account.lamports > 0);
-        assert!(!account.data.is_empty());
+        let account = bank.get_account(&keypair.pubkey()).unwrap();
+        assert!(account.lamports() > 0);
+        assert!(!account.data().is_empty());
     }
 }

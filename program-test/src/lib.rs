@@ -5,15 +5,12 @@
 pub use tokio;
 use {
     agave_feature_set::FEATURE_NAMES,
-    async_trait::async_trait,
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
     solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
     solana_account_info::AccountInfo,
     solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
-    solana_banks_client::start_client,
-    solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
@@ -39,7 +36,6 @@ use {
         accounts_background_service::SnapshotRequestKind,
         bank::Bank,
         bank_forks::BankForks,
-        commitment::BlockCommitmentCache,
         genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
@@ -64,15 +60,13 @@ use {
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
         },
-        time::{Duration, Instant},
+        time::Duration,
     },
     thiserror::Error,
     tokio::task::JoinHandle,
 };
 // Export types so test clients can limit their solana crate dependencies
 pub use {
-    solana_banks_client::{BanksClient, BanksClientError},
-    solana_banks_interface::BanksTransactionResultWithMetadata,
     solana_program_runtime::invoke_context::InvokeContext,
     solana_sbpf::{
         error::EbpfError,
@@ -781,14 +775,7 @@ impl ProgramTest {
         self.deactivate_feature_set.insert(feature_id);
     }
 
-    fn setup_bank(
-        &mut self,
-    ) -> (
-        Arc<RwLock<BankForks>>,
-        Arc<RwLock<BlockCommitmentCache>>,
-        Hash,
-        GenesisConfigInfo,
-    ) {
+    fn setup_bank(&mut self) -> (Arc<Bank>, Arc<RwLock<BankForks>>, GenesisConfigInfo) {
         {
             use std::sync::Once;
             static ONCE: Once = Once::new();
@@ -906,17 +893,12 @@ impl ProgramTest {
             debug!("Bank slot: {}", bank.slot());
             bank
         };
-        let slot = bank.slot();
-        let last_blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
-        let block_commitment_cache = Arc::new(RwLock::new(
-            BlockCommitmentCache::new_for_tests_with_slots(slot, slot),
-        ));
+        let bank = bank_forks.read().unwrap().root_bank();
 
         (
+            bank,
             bank_forks,
-            block_commitment_cache,
-            last_blockhash,
             GenesisConfigInfo {
                 genesis_config,
                 mint_keypair,
@@ -926,19 +908,10 @@ impl ProgramTest {
         )
     }
 
-    pub async fn start(mut self) -> (BanksClient, Keypair, Hash) {
-        let (bank_forks, block_commitment_cache, last_blockhash, gci) = self.setup_bank();
+    pub async fn start(mut self) -> (Arc<Bank>, Keypair) {
+        let (bank, bank_forks, gci) = self.setup_bank();
         let target_tick_duration = gci.genesis_config.poh_config.target_tick_duration;
         let target_slot_duration = target_tick_duration * gci.genesis_config.ticks_per_slot as u32;
-        let transport = start_local_server(
-            bank_forks.clone(),
-            block_commitment_cache.clone(),
-            target_tick_duration,
-        )
-        .await;
-        let banks_client = start_client(transport)
-            .await
-            .unwrap_or_else(|err| panic!("Failed to start banks client: {err}"));
 
         // Run a simulated PohService to provide the client with new blockhashes.  New blockhashes
         // are required when sending multiple otherwise identical transactions in series from a
@@ -954,7 +927,7 @@ impl ProgramTest {
             }
         });
 
-        (banks_client, gci.mint_keypair, last_blockhash)
+        (bank, gci.mint_keypair)
     }
 
     /// Start the test client
@@ -962,56 +935,8 @@ impl ProgramTest {
     /// Returns a `BanksClient` interface into the test environment as well as a payer `Keypair`
     /// with SOL for sending transactions
     pub async fn start_with_context(mut self) -> ProgramTestContext {
-        let (bank_forks, block_commitment_cache, last_blockhash, gci) = self.setup_bank();
-        let target_tick_duration = gci.genesis_config.poh_config.target_tick_duration;
-        let transport = start_local_server(
-            bank_forks.clone(),
-            block_commitment_cache.clone(),
-            target_tick_duration,
-        )
-        .await;
-        let banks_client = start_client(transport)
-            .await
-            .unwrap_or_else(|err| panic!("Failed to start banks client: {err}"));
-
-        ProgramTestContext::new(
-            bank_forks,
-            block_commitment_cache,
-            banks_client,
-            last_blockhash,
-            gci,
-        )
-    }
-}
-
-#[async_trait]
-pub trait ProgramTestBanksClientExt {
-    /// Get a new latest blockhash, similar in spirit to RpcClient::get_latest_blockhash()
-    async fn get_new_latest_blockhash(&mut self, blockhash: &Hash) -> io::Result<Hash>;
-}
-
-#[async_trait]
-impl ProgramTestBanksClientExt for BanksClient {
-    async fn get_new_latest_blockhash(&mut self, blockhash: &Hash) -> io::Result<Hash> {
-        let mut num_retries = 0;
-        let start = Instant::now();
-        while start.elapsed().as_secs() < 5 {
-            let new_blockhash = self.get_latest_blockhash().await?;
-            if new_blockhash != *blockhash {
-                return Ok(new_blockhash);
-            }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
-
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            num_retries += 1;
-        }
-
-        Err(io::Error::other(format!(
-            "Unable to get new blockhash after {}ms (retried {} times), stuck at {}",
-            start.elapsed().as_millis(),
-            num_retries,
-            blockhash
-        )))
+        let (bank, bank_forks, gci) = self.setup_bank();
+        ProgramTestContext::new(bank_forks, bank, gci)
     }
 }
 
@@ -1032,21 +957,17 @@ impl<T> Drop for DroppableTask<T> {
 }
 
 pub struct ProgramTestContext {
-    pub banks_client: BanksClient,
-    pub last_blockhash: Hash,
+    pub bank: Arc<Bank>,
     pub payer: Keypair,
     genesis_config: GenesisConfig,
     bank_forks: Arc<RwLock<BankForks>>,
-    block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
     _bank_task: DroppableTask<()>,
 }
 
 impl ProgramTestContext {
     fn new(
         bank_forks: Arc<RwLock<BankForks>>,
-        block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        banks_client: BanksClient,
-        last_blockhash: Hash,
+        bank: Arc<Bank>,
         genesis_config_info: GenesisConfigInfo,
     ) -> Self {
         // Run a simulated PohService to provide the client with new blockhashes.  New blockhashes
@@ -1078,12 +999,10 @@ impl ProgramTestContext {
         );
 
         Self {
-            banks_client,
-            last_blockhash,
+            bank,
             payer: genesis_config_info.mint_keypair,
             genesis_config: genesis_config_info.genesis_config,
             bank_forks,
-            block_commitment_cache,
             _bank_task: bank_task,
         }
     }
@@ -1215,17 +1134,7 @@ impl ProgramTestContext {
             warp_slot,
         ));
 
-        // Update block commitment cache, otherwise banks server will poll at
-        // the wrong slot
-        let mut w_block_commitment_cache = self.block_commitment_cache.write().unwrap();
-        // HACK: The root set here should be `pre_warp_slot`, but since we're
-        // in a testing environment, the root bank never updates after a warp.
-        // The ticking thread only updates the working bank, and never the root
-        // bank.
-        w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
-
-        let bank = bank_forks.working_bank();
-        self.last_blockhash = bank.last_blockhash();
+        self.bank = bank_forks.working_bank();
         Ok(())
     }
 
@@ -1262,28 +1171,19 @@ impl ProgramTestContext {
         warp_bank.force_reward_interval_end_for_tests();
         bank_forks.insert(warp_bank);
 
-        // Update block commitment cache, otherwise banks server will poll at
-        // the wrong slot
-        let mut w_block_commitment_cache = self.block_commitment_cache.write().unwrap();
-        // HACK: The root set here should be `pre_warp_slot`, but since we're
-        // in a testing environment, the root bank never updates after a warp.
-        // The ticking thread only updates the working bank, and never the root
-        // bank.
-        w_block_commitment_cache.set_all_slots(warp_slot, warp_slot);
-
-        let bank = bank_forks.working_bank();
-        self.last_blockhash = bank.last_blockhash();
+        self.bank = bank_forks.working_bank();
         Ok(())
     }
 
     /// Get a new latest blockhash, similar in spirit to RpcClient::get_latest_blockhash()
     pub async fn get_new_latest_blockhash(&mut self) -> io::Result<Hash> {
-        let blockhash = self
-            .banks_client
-            .get_new_latest_blockhash(&self.last_blockhash)
-            .await?;
-        self.last_blockhash = blockhash;
-        Ok(blockhash)
+        let mut bank_forks = self.bank_forks.write().unwrap();
+        let bank = bank_forks.working_bank();
+        let child_slot = self.bank.slot() + 1;
+        let new_bank = Bank::new_from_parent(bank, &Pubkey::default(), child_slot);
+        bank_forks.insert(new_bank);
+        self.bank = bank_forks.working_bank();
+        Ok(self.bank.last_blockhash())
     }
 
     /// record a hard fork slot in working bank; should be in the past

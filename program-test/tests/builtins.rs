@@ -1,4 +1,5 @@
 use {
+    solana_account::ReadableAccount,
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::{v0::Message, VersionedMessage},
@@ -13,12 +14,12 @@ use {
 #[tokio::test]
 async fn test_bpf_loader_upgradeable_present() {
     // Arrange
-    let (banks_client, payer, recent_blockhash) = ProgramTest::default().start().await;
+    let (bank, payer) = ProgramTest::default().start().await;
 
     let buffer_keypair = Keypair::new();
     let upgrade_authority_keypair = Keypair::new();
 
-    let rent = banks_client.get_rent().await.unwrap();
+    let rent = &bank.rent_collector().rent;
     let buffer_rent = rent.minimum_balance(UpgradeableLoaderState::size_of_programdata(1));
 
     let create_buffer_instructions = solana_loader_v3_interface::instruction::create_buffer(
@@ -32,19 +33,15 @@ async fn test_bpf_loader_upgradeable_present() {
 
     let mut transaction =
         Transaction::new_with_payer(&create_buffer_instructions[..], Some(&payer.pubkey()));
-    transaction.sign(&[&payer, &buffer_keypair], recent_blockhash);
+    transaction.sign(&[&payer, &buffer_keypair], bank.last_blockhash());
 
     // Act
-    banks_client.process_transaction(transaction).await.unwrap();
+    bank.process_transaction(&transaction).unwrap();
 
     // Assert
-    let buffer_account = banks_client
-        .get_account(buffer_keypair.pubkey())
-        .await
-        .unwrap()
-        .unwrap();
+    let buffer_account = bank.get_account(&buffer_keypair.pubkey()).unwrap();
 
-    assert_eq!(buffer_account.owner, bpf_loader_upgradeable::id());
+    assert_eq!(*buffer_account.owner(), bpf_loader_upgradeable::id());
 }
 
 #[tokio::test]
@@ -54,7 +51,7 @@ async fn versioned_transaction() {
 
     let program_id = Pubkey::new_unique();
     let account = Keypair::new();
-    let rent = context.banks_client.get_rent().await.unwrap();
+    let rent = &context.bank.rent_collector().rent;
     let space = 82;
     let transaction = VersionedTransaction::try_new(
         VersionedMessage::V0(
@@ -68,7 +65,7 @@ async fn versioned_transaction() {
                     &program_id,
                 )],
                 &[],
-                context.last_blockhash,
+                context.bank.last_blockhash(),
             )
             .unwrap(),
         ),
@@ -77,8 +74,9 @@ async fn versioned_transaction() {
     .unwrap();
 
     context
-        .banks_client
-        .process_transaction(transaction)
-        .await
+        .bank
+        .process_transaction_with_metadata(transaction)
+        .unwrap()
+        .status
         .unwrap();
 }

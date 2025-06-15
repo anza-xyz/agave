@@ -1,4 +1,5 @@
 use {
+    solana_account::ReadableAccount,
     solana_instruction::Instruction,
     solana_program_test::{ProgramTest, ProgramTestContext},
     solana_pubkey::Pubkey,
@@ -7,15 +8,10 @@ use {
     solana_transaction::Transaction,
 };
 
-async fn assert_bpf_program(context: &ProgramTestContext, program_id: &Pubkey) {
-    let program_account = context
-        .banks_client
-        .get_account(*program_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(program_account.owner, bpf_loader_upgradeable::id());
-    assert!(program_account.executable);
+fn assert_bpf_program(context: &ProgramTestContext, program_id: &Pubkey) {
+    let program_account = context.bank.get_account(program_id).unwrap();
+    assert_eq!(program_account.owner(), &bpf_loader_upgradeable::id());
+    assert!(program_account.executable());
 }
 
 #[tokio::test]
@@ -23,9 +19,9 @@ async fn test_vended_core_bpf_programs() {
     let program_test = ProgramTest::default();
     let context = program_test.start_with_context().await;
 
-    assert_bpf_program(&context, &solana_sdk_ids::address_lookup_table::id()).await;
-    assert_bpf_program(&context, &solana_sdk_ids::config::id()).await;
-    assert_bpf_program(&context, &solana_sdk_ids::feature::id()).await;
+    assert_bpf_program(&context, &solana_sdk_ids::address_lookup_table::id());
+    assert_bpf_program(&context, &solana_sdk_ids::config::id());
+    assert_bpf_program(&context, &solana_sdk_ids::feature::id());
 }
 
 #[tokio::test]
@@ -39,7 +35,7 @@ async fn test_add_core_bpf_program_manually() {
     let context = program_test.start_with_context().await;
 
     // Assert the program is a BPF Loader Upgradeable program.
-    assert_bpf_program(&context, &program_id).await;
+    assert_bpf_program(&context, &program_id);
 
     // Invoke the program.
     let instruction = Instruction::new_with_bytes(program_id, &[], Vec::new());
@@ -47,11 +43,7 @@ async fn test_add_core_bpf_program_manually() {
         &[instruction],
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }

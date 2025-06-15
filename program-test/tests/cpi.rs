@@ -138,14 +138,10 @@ async fn cpi() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
 
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }
 
 #[tokio::test]
@@ -179,14 +175,10 @@ async fn cpi_dupes() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
 
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }
 
 #[tokio::test]
@@ -214,14 +206,10 @@ async fn cpi_create_account() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer, &create_account_keypair],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
 
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }
 
 // Process instruction to invoke into another program
@@ -283,12 +271,8 @@ async fn stack_height() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.bank.last_blockhash(),
     );
 
-    context
-        .banks_client
-        .process_transaction(transaction)
-        .await
-        .unwrap();
+    context.bank.process_transaction(&transaction).unwrap();
 }
