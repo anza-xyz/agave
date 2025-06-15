@@ -22,6 +22,7 @@ jobs:
 
   draft-release:
     if: github.repository == 'anza-xyz/agave'
+    needs: [ trigger-buildkite-pipeline ]
     runs-on: ubuntu-latest
     steps:
       - name: Create Release
@@ -41,6 +42,7 @@ jobs:
 
   version-bump:
     if: github.repository == 'anza-xyz/agave'
+    needs: [ trigger-buildkite-pipeline ]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
