@@ -390,6 +390,27 @@ impl ClusterInfo {
         self.refresh_my_gossip_contact_info();
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
+    /// Checks if target node is in the ping cache, if it is returns (true, None)
+    /// If not in cache, returns false and, if all goes well, a Packet to send to the node
+    pub fn check_ping(&self, target: Pubkey, target_addr: SocketAddr) -> (bool, Option<Packet>) {
+        let mut rng = rand::thread_rng();
+        let (state, maybe_ping) = {
+            let mut pingcache = self.ping_cache.lock().unwrap();
+            pingcache.check(
+                &mut rng,
+                &self.keypair.read().unwrap(),
+                Instant::now(),
+                (target, target_addr),
+            )
+        };
+        let pkt = maybe_ping.map(|ping| {
+            let ping = Protocol::PingMessage(ping);
+            make_gossip_packet(target_addr, &ping, &self.stats).unwrap()
+        });
+        (state, pkt)
+    }
+
     pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
         self.refresh_my_gossip_contact_info();
