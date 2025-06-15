@@ -135,6 +135,7 @@ members = [
     "validator",
     "version",
     "vortexor",
+    "vortexor-receiver",
     "vote",
     "watchtower",
     "wen-restart",
@@ -552,6 +553,7 @@ solana-unified-scheduler-logic = { path = "unified-scheduler-logic", version = "
 solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3.0.0" }
 solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=3.0.0" }
+solana-vortexor-receiver = { path = "vortexor-receiver", version = "=3.0.0" }
 solana-vote = { path = "vote", version = "=3.0.0" }
 solana-vote-interface = "2.2.5"
 solana-vote-program = { path = "programs/vote", version = "=3.0.0", default-features = false }
