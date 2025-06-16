@@ -57,13 +57,10 @@ solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
 thiserror = { workspace = true }
 
-<<<<<<< HEAD
 [lib]
 crate-type = ["lib"]
 name = "solana_svm"
 
-=======
->>>>>>> 51c33c2f3 (Remove conditional feature as it is not supported (#6577))
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
