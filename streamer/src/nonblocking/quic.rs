@@ -21,8 +21,10 @@ use {
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
+    solana_packet::Meta,
+    solana_perf::packet::{
+        BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH, QUIC_MAX_STREAM_SIZE,
+    },
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
@@ -639,7 +641,7 @@ async fn prune_unstaked_connections_and_add_new_connection(
 /// Calculate the ratio for per connection receive window from a staked peer
 fn compute_receive_window_ratio_for_staked_node(max_stake: u64, min_stake: u64, stake: u64) -> u64 {
     // Testing shows the maximum througput from a connection is achieved at receive_window =
-    // PACKET_DATA_SIZE * 10. Beyond that, there is not much gain. We linearly map the
+    // QUIC_MAX_STREAM_SIZE * 10. Beyond that, there is not much gain. We linearly map the
     // stake to the ratio range from QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO to
     // QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO. Where the linear algebra of finding the ratio 'r'
     // for stake 's' is,
@@ -669,12 +671,12 @@ fn compute_recieve_window(
 ) -> Result<VarInt, VarIntBoundsExceeded> {
     match peer_type {
         ConnectionPeerType::Unstaked => {
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO)
+            VarInt::from_u64(QUIC_MAX_STREAM_SIZE as u64 * QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO)
         }
         ConnectionPeerType::Staked(peer_stake) => {
             let ratio =
                 compute_receive_window_ratio_for_staked_node(max_stake, min_stake, peer_stake);
-            VarInt::from_u64(PACKET_DATA_SIZE as u64 * ratio)
+            VarInt::from_u64(QUIC_MAX_STREAM_SIZE as u64 * ratio)
         }
     }
 }
@@ -1135,6 +1137,7 @@ async fn handle_connection(
         // Bytes values are small, so overall the array takes only 128 bytes, and the "cost" of
         // overallocating a few bytes is negligible compared to the cost of having to do multiple
         // read_chunks() calls.
+        // TODO(klykov): Do we want to increase the size of the array if the size of txs is increased?
         let mut chunks: [Bytes; 4] = array::from_fn(|_| Bytes::new());
 
         loop {
@@ -1242,8 +1245,8 @@ async fn handle_chunks(
     let n_chunks = chunks.len();
     for chunk in chunks {
         accum.meta.size += chunk.len();
-        if accum.meta.size > PACKET_DATA_SIZE {
-            // The stream window size is set to PACKET_DATA_SIZE, so one individual chunk can
+        if accum.meta.size > QUIC_MAX_STREAM_SIZE {
+            // The stream window size is set to QUIC_MAX_STREAM_SIZE, so one individual chunk can
             // never exceed this size. A peer can send two chunks that together exceed the size
             // tho, in which case we report the error.
             stats.invalid_stream_size.fetch_add(1, Ordering::Relaxed);
@@ -1575,7 +1578,8 @@ pub mod test {
         crossbeam_channel::{unbounded, Receiver},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
-        solana_net_utils::sockets::bind_to_localhost_unique,
+        solana_net_utils::bind_to_localhost,
+        solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,

@@ -47,7 +47,7 @@ use {
     },
     solana_message::{AddressLoader, SanitizedMessage},
     solana_metrics::inc_new_counter_info,
-    solana_perf::packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_program_pack::Pack,
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_rpc_client_api::{
@@ -4299,8 +4299,8 @@ fn rpc_perf_sample_from_perf_sample(slot: u64, sample: PerfSample) -> RpcPerfSam
     }
 }
 
-const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
-const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
+const MAX_BASE58_SIZE: usize = 5594; // Golden, bump if QUIC_MAX_STREAM_SIZE changes
+const MAX_BASE64_SIZE: usize = 5464; // Golden, bump if QUIC_MAX_STREAM_SIZE changes
 fn decode_and_deserialize<T>(
     encoded: String,
     encoding: TransactionBinaryEncoding,
@@ -4317,7 +4317,7 @@ where
                     type_name::<T>(),
                     encoded.len(),
                     MAX_BASE58_SIZE,
-                    PACKET_DATA_SIZE,
+                    QUIC_MAX_STREAM_SIZE,
                 )));
             }
             bs58::decode(encoded)
@@ -4332,7 +4332,7 @@ where
                     type_name::<T>(),
                     encoded.len(),
                     MAX_BASE64_SIZE,
-                    PACKET_DATA_SIZE,
+                    QUIC_MAX_STREAM_SIZE,
                 )));
             }
             BASE64_STANDARD
@@ -4340,16 +4340,16 @@ where
                 .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?
         }
     };
-    if wire_output.len() > PACKET_DATA_SIZE {
+    if wire_output.len() > QUIC_MAX_STREAM_SIZE {
         return Err(Error::invalid_params(format!(
             "decoded {} too large: {} bytes (max: {} bytes)",
             type_name::<T>(),
             wire_output.len(),
-            PACKET_DATA_SIZE
+            QUIC_MAX_STREAM_SIZE
         )));
     }
     bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
+        .with_limit(QUIC_MAX_STREAM_SIZE as u64)
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from(&wire_output[..])
@@ -8887,7 +8887,7 @@ pub mod tests {
 
     #[test]
     fn test_worst_case_encoded_tx_goldens() {
-        let ff_tx = vec![0xffu8; PACKET_DATA_SIZE];
+        let ff_tx = vec![0xffu8; QUIC_MAX_STREAM_SIZE];
         let tx58 = bs58::encode(&ff_tx).into_string();
         assert_eq!(tx58.len(), MAX_BASE58_SIZE);
         let tx64 = BASE64_STANDARD.encode(&ff_tx);
@@ -8897,7 +8897,7 @@ pub mod tests {
     #[test]
     fn test_decode_and_deserialize_too_large_payloads_fail() {
         // +2 because +1 still fits in base64 encoded worst-case
-        let too_big = PACKET_DATA_SIZE + 2;
+        let too_big = QUIC_MAX_STREAM_SIZE + 2;
         let tx_ser = vec![0xffu8; too_big];
 
         let tx58 = bs58::encode(&tx_ser).into_string();
@@ -8906,31 +8906,27 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: \
-                 encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
-            ))
-        );
+                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: encoded/raw {MAX_BASE58_SIZE}/{QUIC_MAX_STREAM_SIZE})",
+            )
+        ));
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
-        let tx64_len = tx64.len();
         assert_eq!(
             decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: \
-                 encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
+                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: {QUIC_MAX_STREAM_SIZE} bytes)",
             ))
         );
 
-        let too_big = PACKET_DATA_SIZE + 1;
+        let too_big = QUIC_MAX_STREAM_SIZE + 1;
         let tx_ser = vec![0x00u8; too_big];
         let tx58 = bs58::encode(&tx_ser).into_string();
         assert_eq!(
             decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
-                 {PACKET_DATA_SIZE} bytes)"
+                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: {QUIC_MAX_STREAM_SIZE} bytes)"
             ))
         );
 
@@ -8939,12 +8935,11 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
                 .unwrap_err(),
             Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: \
-                 {PACKET_DATA_SIZE} bytes)"
+                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: {QUIC_MAX_STREAM_SIZE} bytes)",
             ))
         );
 
-        let tx_ser = vec![0xffu8; PACKET_DATA_SIZE - 2];
+        let tx_ser = vec![0xffu8; QUIC_MAX_STREAM_SIZE - 2];
         let mut tx64 = BASE64_STANDARD.encode(&tx_ser);
         assert_eq!(
             decode_and_deserialize::<Transaction>(tx64.clone(), TransactionBinaryEncoding::Base64)
@@ -8960,7 +8955,7 @@ pub mod tests {
         assert_eq!(
             decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
                 .unwrap_err(),
-            Error::invalid_params("invalid base64 encoding: InvalidByte(1640, 33)".to_string())
+            Error::invalid_params("invalid base64 encoding: InvalidByte(5460, 33)".to_string())
         );
 
         let mut tx58 = bs58::encode(&tx_ser).into_string();
@@ -8979,7 +8974,7 @@ pub mod tests {
             decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
                 .unwrap_err(),
             Error::invalid_params(
-                "invalid base58 encoding: InvalidCharacter { character: '!', index: 1680 }"
+                "invalid base58 encoding: InvalidCharacter { character: '!', index: 5592 }"
                     .to_string(),
             )
         );
