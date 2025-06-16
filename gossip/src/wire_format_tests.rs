@@ -7,12 +7,14 @@ mod tests {
         crate::protocol::Protocol,
         serde::Serialize,
         solana_net_utils::tooling_for_tests::{hexdump, validate_packet_format},
+        solana_packet::PACKET_DATA_SIZE,
         solana_sanitize::Sanitize,
         std::path::PathBuf,
     };
 
     fn parse_gossip(bytes: &[u8]) -> anyhow::Result<Protocol> {
-        let pkt: Protocol = solana_perf::packet::deserialize_from_with_limit(bytes)?;
+        let pkt: Protocol =
+            solana_perf::packet::deserialize_from_with_limit(bytes, PACKET_DATA_SIZE)?;
         pkt.sanitize()?;
         Ok(pkt)
     }
