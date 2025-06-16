@@ -8,7 +8,7 @@ use {
         cuda_runtime::PinnedVec,
         packet::{
             BytesPacketBatch, Packet, PacketBatch, PacketFlags, PacketRef, PacketRefMut,
-            PinnedPacketBatch, PACKET_DATA_SIZE,
+            PinnedPacketBatch,
         },
         perf_libs,
         recycler::Recycler,
@@ -645,7 +645,6 @@ pub fn ed25519_verify(
     trace!("Starting verify num packets: {num_packets}");
     trace!("elem len: {}", elems.len() as u32);
     trace!("packet sizeof: {}", size_of::<Packet>() as u32);
-    trace!("len offset: {}", PACKET_DATA_SIZE as u32);
     const USE_NON_DEFAULT_STREAM: u8 = 1;
     unsafe {
         let res = (api.ed25519_verify_many)(
@@ -678,7 +677,7 @@ mod tests {
         crate::{
             packet::{
                 to_packet_batches, BytesPacket, BytesPacketBatch, Packet, PinnedPacketBatch,
-                PACKETS_PER_BATCH,
+                PACKETS_PER_BATCH, QUIC_MAX_STREAM_SIZE,
             },
             sigverify::{self, PacketOffsets},
             test_tx::{new_test_vote_tx, test_multisig_tx, test_tx},
@@ -1008,7 +1007,7 @@ mod tests {
         tx0.message.instructions[0].data = vec![1, 2, 3];
         let message0a = tx0.message_data();
         let tx_bytes = serialize(&tx0).unwrap();
-        assert!(tx_bytes.len() <= PACKET_DATA_SIZE);
+        assert!(tx_bytes.len() <= QUIC_MAX_STREAM_SIZE);
         assert_eq!(
             memfind(&tx_bytes, tx0.signatures[0].as_ref()),
             Some(SIG_OFFSET)
