@@ -1214,25 +1214,26 @@ fn update_caller_account(
 
     let prev_len = *caller_account.ref_to_len_in_vm as usize;
     let post_len = callee_account.get_data().len();
-    if prev_len != post_len {
-        let is_loader_deprecated = !invoke_context.get_check_aligned();
-        let address_space_reserved_for_account = if direct_mapping && is_loader_deprecated {
-            caller_account.original_data_len
-        } else {
-            caller_account
-                .original_data_len
-                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-        };
-        if post_len > address_space_reserved_for_account {
-            let max_increase =
-                address_space_reserved_for_account.saturating_sub(caller_account.original_data_len);
-            ic_msg!(
-                invoke_context,
-                "Account data size realloc limited to {max_increase} in inner instructions",
-            );
-            return Err(Box::new(InstructionError::InvalidRealloc));
-        }
+    let is_loader_deprecated = !invoke_context.get_check_aligned();
+    let address_space_reserved_for_account = if direct_mapping && is_loader_deprecated {
+        caller_account.original_data_len
+    } else {
+        caller_account
+            .original_data_len
+            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+    };
 
+    if post_len > address_space_reserved_for_account && (direct_mapping || prev_len != post_len) {
+        let max_increase =
+            address_space_reserved_for_account.saturating_sub(caller_account.original_data_len);
+        ic_msg!(
+            invoke_context,
+            "Account data size realloc limited to {max_increase} in inner instructions",
+        );
+        return Err(Box::new(InstructionError::InvalidRealloc));
+    }
+
+    if prev_len != post_len {
         // when direct mapping is enabled we don't cache the serialized data in
         // caller_account.serialized_data. See CallerAccount::from_account_info.
         if !direct_mapping {
