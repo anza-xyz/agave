@@ -1,7 +1,7 @@
 [package]
 name = "solana-rpc-client-nonce-utils"
 description = "Solana RPC Client Nonce Utilities"
-documentation = "https://docs.rs/solana-nonce-client"
+documentation = "https://docs.rs/solana-rpc-client-nonce-utils"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }

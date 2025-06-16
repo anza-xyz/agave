@@ -1,7 +1,7 @@
 [package]
 name = "solana-accounts-db"
 description = "Solana accounts db"
-documentation = "https://docs.rs/solana-acounts-db"
+documentation = "https://docs.rs/solana-accounts-db"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
