@@ -1195,12 +1195,16 @@ impl TestValidator {
             CommitmentConfig::processed(),
         );
 
+        let mut deployed = vec![false; upgradeable_programs.len()];
         const MAX_ATTEMPTS: u64 = 10;
-        let mut attempt = 0;
-        loop {
+
+        for attempt in 1..=MAX_ATTEMPTS {
             let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
-            let mut all_deployed = true;
-            for program_id in upgradeable_programs {
+            for (program_id, is_deployed) in upgradeable_programs.iter().zip(deployed.iter_mut()) {
+                if *is_deployed {
+                    continue;
+                }
+
                 let transaction = Transaction::new_signed_with_payer(
                     &[Instruction {
                         program_id: **program_id,
@@ -1212,30 +1216,27 @@ impl TestValidator {
                     blockhash,
                 );
                 match rpc_client.send_transaction(&transaction).await {
-                    Ok(_) => println!("{:?} - OK", program_id),
+                    Ok(_) => *is_deployed = true,
                     Err(e) => {
                         if format!("{:?}", e).contains("Program is not deployed") {
-                            println!("{:?} - not deployed", program_id);
-                            all_deployed = false;
-                            break;
+                            debug!("{:?} - not deployed", program_id);
                         } else {
                             // Assuming all other other errors could only occur *after*
-                            // program is checked for usability.
-                            println!("{:?} - Unexpected error: {:?}", program_id, e);
+                            // program is deployed for usability.
+                            *is_deployed = true;
+                            debug!("{:?} - Unexpected error: {:?}", program_id, e);
                         }
                     }
                 }
             }
-            if !all_deployed {
-                attempt += 1;
-                if attempt > MAX_ATTEMPTS {
-                    panic!("Timeout waiting for program to become usable");
-                }
-                sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
-            } else {
-                break;
+            if deployed.iter().all(|&deployed| deployed) {
+                return;
             }
+
+            println!("Waiting for programs to be fully deployed {} ...", attempt);
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
         }
+        panic!("Timeout waiting for program to become usable");
     }
 
     /// Return the validator's TPU address
