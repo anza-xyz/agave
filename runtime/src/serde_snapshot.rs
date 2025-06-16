@@ -300,6 +300,13 @@ pub struct SnapshotBankFields {
 }
 
 impl SnapshotBankFields {
+    pub fn new(
+        full: BankFieldsToDeserialize,
+        incremental: Option<BankFieldsToDeserialize>,
+    ) -> Self {
+        Self { full, incremental }
+    }
+
     /// Collapse the SnapshotBankFields into a single (the latest) BankFieldsToDeserialize.
     pub fn collapse_into(self) -> BankFieldsToDeserialize {
         self.incremental.unwrap_or(self.full)
@@ -559,6 +566,7 @@ pub struct BankFromStreamsInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn bank_from_streams<R>(
     snapshot_streams: &mut SnapshotStreams<R>,
     account_paths: &[PathBuf],

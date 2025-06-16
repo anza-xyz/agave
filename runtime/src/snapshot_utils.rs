@@ -1,10 +1,9 @@
 use {
     crate::{
-        bank::{BankFieldsToSerialize, BankHashStats, BankSlotDelta},
+        bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
             self, AccountsDbFields, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
-            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
-            SnapshotStreams,
+            SerializableAccountStorageEntry, SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -282,6 +281,8 @@ pub struct UnarchivedSnapshot {
     #[allow(dead_code)]
     unpack_dir: TempDir,
     pub storage: AccountStorageMap,
+    pub bank_fields: BankFieldsToDeserialize,
+    pub accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
     pub unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion,
     pub measure_untar: Measure,
 }
@@ -1757,8 +1758,8 @@ fn get_version_and_snapshot_files(
 /// Fields and information parsed from the snapshot.
 struct SnapshotFieldsBundle {
     snapshot_version: SnapshotVersion,
-    bank_fields: SnapshotBankFields,
-    accounts_db_fields: SnapshotAccountsDbFields<SerializableAccountStorageEntry>,
+    bank_fields: BankFieldsToDeserialize,
+    accounts_db_fields: AccountsDbFields<SerializableAccountStorageEntry>,
     append_vec_files: Vec<PathBuf>,
 }
 
@@ -1775,13 +1776,9 @@ fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<Snaps
     })?;
 
     let snapshot_file = fs::File::open(snapshot_file_path).unwrap();
-    let full_snapshot_stream = &mut BufReader::new(snapshot_file);
-    let mut snapshot_streams = SnapshotStreams {
-        full_snapshot_stream,
-        incremental_snapshot_stream: None,
-    };
+    let mut snapshot_stream = BufReader::new(snapshot_file);
     let (bank_fields, accounts_db_fields) = match snapshot_version {
-        SnapshotVersion::V1_2_0 => serde_snapshot::fields_from_streams(&mut snapshot_streams)?,
+        SnapshotVersion::V1_2_0 => serde_snapshot::fields_from_stream(&mut snapshot_stream)?,
     };
 
     Ok(SnapshotFieldsBundle {
@@ -1857,9 +1854,10 @@ fn unarchive_snapshot(
         .saturating_sub(parallel_divisions)
         .max(1);
     let snapshot_bundle = snapshot_fields_from_files(&file_receiver)?;
+    let accounts_db_fields = snapshot_bundle.accounts_db_fields;
     let (storage, measure_untar) = measure_time!(
         SnapshotStorageRebuilder::rebuild_storage(
-            &snapshot_bundle.accounts_db_fields.collapse_into()?,
+            &accounts_db_fields,
             snapshot_bundle.append_vec_files,
             file_receiver,
             num_rebuilder_threads,
@@ -1873,9 +1871,13 @@ fn unarchive_snapshot(
 
     create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
+    let SnapshotFieldsBundle { bank_fields, .. } = snapshot_bundle;
+
     Ok(UnarchivedSnapshot {
         unpack_dir,
         storage,
+        bank_fields,
+        accounts_db_fields,
         unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
             unpacked_snapshots_dir,
             snapshot_version: snapshot_bundle.snapshot_version,
@@ -1915,7 +1917,7 @@ pub fn rebuild_storages_from_snapshot_dir(
     storage_access: StorageAccess,
 ) -> Result<(
     AccountStorageMap,
-    SnapshotBankFields,
+    BankFieldsToDeserialize,
     AccountsDbFields<SerializableAccountStorageEntry>,
 )> {
     let bank_snapshot_dir = &snapshot_info.snapshot_dir;
@@ -1983,13 +1985,17 @@ pub fn rebuild_storages_from_snapshot_dir(
         account_paths,
     )?;
 
-    let snapshot_bundle = snapshot_fields_from_files(&file_receiver)?;
-    let accounts_db_fields = snapshot_bundle.accounts_db_fields.collapse_into()?;
+    let SnapshotFieldsBundle {
+        bank_fields,
+        accounts_db_fields,
+        append_vec_files,
+        ..
+    } = snapshot_fields_from_files(&file_receiver)?;
 
     let num_rebuilder_threads = num_cpus::get_physical().saturating_sub(1).max(1);
     let storage = SnapshotStorageRebuilder::rebuild_storage(
         &accounts_db_fields,
-        snapshot_bundle.append_vec_files,
+        append_vec_files,
         file_receiver,
         num_rebuilder_threads,
         next_append_vec_id,
@@ -1997,7 +2003,7 @@ pub fn rebuild_storages_from_snapshot_dir(
         storage_access,
     )?;
 
-    Ok((storage, snapshot_bundle.bank_fields, accounts_db_fields))
+    Ok((storage, bank_fields, accounts_db_fields))
 }
 
 /// Reads the `snapshot_version` from a file. Before opening the file, its size
