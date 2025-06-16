@@ -1,6 +1,13 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::{bank::BankFieldsToDeserialize, serde_snapshot::fields_from_streams},
+    crate::{
+        bank::BankFieldsToDeserialize,
+        serde_snapshot::fields_from_streams,
+        snapshot_utils::{
+            deserialize_snapshot_data_files, verify_unpacked_snapshots_dir_and_version,
+            SnapshotRootPaths, UnpackedSnapshotsDirAndVersion,
+        },
+    },
     solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
@@ -20,14 +27,12 @@ use {
         snapshot_hash::SnapshotHash,
         snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
         snapshot_utils::{
-            self, deserialize_snapshot_data_file, deserialize_snapshot_data_files,
-            get_highest_bank_snapshot_post, get_highest_full_snapshot_archive_info,
-            get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            serialize_snapshot_data_file, verify_and_unarchive_snapshots,
-            verify_unpacked_snapshots_dir_and_version, ArchiveFormat, BankSnapshotInfo,
-            SnapshotError, SnapshotRootPaths, SnapshotVersion, StorageAndNextAccountsFileId,
-            UnarchivedSnapshot, UnpackedSnapshotsDirAndVersion, VerifyEpochStakesError,
-            VerifySlotDeltasError,
+            self, deserialize_snapshot_data_file, get_highest_bank_snapshot_post,
+            get_highest_full_snapshot_archive_info, get_highest_incremental_snapshot_archive_info,
+            rebuild_storages_from_snapshot_dir, serialize_snapshot_data_file,
+            verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
+            SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshot,
+            VerifyEpochStakesError, VerifySlotDeltasError,
         },
         status_cache,
     },
@@ -612,6 +617,7 @@ fn verify_bank_against_expected_slot_hash(
 }
 
 /// Returns the validated version and root paths for the given snapshots.
+#[cfg(feature = "dev-context-only-utils")]
 fn snapshot_version_and_root_paths(
     full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<

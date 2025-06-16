@@ -529,6 +529,7 @@ pub(crate) fn fields_from_stream<R: Read>(
     deserialize_bank_fields(snapshot_stream)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub(crate) fn fields_from_streams(
     snapshot_streams: &mut SnapshotStreams<impl Read>,
 ) -> std::result::Result<
