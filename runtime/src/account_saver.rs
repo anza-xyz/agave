@@ -250,6 +250,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let loaded1 = LoadedTransaction {
@@ -259,6 +260,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx0.clone(), tx1.clone()];
@@ -320,6 +322,7 @@ mod tests {
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx];
@@ -412,6 +415,7 @@ mod tests {
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx];
@@ -517,6 +521,7 @@ mod tests {
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let txs = vec![tx];

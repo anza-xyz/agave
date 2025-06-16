@@ -6,6 +6,7 @@ use {
 };
 
 pub trait TransactionNotifier {
+    #[allow(clippy::too_many_arguments)]
     fn notify_transaction(
         &self,
         slot: Slot,
@@ -15,6 +16,7 @@ pub trait TransactionNotifier {
         is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
+        pre_accounts_states: &[(Pubkey, AccountSharedData)],
         post_accounts_states: &[(Pubkey, AccountSharedData)],
     );
 }

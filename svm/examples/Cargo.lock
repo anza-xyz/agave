@@ -89,6 +89,7 @@ version = "3.0.0"
 dependencies = [
  "log",
  "solana-account",
+ "solana-account",
  "solana-clock",
  "solana-hash",
  "solana-pubkey",

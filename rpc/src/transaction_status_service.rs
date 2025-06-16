@@ -164,6 +164,7 @@ impl TransactionStatusService {
                         return_data,
                         executed_units,
                         fee_details,
+                        pre_accounts_states,
                         post_accounts_states,
                         ..
                     } = committed_tx;
@@ -206,6 +207,7 @@ impl TransactionStatusService {
                             is_vote,
                             &transaction_status_meta,
                             &transaction,
+                            pre_accounts_states.as_ref().expect("pre_accounts_states should be available because the TransactionNotifier service is on"),
                             post_accounts_states.as_ref().expect("post_accounts_states should be available because the TransactionNotifier service is on"),
                         );
                     }
@@ -363,6 +365,7 @@ pub(crate) mod tests {
     struct TestNotification {
         _meta: TransactionStatusMeta,
         transaction: VersionedTransaction,
+        pre_accounts_states: Vec<(Pubkey, AccountSharedData)>,
         post_accounts_states: Vec<(Pubkey, AccountSharedData)>,
     }
 
@@ -388,6 +391,7 @@ pub(crate) mod tests {
             _is_vote: bool,
             transaction_status_meta: &TransactionStatusMeta,
             transaction: &VersionedTransaction,
+            pre_accounts_states: &[(Pubkey, AccountSharedData)],
             post_accounts_states: &[(Pubkey, AccountSharedData)],
         ) {
             self.notifications.insert(
@@ -398,6 +402,7 @@ pub(crate) mod tests {
                 },
                 TestNotification {
                     _meta: transaction_status_meta.clone(),
+                    pre_accounts_states: pre_accounts_states.to_vec(),
                     post_accounts_states: post_accounts_states.to_vec(),
                     transaction: transaction.clone(),
                 },
@@ -448,13 +453,8 @@ pub(crate) mod tests {
         let mut rent_debits = RentDebits::default();
         rent_debits.insert(&pubkey, 123, 456);
 
-        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = transaction
-            .message()
-            .account_keys()
-            .iter()
-            .map(|key| (*key, bank.get_account(key).unwrap()))
-            .collect();
-
+        let post_accounts_states: Vec<(Pubkey, AccountSharedData)> = vec![(pubkey, nonce_account)];
+        let pre_accounts_states = post_accounts_states.clone();
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),
             log_messages: None,
@@ -463,6 +463,7 @@ pub(crate) mod tests {
             executed_units: 0,
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
+            pre_accounts_states: Some(pre_accounts_states.clone()),
             post_accounts_states: Some(post_accounts_states.clone()),
         });
 
@@ -544,6 +545,7 @@ pub(crate) mod tests {
             expected_transaction.signature(),
             result.transaction.signatures.first().unwrap()
         );
+        assert_eq!(pre_accounts_states, result.pre_accounts_states);
         assert_eq!(post_accounts_states, result.post_accounts_states);
     }
 
@@ -592,6 +594,7 @@ pub(crate) mod tests {
             fee_details: FeeDetails::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
             post_accounts_states: Some(vec![]),
+            pre_accounts_states: Some(vec![]),
         });
 
         let balances = TransactionBalancesSet {

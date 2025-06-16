@@ -427,6 +427,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 environment
                     .rent_collector
                     .unwrap_or(&RentCollector::default()),
+                config.recording_config.enable_transaction_balance_recording,
             ));
             load_us = load_us.saturating_add(single_load_us);
 
@@ -1362,6 +1363,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 32,
+            pre_accounts_states: None,
         };
 
         let processing_environment = TransactionProcessingEnvironment::default();
@@ -1457,6 +1459,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
+            pre_accounts_states: None,
         };
 
         let processing_config = TransactionProcessingConfig {

@@ -2454,14 +2454,12 @@ fn test_load_and_execute_commit_transactions_fees_only() {
     // Use rent-paying fee payer to show that rent is not collected for fees
     // only transactions even when they use a rent-paying account.
     let rent_paying_fee_payer = Pubkey::new_unique();
-    bank.store_account(
-        &rent_paying_fee_payer,
-        &AccountSharedData::new(
-            genesis_config.rent.minimum_balance(0) - 1,
-            0,
-            &system_program::id(),
-        ),
+    let rent_paying_fee_payer_account = AccountSharedData::new(
+        genesis_config.rent.minimum_balance(0) - 1,
+        0,
+        &system_program::id(),
     );
+    bank.store_account(&rent_paying_fee_payer, &rent_paying_fee_payer_account);
 
     // Use nonce to show that loaded account stats also included loaded
     // nonce account size
@@ -2522,6 +2520,10 @@ fn test_load_and_execute_commit_transactions_fees_only() {
                 ),
                 (nonce_pubkey, bank.get_account(&nonce_pubkey).unwrap())
             ]),
+            pre_accounts_states: Some(vec![
+                (rent_paying_fee_payer, rent_paying_fee_payer_account),
+                (nonce_pubkey, nonce_account)
+            ])
         })]
     );
 }
