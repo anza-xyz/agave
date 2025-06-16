@@ -141,6 +141,7 @@ use {
         account_loader::{update_rent_exempt_status_for_account, LoadedTransaction},
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
+        rollback_accounts::RollbackAccounts,
         transaction_balances::BalanceCollector,
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -3714,6 +3715,7 @@ impl Bank {
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
+        is_geyser_present: bool,
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
@@ -3825,11 +3827,12 @@ impl Bank {
             update_transaction_statuses_us,
         );
 
-        Self::create_commit_results(processing_results)
+        Self::create_commit_results(processing_results, is_geyser_present)
     }
 
     fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
+        is_geyser_present: bool,
     ) -> Vec<TransactionCommitResult> {
         processing_results
             .into_iter()
@@ -3837,12 +3840,11 @@ impl Bank {
                 let processing_result = processing_result?;
                 let executed_units = processing_result.executed_units();
                 let loaded_accounts_data_size = processing_result.loaded_accounts_data_size();
-
                 match processing_result {
                     ProcessedTransaction::Executed(executed_tx) => {
                         let execution_details = executed_tx.execution_details;
                         let LoadedTransaction {
-                            accounts: loaded_accounts,
+                            accounts: mut loaded_accounts,
                             fee_details,
                             ..
                         } = executed_tx.loaded_transaction;
@@ -3858,20 +3860,46 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
+                            post_accounts_states: if is_geyser_present {
+                                //Mutate zero lamports accounts to default state to be in line with current Geyser Account Notification implementation
+                                loaded_accounts.iter_mut().for_each(|(_, acc)| {
+                                    if acc.lamports() == 0 {
+                                        *acc = AccountSharedData::default()
+                                    }
+                                });
+                                Some(loaded_accounts)
+                            } else {
+                                None
+                            },
                         })
                     }
-                    ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
-                        status: Err(fees_only_tx.load_error),
-                        log_messages: None,
-                        inner_instructions: None,
-                        return_data: None,
-                        executed_units,
-                        fee_details: fees_only_tx.fee_details,
-                        loaded_account_stats: TransactionLoadedAccountsStats {
-                            loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
-                            loaded_accounts_data_size,
-                        },
-                    }),
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => {
+                        let loaded_accounts_count = fees_only_tx.rollback_accounts.count();
+                        let post_accounts_states = if is_geyser_present {
+                            Some(match fees_only_tx.rollback_accounts {
+                                RollbackAccounts::FeePayerOnly { fee_payer } => vec![fee_payer],
+                                RollbackAccounts::SameNonceAndFeePayer { nonce } => vec![nonce],
+                                RollbackAccounts::SeparateNonceAndFeePayer { nonce, fee_payer } => {
+                                    vec![fee_payer, nonce]
+                                }
+                            })
+                        } else {
+                            None
+                        };
+                        Ok(CommittedTransaction {
+                            status: Err(fees_only_tx.load_error),
+                            log_messages: None,
+                            inner_instructions: None,
+                            return_data: None,
+                            executed_units,
+                            fee_details: fees_only_tx.fee_details,
+                            loaded_account_stats: TransactionLoadedAccountsStats {
+                                loaded_accounts_count,
+                                loaded_accounts_data_size,
+                            },
+                            post_accounts_states,
+                        })
+                    }
                 }
             })
             .collect()
@@ -4408,6 +4436,7 @@ impl Bank {
             processing_results,
             &processed_counts,
             timings,
+            recording_config.enable_transaction_balance_recording,
         );
         drop(freeze_lock);
         Ok((commit_results, balance_collector))

@@ -5,10 +5,12 @@ use {
         ReplicaTransactionInfoV3, ReplicaTransactionInfoVersions,
     },
     log::*,
+    solana_account::AccountSharedData,
     solana_clock::Slot,
     solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_metrics::*,
+    solana_pubkey::Pubkey,
     solana_rpc::transaction_notifier_interface::TransactionNotifier,
     solana_signature::Signature,
     solana_transaction::versioned::VersionedTransaction,
@@ -34,6 +36,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
         is_vote: bool,
         transaction_status_meta: &TransactionStatusMeta,
         transaction: &VersionedTransaction,
+        post_accounts_states: &[(Pubkey, AccountSharedData)],
     ) {
         let mut measure = Measure::start("geyser-plugin-notify_plugins_of_transaction_info");
         let transaction_log_info = Self::build_replica_transaction_info(
@@ -43,6 +46,7 @@ impl TransactionNotifier for TransactionNotifierImpl {
             is_vote,
             transaction_status_meta,
             transaction,
+            post_accounts_states,
         );
 
         let plugin_manager = self.plugin_manager.read().unwrap();
@@ -96,6 +100,7 @@ impl TransactionNotifierImpl {
         is_vote: bool,
         transaction_status_meta: &'a TransactionStatusMeta,
         transaction: &'a VersionedTransaction,
+        post_accounts_states: &'a [(Pubkey, AccountSharedData)],
     ) -> ReplicaTransactionInfoV3<'a> {
         ReplicaTransactionInfoV3 {
             index,
@@ -104,6 +109,7 @@ impl TransactionNotifierImpl {
             is_vote,
             transaction,
             transaction_status_meta,
+            post_accounts_states,
         }
     }
 }
