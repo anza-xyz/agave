@@ -3864,6 +3864,7 @@ impl Bank {
                         let LoadedTransaction {
                             rent_debits,
                             accounts: mut loaded_accounts,
+                            pre_accounts_states,
                             fee_details,
                             ..
                         } = executed_tx.loaded_transaction;
@@ -3887,6 +3888,7 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
+                            pre_accounts_states,
                             post_accounts_states: if is_geyser_present {
                                 //Mutate zero lamports accounts to default state to be in line with current Geyser Account Notification implementation
                                 loaded_accounts.iter_mut().for_each(|(_, acc)| {
@@ -3936,6 +3938,11 @@ impl Bank {
                                 loaded_accounts_data_size,
                             },
                             post_accounts_states,
+                            pre_accounts_states: if is_geyser_present {
+                                Some(vec![])
+                            } else {
+                                None
+                            },
                         })
                     }
                 }
