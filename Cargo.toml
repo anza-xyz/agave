@@ -471,7 +471,7 @@ solana-poseidon = { path = "poseidon", version = "=3.0.0" }
 solana-precompile-error = "2.2.2"
 solana-presigner = "2.2.1"
 solana-program = { version = "2.3.0", default-features = false }
-solana-program-entrypoint = "2.2.1"
+solana-program-entrypoint = "2.3.0"
 solana-program-error = "2.2.2"
 solana-program-memory = "2.3.1"
 solana-program-option = "2.2.1"
