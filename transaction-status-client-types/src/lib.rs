@@ -4,12 +4,12 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     core::fmt,
     serde::{
-        de::{self, Deserialize as DeserializeTrait},
+        de::{self, Deserialize as DeserializeTrait, Error as DeserializeError},
         ser::{Serialize as SerializeTrait, SerializeTupleVariant},
         Deserializer,
     },
     serde_derive::{Deserialize, Serialize},
-    serde_json::Value,
+    serde_json::{from_slice, Value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
     solana_instruction::error::InstructionError,
@@ -289,12 +289,28 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
         let value = serde_json::Value::deserialize(deserializer)?;
         if let Some(obj) = value.as_object() {
             if let Some(arr) = obj.get("InstructionError").and_then(|v| v.as_array()) {
-                let outer_instruction_index: u8 = arr[0]
+                let outer_instruction_index: u8 = arr
+                    .first()
+                    .ok_or_else(|| {
+                        DeserializeError::invalid_length(0, &"Expected the first element to exist")
+                    })?
                     .as_u64()
-                    .expect("Expected the first element to be the `outer_instruction_index`")
-                    as u8;
-                let err = InstructionError::deserialize(&arr[1])
-                    .expect("Expected the second element to deserialize as an `InstructionError`");
+                    .ok_or_else(|| {
+                        DeserializeError::custom("Expected the first element to be a u64")
+                    })? as u8;
+                let rest_bytes: Vec<u8> = arr
+                    .get(1..)
+                    .ok_or_else(|| {
+                        DeserializeError::invalid_length(
+                            1,
+                            &"Expected there to be at least 2 elements",
+                        )
+                    })?
+                    .iter()
+                    .map(|v| Ok(v.as_u64().unwrap() as u8))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let err: InstructionError =
+                    from_slice(&rest_bytes).map_err(|e| DeserializeError::custom(e.to_string()))?;
                 return Ok(UiTransactionError(TransactionError::InstructionError(
                     outer_instruction_index,
                     err,
