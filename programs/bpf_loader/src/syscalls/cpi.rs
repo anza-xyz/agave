@@ -1062,27 +1062,6 @@ fn cpi_common<S: SyscallInvokeSigned>(
         .get_feature_set()
         .bpf_account_data_direct_mapping;
 
-    if direct_mapping {
-        // Update all perms at once before doing account data updates. This
-        // isn't strictly required as we forbid updates to an account to touch
-        // other accounts, but since we did have bugs around this in the past,
-        // it's better to be safe than sorry.
-        for translate_account in accounts.iter() {
-            let mut callee_account = instruction_context.try_borrow_instruction_account(
-                transaction_context,
-                translate_account.index_in_caller,
-            )?;
-            if translate_account.update_caller_account_region {
-                update_caller_account_region(
-                    memory_mapping,
-                    &translate_account.caller_account,
-                    &mut callee_account,
-                    is_loader_deprecated,
-                )?;
-            }
-        }
-    }
-
     for translate_account in accounts.iter_mut() {
         let mut callee_account = instruction_context.try_borrow_instruction_account(
             transaction_context,
@@ -1096,6 +1075,23 @@ fn cpi_common<S: SyscallInvokeSigned>(
                 &mut callee_account,
                 direct_mapping,
             )?;
+        }
+    }
+
+    if direct_mapping {
+        for translate_account in accounts.iter() {
+            let mut callee_account = instruction_context.try_borrow_instruction_account(
+                transaction_context,
+                translate_account.index_in_caller,
+            )?;
+            if translate_account.update_caller_account_region {
+                update_caller_account_region(
+                    memory_mapping,
+                    &translate_account.caller_account,
+                    &mut callee_account,
+                    is_loader_deprecated,
+                )?;
+            }
         }
     }
 
@@ -1202,6 +1198,10 @@ fn update_caller_account_region(
 //
 // This method updates caller_account so the CPI caller can see the callee's
 // changes.
+//
+// Safety: Once `direct_mapping` is enabled all fields of [CallerAccount] used
+// in this function should never point inside the address space reserved for
+// accounts (regardless of the current size of an account).
 fn update_caller_account(
     invoke_context: &InvokeContext,
     memory_mapping: &MemoryMapping<'_>,
