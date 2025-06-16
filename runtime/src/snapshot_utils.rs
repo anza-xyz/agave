@@ -26,7 +26,7 @@ use {
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         accounts_hash::AccountsHash,
-        hardened_unpack::{self, ArchiveChunker, BytesChannelReader, MultiBytes, UnpackError},
+        hardened_unpack::{self, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
     solana_clock::{Epoch, Slot},
@@ -36,7 +36,7 @@ use {
         cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt, fs,
-        io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
+        io::{self, BufRead, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
         num::{NonZeroU64, NonZeroUsize},
         ops::RangeInclusive,
@@ -52,7 +52,7 @@ use {
 };
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    hardened_unpack::UnpackedAppendVecMap, rayon::prelude::*,
+    hardened_unpack::UnpackedAppendVecMap,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
 };
 
@@ -1569,9 +1569,6 @@ pub(crate) fn get_storages_to_serialize(
         .collect::<Vec<_>>()
 }
 
-// From testing, 4 seems to be a sweet spot for ranges of 60M-360M accounts and 16-64 cores. This may need to be tuned later.
-const PARALLEL_UNTAR_READERS_DEFAULT: usize = 4;
-
 /// Unarchives the given full and incremental snapshot archives, as long as they are compatible.
 pub fn verify_and_unarchive_snapshots(
     bank_snapshots_dir: impl AsRef<Path>,
@@ -1585,7 +1582,15 @@ pub fn verify_and_unarchive_snapshots(
         incremental_snapshot_archive_info,
     )?;
 
-    let num_worker_threads = (num_cpus::get() / 4).clamp(1, PARALLEL_UNTAR_READERS_DEFAULT);
+    let num_writer_threads = if solana_accounts_db::io_uring_supported() {
+        // With asynchronous IO we don't even need spearate threads,
+        // but using 1 allows keeping same code structure as sync path.
+        1
+    } else {
+        // Writers will do synchronous syscalls, use several to parallelize
+        // actual data writes.
+        (num_cpus::get() / 4).clamp(1, 4)
+    };
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let UnarchivedSnapshot {
@@ -1602,7 +1607,7 @@ pub fn verify_and_unarchive_snapshots(
         "snapshot untar",
         account_paths,
         full_snapshot_archive_info.archive_format(),
-        num_worker_threads,
+        num_writer_threads,
         next_append_vec_id.clone(),
         storage_access,
     )?;
@@ -1629,7 +1634,7 @@ pub fn verify_and_unarchive_snapshots(
             "incremental snapshot untar",
             account_paths,
             incremental_snapshot_archive_info.archive_format(),
-            num_worker_threads,
+            num_writer_threads,
             next_append_vec_id.clone(),
             storage_access,
         )?;
@@ -1669,19 +1674,21 @@ pub fn verify_and_unarchive_snapshots(
     ))
 }
 
-/// Spawns a thread for unpacking a snapshot
-fn spawn_unpack_snapshot_thread(
-    chunks_receiver: crossbeam_channel::Receiver<MultiBytes>,
+/// Streams unpacked files across channel
+fn streaming_unarchive_snapshot(
     file_sender: Sender<PathBuf>,
-    account_paths: Arc<Vec<PathBuf>>,
-    ledger_dir: Arc<PathBuf>,
-    thread_index: usize,
+    account_paths: Vec<PathBuf>,
+    ledger_dir: PathBuf,
+    snapshot_archive_path: PathBuf,
+    archive_format: ArchiveFormat,
+    _num_threads: usize,
 ) -> JoinHandle<Result<()>> {
     Builder::new()
-        .name(format!("solUnpkSnpsht{thread_index:02}"))
+        .name("solTarUnpack".to_string())
         .spawn(move || {
+            let decompressor = decompressed_tar_reader(archive_format, snapshot_archive_path)?;
             hardened_unpack::streaming_unpack_snapshot(
-                Archive::new(BytesChannelReader::new(chunks_receiver)),
+                Archive::new(decompressor),
                 ledger_dir.as_path(),
                 &account_paths,
                 &file_sender,
@@ -1691,70 +1698,20 @@ fn spawn_unpack_snapshot_thread(
         .unwrap()
 }
 
-/// Streams unpacked files across channel
-fn streaming_unarchive_snapshot(
-    file_sender: Sender<PathBuf>,
-    account_paths: Vec<PathBuf>,
-    ledger_dir: PathBuf,
-    snapshot_archive_path: PathBuf,
+fn decompressed_tar_reader(
     archive_format: ArchiveFormat,
-    num_threads: usize,
-) -> Vec<JoinHandle<Result<()>>> {
-    let account_paths = Arc::new(account_paths);
-    let ledger_dir = Arc::new(ledger_dir);
-
-    let mut handles = vec![];
-
-    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads * 2);
-    handles.push(spawn_archive_chunker_thread(
-        snapshot_archive_path,
-        archive_format,
-        chunk_sender,
-    ));
-
-    for thread_index in 0..num_threads {
-        handles.push(spawn_unpack_snapshot_thread(
-            chunk_receiver.clone(),
-            file_sender.clone(),
-            account_paths.clone(),
-            ledger_dir.clone(),
-            thread_index,
-        ))
-    }
-
-    handles
-}
-
-fn archive_chunker_from_path(
-    archive_path: &Path,
-    archive_format: ArchiveFormat,
-) -> io::Result<ArchiveChunker<ArchiveFormatDecompressor<Box<dyn std::io::BufRead>>>> {
-    const INPUT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
-    let buf_reader = solana_accounts_db::large_file_buf_reader(archive_path, INPUT_READER_BUF_SIZE)
-        .map_err(|err| {
-            IoError::other(format!(
-                "failed to open snapshot archive '{}': {err}",
-                archive_path.display(),
-            ))
-        })?;
-    let decompressor = ArchiveFormatDecompressor::new(archive_format, buf_reader)?;
-    Ok(ArchiveChunker::new(decompressor))
-}
-
-fn spawn_archive_chunker_thread(
     archive_path: impl AsRef<Path>,
-    archive_format: ArchiveFormat,
-    chunk_sender: Sender<MultiBytes>,
-) -> JoinHandle<Result<()>> {
-    let archive_path = archive_path.as_ref().to_path_buf();
-    Builder::new()
-        .name("solTarDecompr".to_string())
-        .spawn(move || {
-            let chunker = archive_chunker_from_path(&archive_path, archive_format)?;
-            chunker.decode_and_send_chunks(chunk_sender)?;
-            Ok(())
-        })
-        .unwrap()
+) -> Result<ArchiveFormatDecompressor<Box<dyn BufRead + 'static>>> {
+    const INPUT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
+    let buf_reader =
+        solana_accounts_db::large_file_buf_reader(archive_path.as_ref(), INPUT_READER_BUF_SIZE)
+            .map_err(|err| {
+                io::Error::other(format!(
+                    "failed to open snapshot archive '{}': {err}",
+                    archive_path.as_ref().display(),
+                ))
+            })?;
+    Ok(ArchiveFormatDecompressor::new(archive_format, buf_reader)?)
 }
 
 /// Used to determine if a filename is structured like a version file, bank file, or storage file
@@ -1916,7 +1873,7 @@ fn unarchive_snapshot(
     let unpacked_snapshots_dir = unpack_dir.path().join("snapshots");
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    let unarchive_handles = streaming_unarchive_snapshot(
+    let unarchive_handle = streaming_unarchive_snapshot(
         file_sender,
         account_paths.to_vec(),
         unpack_dir.path().to_path_buf(),
@@ -1964,9 +1921,7 @@ fn unarchive_snapshot(
             })
         },
     );
-    for handle in unarchive_handles {
-        handle.join().unwrap()?;
-    }
+    unarchive_handle.join().unwrap()?;
     snapshot_result
 }
 
@@ -2470,24 +2425,9 @@ fn unpack_snapshot_local(
     num_threads: usize,
 ) -> Result<UnpackedAppendVecMap> {
     assert!(num_threads > 0);
-
-    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads);
-    let handle = spawn_archive_chunker_thread(snapshot_path, archive_format, chunk_sender);
-
-    // create 'num_threads' # of parallel workers, each receiving chunks of archive to extract.
-    let all_unpacked_append_vec_map = (0..num_threads)
-        .into_par_iter()
-        .map(|_| {
-            let archive_subset = Archive::new(BytesChannelReader::new(chunk_receiver.clone()));
-            hardened_unpack::unpack_snapshot(archive_subset, ledger_dir, account_paths)
-        })
-        .collect::<Vec<_>>();
-    handle.join().unwrap()?;
-
-    let mut unpacked_append_vec_map = UnpackedAppendVecMap::new();
-    for h in all_unpacked_append_vec_map {
-        unpacked_append_vec_map.extend(h?);
-    }
+    let archive = Archive::new(decompressed_tar_reader(archive_format, snapshot_path)?);
+    let unpacked_append_vec_map =
+        hardened_unpack::unpack_snapshot(archive, ledger_dir, account_paths)?;
 
     Ok(unpacked_append_vec_map)
 }

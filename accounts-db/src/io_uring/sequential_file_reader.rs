@@ -1,5 +1,8 @@
 use {
-    crate::io_uring::memory::{BorrowedBytesMut, LargeBuffer},
+    crate::io_uring::{
+        memory::{IoFixedBuffer, LargeBuffer},
+        IO_PRIO_BE_HIGHEST,
+    },
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
@@ -16,17 +19,6 @@ const DEFAULT_READ_SIZE: usize = 1024 * 1024;
 const DEFAULT_BUFFER_SIZE: usize = 64 * DEFAULT_READ_SIZE;
 const SQPOLL_IDLE_TIMEOUT: u32 = 50;
 const MAX_IOWQ_WORKERS: u32 = 4;
-
-// Based on Linux <uapi/linux/ioprio.h>
-const IO_PRIO_CLASS_SHIFT: u16 = 13;
-const IO_PRIO_CLASS_BE: u16 = 2;
-const IO_PRIO_LEVEL_HIGHEST: u16 = 0;
-const IO_PRIO_BE_HIGHEST: u16 = IO_PRIO_CLASS_BE << IO_PRIO_CLASS_SHIFT | IO_PRIO_LEVEL_HIGHEST;
-
-// We register fixed buffers in chunks of up to 1GB as this is faster than registering many
-// `read_capacity` buffers. Registering fixed buffers saves the kernel some work in
-// checking/mapping/unmapping buffers for each read operation.
-const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
 /// Reader for non-seekable files.
 ///
@@ -104,18 +96,9 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             "buffer size must be a multiple of read_capacity"
         );
 
-        // Split the buffer into `read_capacity` sized chunks.
-        let buf_start = buffer.as_ptr() as usize;
-        let buffers = buffer
-            .chunks_exact_mut(read_capacity)
-            .map(|buf| {
-                let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
-                ReadBufState::Uninit {
-                    io_buf_index,
-                    buf: BorrowedBytesMut::from_mut_slice(buf),
-                }
-            })
-            .collect::<Vec<_>>();
+        let buffers = IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, read_capacity)?
+            .map(ReadBufState::Uninit)
+            .collect();
 
         let file = std::os::unix::fs::OpenOptionsExt::custom_flags(
             std::fs::OpenOptions::new().read(true),
@@ -134,17 +117,6 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
                 current_buf: 0,
             },
         );
-        let iovecs = buffer
-            .chunks(FIXED_BUFFER_LEN)
-            .map(|buf| libc::iovec {
-                iov_base: buf.as_ptr() as _,
-                iov_len: buf.len(),
-            })
-            .collect::<Vec<_>>();
-        // Safety:
-        // The iovecs point to a buffer which is guaranteed to be valid for the
-        // lifetime of the reader
-        unsafe { ring.register_buffers(&iovecs)? };
 
         let mut reader = Self {
             inner: ring,
@@ -180,12 +152,11 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         } = &mut self.inner.context_mut();
         let read_buf = mem::replace(&mut buffers[index], ReadBufState::Reading);
         match read_buf {
-            ReadBufState::Uninit { buf, io_buf_index } => {
+            ReadBufState::Uninit(buf) => {
                 let op = ReadOp {
                     fd: file.as_raw_fd(),
                     buf,
                     buf_off: 0,
-                    io_buf_index,
                     file_off: *offset,
                     read_len: *read_capacity,
                     reader_buf_index: index,
@@ -198,7 +169,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
                 // Safety:
                 // The op points to a buffer which is guaranteed to be valid for
                 // the lifetime of the operation
-                self.inner.push(op)?
+                self.inner.push(op)?;
             }
             _ => unreachable!("called start_reading_buf on a non-empty buffer"),
         }
@@ -228,10 +199,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
             let num_buffers = state.buffers.len();
             let read_buf = &mut state.buffers[state.current_buf];
             match read_buf {
-                ReadBufState::Full {
-                    ref mut cursor,
-                    io_buf_index,
-                } => {
+                ReadBufState::Full(ref mut cursor) => {
                     if !cursor.fill_buf()?.is_empty() {
                         // we have some data available
                         break true;
@@ -247,7 +215,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                         state.current_buf = (state.current_buf + 1) % num_buffers;
                     } else {
                         // we have finished consuming this buffer, queue the next read
-                        let cursor = mem::replace(cursor, Cursor::new(BorrowedBytesMut::empty()));
+                        let cursor = mem::replace(cursor, Cursor::new(IoFixedBuffer::empty()));
                         let buf = cursor.into_inner();
 
                         // The very last read when we hit EOF could return less than `read_capacity`, in
@@ -258,10 +226,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                         // didn't reset the length it wouldn't matter.
                         debug_assert!(buf.len() == state.read_capacity);
 
-                        state.buffers[index] = ReadBufState::Uninit {
-                            buf,
-                            io_buf_index: *io_buf_index,
-                        };
+                        state.buffers[index] = ReadBufState::Uninit(buf);
                         state.current_buf = (state.current_buf + 1) % num_buffers;
 
                         self.start_reading_buf(index)?;
@@ -270,7 +235,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                     // move to the next buffer and check again whether we have data
                     continue;
                 }
-                ReadBufState::Uninit { .. } => unreachable!("should be initialized"),
+                ReadBufState::Uninit(_) => unreachable!("should be initialized"),
                 _ => break false,
             }
         };
@@ -280,8 +245,8 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
             let state = self.inner.context();
 
             match &state.buffers[state.current_buf] {
-                ReadBufState::Full { .. } => break,
-                ReadBufState::Uninit { .. } => unreachable!("should be initialized"),
+                ReadBufState::Full(_) => break,
+                ReadBufState::Uninit(_) => unreachable!("should be initialized"),
                 // Still no data, wait for more completions, but submit in case the SQPOLL
                 // thread is asleep and there are queued entries in the submission queue.
                 ReadBufState::Reading => self.inner.submit()?,
@@ -291,7 +256,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
         // At this point we must have data or be at EOF.
         let state = self.inner.context_mut();
         match &mut state.buffers[state.current_buf] {
-            ReadBufState::Full { cursor, .. } => Ok(cursor.fill_buf()?),
+            ReadBufState::Full(cursor) => Ok(cursor.fill_buf()?),
             // after the loop above we either have some data or we must be at EOF
             _ => unreachable!(),
         }
@@ -300,7 +265,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
     fn consume(&mut self, amt: usize) {
         let state = self.inner.context_mut();
         match &mut state.buffers[state.current_buf] {
-            ReadBufState::Full { cursor, .. } => cursor.consume(amt),
+            ReadBufState::Full(cursor) => cursor.consume(amt),
             _ => assert_eq!(amt, 0),
         }
     }
@@ -309,37 +274,25 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
 enum ReadBufState {
     /// The buffer is pending submission to read queue (on initialization and
     /// in transition from `Full` to `Reading`).
-    Uninit {
-        buf: BorrowedBytesMut,
-        io_buf_index: usize,
-    },
+    Uninit(IoFixedBuffer),
     /// The buffer is currently being read and there's a corresponding ReadOp in
     /// the ring.
     Reading,
     /// The buffer is filled and ready to be consumed.
-    Full {
-        cursor: Cursor<BorrowedBytesMut>,
-        io_buf_index: usize,
-    },
+    Full(Cursor<IoFixedBuffer>),
 }
 
 impl std::fmt::Debug for ReadBufState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Uninit {
-                buf: _,
-                io_buf_index,
-            } => f
+            Self::Uninit(buf) => f
                 .debug_struct("Uninit")
-                .field("io_buf_index", io_buf_index)
+                .field("io_buf_index", &buf.io_buf_index())
                 .finish(),
             Self::Reading => write!(f, "Reading"),
-            Self::Full {
-                cursor: _,
-                io_buf_index,
-            } => f
+            Self::Full(cursor) => f
                 .debug_struct("Full")
-                .field("io_buf_index", io_buf_index)
+                .field("io_buf_index", &cursor.get_ref().io_buf_index())
                 .finish(),
         }
     }
@@ -347,13 +300,11 @@ impl std::fmt::Debug for ReadBufState {
 
 struct ReadOp {
     fd: RawFd,
-    buf: BorrowedBytesMut,
+    buf: IoFixedBuffer,
     /// This is the offset inside the buffer. It's typically 0, but can be non-zero if a previous
     /// read returned less data than requested (because of EINTR or whatever) and we submitted a new
     /// read for the remaining data.
     buf_off: usize,
-    /// The index of the fixed buffer in the ring. See register_buffers().
-    io_buf_index: usize,
     /// The offset in the file.
     file_off: usize,
     /// The length of the read. This is typically `read_capacity` but can be less if a previous read
@@ -369,7 +320,7 @@ impl std::fmt::Debug for ReadOp {
         f.debug_struct("ReadOp")
             .field("fd", &self.fd)
             .field("buf_off", &self.buf_off)
-            .field("io_buf_index", &self.io_buf_index)
+            .field("io_buf_index", &self.buf.io_buf_index())
             .field("file_off", &self.file_off)
             .field("read_len", &self.read_len)
             .field("reader_buf_index", &self.reader_buf_index)
@@ -383,7 +334,6 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             fd,
             buf,
             buf_off,
-            io_buf_index,
             file_off,
             read_len,
             reader_buf_index: _,
@@ -394,7 +344,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             // Safety: we assert that the buffer is large enough to hold the read.
             unsafe { buf.as_mut_ptr().byte_add(*buf_off) },
             *read_len as u32,
-            *io_buf_index as u16,
+            buf.io_buf_index(),
         )
         .offset(*file_off as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
@@ -410,7 +360,6 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             fd,
             buf,
             buf_off,
-            io_buf_index,
             file_off,
             read_len,
             reader_buf_index,
@@ -430,7 +379,6 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
                 fd: *fd,
                 buf: buf.sub_buf_to(buf.len()), // Still use the full buf
                 buf_off: total_read_len,
-                io_buf_index: *io_buf_index,
                 file_off: *file_off + last_read_len,
                 read_len: *read_len - last_read_len,
                 reader_buf_index: *reader_buf_index,
@@ -440,10 +388,8 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             // lifetime of the operation
             completion.push(op);
         } else {
-            reader_state.buffers[*reader_buf_index] = ReadBufState::Full {
-                cursor: Cursor::new(buf.sub_buf_to(total_read_len)),
-                io_buf_index: *io_buf_index,
-            };
+            reader_state.buffers[*reader_buf_index] =
+                ReadBufState::Full(Cursor::new(buf.sub_buf_to(total_read_len)));
         }
 
         Ok(())
