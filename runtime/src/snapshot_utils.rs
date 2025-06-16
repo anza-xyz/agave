@@ -1581,9 +1581,6 @@ pub(crate) fn get_storages_to_serialize(
         .collect::<Vec<_>>()
 }
 
-// From testing, 4 seems to be a sweet spot for ranges of 60M-360M accounts and 16-64 cores. This may need to be tuned later.
-const PARALLEL_UNTAR_READERS_DEFAULT: usize = 4;
-
 /// Unarchives the given full and incremental snapshot archives, as long as they are compatible.
 pub fn verify_and_unarchive_snapshots(
     bank_snapshots_dir: impl AsRef<Path>,
@@ -1597,7 +1594,15 @@ pub fn verify_and_unarchive_snapshots(
         incremental_snapshot_archive_info,
     )?;
 
-    let num_worker_threads = (num_cpus::get() / 4).clamp(1, PARALLEL_UNTAR_READERS_DEFAULT);
+    let num_writer_threads = if solana_accounts_db::io_uring_supported() {
+        // With asynchronous IO we don't even need spearate threads,
+        // but using 1 allows keeping same code structure as sync path.
+        1
+    } else {
+        // Writers will do synchronous syscalls, use several to parallelize
+        // actual data writes.
+        (num_cpus::get() / 4).clamp(1, 4)
+    };
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
     let UnarchivedSnapshot {
@@ -1614,7 +1619,7 @@ pub fn verify_and_unarchive_snapshots(
         "snapshot untar",
         account_paths,
         full_snapshot_archive_info.archive_format(),
-        num_worker_threads,
+        num_writer_threads,
         next_append_vec_id.clone(),
         storage_access,
     )?;
@@ -1641,7 +1646,7 @@ pub fn verify_and_unarchive_snapshots(
             "incremental snapshot untar",
             account_paths,
             incremental_snapshot_archive_info.archive_format(),
-            num_worker_threads,
+            num_writer_threads,
             next_append_vec_id.clone(),
             storage_access,
         )?;
@@ -1717,7 +1722,8 @@ fn streaming_unarchive_snapshot(
 
     let mut handles = vec![];
 
-    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(num_threads * 2);
+    const ARCHIVE_CHUNKS_QUEUE_SIZE: usize = 16;
+    let (chunk_sender, chunk_receiver) = crossbeam_channel::bounded(ARCHIVE_CHUNKS_QUEUE_SIZE);
     handles.push(spawn_archive_chunker_thread(
         snapshot_archive_path,
         archive_format,
