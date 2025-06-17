@@ -1475,18 +1475,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("no_accounts_db_experimental_accumulator_hash")
-            .long("no-accounts-db-experimental-accumulator-hash")
-            .help("Disables the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_verify_experimental_accumulator_hash")
-            .long("accounts-db-verify-experimental-accumulator-hash")
-            .help("Verifies the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
             .long("accounts-db-snapshots-use-experimental-accumulator-hash")
             .help("Snapshots use the experimental accumulator hash")

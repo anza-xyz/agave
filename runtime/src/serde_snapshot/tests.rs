@@ -75,10 +75,8 @@ mod serde_snapshot_tests {
             Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
-            None,
             (u64::default(), None),
             None,
-            false,
         )
         .map(|(accounts_db, _)| accounts_db)
     }

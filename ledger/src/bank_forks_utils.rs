@@ -311,7 +311,6 @@ fn bank_forks_from_snapshot(
             process_options.debug_keys.clone(),
             None,
             process_options.limit_load_slot_count_from_snapshot,
-            process_options.accounts_db_test_hash_calculation,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
             process_options.verify_index,

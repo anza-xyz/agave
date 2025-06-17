@@ -16,7 +16,6 @@ use {
     scopeguard::defer,
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
-        epoch_accounts_hash::EpochAccountsHash,
     },
     solana_clock::{Slot, MAX_PROCESSING_AGE},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
@@ -31,7 +30,6 @@ use {
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime::{
-        accounts_background_service::SnapshotRequestKind,
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
@@ -69,10 +67,7 @@ use {
         ops::Index,
         path::PathBuf,
         result,
-        sync::{
-            atomic::{AtomicBool, Ordering::Relaxed},
-            Arc, Mutex, RwLock,
-        },
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         time::{Duration, Instant},
         vec::Drain,
     },
@@ -855,7 +850,6 @@ pub struct ProcessOptions {
     pub accounts_db_config: Option<AccountsDbConfig>,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
-    pub on_halt_store_hash_raw_data_for_debug: bool,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
@@ -886,41 +880,12 @@ pub fn test_process_blockstore(
     )
     .unwrap();
 
-    // Spin up a thread to be a fake Accounts Background Service.  Need to intercept and handle all
-    // EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze() waiting for
-    // an in-flight EAH calculation to complete.
-    let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+    let (snapshot_request_sender, _snapshot_request_receiver) = crossbeam_channel::unbounded();
     let snapshot_controller = SnapshotController::new(
         snapshot_request_sender,
         snapshot_config,
         bank_forks.read().unwrap().root(),
     );
-    let bg_exit = Arc::new(AtomicBool::new(false));
-    let bg_thread = {
-        let exit = Arc::clone(&bg_exit);
-        std::thread::spawn(move || {
-            while !exit.load(Relaxed) {
-                snapshot_request_receiver
-                    .try_iter()
-                    .filter(|snapshot_request| {
-                        snapshot_request.request_kind == SnapshotRequestKind::EpochAccountsHash
-                    })
-                    .for_each(|snapshot_request| {
-                        snapshot_request
-                            .snapshot_root_bank
-                            .rc
-                            .accounts
-                            .accounts_db
-                            .epoch_accounts_hash_manager
-                            .set_valid(
-                                EpochAccountsHash::new(Hash::new_unique()),
-                                snapshot_request.snapshot_root_bank.slot(),
-                            )
-                    });
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        })
-    };
 
     process_blockstore_from_root(
         blockstore,
@@ -932,9 +897,6 @@ pub fn test_process_blockstore(
         Some(&snapshot_controller),
     )
     .unwrap();
-
-    bg_exit.store(true, Relaxed);
-    bg_thread.join().unwrap();
 
     (bank_forks, leader_schedule_cache)
 }
@@ -1905,7 +1867,6 @@ fn load_frozen_forks(
         opts,
     )?;
 
-    let on_halt_store_hash_raw_data_for_debug = opts.on_halt_store_hash_raw_data_for_debug;
     if Some(bank_forks.read().unwrap().root()) != opts.halt_at_slot {
         let recyclers = VerifyRecyclers::default();
         let mut all_banks = HashMap::new();
@@ -2068,7 +2029,7 @@ fn load_frozen_forks(
                 .unwrap_or(false);
             if done_processing {
                 if opts.run_final_accounts_hash_calc {
-                    bank.run_final_hash_calc(on_halt_store_hash_raw_data_for_debug);
+                    bank.run_final_hash_calc();
                 }
                 break;
             }
@@ -2082,12 +2043,6 @@ fn load_frozen_forks(
                 opts,
             )?;
         }
-    } else if on_halt_store_hash_raw_data_for_debug {
-        bank_forks
-            .read()
-            .unwrap()
-            .root_bank()
-            .run_final_hash_calc(on_halt_store_hash_raw_data_for_debug);
     }
 
     Ok((total_slots_processed, total_rooted_slots))

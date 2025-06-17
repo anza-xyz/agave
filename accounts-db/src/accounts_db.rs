@@ -64,7 +64,6 @@ use {
         append_vec::{aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
-        epoch_accounts_hash::EpochAccountsHashManager,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
             PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
@@ -346,8 +345,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
-    enable_experimental_accumulator_hash: false,
-    verify_experimental_accumulator_hash: false,
     snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
@@ -372,8 +369,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
-    enable_experimental_accumulator_hash: false,
-    verify_experimental_accumulator_hash: false,
     snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
@@ -502,8 +497,6 @@ pub struct AccountsDbConfig {
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
-    pub enable_experimental_accumulator_hash: bool,
-    pub verify_experimental_accumulator_hash: bool,
     pub snapshots_use_experimental_accumulator_hash: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
@@ -551,7 +544,7 @@ pub struct IndexGenerationInfo {
     pub accounts_data_len: u64,
     /// The lt hash of the old/duplicate accounts identified during index generation.
     /// Will be used when verifying the accounts lt hash, after rebuilding a Bank.
-    pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+    pub duplicates_lt_hash: Box<DuplicatesLtHash>,
 }
 
 #[derive(Debug, Default)]
@@ -1454,24 +1447,9 @@ pub struct AccountsDb {
     /// At that point, this and other code can be deleted.
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
 
-    /// the full accounts hash calculation as of a predetermined block height 'N'
-    /// to be included in the bank hash at a predetermined block height 'M'
-    /// The cadence is once per epoch, all nodes calculate a full accounts hash as of a known slot calculated using 'N'
-    /// Some time later (to allow for slow calculation time), the bank hash at a slot calculated using 'M' includes the full accounts hash.
-    /// Thus, the state of all accounts on a validator is known to be correct at least once per epoch.
-    pub epoch_accounts_hash_manager: EpochAccountsHashManager,
-
     /// The latest full snapshot slot dictates how to handle zero lamport accounts
     /// Note, this is None if we're told to *not* take snapshots
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
-
-    /// Flag to indicate if the experimental accounts lattice hash is enabled.
-    /// (For R&D only; a feature-gate also exists to turn this on and make it a part of consensus.)
-    pub is_experimental_accumulator_hash_enabled: AtomicBool,
-
-    /// Flag to indicate if the experimental accounts lattice hash should be verified.
-    /// (For R&D only)
-    pub verify_experimental_accumulator_hash: bool,
 
     /// Flag to indicate if the experimental accounts lattice hash is used for snapshots.
     /// (For R&D only; a feature-gate also exists to turn this on.)
@@ -1884,11 +1862,6 @@ impl AccountsDb {
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
             storage_access: accounts_db_config.storage_access,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
-            is_experimental_accumulator_hash_enabled: accounts_db_config
-                .enable_experimental_accumulator_hash
-                .into(),
-            verify_experimental_accumulator_hash: accounts_db_config
-                .verify_experimental_accumulator_hash,
             snapshots_use_experimental_accumulator_hash: accounts_db_config
                 .snapshots_use_experimental_accumulator_hash
                 .into(),
@@ -1923,7 +1896,6 @@ impl AccountsDb {
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
             log_dead_slots: AtomicBool::new(true),
             accounts_file_provider: AccountsFileProvider::default(),
-            epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
         };
@@ -1967,18 +1939,6 @@ impl AccountsDb {
             size,
             self.accounts_file_provider,
         )
-    }
-
-    /// Returns if the experimental accounts lattice hash is enabled
-    pub fn is_experimental_accumulator_hash_enabled(&self) -> bool {
-        self.is_experimental_accumulator_hash_enabled
-            .load(Ordering::Acquire)
-    }
-
-    /// Sets if the experimental accounts lattice hash is enabled
-    pub fn set_is_experimental_accumulator_hash_enabled(&self, is_enabled: bool) {
-        self.is_experimental_accumulator_hash_enabled
-            .store(is_enabled, Ordering::Release);
     }
 
     /// Returns if snapshots use the experimental accounts lattice hash
@@ -7982,7 +7942,6 @@ impl AccountsDb {
         &self,
         limit_load_slot_count_from_snapshot: Option<usize>,
         verify: bool,
-        should_calculate_duplicates_lt_hash: bool,
     ) -> IndexGenerationInfo {
         let mut total_time = Measure::start("generate_index");
         let mut slots = self.storage.all_slots();
@@ -7993,7 +7952,7 @@ impl AccountsDb {
         let accounts_data_len = AtomicU64::new(0);
 
         let zero_lamport_pubkeys = Mutex::new(HashSet::new());
-        let mut outer_duplicates_lt_hash = None;
+        let mut outer_duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
 
         // pass == 0 always runs and generates the index
         // pass == 1 only runs if verify == true.
@@ -8219,37 +8178,16 @@ impl AccountsDb {
                 struct DuplicatePubkeysVisitedInfo {
                     accounts_data_len_from_duplicates: u64,
                     num_duplicate_accounts: u64,
-                    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+                    duplicates_lt_hash: Box<DuplicatesLtHash>,
                 }
                 impl DuplicatePubkeysVisitedInfo {
                     fn reduce(mut self, other: Self) -> Self {
                         self.accounts_data_len_from_duplicates +=
                             other.accounts_data_len_from_duplicates;
                         self.num_duplicate_accounts += other.num_duplicate_accounts;
-
-                        match (
-                            self.duplicates_lt_hash.is_some(),
-                            other.duplicates_lt_hash.is_some(),
-                        ) {
-                            (true, true) => {
-                                // SAFETY: We just checked that both values are Some
-                                self.duplicates_lt_hash
-                                    .as_mut()
-                                    .unwrap()
-                                    .0
-                                    .mix_in(&other.duplicates_lt_hash.as_ref().unwrap().0);
-                            }
-                            (true, false) => {
-                                // nothing to do; `other` doesn't have a duplicates lt hash
-                            }
-                            (false, true) => {
-                                // `self` doesn't have a duplicates lt hash, so pilfer from `other`
-                                self.duplicates_lt_hash = other.duplicates_lt_hash;
-                            }
-                            (false, false) => {
-                                // nothing to do; no duplicates lt hash at all
-                            }
-                        }
+                        self.duplicates_lt_hash
+                            .0
+                            .mix_in(&other.duplicates_lt_hash.0);
                         self
                     }
                 }
@@ -8281,11 +8219,8 @@ impl AccountsDb {
                                         accounts_data_len_from_duplicates,
                                         accounts_duplicates_num,
                                         duplicates_lt_hash,
-                                    ) = self.visit_duplicate_pubkeys_during_startup(
-                                        pubkeys,
-                                        &timings,
-                                        should_calculate_duplicates_lt_hash,
-                                    );
+                                    ) = self
+                                        .visit_duplicate_pubkeys_during_startup(pubkeys, &timings);
                                     let intermediate = DuplicatePubkeysVisitedInfo {
                                         accounts_data_len_from_duplicates,
                                         num_duplicate_accounts: accounts_duplicates_num,
@@ -8309,10 +8244,7 @@ impl AccountsDb {
                 timings.num_duplicate_accounts = num_duplicate_accounts;
 
                 accounts_data_len.fetch_sub(accounts_data_len_from_duplicates, Ordering::Relaxed);
-                if let Some(duplicates_lt_hash) = duplicates_lt_hash {
-                    let old_val = outer_duplicates_lt_hash.replace(duplicates_lt_hash);
-                    assert!(old_val.is_none());
-                }
+                outer_duplicates_lt_hash = duplicates_lt_hash;
                 info!(
                     "accounts data len: {}",
                     accounts_data_len.load(Ordering::Relaxed)
@@ -8343,14 +8275,6 @@ impl AccountsDb {
         }
 
         self.accounts_index.log_secondary_indexes();
-
-        // The duplicates lt hash must be Some if should_calculate_duplicates_lt_hash is true.
-        // But, if there were no duplicates, then we'd never set outer_duplicates_lt_hash to Some!
-        // So do one last check here to ensure outer_duplicates_lt_hash is Some if we're supposed
-        // to calculate the duplicates lt hash.
-        if should_calculate_duplicates_lt_hash && outer_duplicates_lt_hash.is_none() {
-            outer_duplicates_lt_hash = Some(Box::new(DuplicatesLtHash::default()));
-        }
 
         IndexGenerationInfo {
             accounts_data_len: accounts_data_len.load(Ordering::Relaxed),
@@ -8427,12 +8351,10 @@ impl AccountsDb {
         &self,
         pubkeys: &[Pubkey],
         timings: &GenerateIndexTimings,
-        should_calculate_duplicates_lt_hash: bool,
-    ) -> (u64, u64, Option<Box<DuplicatesLtHash>>) {
+    ) -> (u64, u64, Box<DuplicatesLtHash>) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
-        let mut duplicates_lt_hash =
-            should_calculate_duplicates_lt_hash.then(|| Box::new(DuplicatesLtHash::default()));
+        let mut duplicates_lt_hash = Box::new(DuplicatesLtHash::default());
         let mut lt_hash_time = Duration::default();
         self.accounts_index.scan(
             pubkeys.iter(),
@@ -8462,14 +8384,12 @@ impl AccountsDb {
                                     accounts_data_len_from_duplicates += data_len;
                                 }
                                 num_duplicate_accounts += 1;
-                                if let Some(duplicates_lt_hash) = duplicates_lt_hash.as_mut() {
-                                    let (_, duration) = meas_dur!({
-                                        let account_lt_hash =
-                                            Self::lt_hash_account(&loaded_account, pubkey);
-                                        duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
-                                    });
-                                    lt_hash_time += duration;
-                                }
+                                let (_, duration) = meas_dur!({
+                                    let account_lt_hash =
+                                        Self::lt_hash_account(&loaded_account, pubkey);
+                                    duplicates_lt_hash.0.mix_in(&account_lt_hash.0);
+                                });
+                                lt_hash_time += duration;
                             });
                         });
                     }

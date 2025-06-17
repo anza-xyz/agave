@@ -2,6 +2,8 @@
 title: Epoch Accounts Hash
 ---
 
+*The Epoch Accounts Hash has been removed by SIMD-215*
+
 *Paraphrasing from https://github.com/solana-labs/solana/issues/26847*
 
 ## Background
