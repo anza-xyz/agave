@@ -240,7 +240,7 @@ mod tests {
     use {
         super::*,
         bincode::{serialize_into, DefaultOptions, Options},
-        solana_packet::PACKET_DATA_SIZE,
+        solana_perf::packet::QUIC_MAX_STREAM_SIZE,
         solana_short_vec::ShortU16,
     };
 
@@ -335,7 +335,7 @@ mod tests {
         let options = DefaultOptions::new().with_fixint_encoding(); // Ensure fixed-int encoding
 
         // Test all possible u16 values under the packet length
-        for value in 0..=PACKET_DATA_SIZE as u16 {
+        for value in 0..=QUIC_MAX_STREAM_SIZE as u16 {
             let mut offset;
             let short_u16 = ShortU16(value);
 

@@ -26,7 +26,7 @@ use {
         AddressLoader, AddressLoaderError,
     },
     solana_nonce::state::DurableNonce,
-    solana_perf::packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
         loaded_programs::ProgramCacheEntry,
@@ -94,8 +94,8 @@ pub const MAX_REQUEST_BODY_SIZE: usize = 50 * (1 << 10); // 50kB
 
 const EXECUTION_SLOT: u64 = 5; // The execution slot must be greater than the deployment slot
 const EXECUTION_EPOCH: u64 = 2; // The execution epoch must be greater than the deployment epoch
-const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
-const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
+const MAX_BASE58_SIZE: usize = 5594; // Golden, bump if QUIC_MAX_STREAM_SIZE changes
+const MAX_BASE64_SIZE: usize = 5464; // Golden, bump if QUIC_MAX_STREAM_SIZE changes
 
 fn new_response<T>(slot: Slot, value: T) -> RpcResponse<T> {
     RpcResponse {
@@ -838,7 +838,7 @@ where
                     type_name::<T>(),
                     encoded.len(),
                     MAX_BASE58_SIZE,
-                    PACKET_DATA_SIZE,
+                    QUIC_MAX_STREAM_SIZE,
                 )));
             }
             bs58::decode(encoded)
@@ -852,7 +852,7 @@ where
                     type_name::<T>(),
                     encoded.len(),
                     MAX_BASE64_SIZE,
-                    PACKET_DATA_SIZE,
+                    QUIC_MAX_STREAM_SIZE,
                 )));
             }
             BASE64_STANDARD
@@ -860,16 +860,16 @@ where
                 .map_err(|e| Error::invalid_params(format!("invalid base64 encoding: {e:?}")))?
         }
     };
-    if wire_output.len() > PACKET_DATA_SIZE {
+    if wire_output.len() > QUIC_MAX_STREAM_SIZE {
         return Err(Error::invalid_params(format!(
             "decoded {} too large: {} bytes (max: {} bytes)",
             type_name::<T>(),
             wire_output.len(),
-            PACKET_DATA_SIZE
+            QUIC_MAX_STREAM_SIZE
         )));
     }
     bincode::options()
-        .with_limit(PACKET_DATA_SIZE as u64)
+        .with_limit(QUIC_MAX_STREAM_SIZE as u64)
         .with_fixint_encoding()
         .allow_trailing_bytes()
         .deserialize_from(&wire_output[..])
