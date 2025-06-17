@@ -22,8 +22,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::RentDue,
-    solana_rent_collector::{CollectedInfo, RENT_EXEMPT_RENT_EPOCH},
-    solana_rent_debits::RentDebits,
+    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_sdk_ids::{
         bpf_loader_upgradeable, native_loader,
         sysvar::{self, slot_history},
@@ -47,7 +46,6 @@ pub(crate) const TRANSACTION_ACCOUNT_BASE_SIZE: usize = 64;
 const ADDRESS_LOOKUP_TABLE_BASE_SIZE: usize = 8248;
 
 // for the load instructions
-pub(crate) type TransactionRent = u64;
 pub(crate) type TransactionProgramIndices = Vec<Vec<IndexOfAccount>>;
 pub type TransactionCheckResult = Result<CheckedTransactionDetails>;
 type TransactionValidationResult = Result<ValidatedTransactionDetails>;
@@ -127,7 +125,6 @@ impl Default for ValidatedTransactionDetails {
 pub(crate) struct LoadedTransactionAccount {
     pub(crate) account: AccountSharedData,
     pub(crate) loaded_size: usize,
-    pub(crate) rent_collected: u64,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -142,8 +139,6 @@ pub struct LoadedTransaction {
     pub fee_details: FeeDetails,
     pub rollback_accounts: RollbackAccounts,
     pub(crate) compute_budget: SVMTransactionExecutionBudget,
-    pub rent: TransactionRent,
-    pub rent_debits: RentDebits,
     pub loaded_accounts_data_size: u32,
 }
 
@@ -223,7 +218,6 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
         account.map(|account| LoadedTransactionAccount {
             loaded_size: base_account_size.saturating_add(account.data().len()),
             account,
-            rent_collected: 0,
         })
     }
 
@@ -355,33 +349,24 @@ impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallba
 {
 }
 
-/// Collect rent from an account if rent is still enabled and regardless of
-/// whether rent is enabled, set the rent epoch to u64::MAX if the account is
-/// rent exempt.
+/// Set the rent epoch to u64::MAX if the account is rent exempt.
 pub fn collect_rent_from_account(
-    feature_set: &SVMFeatureSet,
     rent_collector: &dyn SVMRentCollector,
-    address: &Pubkey,
     account: &mut AccountSharedData,
-) -> CollectedInfo {
-    if !feature_set.disable_rent_fees_collection {
-        rent_collector.collect_rent(address, account)
-    } else {
-        // When rent fee collection is disabled, we won't collect rent for any account. If there
-        // are any rent paying accounts, their `rent_epoch` won't change either. However, if the
-        // account itself is rent-exempted but its `rent_epoch` is not u64::MAX, we will set its
-        // `rent_epoch` to u64::MAX. In such case, the behavior stays the same as before.
-        if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
-            && rent_collector.get_rent_due(
-                account.lamports(),
-                account.data().len(),
-                account.rent_epoch(),
-            ) == RentDue::Exempt
-        {
-            account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-        }
-
-        CollectedInfo::default()
+) {
+    // Now that rent fee collection is disabled, we won't collect rent for any
+    // account. If there are any rent paying accounts, their `rent_epoch` won't
+    // change either. However, if the account itself is rent-exempted but its
+    // `rent_epoch` is not u64::MAX, we will set its `rent_epoch` to u64::MAX.
+    // In such case, the behavior stays the same as before.
+    if account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH
+        && rent_collector.get_rent_due(
+            account.lamports(),
+            account.data().len(),
+            account.rent_epoch(),
+        ) == RentDue::Exempt
+    {
+        account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
     }
 }
 
@@ -465,8 +450,6 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                     accounts: loaded_tx_accounts.accounts,
                     program_indices: loaded_tx_accounts.program_indices,
                     fee_details: tx_details.fee_details,
-                    rent: loaded_tx_accounts.rent,
-                    rent_debits: loaded_tx_accounts.rent_debits,
                     rollback_accounts: tx_details.rollback_accounts,
                     compute_budget: tx_details.compute_budget,
                     loaded_accounts_data_size: loaded_tx_accounts.loaded_accounts_data_size,
@@ -485,8 +468,6 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
 struct LoadedTransactionAccounts {
     pub(crate) accounts: Vec<TransactionAccount>,
     pub(crate) program_indices: TransactionProgramIndices,
-    pub(crate) rent: TransactionRent,
-    pub(crate) rent_debits: RentDebits,
     pub(crate) loaded_accounts_data_size: u32,
 }
 
@@ -561,8 +542,6 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
     let mut loaded_transaction_accounts = LoadedTransactionAccounts {
         accounts: Vec::with_capacity(account_keys.len()),
         program_indices: Vec::with_capacity(message.num_instructions()),
-        rent: 0,
-        rent_debits: RentDebits::default(),
         loaded_accounts_data_size: 0,
     };
 
@@ -576,11 +555,10 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
     )?;
 
     let mut collect_loaded_account =
-        |account_loader: &mut AccountLoader<CB>, key, loaded_account| -> Result<()> {
+        |account_loader: &mut AccountLoader<CB>, key: &Pubkey, loaded_account| -> Result<()> {
             let LoadedTransactionAccount {
                 account,
                 loaded_size,
-                rent_collected,
             } = loaded_account;
 
             loaded_transaction_accounts.increase_calculated_data_size(
@@ -588,14 +566,6 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
                 loaded_accounts_bytes_limit,
                 error_metrics,
             )?;
-
-            loaded_transaction_accounts.rent = loaded_transaction_accounts
-                .rent
-                .saturating_add(rent_collected);
-
-            loaded_transaction_accounts
-                .rent_debits
-                .insert(key, rent_collected, account.lamports());
 
             // This has been annotated branch-by-branch because collapsing the logic is infeasible.
             // Its purpose is to ensure programdata accounts are counted once and *only* once per
@@ -696,18 +666,15 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
     error_metrics: &mut TransactionErrorMetrics,
     rent_collector: &dyn SVMRentCollector,
 ) -> Result<LoadedTransactionAccounts> {
-    let mut tx_rent: TransactionRent = 0;
     let account_keys = message.account_keys();
     let mut accounts = Vec::with_capacity(account_keys.len());
     let mut validated_loaders = AHashSet::with_capacity(PROGRAM_OWNERS.len());
-    let mut rent_debits = RentDebits::default();
     let mut accumulated_accounts_data_size: Saturating<u32> = Saturating(0);
 
-    let mut collect_loaded_account = |key, loaded_account| -> Result<()> {
+    let mut collect_loaded_account = |key: &Pubkey, loaded_account| -> Result<()> {
         let LoadedTransactionAccount {
             account,
             loaded_size,
-            rent_collected,
         } = loaded_account;
 
         accumulate_and_check_loaded_account_data_size(
@@ -716,9 +683,6 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
             loaded_accounts_bytes_limit,
             error_metrics,
         )?;
-
-        tx_rent += rent_collected;
-        rent_debits.insert(key, rent_collected, account.lamports());
 
         accounts.push((*key, account));
         Ok(())
@@ -800,8 +764,6 @@ fn load_transaction_accounts_old<CB: TransactionProcessingCallback>(
     Ok(LoadedTransactionAccounts {
         accounts,
         program_indices,
-        rent: tx_rent,
-        rent_debits,
         loaded_accounts_data_size: accumulated_accounts_data_size.0,
     })
 }
@@ -820,23 +782,13 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         LoadedTransactionAccount {
             loaded_size: 0,
             account: construct_instructions_account(message),
-            rent_collected: 0,
         }
     } else if let Some(mut loaded_account) =
         account_loader.load_transaction_account(account_key, is_writable)
     {
-        loaded_account.rent_collected = if is_writable {
-            collect_rent_from_account(
-                account_loader.feature_set,
-                rent_collector,
-                account_key,
-                &mut loaded_account.account,
-            )
-            .rent_amount
-        } else {
-            0
-        };
-
+        if is_writable {
+            collect_rent_from_account(rent_collector, &mut loaded_account.account);
+        }
         loaded_account
     } else {
         let mut default_account = AccountSharedData::default();
@@ -847,7 +799,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         LoadedTransactionAccount {
             loaded_size: default_account.data().len(),
             account: default_account,
-            rent_collected: 0,
         }
     };
 
@@ -934,7 +885,6 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
-        solana_rent_debits::RentDebits,
         solana_sdk_ids::{
             bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,
         },
@@ -1013,9 +963,8 @@ mod tests {
         accounts: &[TransactionAccount],
         rent_collector: &RentCollector,
         error_metrics: &mut TransactionErrorMetrics,
-        mut feature_set: SVMFeatureSet,
+        feature_set: SVMFeatureSet,
     ) -> TransactionLoadResult {
-        feature_set.disable_rent_fees_collection = false;
         let sanitized_tx = SanitizedTransaction::from_transaction_for_tests(tx);
         let fee_payer_account = accounts[0].1.clone();
         let mut accounts_map = HashMap::new();
@@ -1636,7 +1585,6 @@ mod tests {
             .accounts_map
             .insert(fee_payer_address, fee_payer_account.clone());
         let mut account_loader = (&mock_bank).into();
-        let fee_payer_rent_debit = 42;
 
         let mut error_metrics = TransactionErrorMetrics::default();
 
@@ -1651,25 +1599,16 @@ mod tests {
             LoadedTransactionAccount {
                 loaded_size: fee_payer_account.data().len(),
                 account: fee_payer_account.clone(),
-                rent_collected: fee_payer_rent_debit,
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
             &RentCollector::default(),
         );
-
-        let expected_rent_debits = {
-            let mut rent_debits = RentDebits::default();
-            rent_debits.insert(&fee_payer_address, fee_payer_rent_debit, fee_payer_balance);
-            rent_debits
-        };
         assert_eq!(
             result.unwrap(),
             LoadedTransactionAccounts {
                 accounts: vec![(fee_payer_address, fee_payer_account)],
                 program_indices: vec![],
-                rent: fee_payer_rent_debit,
-                rent_debits: expected_rent_debits,
                 loaded_accounts_data_size: 0,
             }
         );
@@ -1724,7 +1663,6 @@ mod tests {
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
                 loaded_size: base_account_size,
-                ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
@@ -1749,8 +1687,6 @@ mod tests {
                         )
                     ],
                     program_indices: vec![vec![]],
-                    rent: 0,
-                    rent_debits: RentDebits::default(),
                     loaded_accounts_data_size,
                 }
             );
@@ -1900,7 +1836,6 @@ mod tests {
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
                 loaded_size: base_account_size,
-                ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
@@ -1920,8 +1855,6 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![1]],
-                rent: 0,
-                rent_debits: RentDebits::default(),
                 loaded_accounts_data_size,
             }
         );
@@ -2092,7 +2025,6 @@ mod tests {
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
                 loaded_size: base_account_size,
-                ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
@@ -2112,8 +2044,6 @@ mod tests {
                     ),
                 ],
                 program_indices: vec![vec![1]],
-                rent: 0,
-                rent_debits: RentDebits::default(),
                 loaded_accounts_data_size,
             }
         );
@@ -2191,7 +2121,6 @@ mod tests {
             LoadedTransactionAccount {
                 account: fee_payer_account.clone(),
                 loaded_size: base_account_size,
-                ..LoadedTransactionAccount::default()
             },
             MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
             &mut error_metrics,
@@ -2214,8 +2143,6 @@ mod tests {
                     (key3.pubkey(), account_data),
                 ],
                 program_indices: vec![vec![1], vec![1]],
-                rent: 0,
-                rent_debits: RentDebits::default(),
                 loaded_accounts_data_size,
             }
         );
@@ -2354,7 +2281,6 @@ mod tests {
             loaded_fee_payer_account: LoadedTransactionAccount {
                 account: fee_payer_account,
                 loaded_size: base_account_size,
-                ..LoadedTransactionAccount::default()
             },
             ..ValidatedTransactionDetails::default()
         });
@@ -2393,8 +2319,6 @@ mod tests {
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::default(),
                 compute_budget: SVMTransactionExecutionBudget::default(),
-                rent: 0,
-                rent_debits: RentDebits::default(),
                 loaded_accounts_data_size,
             }
         );
@@ -2459,73 +2383,36 @@ mod tests {
 
     #[test]
     fn test_collect_rent_from_account() {
-        let feature_set = SVMFeatureSet::all_enabled();
         let rent_collector = RentCollector {
             epoch: 1,
             ..RentCollector::default()
         };
 
-        let address = Pubkey::new_unique();
         let min_exempt_balance = rent_collector.rent.minimum_balance(0);
         let mut account = AccountSharedData::from(Account {
             lamports: min_exempt_balance,
             ..Account::default()
         });
 
-        assert_eq!(
-            collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
-            CollectedInfo::default()
-        );
+        collect_rent_from_account(&rent_collector, &mut account);
         assert_eq!(account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
     }
 
     #[test]
     fn test_collect_rent_from_account_rent_paying() {
-        let feature_set = SVMFeatureSet::all_enabled();
         let rent_collector = RentCollector {
             epoch: 1,
             ..RentCollector::default()
         };
 
-        let address = Pubkey::new_unique();
         let mut account = AccountSharedData::from(Account {
             lamports: 1,
             ..Account::default()
         });
 
-        assert_eq!(
-            collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
-            CollectedInfo::default()
-        );
+        collect_rent_from_account(&rent_collector, &mut account);
         assert_eq!(account.rent_epoch(), 0);
         assert_eq!(account.lamports(), 1);
-    }
-
-    #[test]
-    fn test_collect_rent_from_account_rent_enabled() {
-        let mut feature_set = SVMFeatureSet::all_enabled();
-        feature_set.disable_rent_fees_collection = false;
-        let rent_collector = RentCollector {
-            epoch: 1,
-            ..RentCollector::default()
-        };
-
-        let address = Pubkey::new_unique();
-        let mut account = AccountSharedData::from(Account {
-            lamports: 1,
-            data: vec![0],
-            ..Account::default()
-        });
-
-        assert_eq!(
-            collect_rent_from_account(&feature_set, &rent_collector, &address, &mut account),
-            CollectedInfo {
-                rent_amount: 1,
-                account_data_len_reclaimed: 1
-            }
-        );
-        assert_eq!(account.rent_epoch(), 0);
-        assert_eq!(account.lamports(), 0);
     }
 
     // Ensure `TransactionProcessingCallback::inspect_account()` is called when
@@ -2718,7 +2605,6 @@ mod tests {
                 LoadedTransactionAccount {
                     account: fee_payer_account.clone(),
                     loaded_size: fee_payer_size as usize,
-                    rent_collected: 0,
                 },
                 MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
                 &mut TransactionErrorMetrics::default(),
@@ -3160,7 +3046,6 @@ mod tests {
                 LoadedTransactionAccount {
                     loaded_size: TRANSACTION_ACCOUNT_BASE_SIZE + fee_payer_account.data().len(),
                     account: fee_payer_account,
-                    rent_collected: 0,
                 },
                 MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
                 &mut TransactionErrorMetrics::default(),

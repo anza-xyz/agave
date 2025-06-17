@@ -486,7 +486,6 @@ solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.0.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=3.0.0", default-features = false }
 solana-rent = "2.2.1"
 solana-rent-collector = "2.2.1"
-solana-rent-debits = "2.2.1"
 solana-reward-info = "2.2.1"
 solana-rpc = { path = "rpc", version = "=3.0.0" }
 solana-rpc-client = { path = "rpc-client", version = "=3.0.0", default-features = false }

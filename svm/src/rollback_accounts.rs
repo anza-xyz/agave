@@ -35,18 +35,8 @@ impl RollbackAccounts {
         nonce: Option<NonceInfo>,
         fee_payer_address: Pubkey,
         mut fee_payer_account: AccountSharedData,
-        fee_payer_rent_debit: u64,
         fee_payer_loaded_rent_epoch: Epoch,
     ) -> Self {
-        // When the fee payer account is rolled back due to transaction failure,
-        // rent should not be charged so credit the previously debited rent
-        // amount.
-        fee_payer_account.set_lamports(
-            fee_payer_account
-                .lamports()
-                .saturating_add(fee_payer_rent_debit),
-        );
-
         if let Some(nonce) = nonce {
             if &fee_payer_address == nonce.address() {
                 // `nonce` contains an AccountSharedData which has already been advanced to the current DurableNonce
@@ -120,10 +110,9 @@ mod tests {
         let fee_payer_account = AccountSharedData::new(100, 0, &Pubkey::default());
         let fee_payer_rent_epoch = fee_payer_account.rent_epoch();
 
-        const TEST_RENT_DEBIT: u64 = 1;
-        let rent_collected_fee_payer_account = {
+        let rent_epoch_updated_fee_payer_account = {
             let mut account = fee_payer_account.clone();
-            account.set_lamports(fee_payer_account.lamports() - TEST_RENT_DEBIT);
+            account.set_lamports(fee_payer_account.lamports());
             account.set_rent_epoch(fee_payer_rent_epoch + 1);
             account
         };
@@ -131,8 +120,7 @@ mod tests {
         let rollback_accounts = RollbackAccounts::new(
             None,
             fee_payer_address,
-            rent_collected_fee_payer_account,
-            TEST_RENT_DEBIT,
+            rent_epoch_updated_fee_payer_account,
             fee_payer_rent_epoch,
         );
 
@@ -161,19 +149,17 @@ mod tests {
         )
         .unwrap();
 
-        const TEST_RENT_DEBIT: u64 = 1;
-        let rent_collected_nonce_account = {
+        let rent_epoch_updated_fee_payer_account = {
             let mut account = nonce_account.clone();
-            account.set_lamports(nonce_account.lamports() - TEST_RENT_DEBIT);
+            account.set_lamports(nonce_account.lamports());
             account
         };
 
-        let nonce = NonceInfo::new(nonce_address, rent_collected_nonce_account.clone());
+        let nonce = NonceInfo::new(nonce_address, rent_epoch_updated_fee_payer_account.clone());
         let rollback_accounts = RollbackAccounts::new(
             Some(nonce),
             nonce_address,
-            rent_collected_nonce_account,
-            TEST_RENT_DEBIT,
+            rent_epoch_updated_fee_payer_account,
             u64::MAX, // ignored
         );
 
@@ -205,10 +191,9 @@ mod tests {
         let fee_payer_address = Pubkey::new_unique();
         let fee_payer_account = AccountSharedData::new(44, 0, &Pubkey::default());
 
-        const TEST_RENT_DEBIT: u64 = 1;
-        let rent_collected_fee_payer_account = {
+        let rent_epoch_updated_fee_payer_account = {
             let mut account = fee_payer_account.clone();
-            account.set_lamports(fee_payer_account.lamports() - TEST_RENT_DEBIT);
+            account.set_lamports(fee_payer_account.lamports());
             account
         };
 
@@ -216,8 +201,7 @@ mod tests {
         let rollback_accounts = RollbackAccounts::new(
             Some(nonce),
             fee_payer_address,
-            rent_collected_fee_payer_account.clone(),
-            TEST_RENT_DEBIT,
+            rent_epoch_updated_fee_payer_account.clone(),
             u64::MAX, // ignored
         );
 

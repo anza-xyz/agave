@@ -65,7 +65,6 @@ solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
-solana-rent-debits = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }

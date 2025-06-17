@@ -138,7 +138,6 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rayon-threadlimit = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true, features = ["serde"] }
-solana-rent-debits = { workspace = true }
 solana-reward-info = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sdk-ids = { workspace = true }
@@ -192,7 +191,6 @@ rand_chacha = { workspace = true }
 solana-accounts-db = { workspace = true, features = ["dev-context-only-utils"] }
 solana-builtins = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
-solana-rent-debits = { workspace = true, features = ["dev-context-only-utils"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-runtime = { path = ".", features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [

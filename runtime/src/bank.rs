@@ -86,7 +86,7 @@ use {
             IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
         },
         accounts_index::{IndexKey, ScanConfig, ScanResult},
-        accounts_partition::{self, Partition, PartitionIndex},
+        accounts_partition::{self, Partition},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
@@ -126,8 +126,7 @@ use {
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
-    solana_rent_collector::{CollectedInfo, RentCollector},
-    solana_rent_debits::RentDebits,
+    solana_rent_collector::RentCollector,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
@@ -446,6 +445,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) collector_id: Pubkey,
     pub(crate) collector_fees: u64,
     pub(crate) fee_rate_governor: FeeRateGovernor,
+    #[allow(dead_code)]
     pub(crate) collected_rent: u64,
     pub(crate) rent_collector: RentCollector,
     pub(crate) epoch_schedule: EpochSchedule,
@@ -545,7 +545,6 @@ impl PartialEq for Bank {
             collector_id,
             collector_fees,
             fee_rate_governor,
-            collected_rent,
             rent_collector,
             epoch_schedule,
             inflation,
@@ -610,7 +609,6 @@ impl PartialEq for Bank {
             && collector_id == &other.collector_id
             && collector_fees.load(Relaxed) == other.collector_fees.load(Relaxed)
             && fee_rate_governor == &other.fee_rate_governor
-            && collected_rent.load(Relaxed) == other.collected_rent.load(Relaxed)
             && rent_collector == &other.rent_collector
             && epoch_schedule == &other.epoch_schedule
             && *inflation.read().unwrap() == *other.inflation.read().unwrap()
@@ -826,9 +824,6 @@ pub struct Bank {
 
     /// Track cluster signature throughput and adjust fee rate
     pub(crate) fee_rate_governor: FeeRateGovernor,
-
-    /// Rent that has been collected
-    collected_rent: AtomicU64,
 
     /// latest rent collector, knows the epoch
     rent_collector: RentCollector,
@@ -1107,7 +1102,6 @@ impl Bank {
             collector_id: Pubkey::default(),
             collector_fees: AtomicU64::default(),
             fee_rate_governor: FeeRateGovernor::default(),
-            collected_rent: AtomicU64::default(),
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Arc::<RwLock<Inflation>>::default(),
@@ -1330,7 +1324,6 @@ impl Bank {
             genesis_creation_time: parent.genesis_creation_time,
             slots_per_year: parent.slots_per_year,
             epoch_schedule,
-            collected_rent: AtomicU64::new(0),
             rent_collector: Self::get_rent_collector_from(&parent.rent_collector, epoch),
             max_tick_height: slot
                 .checked_add(1)
@@ -1840,7 +1833,6 @@ impl Bank {
             collector_id: fields.collector_id,
             collector_fees: AtomicU64::new(fields.collector_fees),
             fee_rate_governor: fields.fee_rate_governor,
-            collected_rent: AtomicU64::new(fields.collected_rent),
             // clone()-ing is needed to consider a gated behavior in rent_collector
             rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
             epoch_schedule: fields.epoch_schedule,
@@ -2040,7 +2032,7 @@ impl Bank {
             collector_id: self.collector_id,
             collector_fees: self.collector_fees.load(Relaxed),
             fee_rate_governor: self.fee_rate_governor.clone(),
-            collected_rent: self.collected_rent.load(Relaxed),
+            collected_rent: 0u64,
             rent_collector: self.rent_collector.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
             inflation: *self.inflation.read().unwrap(),
@@ -2656,7 +2648,6 @@ impl Bank {
             // finish up any deferred changes to account state
             self.collect_rent_eagerly();
             self.distribute_transaction_fee_details();
-            self.distribute_rent_fees();
             self.update_slot_history();
             self.run_incinerator();
 
@@ -3796,8 +3787,6 @@ impl Bank {
                 .store_cached(to_store, transactions.as_deref());
         });
 
-        self.collect_rent(&processing_results);
-
         // Cached vote and stake accounts are synchronized with accounts-db
         // after each transaction.
         let ((), update_stakes_cache_us) =
@@ -3867,18 +3856,10 @@ impl Bank {
                     ProcessedTransaction::Executed(executed_tx) => {
                         let execution_details = executed_tx.execution_details;
                         let LoadedTransaction {
-                            rent_debits,
                             accounts: loaded_accounts,
                             fee_details,
                             ..
                         } = executed_tx.loaded_transaction;
-
-                        // Rent is only collected for successfully executed transactions
-                        let rent_debits = if execution_details.was_successful() {
-                            rent_debits
-                        } else {
-                            RentDebits::default()
-                        };
 
                         Ok(CommittedTransaction {
                             status: execution_details.status,
@@ -3887,7 +3868,6 @@ impl Bank {
                             return_data: execution_details.return_data,
                             executed_units,
                             fee_details,
-                            rent_debits,
                             loaded_account_stats: TransactionLoadedAccountsStats {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
@@ -3900,7 +3880,6 @@ impl Bank {
                         inner_instructions: None,
                         return_data: None,
                         executed_units,
-                        rent_debits: RentDebits::default(),
                         fee_details: fees_only_tx.fee_details,
                         loaded_account_stats: TransactionLoadedAccountsStats {
                             loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
@@ -3910,17 +3889,6 @@ impl Bank {
                 }
             })
             .collect()
-    }
-
-    fn collect_rent(&self, processing_results: &[TransactionProcessingResult]) {
-        let collected_rent = processing_results
-            .iter()
-            .filter_map(|processing_result| processing_result.processed_transaction())
-            .filter_map(|processed_tx| processed_tx.executed_transaction())
-            .filter(|executed_tx| executed_tx.was_successful())
-            .map(|executed_tx| executed_tx.loaded_transaction.rent)
-            .sum();
-        self.collected_rent.fetch_add(collected_rent, Relaxed);
     }
 
     fn run_incinerator(&self) {
@@ -4111,8 +4079,8 @@ impl Bank {
             if parallel {
                 let thread_pool = &self.rc.accounts.accounts_db.thread_pool;
                 thread_pool.install(|| {
-                    ranges.into_par_iter().for_each(|range| {
-                        self.collect_rent_in_range(range.0, range.1, &rent_metrics)
+                    ranges.into_par_iter().for_each(|(_, subrange_full)| {
+                        self.collect_rent_in_range(subrange_full, &rent_metrics)
                     });
                 });
             }
@@ -4170,13 +4138,6 @@ impl Bank {
             .is_active(&feature_set::skip_rent_rewrites::id())
     }
 
-    /// true if rent fees should be collected (i.e. disable_rent_fees_collection is NOT enabled)
-    fn should_collect_rent(&self) -> bool {
-        !self
-            .feature_set
-            .is_active(&feature_set::disable_rent_fees_collection::id())
-    }
-
     /// Collect rent from `accounts`
     ///
     /// This fn is called inside a parallel loop from `collect_rent_in_partition()`.  Avoid adding
@@ -4189,11 +4150,7 @@ impl Bank {
     fn collect_rent_from_accounts(
         &self,
         mut accounts: Vec<(Pubkey, AccountSharedData, Slot)>,
-        rent_paying_pubkeys: Option<&HashSet<Pubkey>>,
-        partition_index: PartitionIndex,
     ) -> CollectRentFromAccountsInfo {
-        let mut rent_debits = RentDebits::default();
-        let mut total_rent_collected_info = CollectedInfo::default();
         let mut accounts_to_store =
             Vec::<(&Pubkey, &AccountSharedData)>::with_capacity(accounts.len());
         let mut time_collecting_rent_us = 0;
@@ -4207,18 +4164,13 @@ impl Bank {
         let mut skipped_rewrites = Vec::default();
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let rent_epoch_pre = account.rent_epoch();
-            let (rent_collected_info, collect_rent_us) = measure_us!(collect_rent_from_account(
-                &self.feature_set.runtime_features(),
-                &self.rent_collector,
-                pubkey,
-                account
-            ));
+            let ((), collect_rent_us) =
+                measure_us!(collect_rent_from_account(&self.rent_collector, account));
             time_collecting_rent_us += collect_rent_us;
             let rent_epoch_post = account.rent_epoch();
 
             // did the account change in any way due to rent collection?
-            let rent_epoch_changed = rent_epoch_post != rent_epoch_pre;
-            let account_changed = rent_collected_info.rent_amount != 0 || rent_epoch_changed;
+            let account_changed = rent_epoch_post != rent_epoch_pre;
 
             // always store the account, regardless if it changed or not
             let always_store_accounts =
@@ -4230,45 +4182,15 @@ impl Bank {
             // ensures we verify the whole on-chain state (= all accounts)
             // via the bank delta hash slowly once per an epoch.
             if account_changed || always_store_accounts {
-                if rent_collected_info.rent_amount > 0 {
-                    if let Some(rent_paying_pubkeys) = rent_paying_pubkeys {
-                        if !rent_paying_pubkeys.contains(pubkey) {
-                            let partition_from_pubkey = accounts_partition::partition_from_pubkey(
-                                pubkey,
-                                self.epoch_schedule.slots_per_epoch,
-                            );
-                            // Submit datapoint instead of assert while we verify this is correct
-                            datapoint_warn!(
-                                "bank-unexpected_rent_paying_pubkey",
-                                ("slot", self.slot(), i64),
-                                ("pubkey", pubkey.to_string(), String),
-                                ("partition_index", partition_index, i64),
-                                ("partition_from_pubkey", partition_from_pubkey, i64)
-                            );
-                            warn!(
-                                "Collecting rent from unexpected pubkey: {}, slot: {}, parent_slot: {:?}, \
-                                partition_index: {}, partition_from_pubkey: {}",
-                                pubkey,
-                                self.slot(),
-                                self.parent().map(|bank| bank.slot()),
-                                partition_index,
-                                partition_from_pubkey,
-                            );
-                        }
-                    }
-                } else {
-                    debug_assert_eq!(rent_collected_info.rent_amount, 0);
-                    if rent_epoch_changed {
-                        datapoint_info!(
-                            "bank-rent_collection_updated_only_rent_epoch",
-                            ("slot", self.slot(), i64),
-                            ("pubkey", pubkey.to_string(), String),
-                            ("rent_epoch_pre", rent_epoch_pre, i64),
-                            ("rent_epoch_post", rent_epoch_post, i64),
-                        );
-                    }
+                if account_changed {
+                    datapoint_info!(
+                        "bank-rent_collection_updated_only_rent_epoch",
+                        ("slot", self.slot(), i64),
+                        ("pubkey", pubkey.to_string(), String),
+                        ("rent_epoch_pre", rent_epoch_pre, i64),
+                        ("rent_epoch_post", rent_epoch_post, i64),
+                    );
                 }
-                total_rent_collected_info += rent_collected_info;
                 accounts_to_store.push((pubkey, account));
             } else if !account_changed
                 && !can_skip_rewrites
@@ -4281,7 +4203,6 @@ impl Bank {
                 let hash = AccountsDb::hash_account(account, pubkey);
                 skipped_rewrites.push((*pubkey, hash));
             }
-            rent_debits.insert(pubkey, rent_collected_info.rent_amount, account.lamports());
         }
 
         if !accounts_to_store.is_empty() {
@@ -4294,8 +4215,6 @@ impl Bank {
 
         CollectRentFromAccountsInfo {
             skipped_rewrites,
-            rent_collected_info: total_rent_collected_info,
-            rent_rewards: rent_debits.into_unordered_rewards_iter().collect(),
             time_collecting_rent_us,
             time_storing_accounts_us,
             num_accounts: accounts.len(),
@@ -4305,40 +4224,14 @@ impl Bank {
     /// convert 'partition' to a pubkey range and 'collect_rent_in_range'
     fn collect_rent_in_partition(&self, partition: Partition, metrics: &RentMetrics) {
         let subrange_full = accounts_partition::pubkey_range_from_partition(partition);
-        self.collect_rent_in_range(partition, subrange_full, metrics)
-    }
-
-    /// get all pubkeys that we expect to be rent-paying or None, if this was not initialized at load time (that should only exist in test cases)
-    fn get_rent_paying_pubkeys(&self, partition: &Partition) -> Option<HashSet<Pubkey>> {
-        self.rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .rent_paying_accounts_by_partition
-            .get()
-            .and_then(|rent_paying_accounts| {
-                rent_paying_accounts.is_initialized().then(|| {
-                    accounts_partition::get_partition_end_indexes(partition)
-                        .into_iter()
-                        .flat_map(|end_index| {
-                            rent_paying_accounts.get_pubkeys_in_partition_index(end_index)
-                        })
-                        .cloned()
-                        .collect::<HashSet<_>>()
-                })
-            })
+        self.collect_rent_in_range(subrange_full, metrics)
     }
 
     /// load accounts with pubkeys in 'subrange_full'
     /// collect rent and update 'account.rent_epoch' as necessary
     /// store accounts, whether rent was collected or not (depending on whether we skipping rewrites is enabled)
     /// update bank's rewrites set for all rewrites that were skipped
-    fn collect_rent_in_range(
-        &self,
-        partition: Partition,
-        subrange_full: RangeInclusive<Pubkey>,
-        metrics: &RentMetrics,
-    ) {
+    fn collect_rent_in_range(&self, subrange_full: RangeInclusive<Pubkey>, metrics: &RentMetrics) {
         let mut hold_range = Measure::start("hold_range");
         let thread_pool = &self.rc.accounts.accounts_db.thread_pool;
         thread_pool.install(|| {
@@ -4347,9 +4240,6 @@ impl Bank {
                 .hold_range_in_memory(&subrange_full, true, thread_pool);
             hold_range.stop();
             metrics.hold_range_us.fetch_add(hold_range.as_us(), Relaxed);
-
-            let rent_paying_pubkeys_ = self.get_rent_paying_pubkeys(&partition);
-            let rent_paying_pubkeys = rent_paying_pubkeys_.as_ref();
 
             // divide the range into num_threads smaller ranges and process in parallel
             // Note that 'pubkey_range_from_partition' cannot easily be re-used here to break the range smaller.
@@ -4360,7 +4250,7 @@ impl Bank {
             let end_prefix_inclusive = accounts_partition::prefix_from_pubkey(subrange_full.end());
             let range = end_prefix_inclusive - start_prefix;
             let increment = range / num_threads;
-            let mut results = (0..num_threads)
+            let results = (0..num_threads)
                 .into_par_iter()
                 .map(|chunk| {
                     let offset = |chunk| start_prefix + chunk * increment;
@@ -4385,7 +4275,7 @@ impl Bank {
                             .load_to_collect_rent_eagerly(&self.ancestors, subrange)
                     });
                     CollectRentInPartitionInfo::new(
-                        self.collect_rent_from_accounts(accounts, rent_paying_pubkeys, partition.1),
+                        self.collect_rent_from_accounts(accounts),
                         Duration::from_nanos(measure_load_accounts.as_ns()),
                     )
                 })
@@ -4405,16 +4295,6 @@ impl Bank {
             self.rc
                 .accounts
                 .hold_range_in_memory(&subrange_full, false, thread_pool);
-
-            self.collected_rent
-                .fetch_add(results.rent_collected, Relaxed);
-            self.update_accounts_data_size_delta_off_chain(
-                -(results.accounts_data_size_reclaimed as i64),
-            );
-            self.rewards
-                .write()
-                .unwrap()
-                .append(&mut results.rent_rewards);
 
             metrics
                 .load_us
@@ -7297,8 +7177,6 @@ enum ApplyFeatureActivationsCaller {
 #[derive(Debug, Default)]
 struct CollectRentFromAccountsInfo {
     skipped_rewrites: Vec<(Pubkey, AccountHash)>,
-    rent_collected_info: CollectedInfo,
-    rent_rewards: Vec<(Pubkey, RewardInfo)>,
     time_collecting_rent_us: u64,
     time_storing_accounts_us: u64,
     num_accounts: usize,
@@ -7309,9 +7187,6 @@ struct CollectRentFromAccountsInfo {
 #[derive(Debug, Default)]
 struct CollectRentInPartitionInfo {
     skipped_rewrites: Vec<(Pubkey, AccountHash)>,
-    rent_collected: u64,
-    accounts_data_size_reclaimed: u64,
-    rent_rewards: Vec<(Pubkey, RewardInfo)>,
     time_loading_accounts_us: u64,
     time_collecting_rent_us: u64,
     time_storing_accounts_us: u64,
@@ -7325,9 +7200,6 @@ impl CollectRentInPartitionInfo {
     fn new(info: CollectRentFromAccountsInfo, time_loading_accounts: Duration) -> Self {
         Self {
             skipped_rewrites: info.skipped_rewrites,
-            rent_collected: info.rent_collected_info.rent_amount,
-            accounts_data_size_reclaimed: info.rent_collected_info.account_data_len_reclaimed,
-            rent_rewards: info.rent_rewards,
             time_loading_accounts_us: time_loading_accounts.as_micros() as u64,
             time_collecting_rent_us: info.time_collecting_rent_us,
             time_storing_accounts_us: info.time_storing_accounts_us,
@@ -7343,11 +7215,6 @@ impl CollectRentInPartitionInfo {
     fn reduce(lhs: Self, rhs: Self) -> Self {
         Self {
             skipped_rewrites: [lhs.skipped_rewrites, rhs.skipped_rewrites].concat(),
-            rent_collected: lhs.rent_collected.saturating_add(rhs.rent_collected),
-            accounts_data_size_reclaimed: lhs
-                .accounts_data_size_reclaimed
-                .saturating_add(rhs.accounts_data_size_reclaimed),
-            rent_rewards: [lhs.rent_rewards, rhs.rent_rewards].concat(),
             time_loading_accounts_us: lhs
                 .time_loading_accounts_us
                 .saturating_add(rhs.time_loading_accounts_us),

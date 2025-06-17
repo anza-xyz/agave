@@ -189,7 +189,6 @@ mod tests {
         },
         solana_nonce_account as nonce_account,
         solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
-        solana_rent_debits::RentDebits,
         solana_sdk_ids::native_loader,
         solana_signer::{signers::Signers, Signer},
         solana_svm::{
@@ -280,8 +279,6 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -291,8 +288,6 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -354,8 +349,6 @@ mod tests {
                 fee_payer_account: from_account_pre.clone(),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -449,8 +442,6 @@ mod tests {
                 fee_payer_account: from_account_pre.clone(),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -557,8 +548,6 @@ mod tests {
                 nonce: nonce.clone(),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 

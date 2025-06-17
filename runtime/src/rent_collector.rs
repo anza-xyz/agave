@@ -14,7 +14,7 @@ use {
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
     solana_rent::{Rent, RentDue},
-    solana_rent_collector::{CollectedInfo, RentCollector},
+    solana_rent_collector::RentCollector,
     solana_svm_rent_collector::{rent_state::RentState, svm_rent_collector::SVMRentCollector},
     solana_transaction_context::IndexOfAccount,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
@@ -35,10 +35,6 @@ impl RentCollectorWithMetrics {
 }
 
 impl SVMRentCollector for RentCollectorWithMetrics {
-    fn collect_rent(&self, address: &Pubkey, account: &mut AccountSharedData) -> CollectedInfo {
-        self.0.collect_rent(address, account)
-    }
-
     fn get_rent(&self) -> &Rent {
         self.0.get_rent()
     }
