@@ -852,6 +852,12 @@ impl Serialize for SerializableAccountsDb<'_> {
 #[cfg(feature = "frozen-abi")]
 impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccountsDb<'_> {}
 
+/// This struct contains side-info while reconstructing the bank from fields
+#[derive(Debug)]
+pub(crate) struct ReconstructedBankInfo {
+    pub(crate) duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn reconstruct_bank_from_fields<E>(
     bank_fields: SnapshotBankFields,
@@ -867,7 +873,7 @@ pub(crate) fn reconstruct_bank_from_fields<E>(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-) -> Result<(Bank, BankFromStreamsInfo), Error>
+) -> Result<(Bank, ReconstructedBankInfo), Error>
 where
     E: SerializableStorage + std::marker::Sync,
 {
@@ -915,7 +921,7 @@ where
     info!("rent_collector: {:?}", bank.rent_collector());
     Ok((
         bank,
-        BankFromStreamsInfo {
+        ReconstructedBankInfo {
             duplicates_lt_hash: reconstructed_accounts_db_info.duplicates_lt_hash,
         },
     ))
