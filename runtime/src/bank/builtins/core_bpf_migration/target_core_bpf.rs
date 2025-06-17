@@ -1,6 +1,6 @@
 use {
     super::error::CoreBpfMigrationError,
-    crate::bank::Bank,
+    crate::bank::{builtins::core_bpf_migration::Target, Bank},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
     solana_pubkey::Pubkey,
@@ -89,6 +89,12 @@ impl TargetCoreBpf {
         Err(CoreBpfMigrationError::InvalidProgramDataAccount(
             program_data_address,
         ))
+    }
+}
+
+impl Target for TargetCoreBpf {
+    fn program_data_address(&self) -> &Pubkey {
+        &self.program_data_address
     }
 }
 
