@@ -219,7 +219,7 @@ pub struct StorableAccountsBySlot<'a> {
     /// cumulative offset of all account slices prior to this one
     /// starting_offsets[0] is the starting offset of slots_and_accounts[1]
     /// The starting offset of slots_and_accounts[0] is always 0
-    starting_offsets: Vec<usize>,
+    starting_offsets_for_slots_accounts_slice: Vec<usize>,
     /// true if there is more than 1 slot represented in slots_and_accounts
     contains_multiple_slots: bool,
     /// total len of all accounts, across all slots_and_accounts
@@ -251,7 +251,7 @@ impl<'a> StorableAccountsBySlot<'a> {
         Self {
             target_slot,
             slots_and_accounts,
-            starting_offsets,
+            starting_offsets_for_slots_accounts_slice: starting_offsets,
             contains_multiple_slots,
             len: cumulative_len,
             db,
@@ -267,20 +267,20 @@ impl<'a> StorableAccountsBySlot<'a> {
     fn find_internal_index(&self, index: usize) -> (usize, usize) {
         // special case for when there is only one slot - just return the first index without searching.
         // This happens when we are just shrinking a single slot storage, which happens very often.
-        if self.starting_offsets.len() == 1 {
+        if !self.contains_multiple_slots {
             return (0, index);
         }
-        let upper_bound =
-            self.starting_offsets
-                .binary_search_by(|element| match element.cmp(&index) {
-                    Ordering::Equal => Ordering::Less,
-                    ord => ord,
-                });
+        let upper_bound = self
+            .starting_offsets_for_slots_accounts_slice
+            .binary_search_by(|offset| match offset.cmp(&index) {
+                Ordering::Equal => Ordering::Less,
+                ord => ord,
+            });
         match upper_bound {
             Ok(offset_index) => (offset_index, 0),
             Err(offset_index) => {
                 let prior_offset = if offset_index > 0 {
-                    self.starting_offsets[offset_index - 1]
+                    self.starting_offsets_for_slots_accounts_slice[offset_index - 1]
                 } else {
                     0
                 };
@@ -379,11 +379,16 @@ pub mod tests {
         pub fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
             // search offsets for the accounts slice that contains 'index'.
             // This could be a binary search.
-            for (offset_index, next_offset) in self.starting_offsets.iter().enumerate() {
+            for (offset_index, next_offset) in self
+                .starting_offsets_for_slots_accounts_slice
+                .iter()
+                .enumerate()
+            {
                 if next_offset > &index {
                     // offset of prior entry
                     let prior_offset = if offset_index > 0 {
-                        self.starting_offsets[offset_index.saturating_sub(1)]
+                        self.starting_offsets_for_slots_accounts_slice
+                            [offset_index.saturating_sub(1)]
                     } else {
                         0
                     };
