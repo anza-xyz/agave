@@ -4680,12 +4680,6 @@ impl Bank {
         Ok((commit_results, balance_collector))
     }
 
-    /// Process a Transaction. This is used for unit tests and simply calls the vector
-    /// Bank::process_transactions method.
-    pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
-        self.try_process_transactions(std::iter::once(tx))?[0].clone()
-    }
-
     /// Process a Transaction and store metadata. This is used for tests and the banks services. It
     /// replicates the vector Bank::process_transaction method with metadata recording enabled.
     pub fn process_transaction_with_metadata(
@@ -7152,6 +7146,12 @@ impl Bank {
     #[cfg(test)]
     fn restore_old_behavior_for_fragile_tests(&self) {
         self.lazy_rent_collection.store(true, Relaxed);
+    }
+
+    /// Process a Transaction. This is used for unit tests and simply calls the vector
+    /// Bank::process_transactions method.
+    pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
+        self.try_process_transactions(std::iter::once(tx))?[0].clone()
     }
 
     /// Process multiple transaction in a single batch. This is used for benches and unit tests.
