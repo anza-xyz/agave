@@ -1,6 +1,7 @@
 use std::{
     ops::{Deref, DerefMut},
-    ptr, slice,
+    ptr::{self, NonNull},
+    slice,
 };
 
 pub enum LargeBuffer {
@@ -55,13 +56,12 @@ impl LargeBuffer {
 struct AllocError;
 
 pub struct PageAlignedMemory {
-    ptr: *mut u8,
+    ptr: NonNull<u8>,
     len: usize,
 }
 
 impl PageAlignedMemory {
     fn alloc_huge_table(memory_size: usize) -> Result<Self, AllocError> {
-        // Safety: just a libc wrapper
         let page_size = Self::page_size();
         debug_assert!(memory_size.is_power_of_two());
         debug_assert!(page_size.is_power_of_two());
@@ -85,25 +85,23 @@ impl PageAlignedMemory {
         }
 
         Ok(Self {
-            ptr: ptr as *mut u8,
+            ptr: NonNull::new(ptr as *mut u8).ok_or(AllocError)?,
             len: aligned_size,
         })
     }
 
     fn page_size() -> usize {
+        // Safety: just a libc wrapper
         unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
     }
 }
 
 impl Drop for PageAlignedMemory {
     fn drop(&mut self) {
-        if self.ptr.is_null() {
-            return;
-        }
         // Safety:
         // ptr is a valid pointer returned by mmap
         unsafe {
-            libc::munmap(self.ptr as *mut libc::c_void, self.len);
+            libc::munmap(self.ptr.as_ptr() as *mut libc::c_void, self.len);
         }
     }
 }
@@ -112,13 +110,13 @@ impl Deref for PageAlignedMemory {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.ptr, self.len) }
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
 impl DerefMut for PageAlignedMemory {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.len) }
+        unsafe { slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 }
 
