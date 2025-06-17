@@ -530,7 +530,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            shred::{ProcessShredsStats, Shred, ShredFlags, LEGACY_SHRED_DATA_CAPACITY},
+            shred::{ProcessShredsStats, Shred, ShredFlags},
             shredder::{ReedSolomonCache, Shredder},
         },
         assert_matches::assert_matches,
@@ -705,97 +705,6 @@ mod tests {
     fn test_sigverify_shreds_gpu() {
         let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
         run_test_sigverify_shreds_gpu(&thread_pool, 0xdead_c0de);
-    }
-
-    fn run_test_sigverify_shreds_sign_gpu(thread_pool: &ThreadPool, slot: Slot) {
-        solana_logger::setup();
-        let recycler_cache = RecyclerCache::default();
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-
-        let num_packets = 32;
-        let num_batches = 100;
-        let mut packet_batch = PinnedPacketBatch::with_capacity(num_packets);
-        packet_batch.resize(num_packets, Packet::default());
-
-        for (i, p) in packet_batch.iter_mut().enumerate() {
-            let shred = Shred::new_from_data(
-                slot,
-                0xc0de,
-                i as u16,
-                &[5; LEGACY_SHRED_DATA_CAPACITY],
-                ShredFlags::LAST_SHRED_IN_SLOT,
-                1,
-                2,
-                0xc0de,
-            );
-            shred.copy_to_packet(p);
-        }
-        let packet_batch = PacketBatch::from(packet_batch);
-        let mut batches = vec![packet_batch; num_batches];
-        let keypair = Keypair::new();
-        let pinned_keypair = sign_shreds_gpu_pinned_keypair(&keypair, &recycler_cache);
-        let pinned_keypair = Some(Arc::new(pinned_keypair));
-        let pubkeys = HashMap::from([(u64::MAX, Pubkey::default()), (slot, keypair.pubkey())]);
-        //unsigned
-        let rv = verify_shreds_gpu(thread_pool, &batches, &pubkeys, &recycler_cache, &cache);
-        assert_eq!(rv, vec![vec![0; num_packets]; num_batches]);
-        //signed
-        sign_shreds_gpu(
-            thread_pool,
-            &keypair,
-            &pinned_keypair,
-            &mut batches,
-            &recycler_cache,
-        );
-        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
-        assert_eq!(rv, vec![vec![1; num_packets]; num_batches]);
-
-        let rv = verify_shreds_gpu(thread_pool, &batches, &pubkeys, &recycler_cache, &cache);
-        assert_eq!(rv, vec![vec![1; num_packets]; num_batches]);
-    }
-
-    #[test]
-    fn test_sigverify_shreds_sign_gpu() {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-        run_test_sigverify_shreds_sign_gpu(&thread_pool, 0xdead_c0de);
-    }
-
-    fn run_test_sigverify_shreds_sign_cpu(thread_pool: &ThreadPool, slot: Slot) {
-        solana_logger::setup();
-
-        let mut batch = PinnedPacketBatch::default();
-        let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let keypair = Keypair::new();
-        let shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        batch.resize(1, Packet::default());
-        batch[0].buffer_mut()[..shred.payload().len()].copy_from_slice(shred.payload());
-        batch[0].meta_mut().size = shred.payload().len();
-        let batch = PacketBatch::from(batch);
-        let mut batches = [batch];
-
-        let pubkeys = HashMap::from([(slot, keypair.pubkey()), (u64::MAX, Pubkey::default())]);
-        //unsigned
-        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
-        assert_eq!(rv, vec![vec![0]]);
-        //signed
-        sign_shreds_cpu(thread_pool, &keypair, &mut batches);
-        let rv = verify_shreds_cpu(thread_pool, &batches, &pubkeys, &cache);
-        assert_eq!(rv, vec![vec![1]]);
-    }
-
-    #[test]
-    fn test_sigverify_shreds_sign_cpu() {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(3).build().unwrap();
-        run_test_sigverify_shreds_sign_cpu(&thread_pool, 0xdead_c0de);
     }
 
     fn make_transaction<R: Rng>(rng: &mut R) -> Transaction {
