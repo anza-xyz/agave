@@ -892,7 +892,7 @@ impl AppendVec {
                         data,
                         account_meta.owner,
                         account_meta.executable,
-                        account_meta.rent_epoch,
+                        account_meta.rent_epoch_obsolete,
                     )
                 })
             }
@@ -1313,7 +1313,7 @@ impl AppendVec {
                 let account_meta = AccountMeta {
                     lamports: account.lamports(),
                     owner: *account.owner(),
-                    rent_epoch: account.rent_epoch(),
+                    rent_epoch_obsolete: u64::MAX,
                     executable: account.executable(),
                 };
 
@@ -1386,9 +1386,8 @@ pub mod tests {
     use {
         super::{test_utils::*, *},
         assert_matches::assert_matches,
-        memoffset::offset_of,
         rand::{thread_rng, Rng},
-        solana_account::{Account, AccountSharedData},
+        solana_account::AccountSharedData,
         solana_clock::Slot,
         std::{mem::ManuallyDrop, time::Instant},
         test_case::test_case,
@@ -1415,43 +1414,6 @@ pub mod tests {
 
     // Offset of the first account's `data_len` field.
     const ACCOUNT_0_DATA_LEN_OFFSET: u64 = core::mem::offset_of!(StoredMeta, data_len) as u64;
-
-    #[test]
-    fn test_account_meta_default() {
-        let def1 = AccountMeta::default();
-        let def2 = AccountMeta::from(&Account::default());
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(&AccountSharedData::default());
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(Some(&AccountSharedData::default()));
-        assert_eq!(&def1, &def2);
-        let none: Option<&AccountSharedData> = None;
-        let def2 = AccountMeta::from(none);
-        assert_eq!(&def1, &def2);
-    }
-
-    #[test]
-    fn test_account_meta_non_default() {
-        let def1 = AccountMeta {
-            lamports: 1,
-            owner: Pubkey::new_unique(),
-            executable: true,
-            rent_epoch: 3,
-        };
-        let def2_account = Account {
-            lamports: def1.lamports,
-            owner: def1.owner,
-            executable: def1.executable,
-            rent_epoch: def1.rent_epoch,
-            data: Vec::new(),
-        };
-        let def2 = AccountMeta::from(&def2_account);
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(&AccountSharedData::from(def2_account.clone()));
-        assert_eq!(&def1, &def2);
-        let def2 = AccountMeta::from(Some(&AccountSharedData::from(def2_account)));
-        assert_eq!(&def1, &def2);
-    }
 
     #[test]
     #[should_panic(expected = "AppendVecError(FileSizeTooSmall(0))")]
@@ -2036,20 +1998,6 @@ pub mod tests {
         assert_matches!(result, Err(ref message) if message.to_string().contains("incorrect layout/length/data"));
     }
 
-    #[test]
-    fn test_type_layout() {
-        assert_eq!(offset_of!(StoredMeta, write_version_obsolete), 0x00);
-        assert_eq!(offset_of!(StoredMeta, data_len), 0x08);
-        assert_eq!(offset_of!(StoredMeta, pubkey), 0x10);
-        assert_eq!(mem::size_of::<StoredMeta>(), 0x30);
-
-        assert_eq!(offset_of!(AccountMeta, lamports), 0x00);
-        assert_eq!(offset_of!(AccountMeta, rent_epoch), 0x08);
-        assert_eq!(offset_of!(AccountMeta, owner), 0x10);
-        assert_eq!(offset_of!(AccountMeta, executable), 0x30);
-        assert_eq!(mem::size_of::<AccountMeta>(), 0x38);
-    }
-
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_get_account_shared_data_from_truncated_file(storage_access: StorageAccess) {
@@ -2234,7 +2182,7 @@ pub mod tests {
             };
             let fake_account_meta = AccountMeta {
                 lamports: 100,
-                rent_epoch: 10,
+                rent_epoch_obsolete: 10,
                 owner: solana_pubkey::new_rand(),
                 executable: false,
             };
@@ -2333,7 +2281,7 @@ pub mod tests {
             };
             let fake_account_meta = AccountMeta {
                 lamports: 100,
-                rent_epoch: 10,
+                rent_epoch_obsolete: 10,
                 owner: solana_pubkey::new_rand(),
                 executable: false,
             };

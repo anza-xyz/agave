@@ -2019,7 +2019,7 @@ fn test_stored_readable_account() {
         lamports,
         owner,
         executable,
-        rent_epoch,
+        rent_epoch_obsolete: rent_epoch,
     };
     let data = Vec::new();
     let account = Account {
@@ -2061,7 +2061,7 @@ fn test_hash_stored_account() {
     };
     let account_meta = AccountMeta {
         lamports: 0x39_3a_3b_3c_3d_3e_3f_40,
-        rent_epoch: 0x41_42_43_44_45_46_47_48,
+        rent_epoch_obsolete: 0x41_42_43_44_45_46_47_48,
         owner: Pubkey::from([
             0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56,
             0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f, 0x60, 0x61, 0x62, 0x63, 0x64,

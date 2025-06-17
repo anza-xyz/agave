@@ -30,7 +30,9 @@ pub struct AccountMeta {
     /// lamports in the account
     pub lamports: u64,
     /// the epoch at which this account will next owe rent
-    pub rent_epoch: Epoch,
+    /// Note: rent epoch is obsolete as of SIMD-215. All accounts must be rent exempt, *and*
+    /// the rent epoch field is no longer used. It will always be written as u64::MAX.
+    pub rent_epoch_obsolete: u64,
     /// the program that owns this account. If executable, the program that loads this account.
     pub owner: Pubkey,
     /// this account's data contains a loaded program (and is now read-only)
@@ -43,7 +45,7 @@ impl<'a, T: ReadableAccount> From<&'a T> for AccountMeta {
             lamports: account.lamports(),
             owner: *account.owner(),
             executable: account.executable(),
-            rent_epoch: account.rent_epoch(),
+            rent_epoch_obsolete: account.rent_epoch(),
         }
     }
 }
@@ -120,7 +122,7 @@ impl<'append_vec> ReadableAccount for StoredAccountMeta<'append_vec> {
         self.account_meta.executable
     }
     fn rent_epoch(&self) -> Epoch {
-        self.account_meta.rent_epoch
+        self.account_meta.rent_epoch_obsolete
     }
 }
 
@@ -174,7 +176,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
 
     #[inline(always)]
     pub fn rent_epoch(&self) -> Epoch {
-        self.account_meta.rent_epoch
+        self.account_meta.rent_epoch_obsolete
     }
 
     pub fn sanitize_executable(&self) -> bool {
@@ -190,7 +192,7 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
         self.account_meta.lamports == 0
             && self.meta.data_len == 0
             && !self.account_meta.executable
-            && self.account_meta.rent_epoch == Epoch::default()
+            && self.account_meta.rent_epoch_obsolete == Epoch::default()
             && self.account_meta.owner == Pubkey::default()
     }
 
@@ -213,5 +215,68 @@ impl<'append_vec> StoredAccountNoData<'append_vec> {
 impl IsZeroLamport for StoredAccountNoData<'_> {
     fn is_zero_lamport(&self) -> bool {
         self.lamports() == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        core::mem::offset_of,
+        solana_account::{Account, AccountSharedData},
+    };
+
+    #[test]
+    fn test_stored_meta_layout() {
+        assert_eq!(offset_of!(StoredMeta, write_version_obsolete), 0x00);
+        assert_eq!(offset_of!(StoredMeta, data_len), 0x08);
+        assert_eq!(offset_of!(StoredMeta, pubkey), 0x10);
+        assert_eq!(size_of::<StoredMeta>(), 0x30);
+    }
+
+    #[test]
+    fn test_account_meta_layout() {
+        assert_eq!(offset_of!(AccountMeta, lamports), 0x00);
+        assert_eq!(offset_of!(AccountMeta, rent_epoch_obsolete), 0x08);
+        assert_eq!(offset_of!(AccountMeta, owner), 0x10);
+        assert_eq!(offset_of!(AccountMeta, executable), 0x30);
+        assert_eq!(size_of::<AccountMeta>(), 0x38);
+    }
+
+    #[test]
+    fn test_account_meta_default() {
+        let def1 = AccountMeta::default();
+        let def2 = AccountMeta::from(&Account::default());
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(&AccountSharedData::default());
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(Some(&AccountSharedData::default()));
+        assert_eq!(&def1, &def2);
+        let none: Option<&AccountSharedData> = None;
+        let def2 = AccountMeta::from(none);
+        assert_eq!(&def1, &def2);
+    }
+
+    #[test]
+    fn test_account_meta_non_default() {
+        let def1 = AccountMeta {
+            lamports: 1,
+            owner: Pubkey::new_unique(),
+            executable: true,
+            rent_epoch_obsolete: 3,
+        };
+        let def2_account = Account {
+            lamports: def1.lamports,
+            owner: def1.owner,
+            executable: def1.executable,
+            rent_epoch: def1.rent_epoch_obsolete,
+            data: Vec::new(),
+        };
+        let def2 = AccountMeta::from(&def2_account);
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(&AccountSharedData::from(def2_account.clone()));
+        assert_eq!(&def1, &def2);
+        let def2 = AccountMeta::from(Some(&AccountSharedData::from(def2_account)));
+        assert_eq!(&def1, &def2);
     }
 }

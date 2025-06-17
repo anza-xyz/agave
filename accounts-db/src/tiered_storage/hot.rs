@@ -748,8 +748,10 @@ impl HotStorageWriter {
         owner_offset: OwnerOffset,
         account_data: &[u8],
         executable: bool,
-        rent_epoch: Option<Epoch>,
     ) -> TieredStorageResult<usize> {
+        // Note: rent epoch is obsolete as of SIMD-215. All accounts must be rent exempt, *and*
+        // the rent epoch field is no longer used. It will not be written.
+        let rent_epoch = None;
         let optional_fields = AccountMetaOptionalFields { rent_epoch };
 
         let mut flags = AccountMetaFlags::new_from(&optional_fields);
@@ -804,20 +806,16 @@ impl HotStorageWriter {
 
                 // Obtain necessary fields from the account, or default fields
                 // for a zero-lamport account in the None case.
-                let (lamports, owner, data, executable, rent_epoch) = {
+                let (lamports, owner, data, executable) = {
                     (
                         account.lamports(),
                         account.owner(),
                         account.data(),
                         account.executable(),
-                        // only persist rent_epoch for those rent-paying accounts
-                        (account.rent_epoch() != RENT_EXEMPT_RENT_EPOCH)
-                            .then_some(account.rent_epoch()),
                     )
                 };
                 let owner_offset = owners_table.insert(owner);
-                cursor +=
-                    self.write_account(lamports, owner_offset, data, executable, rent_epoch)?;
+                cursor += self.write_account(lamports, owner_offset, data, executable)?;
 
                 // Here we pass the IndexOffset as the get_account() API
                 // takes IndexOffset.  Given the account address is also
