@@ -216,7 +216,7 @@ Or to see in finer detail:
 solana balance --lamports
 ```
 
-Read more about the [difference between SOL and lamports here](https://docs.solana.com/developing/programming-model/accounts#lamports).
+Read more about the difference between SOL and lamports here: [What is SOL?](https://solana.com/docs/references/terminology#sol), [What is a lamport?](https://solana.com/docs/references/terminology#lamport).
 
 ## Create Authorized Withdrawer Account
 
