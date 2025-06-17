@@ -89,6 +89,8 @@ pub struct ExecutionRecordingConfig {
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
     pub enable_transaction_balance_recording: bool,
+    pub enable_geyser_pre_accounts_states: bool,
+    pub enable_geyser_post_accounts_states: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -98,6 +100,8 @@ impl ExecutionRecordingConfig {
             enable_log_recording: option,
             enable_cpi_recording: option,
             enable_transaction_balance_recording: option,
+            enable_geyser_pre_accounts_states: option,
+            enable_geyser_post_accounts_states: option,
         }
     }
 }

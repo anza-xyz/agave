@@ -3318,6 +3318,8 @@ impl Bank {
                     enable_log_recording: true,
                     enable_return_data_recording: true,
                     enable_transaction_balance_recording: false,
+                    enable_geyser_pre_accounts_states: false,
+                    enable_geyser_post_accounts_states: false,
                 },
             },
         );
@@ -3731,7 +3733,8 @@ impl Bank {
         processing_results: Vec<TransactionProcessingResult>,
         processed_counts: &ProcessedTransactionCounts,
         timings: &mut ExecuteTimings,
-        is_geyser_present: bool,
+        fetch_pre_accounts_states: bool,
+        fetch_post_accounts_states: bool,
     ) -> Vec<TransactionCommitResult> {
         assert!(
             !self.freeze_started(),
@@ -3845,12 +3848,17 @@ impl Bank {
             update_transaction_statuses_us,
         );
 
-        Self::create_commit_results(processing_results, is_geyser_present)
+        Self::create_commit_results(
+            processing_results,
+            fetch_pre_accounts_states,
+            fetch_post_accounts_states,
+        )
     }
 
     fn create_commit_results(
         processing_results: Vec<TransactionProcessingResult>,
-        is_geyser_present: bool,
+        fetch_pre_accounts_states: bool,
+        fetch_post_accounts_states: bool,
     ) -> Vec<TransactionCommitResult> {
         processing_results
             .into_iter()
@@ -3864,6 +3872,7 @@ impl Bank {
                         let LoadedTransaction {
                             rent_debits,
                             accounts: mut loaded_accounts,
+                            //TODO! Add fees back
                             pre_accounts_states,
                             fee_details,
                             ..
@@ -3889,11 +3898,14 @@ impl Bank {
                                 loaded_accounts_data_size,
                             },
                             pre_accounts_states,
-                            post_accounts_states: if is_geyser_present {
+                            post_accounts_states: if fetch_post_accounts_states {
                                 //Mutate zero lamports accounts to default state to be in line with current Geyser Account Notification implementation
+                                //TODO! We should not touch read-only accounts here
                                 loaded_accounts.iter_mut().for_each(|(_, acc)| {
                                     if acc.lamports() == 0 {
-                                        *acc = AccountSharedData::default()
+                                        let epoch = acc.rent_epoch();
+                                        *acc = AccountSharedData::default();
+                                        acc.set_rent_epoch(epoch);
                                     }
                                 });
                                 Some(loaded_accounts)
@@ -3904,7 +3916,30 @@ impl Bank {
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => {
                         let loaded_accounts_count = fees_only_tx.rollback_accounts.count();
-                        let post_accounts_states = if is_geyser_present {
+
+                        let post_accounts_states = if fetch_post_accounts_states {
+                            match fees_only_tx.rollback_accounts.clone() {
+                                RollbackAccounts::FeePayerOnly {
+                                    fee_payer_account,
+                                    fee_payer_address,
+                                } => Some(vec![(fee_payer_address, fee_payer_account)]),
+                                RollbackAccounts::SameNonceAndFeePayer { nonce } => {
+                                    Some(vec![(nonce.address, nonce.account)])
+                                }
+                                RollbackAccounts::SeparateNonceAndFeePayer {
+                                    nonce,
+                                    fee_payer_account,
+                                    fee_payer_address,
+                                } => Some(vec![
+                                    (fee_payer_address, fee_payer_account),
+                                    (nonce.address, nonce.account),
+                                ]),
+                            }
+                        } else {
+                            None
+                        };
+                        //TODO! Add fees back
+                        let pre_accounts_states = if fetch_pre_accounts_states {
                             match fees_only_tx.rollback_accounts {
                                 RollbackAccounts::FeePayerOnly {
                                     fee_payer_account,
@@ -3938,11 +3973,7 @@ impl Bank {
                                 loaded_accounts_data_size,
                             },
                             post_accounts_states,
-                            pre_accounts_states: if is_geyser_present {
-                                Some(vec![])
-                            } else {
-                                None
-                            },
+                            pre_accounts_states,
                         })
                     }
                 }
@@ -4713,7 +4744,8 @@ impl Bank {
             processing_results,
             &processed_counts,
             timings,
-            recording_config.enable_transaction_balance_recording,
+            recording_config.enable_geyser_pre_accounts_states,
+            recording_config.enable_geyser_post_accounts_states,
         );
         drop(freeze_lock);
         Ok((commit_results, balance_collector))
@@ -4745,6 +4777,8 @@ impl Bank {
                 enable_log_recording: true,
                 enable_return_data_recording: true,
                 enable_transaction_balance_recording: false,
+                enable_geyser_pre_accounts_states: false,
+                enable_geyser_post_accounts_states: false,
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),
