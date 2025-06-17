@@ -389,14 +389,13 @@ async fn shreds(
         };
 
         let shredder = Shredder::new(*slot, block.parent_slot, 0, shred_config.shred_version)?;
-        let (data_shreds, _coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, _coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
-            true,  // last_in_slot
-            None,  // chained_merkle_root
-            0,     // next_shred_index
-            0,     // next_code_index
-            false, // merkle_variant
+            true, // last_in_slot
+            None, // chained_merkle_root
+            0,    // next_shred_index
+            0,    // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
