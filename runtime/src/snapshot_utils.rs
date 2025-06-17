@@ -3,7 +3,8 @@ use {
         bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
             self, AccountsDbFields, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
-            SerializableAccountStorageEntry, SnapshotStreams,
+            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
+            SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -287,6 +288,28 @@ pub struct UnarchivedSnapshot {
     pub measure_untar: Measure,
 }
 
+/// Helper type to bundle up the results from `verify_and_unarchive_snapshots()`.
+#[derive(Debug)]
+pub struct UnarchivedSnapshots {
+    pub full_storage: AccountStorageMap,
+    pub incremental_storage: Option<AccountStorageMap>,
+    pub bank_fields: SnapshotBankFields,
+    pub accounts_db_fields: SnapshotAccountsDbFields<SerializableAccountStorageEntry>,
+    pub full_unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion,
+    pub incremental_unpacked_snapshots_dir_and_version: Option<UnpackedSnapshotsDirAndVersion>,
+    pub full_measure_untar: Measure,
+    pub incremental_measure_untar: Option<Measure>,
+    pub next_append_vec_id: AtomicAccountsFileId,
+}
+
+/// Guard type whick keeps the unpack directories of snapshots alive.
+/// Once dropped, the unpack directories are removed.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct UnarchivedSnapshotGuard {
+    full_unpack_dir: TempDir,
+    incremental_unpack_dir: Option<TempDir>,
+}
 /// Helper type for passing around the unpacked snapshots dir and the snapshot version together
 #[derive(Debug)]
 pub struct UnpackedSnapshotsDirAndVersion {
@@ -1568,11 +1591,7 @@ pub fn verify_and_unarchive_snapshots(
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
     storage_access: StorageAccess,
-) -> Result<(
-    UnarchivedSnapshot,
-    Option<UnarchivedSnapshot>,
-    AtomicAccountsFileId,
-)> {
+) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
@@ -1581,7 +1600,14 @@ pub fn verify_and_unarchive_snapshots(
     let parallel_divisions = (num_cpus::get() / 4).clamp(1, PARALLEL_UNTAR_READERS_DEFAULT);
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
-    let unarchived_full_snapshot = unarchive_snapshot(
+    let UnarchivedSnapshot {
+        unpack_dir: full_unpack_dir,
+        storage: full_storage,
+        bank_fields: full_bank_fields,
+        accounts_db_fields: full_accounts_db_fields,
+        unpacked_snapshots_dir_and_version: full_unpacked_snapshots_dir_and_version,
+        measure_untar: full_measure_untar,
+    } = unarchive_snapshot(
         &bank_snapshots_dir,
         TMP_SNAPSHOT_ARCHIVE_PREFIX,
         full_snapshot_archive_info.path(),
@@ -1593,28 +1619,65 @@ pub fn verify_and_unarchive_snapshots(
         storage_access,
     )?;
 
-    let unarchived_incremental_snapshot =
-        if let Some(incremental_snapshot_archive_info) = incremental_snapshot_archive_info {
-            let unarchived_incremental_snapshot = unarchive_snapshot(
-                &bank_snapshots_dir,
-                TMP_SNAPSHOT_ARCHIVE_PREFIX,
-                incremental_snapshot_archive_info.path(),
-                "incremental snapshot untar",
-                account_paths,
-                incremental_snapshot_archive_info.archive_format(),
-                parallel_divisions,
-                next_append_vec_id.clone(),
-                storage_access,
-            )?;
-            Some(unarchived_incremental_snapshot)
-        } else {
-            None
-        };
+    let (
+        incremental_unpack_dir,
+        incremental_storage,
+        incremental_bank_fields,
+        incremental_accounts_db_fields,
+        incremental_unpacked_snapshots_dir_and_version,
+        incremental_measure_untar,
+    ) = if let Some(incremental_snapshot_archive_info) = incremental_snapshot_archive_info {
+        let UnarchivedSnapshot {
+            unpack_dir,
+            storage,
+            bank_fields,
+            accounts_db_fields,
+            unpacked_snapshots_dir_and_version,
+            measure_untar,
+        } = unarchive_snapshot(
+            &bank_snapshots_dir,
+            TMP_SNAPSHOT_ARCHIVE_PREFIX,
+            incremental_snapshot_archive_info.path(),
+            "incremental snapshot untar",
+            account_paths,
+            incremental_snapshot_archive_info.archive_format(),
+            parallel_divisions,
+            next_append_vec_id.clone(),
+            storage_access,
+        )?;
+        (
+            Some(unpack_dir),
+            Some(storage),
+            Some(bank_fields),
+            Some(accounts_db_fields),
+            Some(unpacked_snapshots_dir_and_version),
+            Some(measure_untar),
+        )
+    } else {
+        (None, None, None, None, None, None)
+    };
+
+    let bank_fields = SnapshotBankFields::new(full_bank_fields, incremental_bank_fields);
+    let accounts_db_fields =
+        SnapshotAccountsDbFields::new(full_accounts_db_fields, incremental_accounts_db_fields);
+    let next_append_vec_id = Arc::try_unwrap(next_append_vec_id).unwrap();
 
     Ok((
-        unarchived_full_snapshot,
-        unarchived_incremental_snapshot,
-        Arc::try_unwrap(next_append_vec_id).unwrap(),
+        UnarchivedSnapshots {
+            full_storage,
+            incremental_storage,
+            bank_fields,
+            accounts_db_fields,
+            full_unpacked_snapshots_dir_and_version,
+            incremental_unpacked_snapshots_dir_and_version,
+            full_measure_untar,
+            incremental_measure_untar,
+            next_append_vec_id,
+        },
+        UnarchivedSnapshotGuard {
+            full_unpack_dir,
+            incremental_unpack_dir,
+        },
     ))
 }
 

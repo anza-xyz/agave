@@ -31,7 +31,7 @@ use {
             get_highest_full_snapshot_archive_info, get_highest_incremental_snapshot_archive_info,
             rebuild_storages_from_snapshot_dir, serialize_snapshot_data_file,
             verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
-            SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshot,
+            SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshots,
             VerifyEpochStakesError, VerifySlotDeltasError,
         },
         status_cache,
@@ -112,22 +112,24 @@ pub fn bank_fields_from_snapshot_archives(
 
     let account_paths = vec![temp_accounts_dir.path().to_path_buf()];
 
-    let (unarchived_full_snapshot, unarchived_incremental_snapshot, _next_append_vec_id) =
-        verify_and_unarchive_snapshots(
-            &temp_unpack_dir,
-            &full_snapshot_archive_info,
-            incremental_snapshot_archive_info.as_ref(),
-            &account_paths,
-            storage_access,
-        )?;
+    let (
+        UnarchivedSnapshots {
+            full_unpacked_snapshots_dir_and_version,
+            incremental_unpacked_snapshots_dir_and_version,
+            ..
+        },
+        _guard,
+    ) = verify_and_unarchive_snapshots(
+        &temp_unpack_dir,
+        &full_snapshot_archive_info,
+        incremental_snapshot_archive_info.as_ref(),
+        &account_paths,
+        storage_access,
+    )?;
 
     bank_fields_from_snapshots(
-        &unarchived_full_snapshot.unpacked_snapshots_dir_and_version,
-        unarchived_incremental_snapshot
-            .as_ref()
-            .map(|unarchive_preparation_result| {
-                &unarchive_preparation_result.unpacked_snapshots_dir_and_version
-            }),
+        &full_unpacked_snapshots_dir_and_version,
+        incremental_unpacked_snapshots_dir_and_version.as_ref(),
     )
 }
 
@@ -190,51 +192,30 @@ pub fn bank_from_snapshot_archives(
             )
     );
 
-    let (unarchived_full_snapshot, unarchived_incremental_snapshot, next_append_vec_id) =
-        verify_and_unarchive_snapshots(
-            bank_snapshots_dir,
-            full_snapshot_archive_info,
-            incremental_snapshot_archive_info,
-            account_paths,
-            accounts_db_config
-                .as_ref()
-                .map(|config| config.storage_access)
-                .unwrap_or_default(),
-        )?;
-
-    let UnarchivedSnapshot {
-        mut storage,
-        bank_fields,
-        accounts_db_fields,
-        unpacked_snapshots_dir_and_version,
-        measure_untar,
-        ..
-    } = unarchived_full_snapshot;
     let (
-        incremental_storage,
-        incremental_bank_fields,
-        incremental_accounts_db_fields,
-        incremental_unpacked_snapshots_dir_and_version,
-        incremental_measure_untar,
-    ) = unarchived_incremental_snapshot
-        .map(|s| {
-            let UnarchivedSnapshot {
-                storage,
-                bank_fields,
-                accounts_db_fields,
-                unpacked_snapshots_dir_and_version,
-                measure_untar,
-                ..
-            } = s;
-            (
-                Some(storage),
-                Some(bank_fields),
-                Some(accounts_db_fields),
-                Some(unpacked_snapshots_dir_and_version),
-                Some(measure_untar),
-            )
-        })
-        .unwrap_or((None, None, None, None, None));
+        UnarchivedSnapshots {
+            full_storage: mut storage,
+            incremental_storage,
+            bank_fields,
+            accounts_db_fields,
+            full_unpacked_snapshots_dir_and_version,
+            incremental_unpacked_snapshots_dir_and_version,
+            full_measure_untar,
+            incremental_measure_untar,
+            next_append_vec_id,
+            ..
+        },
+        _guard,
+    ) = verify_and_unarchive_snapshots(
+        bank_snapshots_dir,
+        full_snapshot_archive_info,
+        incremental_snapshot_archive_info,
+        account_paths,
+        accounts_db_config
+            .as_ref()
+            .map(|config| config.storage_access)
+            .unwrap_or_default(),
+    )?;
 
     if let Some(incremental_storage) = incremental_storage {
         storage.extend(incremental_storage);
@@ -245,14 +226,10 @@ pub fn bank_from_snapshot_archives(
         next_append_vec_id,
     };
 
-    let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, incremental_bank_fields);
-    let snapshot_accounts_db_fields =
-        SnapshotAccountsDbFields::new(accounts_db_fields, incremental_accounts_db_fields);
-
     let mut measure_rebuild = Measure::start("rebuild bank from snapshots");
     let (bank, info) = reconstruct_bank_from_fields(
-        snapshot_bank_fields,
-        snapshot_accounts_db_fields,
+        bank_fields,
+        accounts_db_fields,
         genesis_config,
         runtime_config,
         account_paths,
@@ -273,10 +250,17 @@ pub fn bank_from_snapshot_archives(
     // The status cache is rebuilt from the latest snapshot.  So, if there's an incremental
     // snapshot, use that.  Otherwise use the full snapshot.
     let status_cache_path = incremental_unpacked_snapshots_dir_and_version
+        .as_ref()
         .map_or_else(
-            || unpacked_snapshots_dir_and_version.unpacked_snapshots_dir,
-            |unpacked_snapshots_dir_and_version| {
-                unpacked_snapshots_dir_and_version.unpacked_snapshots_dir
+            || {
+                full_unpacked_snapshots_dir_and_version
+                    .unpacked_snapshots_dir
+                    .as_path()
+            },
+            |unarchived_incremental_snapshot| {
+                unarchived_incremental_snapshot
+                    .unpacked_snapshots_dir
+                    .as_path()
             },
         )
         .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
@@ -331,9 +315,11 @@ pub fn bank_from_snapshot_archives(
     measure_verify.stop();
 
     let timings = BankFromArchivesTimings {
-        untar_full_snapshot_archive_us: measure_untar.as_us(),
+        untar_full_snapshot_archive_us: full_measure_untar.as_us(),
         untar_incremental_snapshot_archive_us: incremental_measure_untar
-            .map_or(0, |measure_untar| measure_untar.as_us()),
+            .map_or(0, |incremental_measure_untar| {
+                incremental_measure_untar.as_us()
+            }),
         rebuild_bank_us: measure_rebuild.as_us(),
         verify_bank_us: measure_verify.as_us(),
     };
