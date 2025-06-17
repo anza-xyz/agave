@@ -118,6 +118,7 @@ mod tests {
         },
         rand::SeedableRng,
         rand_chacha::ChaChaRng,
+        //TODO(klykov): deduper is used for shreds as well, so use here PACKET_DATA_SIZE for now.
         solana_packet::{Meta, PACKET_DATA_SIZE},
         test_case::test_case,
     };

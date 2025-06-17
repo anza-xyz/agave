@@ -70,7 +70,7 @@ use {
     },
     solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
     solana_nonce::{self as nonce, state::DurableNonce},
-    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_poh_config::PohConfig,
     solana_program_runtime::{
         declare_process_instruction,
@@ -8836,18 +8836,19 @@ fn test_verify_transactions_packet_data_size() {
         let message = Message::new(&ixs[..], Some(&pubkey));
         Transaction::new(&[&keypair], message, recent_blockhash)
     };
+
     // Small transaction.
     {
-        let tx = make_transaction(5);
-        assert!(bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64);
+        let tx = make_transaction(80);
+        assert!(bincode::serialized_size(&tx).unwrap() <= QUIC_MAX_STREAM_SIZE as u64);
         assert!(bank
             .verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
             .is_ok(),);
     }
     // Big transaction.
     {
-        let tx = make_transaction(25);
-        assert!(bincode::serialized_size(&tx).unwrap() > PACKET_DATA_SIZE as u64);
+        let tx = make_transaction(81);
+        assert!(bincode::serialized_size(&tx).unwrap() > QUIC_MAX_STREAM_SIZE as u64);
         assert_matches!(
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification),
             Err(TransactionError::SanitizeFailure)
@@ -8855,10 +8856,10 @@ fn test_verify_transactions_packet_data_size() {
     }
     // Assert that verify fails as soon as serialized
     // size exceeds packet data size.
-    for size in 1..30 {
+    for size in (1..85).step_by(5) {
         let tx = make_transaction(size);
         assert_eq!(
-            bincode::serialized_size(&tx).unwrap() <= PACKET_DATA_SIZE as u64,
+            bincode::serialized_size(&tx).unwrap() <= QUIC_MAX_STREAM_SIZE as u64,
             bank.verify_transaction(tx.into(), TransactionVerificationMode::FullVerification)
                 .is_ok(),
         );

@@ -12,6 +12,7 @@ use {
     },
     solana_log_collector::{ic_logger_msg, LogCollector},
     solana_measure::measure::Measure,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_program_runtime::{
         invoke_context::InvokeContext,
         loaded_programs::{ProgramCacheEntry, ProgramCacheEntryOwner, ProgramCacheEntryType},
@@ -464,7 +465,7 @@ fn process_instruction_inner(
     let program_id = instruction_context.get_last_program_key(transaction_context)?;
     if loader_v4::check_id(program_id) {
         invoke_context.consume_checked(DEFAULT_COMPUTE_UNITS)?;
-        match limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)? {
+        match limited_deserialize(instruction_data, QUIC_MAX_STREAM_SIZE as u64)? {
             LoaderV4Instruction::Write { offset, bytes } => {
                 process_instruction_write(invoke_context, offset, bytes)
             }

@@ -1,5 +1,6 @@
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
+use solana_perf::packet::QUIC_MAX_STREAM_SIZE;
 use {
     super::{transaction_priority_id::TransactionPriorityId, transaction_state::TransactionState},
     crate::banking_stage::scheduler_messages::{MaxAge, TransactionId},
@@ -7,7 +8,6 @@ use {
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::{Slab, VacantEntry},
-    solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
@@ -273,7 +273,7 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     fn with_capacity(capacity: usize) -> Self {
         let inner = TransactionStateContainer::with_capacity(capacity);
         let bytes_buffer = (0..inner.id_to_transaction_state.capacity())
-            .map(|_| Arc::new(Vec::with_capacity(PACKET_DATA_SIZE)))
+            .map(|_| Arc::new(Vec::with_capacity(QUIC_MAX_STREAM_SIZE)))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
