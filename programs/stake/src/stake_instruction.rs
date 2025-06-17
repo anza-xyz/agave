@@ -7,6 +7,7 @@ use {
     log::*,
     solana_bincode::limited_deserialize,
     solana_instruction::error::InstructionError,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_program_runtime::{
         declare_process_instruction, sysvar_cache::get_sysvar_with_account_check,
     },
@@ -75,7 +76,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let signers = instruction_context.get_signers(transaction_context)?;
 
     let stake_instruction: StakeInstruction =
-        limited_deserialize(data, solana_packet::PACKET_DATA_SIZE as u64)?;
+        limited_deserialize(data, QUIC_MAX_STREAM_SIZE as u64)?;
     if epoch_rewards_active && !matches!(stake_instruction, StakeInstruction::GetMinimumDelegation)
     {
         return Err(StakeError::EpochRewardsActive.into());

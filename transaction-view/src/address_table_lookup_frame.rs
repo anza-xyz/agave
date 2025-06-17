@@ -8,7 +8,7 @@ use {
     },
     core::fmt::{Debug, Formatter},
     solana_hash::Hash,
-    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_svm_transaction::message_address_table_lookup::SVMMessageAddressTableLookup,
@@ -47,7 +47,7 @@ const MIN_SIZED_PACKET_WITH_ATLS: usize = {
 
 /// The maximum number of ATLS that can fit in a valid packet.
 const MAX_ATLS_PER_PACKET: u8 =
-    ((PACKET_DATA_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL) as u8;
+    ((QUIC_MAX_STREAM_SIZE - MIN_SIZED_PACKET_WITH_ATLS) / MIN_SIZED_ATL) as u8;
 
 /// Contains metadata about the address table lookups in a transaction packet.
 #[derive(Debug)]

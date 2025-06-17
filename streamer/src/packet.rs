@@ -17,6 +17,7 @@ use {
     },
 };
 pub use {
+    // TODO(klykov): this code is for UDP
     solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_perf::packet::{
         PacketBatch, PacketBatchRecycler, PacketRef, PacketRefMut, PinnedPacketBatch, NUM_PACKETS,

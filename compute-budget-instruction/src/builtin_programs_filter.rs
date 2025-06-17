@@ -2,12 +2,12 @@ use {
     solana_builtins_default_costs::{
         get_builtin_migration_feature_index, BuiltinMigrationFeatureIndex, MAYBE_BUILTIN_KEY,
     },
-    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_pubkey::Pubkey,
 };
 
 // The maximum number of pubkeys that a packet can contain.
-pub(crate) const FILTER_SIZE: u8 = (PACKET_DATA_SIZE / core::mem::size_of::<Pubkey>()) as u8;
+pub(crate) const FILTER_SIZE: u8 = (QUIC_MAX_STREAM_SIZE / core::mem::size_of::<Pubkey>()) as u8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ProgramKind {

@@ -491,8 +491,7 @@ macro_rules! impl_merkle_shred {
     };
 }
 
-use impl_merkle_shred;
-use solana_packet::PACKET_DATA_SIZE;
+use {impl_merkle_shred, solana_packet::PACKET_DATA_SIZE};
 
 impl<'a> ShredTrait<'a> for ShredData {
     type SignedData = Hash;
