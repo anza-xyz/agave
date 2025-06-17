@@ -780,11 +780,6 @@ pub fn execute(
         ..ValidatorConfig::default()
     };
 
-    let available = core_affinity::get_core_ids()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|core_id| core_id.id)
-        .collect::<HashSet<_>>();
     let reserved = validator_config
         .retransmit_xdp
         .as_ref()
@@ -793,8 +788,15 @@ pub fn execute(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let available = available.difference(&reserved);
-    set_cpu_affinity(available.into_iter().copied()).unwrap();
+    if !reserved.is_empty() {
+        let available = core_affinity::get_core_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|core_id| core_id.id)
+            .collect::<HashSet<_>>();
+        let available = available.difference(&reserved);
+        set_cpu_affinity(available.into_iter().copied()).unwrap();
+    }
 
     let vote_account = pubkey_of(matches, "vote_account").unwrap_or_else(|| {
         if !validator_config.voting_disabled {
