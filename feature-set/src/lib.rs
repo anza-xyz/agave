@@ -160,8 +160,7 @@ impl FeatureSet {
             provide_instruction_data_offset_in_vm_r2: self
                 .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
             vote_state_v4: self.is_active(&vote_state_v4::id()),
-            migrate_ptoken_to_spl_token_program: self
-                .is_active(&migrate_ptoken_to_spl_token_program::id()),
+            replace_spl_token_with_p_token: self.is_active(&replace_spl_token_with_p_token::id()),
         }
     }
 }
@@ -1156,12 +1155,12 @@ pub mod vote_state_v4 {
     }
 }
 
-pub mod migrate_ptoken_to_spl_token_program {
+pub mod replace_spl_token_with_p_token {
     use solana_pubkey::Pubkey;
 
     solana_pubkey::declare_id!("ptokSWRqZz5u2xdqMdstkMKpFurauUpVen7TZXgDpkQ");
 
-    pub const SPL_TOLKEN_PROGRAM_ID: Pubkey =
+    pub const SPL_TOKEN_PROGRAM_ID: Pubkey =
         Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
     pub const PTOKEN_PROGRAM_BUFFER: Pubkey =
