@@ -413,31 +413,26 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
-        match block_production_method {
-            BlockProductionMethod::CentralScheduler
-            | BlockProductionMethod::CentralSchedulerGreedy => {
-                let use_greedy_scheduler = matches!(
-                    block_production_method,
-                    BlockProductionMethod::CentralSchedulerGreedy
-                );
-                Self::new_central_scheduler(
-                    transaction_struct,
-                    use_greedy_scheduler,
-                    cluster_info,
-                    poh_recorder,
-                    transaction_recorder,
-                    non_vote_receiver,
-                    tpu_vote_receiver,
-                    gossip_vote_receiver,
-                    num_threads,
-                    transaction_status_sender,
-                    replay_vote_sender,
-                    log_messages_bytes_limit,
-                    bank_forks,
-                    prioritization_fee_cache,
-                )
-            }
-        }
+        let use_greedy_scheduler = matches!(
+            block_production_method,
+            BlockProductionMethod::CentralSchedulerGreedy
+        );
+        Self::new_central_scheduler(
+            transaction_struct,
+            use_greedy_scheduler,
+            cluster_info,
+            poh_recorder,
+            transaction_recorder,
+            non_vote_receiver,
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            num_threads,
+            transaction_status_sender,
+            replay_vote_sender,
+            log_messages_bytes_limit,
+            bank_forks,
+            prioritization_fee_cache,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
