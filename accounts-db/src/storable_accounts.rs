@@ -277,7 +277,7 @@ impl<'a> StorableAccountsBySlot<'a> {
                 ord => ord,
             });
         match upper_bound {
-            Ok(offset_index) => (offset_index, 0),
+            Ok(offset_index) => unreachable!("we shouldn't reach here: {}", offset_index),
             Err(offset_index) => {
                 let prior_offset = if offset_index > 0 {
                     self.starting_offsets_for_slots_accounts_slice[offset_index - 1]
@@ -376,7 +376,7 @@ pub mod tests {
         /// return (slots_and_accounts index, index within those accounts)
         /// This is the baseline unoptimized implementation. It is not used in the validator. It
         /// is used for testing an optimized version - `find_internal_index`, in the actual implementation.
-        pub fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
+        fn find_internal_index_loop(&self, index: usize) -> (usize, usize) {
             // search offsets for the accounts slice that contains 'index'.
             // This could be a binary search.
             for (offset_index, next_offset) in self
@@ -872,14 +872,17 @@ pub mod tests {
         let mut slot_accounts = Vec::new();
         let mut all_accounts = Vec::new();
         let mut total = 0;
-        for _slot in 0..10_u64 {
+        let num_slots = 10_u64;
+        // generate accounts for 10 slots
+        // each slot has a random number of accounts, between 1 and 10
+        for _slot in 0..num_slots {
             // generate random accounts per slot
             let n = rand::thread_rng().gen_range(1..10);
             total += n;
             let accounts = (0..n).map(|_| &account_from_storage).collect::<Vec<_>>();
             all_accounts.push(accounts);
         }
-        for slot in 0..10_u64 {
+        for slot in 0..num_slots {
             slot_accounts.push((slot, &all_accounts[slot as usize][..]));
         }
         let storable_accounts = StorableAccountsBySlot::new(0, &slot_accounts[..], &db);
