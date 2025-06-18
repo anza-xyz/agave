@@ -744,25 +744,24 @@ impl Validator {
                 .register_exit(Box::new(move || cancel_tpu_client_next.cancel()));
         }
 
-        let accounts_update_notifier = geyser_plugin_service
+        let (
+            accounts_update_notifier,
+            transaction_notifier,
+            entry_notifier,
+            block_metadata_notifier,
+            slot_status_notifier,
+        ) = geyser_plugin_service
             .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_accounts_update_notifier());
-
-        let transaction_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_transaction_notifier());
-
-        let entry_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_entry_notifier());
-
-        let block_metadata_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_block_metadata_notifier());
-
-        let slot_status_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_slot_status_notifier());
+            .and_then(|geyser_plugin_service| {
+                Some((
+                    geyser_plugin_service.get_accounts_update_notifier(),
+                    geyser_plugin_service.get_transaction_notifier(),
+                    geyser_plugin_service.get_entry_notifier(),
+                    geyser_plugin_service.get_block_metadata_notifier(),
+                    geyser_plugin_service.get_slot_status_notifier(),
+                ))
+            })
+            .or_else(|| Some((None, None, None, None, None))).unwrap();
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
