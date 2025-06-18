@@ -48,6 +48,9 @@ pub(crate) fn process_message(
         }
 
         let mut compute_units_consumed = 0;
+        if let Some(guest_transaction) = &mut invoke_context.abi_v2_guest_transaction {
+            guest_transaction.set_instruction_index(top_level_instruction_index);
+        }
         let (result, process_instruction_us) = measure_us!({
             if invoke_context.is_precompile(program_id) {
                 invoke_context.process_precompile(
@@ -119,6 +122,7 @@ mod tests {
         solana_program_runtime::{
             declare_process_instruction,
             execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+            guest_transaction::RuntimeGuestTransaction,
             invoke_context::EnvironmentConfig,
             loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
             sysvar_cache::SysvarCache,
@@ -252,6 +256,11 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -259,6 +268,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,
@@ -306,6 +316,11 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -313,6 +328,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,
@@ -350,6 +366,11 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -357,6 +378,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,
@@ -486,6 +508,12 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -493,6 +521,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,
@@ -525,6 +554,12 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -532,6 +567,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,
@@ -561,6 +597,11 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -568,6 +609,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,
@@ -709,6 +751,11 @@ mod tests {
             &feature_set,
             &sysvar_cache,
         );
+        let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            message.num_instructions(),
+            &feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             &mut program_cache_for_tx_batch,
@@ -716,6 +763,7 @@ mod tests {
             None,
             SVMTransactionExecutionBudget::default(),
             SVMTransactionExecutionCost::default(),
+            abi_v2_guest_transaction,
         );
         let result = process_message(
             &message,

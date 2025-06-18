@@ -28,12 +28,13 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_sbpf::{
+        aligned_memory::AlignedMemory,
         declare_builtin_function,
-        ebpf::{self, MM_HEAP_START},
+        ebpf::{self, MM_HEAP_START, MM_INPUT_START},
         elf::Executable,
         error::{EbpfError, ProgramResult},
         memory_region::{AccessType, MemoryMapping, MemoryRegion},
-        program::BuiltinProgram,
+        program::{BuiltinProgram, SBPFVersion},
         verifier::RequisiteVerifier,
         vm::{ContextObject, EbpfVm},
     },
@@ -1607,12 +1608,30 @@ fn execute<'a, 'b: 'a>(
         .mask_out_rent_epoch_in_vm_serialization;
 
     let mut serialize_time = Measure::start("serialize");
-    let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
-        invoke_context.transaction_context,
-        instruction_context,
-        !direct_mapping,
-        mask_out_rent_epoch_in_vm_serialization,
-    )?;
+    let (parameter_bytes, regions, accounts_metadata) = if executable.get_sbpf_version()
+        >= SBPFVersion::V4
+        && invoke_context.abi_v2_guest_transaction.is_some()
+    {
+        let regions = vec![MemoryRegion::new_readonly(
+            invoke_context
+                .abi_v2_guest_transaction
+                .as_ref()
+                .unwrap()
+                .as_slice(),
+            MM_INPUT_START,
+        )];
+        // The deserialization parameters will be included in a future PR, when we deal with
+        // instruction serialization.
+        (AlignedMemory::with_capacity_zeroed(0), regions, Vec::new())
+    } else {
+        debug_assert!(executable.get_sbpf_version() <= SBPFVersion::V3);
+        serialization::serialize_parameters(
+            invoke_context.transaction_context,
+            instruction_context,
+            !direct_mapping,
+            mask_out_rent_epoch_in_vm_serialization,
+        )?
+    };
     serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -1760,10 +1779,18 @@ fn execute<'a, 'b: 'a>(
     }
 
     let mut deserialize_time = Measure::start("deserialize");
-    let execute_or_deserialize_result = execution_result.and_then(|_| {
-        deserialize_parameters(invoke_context, parameter_bytes.as_slice(), !direct_mapping)
-            .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
-    });
+    let execute_or_deserialize_result = if executable.get_sbpf_version() >= SBPFVersion::V4
+        && invoke_context.abi_v2_guest_transaction.is_some()
+    {
+        // The deserialization part is not yet implemented for ABIv2
+        execution_result.map(|_| ())
+    } else {
+        debug_assert!(executable.get_sbpf_version() <= SBPFVersion::V3);
+        execution_result.and_then(|_| {
+            deserialize_parameters(invoke_context, parameter_bytes.as_slice(), !direct_mapping)
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
+        })
+    };
     deserialize_time.stop();
 
     // Update the timings

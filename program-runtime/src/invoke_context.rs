@@ -1,6 +1,7 @@
 use {
     crate::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+        guest_transaction::RuntimeGuestTransaction,
         loaded_programs::{
             ProgramCacheEntry, ProgramCacheEntryType, ProgramCacheForTxBatch,
             ProgramRuntimeEnvironments,
@@ -202,6 +203,7 @@ pub struct InvokeContext<'a> {
     pub timings: ExecuteDetailsTimings,
     pub syscall_context: Vec<Option<SyscallContext>>,
     traces: Vec<Vec<[u64; 12]>>,
+    pub abi_v2_guest_transaction: Option<RuntimeGuestTransaction>,
 }
 
 impl<'a> InvokeContext<'a> {
@@ -213,6 +215,7 @@ impl<'a> InvokeContext<'a> {
         log_collector: Option<Rc<RefCell<LogCollector>>>,
         compute_budget: SVMTransactionExecutionBudget,
         execution_cost: SVMTransactionExecutionCost,
+        guest_transaction: Option<RuntimeGuestTransaction>,
     ) -> Self {
         Self {
             transaction_context,
@@ -226,6 +229,7 @@ impl<'a> InvokeContext<'a> {
             timings: ExecuteDetailsTimings::default(),
             syscall_context: Vec::new(),
             traces: Vec::new(),
+            abi_v2_guest_transaction: guest_transaction,
         }
     }
 
@@ -744,6 +748,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             $crate::{
                 __private::{Hash, ReadableAccount, Rent, TransactionContext},
                 execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+                guest_transaction::RuntimeGuestTransaction,
                 invoke_context::{EnvironmentConfig, InvokeContext},
                 loaded_programs::ProgramCacheForTxBatch,
                 sysvar_cache::SysvarCache,
@@ -786,6 +791,9 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             &sysvar_cache,
         );
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
+        // This macro is only used in tests that assume a single instruction
+        let guest_transaction_abi_v2 =
+            RuntimeGuestTransaction::new_with_feature_set(&$transaction_context, 1, $feature_set);
         let mut $invoke_context = InvokeContext::new(
             &mut $transaction_context,
             &mut program_cache_for_tx_batch,
@@ -793,6 +801,7 @@ macro_rules! with_mock_invoke_context_with_feature_set {
             Some(LogCollector::new_ref()),
             compute_budget,
             SVMTransactionExecutionCost::default(),
+            guest_transaction_abi_v2,
         );
     };
 }

@@ -16,6 +16,7 @@ edition = { workspace = true }
 members = [
     "rust/128bit",
     "rust/128bit_dep",
+    "rust/abiv2",
     "rust/account_mem",
     "rust/account_mem_deprecated",
     "rust/alloc",
@@ -151,7 +152,7 @@ solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=3.0.0" }
 solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=3.0.0" }
 solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=3.0.0" }
 solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=3.0.0" }
-solana-sbpf = "=0.11.1"
+solana-sbpf = { git = "https://github.com/anza-xyz/sbpf.git", rev = "967c2a2eba03816ee14f4c6338476690d374f511" }
 solana-sdk-ids = "=2.2.1"
 solana-secp256k1-recover = "=2.2.1"
 solana-sha256-hasher = { version = "=2.2.1", features = ["sha2"] }
@@ -172,10 +173,11 @@ solana-zk-sdk = "=2.2.1"
 thiserror = "1.0"
 
 [features]
+abi_v2 = []
 sbf_c = []
 sbf_rust = []
 sbf_sanity_list = []
-dummy-for-ci-check = ["sbf_c", "sbf_rust", "sbf_sanity_list"]
+dummy-for-ci-check = ["abi_v2", "sbf_c", "sbf_rust", "sbf_sanity_list"]
 # This was needed for ci
 frozen-abi = []
 

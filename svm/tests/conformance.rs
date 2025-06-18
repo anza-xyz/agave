@@ -15,6 +15,7 @@ use {
     solana_message::SanitizedMessage,
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
+        guest_transaction::RuntimeGuestTransaction,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
@@ -358,6 +359,11 @@ fn execute_fixture_as_instr(
         sysvar_cache,
     );
 
+    let abi_v2_guest_transaction = RuntimeGuestTransaction::new_with_feature_set(
+        &transaction_context,
+        sanitized_message.instructions().len(),
+        &mock_bank.feature_set,
+    );
     let mut invoke_context = InvokeContext::new(
         &mut transaction_context,
         &mut loaded_programs,
@@ -365,6 +371,7 @@ fn execute_fixture_as_instr(
         Some(log_collector.clone()),
         compute_budget,
         SVMTransactionExecutionCost::default(),
+        abi_v2_guest_transaction,
     );
 
     let mut instruction_accounts: Vec<InstructionAccount> =

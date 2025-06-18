@@ -36,6 +36,7 @@ use {
     },
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionCost,
+        guest_transaction::RuntimeGuestTransaction,
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{
             ForkGraph, ProgramCache, ProgramCacheEntry, ProgramCacheForTxBatch,
@@ -870,6 +871,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut executed_units = 0u64;
         let sysvar_cache = &self.sysvar_cache.read().unwrap();
 
+        // The transaction mapping for ABIv2 is created eagerly when the feature is enabled.
+        // Since most transactions won't use ABIv2 in the beginning, we could switch to a lazy
+        // creation, instantiating it only when an instruction requires ABIv2.
+        let guest_transaction_abi_v2 = RuntimeGuestTransaction::new_with_feature_set(
+            &transaction_context,
+            tx.num_instructions(),
+            &environment.feature_set,
+        );
         let mut invoke_context = InvokeContext::new(
             &mut transaction_context,
             program_cache_for_tx_batch,
@@ -883,6 +892,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             log_collector.clone(),
             compute_budget,
             self.execution_cost,
+            guest_transaction_abi_v2,
         );
 
         let mut process_message_time = Measure::start("process_message_time");

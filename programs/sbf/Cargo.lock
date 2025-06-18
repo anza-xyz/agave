@@ -8002,6 +8002,13 @@ name = "solana-sbf-rust-128bit-dep"
 version = "3.0.0"
 
 [[package]]
+name = "solana-sbf-rust-abiv2"
+version = "3.0.0"
+dependencies = [
+ "solana-program",
+]
+
+[[package]]
 name = "solana-sbf-rust-account-mem"
 version = "3.0.0"
 dependencies = [
@@ -8668,8 +8675,7 @@ dependencies = [
 [[package]]
 name = "solana-sbpf"
 version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "474a2d95dc819898ded08d24f29642d02189d3e1497bbb442a92a3997b7eb55f"
+source = "git+https://github.com/anza-xyz/sbpf.git?rev=967c2a2eba03816ee14f4c6338476690d374f511#967c2a2eba03816ee14f4c6338476690d374f511"
 dependencies = [
  "byteorder 1.5.0",
  "combine 3.8.1",
