@@ -7,6 +7,7 @@ steps:
     agents:
       queue: "release-build"
     timeout_in_minutes: 10
+    if: build.message != "Crate publish test"
   - name: "publish dry-run"
     command: "ci/publish-crate.sh --dry-run"
     timeout_in_minutes: 180
@@ -15,23 +16,27 @@ steps:
       CRATE_PUBLISH_TEST: "true"
     agents:
       queue: "release-build"
+    if: build.message == "Crate publish test"
   - wait
   - name: "publish tarball (x86_64-unknown-linux-gnu)"
     command: "ci/publish-tarball.sh"
     agents:
       queue: "release-build"
     timeout_in_minutes: 60
+    if: build.message != "Crate publish test"
   - name: "publish installer"
     command: "ci/publish-installer.sh"
     agents:
       queue: "release-build"
     timeout_in_minutes: 5
+    if: build.message != "Crate publish test"
   - wait
   - name: "publish docker"
     command: "docker-solana/build.sh"
     agents:
       queue: "release-build"
     timeout_in_minutes: 60
+    if: build.message != "Crate publish test"
   - name: "publish crate"
     command: "ci/publish-crate.sh"
     agents:
@@ -41,6 +46,7 @@ steps:
         permit_on_passed: true
     timeout_in_minutes: 240
     branches: "!master"
+    if: build.message != "Crate publish test"
   - name: "trigger github actions windows build"
     command: ".buildkite/scripts/trigger-github-actions-windows-build.sh"
     agents:
@@ -49,6 +55,7 @@ steps:
       manual:
         permit_on_passed: true
     timeout_in_minutes: 5
+    if: build.message != "Crate publish test"
   - name: "publish tarball (aarch64-apple-darwin)"
     command: "ci/publish-tarball.sh"
     agents:
@@ -57,6 +64,7 @@ steps:
       manual:
         permit_on_passed: true
     timeout_in_minutes: 60
+    if: build.message != "Crate publish test"
   - name: "publish tarball (x86_64-apple-darwin)"
     command: "ci/publish-tarball.sh"
     agents:
@@ -65,3 +73,4 @@ steps:
       manual:
         permit_on_passed: true
     timeout_in_minutes: 60
+    if: build.message != "Crate publish test"
