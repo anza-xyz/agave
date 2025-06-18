@@ -4229,9 +4229,9 @@ impl Bank {
         self.update_rent_exempt_status_in_range(subrange_full, metrics)
     }
 
-    /// load accounts with pubkeys in 'subrange_full'
-    /// update 'account.rent_epoch' as necessary
-    /// store accounts, whether rent was collected or not (depending on whether we skipping rewrites is enabled)
+    /// load accounts with pubkeys in 'subrange_full', update
+    /// 'account.rent_epoch' as necessary, and store accounts, whether rent was
+    /// collected or not (depending on whether we skipping rewrites is enabled)
     /// update bank's rewrites set for all rewrites that were skipped
     fn update_rent_exempt_status_in_range(
         &self,

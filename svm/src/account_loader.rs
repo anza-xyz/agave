@@ -2399,7 +2399,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_rent_from_account_rent_paying() {
+    fn test_update_rent_exempt_status_for_rent_paying_account() {
         let rent_collector = RentCollector {
             epoch: 1,
             ..RentCollector::default()
