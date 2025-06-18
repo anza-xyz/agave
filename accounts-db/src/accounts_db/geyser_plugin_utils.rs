@@ -221,12 +221,9 @@ pub mod tests {
         // Ensure key1 was notified twice in different slots
         {
             let notified_key1 = notifier.accounts_notified.get(&key1).unwrap();
-            assert_eq!(notified_key1.len(), 2);
+            assert_eq!(notified_key1.len(), 1);
             let (slot, write_version, _account) = &notified_key1[0];
             assert_eq!(*slot, 1);
-            assert_eq!(*write_version, 1);
-            let (slot, write_version, _account) = &notified_key1[1];
-            assert_eq!(*slot, 0);
             assert_eq!(*write_version, 1);
         }
 

@@ -43,6 +43,11 @@ impl<T: IndexValue> AccountMapEntry<T> {
         self.set_dirty(true);
     }
 
+    pub fn set_ref_one(&self) {
+        self.ref_count.store(1, Ordering::Release);
+        self.set_dirty(true);
+    }
+
     /// decrement the ref count
     /// return the refcount prior to subtracting 1
     /// 0 indicates an under refcounting error in the system.
