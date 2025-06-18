@@ -1050,7 +1050,7 @@ fn test_collect_rent_from_accounts() {
         account3.set_rent_epoch(0); // stake accounts in genesis have a rent epoch of 0
 
         // loaded from previous slot, so we skip rent collection on it
-        let _result = later_bank.collect_rent_from_accounts(vec![
+        let _result = later_bank.update_rent_exempt_status_for_accounts(vec![
             (address1, account1, later_slot - 1),
             (address2, account2, later_slot - 1),
             (address3, account3, later_slot - 1),
@@ -1131,8 +1131,8 @@ fn test_rent_eager_collect_rent_zero_lamport_deterministic() {
     assert_eq!(hash1_with_zero, hash1_without_zero);
     assert_ne!(hash1_with_zero, Hash::default());
 
-    bank2_with_zero.collect_rent_in_partition((0, 0, 1), &RentMetrics::default()); // all
-    bank2_without_zero.collect_rent_in_partition((0, 0, 1), &RentMetrics::default()); // all
+    bank2_with_zero.update_rent_exempt_status_in_partition((0, 0, 1), &RentMetrics::default()); // all
+    bank2_without_zero.update_rent_exempt_status_in_partition((0, 0, 1), &RentMetrics::default()); // all
 
     bank2_with_zero.freeze();
     let hash2_with_zero = bank2_with_zero.hash();
@@ -11060,7 +11060,7 @@ fn test_partitioned_rent_collection(should_run_partitioned_rent_collection: bool
     // Run partitioned rent collection. If enabled, partitioned rent collection
     // will update the rent epoch for any rent exempt accounts whose rent epoch
     // is not already set to RENT_EXEMPT_RENT_EPOCH.
-    bank.collect_rent_eagerly();
+    bank.run_partitioned_rent_exempt_status_updates();
     let updated_account = bank.get_account(&account_pubkey).unwrap();
     if should_run_partitioned_rent_collection {
         assert_eq!(updated_account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
@@ -12076,7 +12076,7 @@ fn test_rebuild_skipped_rewrites() {
     // This fn is called within freeze(), but freeze() *consumes* Self::skipped_rewrites!
     // For testing, we want to know what's in the skipped rewrites, so we perform
     // rent collection manually.
-    bank.collect_rent_eagerly();
+    bank.run_partitioned_rent_exempt_status_updates();
     let actual_skipped_rewrites = bank.skipped_rewrites.lock().unwrap().clone();
     // Ensure skipped rewrites now includes the account we stored above
     assert!(actual_skipped_rewrites.contains_key(&pubkey));

@@ -138,7 +138,7 @@ use {
     solana_slot_history::{Check, SlotHistory},
     solana_stake_interface::state::Delegation,
     solana_svm::{
-        account_loader::{collect_rent_from_account, LoadedTransaction},
+        account_loader::{update_rent_exempt_status_for_account, LoadedTransaction},
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
         transaction_balances::BalanceCollector,
@@ -2646,7 +2646,7 @@ impl Bank {
         let mut hash = self.hash.write().unwrap();
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
-            self.collect_rent_eagerly();
+            self.run_partitioned_rent_exempt_status_updates();
             self.distribute_transaction_fee_details();
             self.update_slot_history();
             self.run_incinerator();
@@ -4028,7 +4028,7 @@ impl Bank {
         accounts_written_this_slot
     }
 
-    fn collect_rent_eagerly(&self) {
+    fn run_partitioned_rent_exempt_status_updates(&self) {
         if self.lazy_rent_collection.load(Relaxed) {
             return;
         }
@@ -4080,16 +4080,16 @@ impl Bank {
                 let thread_pool = &self.rc.accounts.accounts_db.thread_pool;
                 thread_pool.install(|| {
                     ranges.into_par_iter().for_each(|(_, subrange_full)| {
-                        self.collect_rent_in_range(subrange_full, &rent_metrics)
+                        self.update_rent_exempt_status_in_range(subrange_full, &rent_metrics)
                     });
                 });
             }
         }
         if !parallel {
             // collect serially
-            partitions
-                .into_iter()
-                .for_each(|partition| self.collect_rent_in_partition(partition, &rent_metrics));
+            partitions.into_iter().for_each(|partition| {
+                self.update_rent_exempt_status_in_partition(partition, &rent_metrics)
+            });
         }
         measure.stop();
         datapoint_info!(
@@ -4138,7 +4138,7 @@ impl Bank {
             .is_active(&feature_set::skip_rent_rewrites::id())
     }
 
-    /// Collect rent from `accounts`
+    /// Update rent exempt status for `accounts`
     ///
     /// This fn is called inside a parallel loop from `collect_rent_in_partition()`.  Avoid adding
     /// any code that causes contention on shared memory/data (i.e. do not update atomic metrics).
@@ -4147,7 +4147,7 @@ impl Bank {
     /// reduce at the end of its parallel loop.  If possible, place data/computation that cause
     /// contention/take locks in the return struct and process them in
     /// `collect_rent_from_partition()` after reducing the parallel loop.
-    fn collect_rent_from_accounts(
+    fn update_rent_exempt_status_for_accounts(
         &self,
         mut accounts: Vec<(Pubkey, AccountSharedData, Slot)>,
     ) -> CollectRentFromAccountsInfo {
@@ -4164,8 +4164,10 @@ impl Bank {
         let mut skipped_rewrites = Vec::default();
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let rent_epoch_pre = account.rent_epoch();
-            let ((), collect_rent_us) =
-                measure_us!(collect_rent_from_account(&self.rent_collector, account));
+            let ((), collect_rent_us) = measure_us!(update_rent_exempt_status_for_account(
+                &self.rent_collector,
+                account
+            ));
             time_collecting_rent_us += collect_rent_us;
             let rent_epoch_post = account.rent_epoch();
 
@@ -4221,17 +4223,21 @@ impl Bank {
         }
     }
 
-    /// convert 'partition' to a pubkey range and 'collect_rent_in_range'
-    fn collect_rent_in_partition(&self, partition: Partition, metrics: &RentMetrics) {
+    /// convert 'partition' to a pubkey range and 'update_rent_exempt_status_in_range'
+    fn update_rent_exempt_status_in_partition(&self, partition: Partition, metrics: &RentMetrics) {
         let subrange_full = accounts_partition::pubkey_range_from_partition(partition);
-        self.collect_rent_in_range(subrange_full, metrics)
+        self.update_rent_exempt_status_in_range(subrange_full, metrics)
     }
 
     /// load accounts with pubkeys in 'subrange_full'
-    /// collect rent and update 'account.rent_epoch' as necessary
+    /// update 'account.rent_epoch' as necessary
     /// store accounts, whether rent was collected or not (depending on whether we skipping rewrites is enabled)
     /// update bank's rewrites set for all rewrites that were skipped
-    fn collect_rent_in_range(&self, subrange_full: RangeInclusive<Pubkey>, metrics: &RentMetrics) {
+    fn update_rent_exempt_status_in_range(
+        &self,
+        subrange_full: RangeInclusive<Pubkey>,
+        metrics: &RentMetrics,
+    ) {
         let mut hold_range = Measure::start("hold_range");
         let thread_pool = &self.rc.accounts.accounts_db.thread_pool;
         thread_pool.install(|| {
@@ -4275,7 +4281,7 @@ impl Bank {
                             .load_to_collect_rent_eagerly(&self.ancestors, subrange)
                     });
                     CollectRentInPartitionInfo::new(
-                        self.collect_rent_from_accounts(accounts),
+                        self.update_rent_exempt_status_for_accounts(accounts),
                         Duration::from_nanos(measure_load_accounts.as_ns()),
                     )
                 })

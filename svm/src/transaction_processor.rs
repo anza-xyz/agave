@@ -3,8 +3,8 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            collect_rent_from_account, load_transaction, validate_fee_payer, AccountLoader,
-            CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
+            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
+            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
             TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
@@ -582,7 +582,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         };
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
-        collect_rent_from_account(rent_collector, &mut loaded_fee_payer.account);
+        update_rent_exempt_status_for_account(rent_collector, &mut loaded_fee_payer.account);
 
         let fee_payer_index = 0;
         validate_fee_payer(

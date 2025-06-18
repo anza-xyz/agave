@@ -350,7 +350,7 @@ impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallba
 }
 
 /// Set the rent epoch to u64::MAX if the account is rent exempt.
-pub fn collect_rent_from_account(
+pub fn update_rent_exempt_status_for_account(
     rent_collector: &dyn SVMRentCollector,
     account: &mut AccountSharedData,
 ) {
@@ -787,7 +787,7 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         account_loader.load_transaction_account(account_key, is_writable)
     {
         if is_writable {
-            collect_rent_from_account(rent_collector, &mut loaded_account.account);
+            update_rent_exempt_status_for_account(rent_collector, &mut loaded_account.account);
         }
         loaded_account
     } else {
@@ -2382,7 +2382,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_rent_from_account() {
+    fn test_update_rent_exempt_status_for_account() {
         let rent_collector = RentCollector {
             epoch: 1,
             ..RentCollector::default()
@@ -2394,7 +2394,7 @@ mod tests {
             ..Account::default()
         });
 
-        collect_rent_from_account(&rent_collector, &mut account);
+        update_rent_exempt_status_for_account(&rent_collector, &mut account);
         assert_eq!(account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
     }
 
@@ -2410,7 +2410,7 @@ mod tests {
             ..Account::default()
         });
 
-        collect_rent_from_account(&rent_collector, &mut account);
+        update_rent_exempt_status_for_account(&rent_collector, &mut account);
         assert_eq!(account.rent_epoch(), 0);
         assert_eq!(account.lamports(), 1);
     }
