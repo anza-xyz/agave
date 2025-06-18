@@ -1926,7 +1926,7 @@ fn unarchive_snapshot(
     let unpacked_snapshots_dir = unpack_dir.path().join("snapshots");
 
     let (file_sender, file_receiver) = crossbeam_channel::unbounded();
-    streaming_unarchive_snapshot(
+    let unarchive_handles = streaming_unarchive_snapshot(
         file_sender,
         account_paths.to_vec(),
         unpack_dir.path().to_path_buf(),
@@ -1938,40 +1938,46 @@ fn unarchive_snapshot(
     let num_rebuilder_threads = num_cpus::get_physical()
         .saturating_sub(num_untar_threads)
         .max(1);
-    let SnapshotFieldsBundle {
-        snapshot_version,
-        bank_fields,
-        accounts_db_fields,
-        append_vec_files,
-        ..
-    } = snapshot_fields_from_files(&file_receiver)?;
-    let (storage, measure_untar) = measure_time!(
-        SnapshotStorageRebuilder::rebuild_storage(
-            &accounts_db_fields,
-            append_vec_files,
-            file_receiver,
-            num_rebuilder_threads,
-            next_append_vec_id,
-            SnapshotFrom::Archive,
-            storage_access,
-        )?,
-        measure_name
-    );
-    info!("{}", measure_untar);
+    let snapshot_result = snapshot_fields_from_files(&file_receiver).and_then(
+        |SnapshotFieldsBundle {
+             snapshot_version,
+             bank_fields,
+             accounts_db_fields,
+             append_vec_files,
+             ..
+         }| {
+            let (storage, measure_untar) = measure_time!(
+                SnapshotStorageRebuilder::rebuild_storage(
+                    &accounts_db_fields,
+                    append_vec_files,
+                    file_receiver,
+                    num_rebuilder_threads,
+                    next_append_vec_id,
+                    SnapshotFrom::Archive,
+                    storage_access,
+                )?,
+                measure_name
+            );
+            info!("{}", measure_untar);
+            create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
-    create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
-
-    Ok(UnarchivedSnapshot {
-        unpack_dir,
-        storage,
-        bank_fields,
-        accounts_db_fields,
-        unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
-            unpacked_snapshots_dir,
-            snapshot_version,
+            Ok(UnarchivedSnapshot {
+                unpack_dir,
+                storage,
+                bank_fields,
+                accounts_db_fields,
+                unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
+                    unpacked_snapshots_dir,
+                    snapshot_version,
+                },
+                measure_untar,
+            })
         },
-        measure_untar,
-    })
+    );
+    for handle in unarchive_handles {
+        handle.join().unwrap()?;
+    }
+    snapshot_result
 }
 
 /// Streams snapshot dir files across channel
