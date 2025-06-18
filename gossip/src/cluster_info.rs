@@ -52,12 +52,14 @@ use {
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::{
-        bind_common_in_range_with_config, bind_in_range, bind_in_range_with_config,
-        bind_more_with_config, bind_to_localhost, bind_to_unspecified, bind_to_with_config,
-        bind_two_in_range_with_offset_and_config, find_available_ports_in_range,
-        multi_bind_in_range_with_config,
-        sockets::{bind_gossip_port_in_range, localhost_port_range_for_tests},
-        PortRange, SocketConfig, VALIDATOR_PORT_RANGE,
+        bind_in_range, bind_to_localhost, bind_to_unspecified, find_available_ports_in_range,
+        sockets::{
+            bind_common_in_range_with_config, bind_gossip_port_in_range, bind_in_range_with_config,
+            bind_more_with_config, bind_to_with_config, bind_two_in_range_with_offset_and_config,
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            SocketConfiguration as SocketConfig,
+        },
+        PortRange, VALIDATOR_PORT_RANGE,
     },
     solana_perf::{
         data_budget::DataBudget,

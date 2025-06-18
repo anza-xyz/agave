@@ -5,7 +5,9 @@ use {
         sigverify_stage::SigVerifyStage,
     },
     solana_keypair::Keypair,
-    solana_net_utils::{multi_bind_in_range_with_config, SocketConfig},
+    solana_net_utils::sockets::{
+        multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
+    },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{

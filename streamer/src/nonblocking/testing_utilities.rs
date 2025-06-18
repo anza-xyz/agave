@@ -19,8 +19,11 @@ use {
     },
     solana_keypair::Keypair,
     solana_net_utils::{
-        bind_to_localhost, multi_bind_in_range_with_config,
-        sockets::localhost_port_range_for_tests, SocketConfig,
+        bind_to_localhost,
+        sockets::{
+            localhost_port_range_for_tests, multi_bind_in_range_with_config,
+            SocketConfiguration as SocketConfig,
+        },
     },
     solana_perf::packet::PacketBatch,
     solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
