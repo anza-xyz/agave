@@ -9061,6 +9061,7 @@ dependencies = [
  "solana-perf",
  "solana-pubkey",
  "solana-quic-definitions",
+ "solana-rayon-threadlimit",
  "solana-signature",
  "solana-signer",
  "solana-time-utils",

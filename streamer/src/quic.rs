@@ -16,9 +16,11 @@ use {
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
+    solana_rayon_threadlimit::get_max_thread_count,
     solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
+        num::NonZeroUsize,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
@@ -114,9 +116,10 @@ pub(crate) fn configure_server(
     Ok((server_config, cert_chain_pem))
 }
 
-pub fn rt(name: String) -> Runtime {
+pub fn rt(name: String, num_threads: NonZeroUsize) -> Runtime {
     tokio::runtime::Builder::new_multi_thread()
         .thread_name(name)
+        .worker_threads(num_threads.get())
         .enable_all()
         .build()
         .unwrap()
@@ -612,6 +615,7 @@ pub struct QuicServerParams {
     pub wait_for_chunk_timeout: Duration,
     pub coalesce: Duration,
     pub coalesce_channel_size: usize,
+    pub num_threads: NonZeroUsize,
 }
 
 impl Default for QuicServerParams {
@@ -625,6 +629,7 @@ impl Default for QuicServerParams {
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: DEFAULT_TPU_COALESCE,
             coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
+            num_threads: NonZeroUsize::new(get_max_thread_count().min(1)).expect("1 is non-zero"),
         }
     }
 }
@@ -639,7 +644,7 @@ pub fn spawn_server_multi(
     staked_nodes: Arc<RwLock<StakedNodes>>,
     quic_server_params: QuicServerParams,
 ) -> Result<SpawnServerResult, QuicServerError> {
-    let runtime = rt(format!("{thread_name}Rt"));
+    let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
         crate::nonblocking::quic::spawn_server_multi(
@@ -674,11 +679,21 @@ pub fn spawn_server_multi(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
+        crate::nonblocking::{
+            quic::test::*,
+            testing_utilities::{check_multiple_streams, DEFAULT_NUM_SERVER_THREADS_FOR_TEST},
+        },
         crossbeam_channel::unbounded,
         solana_net_utils::bind_to_localhost,
         std::net::SocketAddr,
     };
+
+    fn rt_for_test() -> Runtime {
+        rt(
+            "solQuicTestRt".to_string(),
+            DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
+        )
+    }
 
     fn setup_quic_server() -> (
         std::thread::JoinHandle<()>,
@@ -706,6 +721,7 @@ mod test {
             staked_nodes,
             QuicServerParams {
                 coalesce_channel_size: 100_000, // smaller channel size for faster test
+                num_threads: DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
                 ..Default::default()
             },
         )
@@ -724,7 +740,7 @@ mod test {
     fn test_quic_timeout() {
         solana_logger::setup();
         let (t, exit, receiver, server_address) = setup_quic_server();
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt_for_test();
         runtime.block_on(check_timeout(receiver, server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
@@ -735,7 +751,7 @@ mod test {
         solana_logger::setup();
         let (t, exit, _receiver, server_address) = setup_quic_server();
 
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt_for_test();
         runtime.block_on(check_block_multiple_connections(server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
@@ -770,7 +786,7 @@ mod test {
         )
         .unwrap();
 
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt_for_test();
         runtime.block_on(check_multiple_streams(receiver, server_address, None));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
@@ -781,7 +797,7 @@ mod test {
         solana_logger::setup();
         let (t, exit, receiver, server_address) = setup_quic_server();
 
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt_for_test();
         runtime.block_on(check_multiple_writes(receiver, server_address, None));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();
@@ -816,7 +832,7 @@ mod test {
         )
         .unwrap();
 
-        let runtime = rt("solQuicTestRt".to_string());
+        let runtime = rt_for_test();
         runtime.block_on(check_unstaked_node_connect_failure(server_address));
         exit.store(true, Ordering::Relaxed);
         t.join().unwrap();

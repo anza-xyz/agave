@@ -190,6 +190,7 @@ pub fn spawn_server_multi(
         wait_for_chunk_timeout,
         coalesce,
         coalesce_channel_size,
+        num_threads: _,
     } = quic_server_params;
     let concurrent_connections = max_staked_connections + max_unstaked_connections;
     let max_concurrent_connections = concurrent_connections + concurrent_connections / 4;

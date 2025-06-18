@@ -113,6 +113,9 @@ pub fn execute(
         replay_transactions_threads,
         rocksdb_compaction_threads,
         rocksdb_flush_threads,
+        tpu_transaction_forward_receive_threads,
+        tpu_transaction_receive_threads,
+        tpu_vote_transaction_receive_threads,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
@@ -1246,6 +1249,7 @@ pub fn execute(
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
+        num_threads: tpu_transaction_receive_threads,
         ..Default::default()
     };
 
@@ -1256,6 +1260,7 @@ pub fn execute(
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
+        num_threads: tpu_transaction_forward_receive_threads,
         ..Default::default()
     };
 
@@ -1264,6 +1269,7 @@ pub fn execute(
     let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
     vote_quic_server_config.max_connections_per_peer = 1;
     vote_quic_server_config.max_unstaked_connections = 0;
+    vote_quic_server_config.num_threads = tpu_vote_transaction_receive_threads;
 
     let validator = match Validator::new(
         node,

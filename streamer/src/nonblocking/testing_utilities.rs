@@ -27,11 +27,14 @@ use {
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::{Duration, Instant},
     },
     tokio::{task::JoinHandle, time::sleep},
 };
+
+pub(crate) const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
@@ -137,6 +140,7 @@ pub fn setup_quic_server_with_sockets(
         wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         coalesce: DEFAULT_TPU_COALESCE,
         coalesce_channel_size,
+        num_threads: DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
     };
     let SpawnNonBlockingServerResult {
         endpoints: _,
