@@ -337,9 +337,11 @@ pub fn create_program_runtime_environment_v1<'a>(
         if !feature_set.disable_sbpf_v0_execution || feature_set.reenable_sbpf_v0_execution {
             SBPFVersion::V0
         } else {
-            SBPFVersion::V3
+            SBPFVersion::V4
         };
-    let max_sbpf_version = if feature_set.enable_sbpf_v3_deployment_and_execution {
+    let max_sbpf_version = if feature_set.enable_abi_v2_programs {
+        SBPFVersion::V4
+    } else if feature_set.enable_sbpf_v3_deployment_and_execution {
         SBPFVersion::V3
     } else if feature_set.enable_sbpf_v2_deployment_and_execution {
         SBPFVersion::V2
