@@ -404,22 +404,6 @@ pub fn multi_bind_in_range_with_config(
     Ok((port, sockets))
 }
 
-// binds many sockets to the same port in a range
-// Note: The `mut` modifier for `num` is unused but kept for compatibility with the public API.
-#[deprecated(
-    since = "2.2.0",
-    note = "use `multi_bind_in_range_with_config` instead"
-)]
-#[allow(unused_mut)]
-pub fn multi_bind_in_range(
-    ip_addr: IpAddr,
-    range: PortRange,
-    mut num: usize,
-) -> io::Result<(u16, Vec<UdpSocket>)> {
-    let config = SocketConfig::default();
-    multi_bind_in_range_with_config(ip_addr, range, config, num)
-}
-
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
     let config = SocketConfig {
         reuseport,
