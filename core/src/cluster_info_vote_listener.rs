@@ -562,7 +562,7 @@ impl ClusterInfoVoteListener {
 
                     // Note gossip votes will always be processed because those should be unique
                     // and we need to update the gossip-only stake in the `VoteTracker`.
-                    return;
+                    break;
                 }
 
                 is_new_vote = is_new;
