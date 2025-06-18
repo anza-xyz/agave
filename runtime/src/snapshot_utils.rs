@@ -1800,7 +1800,7 @@ fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
 /// This function will push append_vec files into a buffer until we receive the snapshot file
 fn get_version_and_snapshot_files(
     file_receiver: &Receiver<PathBuf>,
-) -> (PathBuf, PathBuf, Vec<PathBuf>) {
+) -> Result<(PathBuf, PathBuf, Vec<PathBuf>)> {
     let mut append_vec_files = Vec::with_capacity(1024);
     let mut snapshot_version_path = None;
     let mut snapshot_file_path = None;
@@ -1831,13 +1831,15 @@ fn get_version_and_snapshot_files(
                 None => {} // do nothing for other kinds of files
             }
         } else {
-            panic!("did not receive snapshot file from unpacking threads");
+            return Err(SnapshotError::RebuildStorages(
+                "did not receive snapshot file from unpacking threads".to_string(),
+            ));
         }
     }
     let snapshot_version_path = snapshot_version_path.unwrap();
     let snapshot_file_path = snapshot_file_path.unwrap();
 
-    (snapshot_version_path, snapshot_file_path, append_vec_files)
+    Ok((snapshot_version_path, snapshot_file_path, append_vec_files))
 }
 
 /// Fields and information parsed from the snapshot.
@@ -1852,7 +1854,7 @@ struct SnapshotFieldsBundle {
 /// `file_receiver`.
 fn snapshot_fields_from_files(file_receiver: &Receiver<PathBuf>) -> Result<SnapshotFieldsBundle> {
     let (snapshot_version_path, snapshot_file_path, append_vec_files) =
-        get_version_and_snapshot_files(file_receiver);
+        get_version_and_snapshot_files(file_receiver)?;
     let snapshot_version_str = snapshot_version_from_file(snapshot_version_path)?;
     let snapshot_version = snapshot_version_str.parse().map_err(|err| {
         IoError::other(format!(
