@@ -4125,14 +4125,6 @@ impl Blockstore {
         self.max_root.load(Ordering::Relaxed)
     }
 
-    #[deprecated(
-        since = "1.18.0",
-        note = "Please use `solana_ledger::blockstore::Blockstore::max_root()` instead"
-    )]
-    pub fn last_root(&self) -> Slot {
-        self.max_root()
-    }
-
     // find the first available slot in blockstore that has some data in it
     pub fn lowest_slot(&self) -> Slot {
         for (slot, meta) in self
