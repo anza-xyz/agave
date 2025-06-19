@@ -583,6 +583,12 @@ struct SlotIndexGenerationInfo {
     rent_paying_accounts_by_partition: Vec<Pubkey>,
     zero_lamport_pubkeys: Vec<Pubkey>,
     all_accounts_are_zero_lamports: bool,
+    /// Number of accounts in this slot that didn't already exist in the index
+    num_did_not_exist: u64,
+    /// Number of accounts in this slot that already existed, and were in-mem
+    num_existed_in_mem: u64,
+    /// Number of accounts in this slot that already existed, and were on-disk
+    num_existed_on_disk: u64,
 }
 
 /// The lt hash of old/duplicate accounts
@@ -7982,6 +7988,9 @@ impl AccountsDb {
             rent_paying_accounts_by_partition,
             zero_lamport_pubkeys,
             all_accounts_are_zero_lamports,
+            num_did_not_exist: generate_index_results.num_did_not_exist,
+            num_existed_in_mem: generate_index_results.num_existed_in_mem,
+            num_existed_on_disk: generate_index_results.num_existed_on_disk,
         }
     }
 
@@ -8048,6 +8057,9 @@ impl AccountsDb {
                     let mut insert_time_sum = 0;
                     let mut total_including_duplicates_sum = 0;
                     let mut accounts_data_len_sum = 0;
+                    let mut local_num_did_not_exist = 0;
+                    let mut local_num_existed_in_mem = 0;
+                    let mut local_num_existed_on_disk = 0;
                     for (index, slot) in slots.iter().enumerate() {
                         let mut scan_time = Measure::start("scan");
                         log_status.report(index as u64);
@@ -8073,6 +8085,9 @@ impl AccountsDb {
                                     rent_paying_accounts_by_partition_this_slot,
                                 zero_lamport_pubkeys: zero_pubkeys_this_slot,
                                 all_accounts_are_zero_lamports,
+                                num_did_not_exist,
+                                num_existed_in_mem,
+                                num_existed_on_disk,
                             } = self.generate_index_for_slot(
                                 &storage,
                                 *slot,
@@ -8080,6 +8095,10 @@ impl AccountsDb {
                                 &rent_collector,
                                 &storage_info,
                             );
+
+                            local_num_did_not_exist += num_did_not_exist;
+                            local_num_existed_in_mem += num_existed_in_mem;
+                            local_num_existed_on_disk += num_existed_on_disk;
 
                             if rent_paying_this_slot > 0 {
                                 // We don't have any rent paying accounts on mainnet, so this code should never be hit.
@@ -8135,6 +8154,34 @@ impl AccountsDb {
                         };
                         insert_time_sum += insert_us;
                     }
+
+                    if pass == 0 {
+                        // This thread has finished processing its chunk of slots.
+                        // Update the index stats now.
+                        let index_stats = self.accounts_index.bucket_map_holder_stats();
+
+                        // stats for inserted entries that previously did *not* exist
+                        index_stats.inc_insert_count(local_num_did_not_exist);
+                        index_stats.add_mem_count(local_num_did_not_exist as usize);
+
+                        // stats for inserted entries that previous did exist *in-mem*
+                        index_stats
+                            .entries_from_mem
+                            .fetch_add(local_num_existed_in_mem, Ordering::Relaxed);
+                        index_stats
+                            .updates_in_mem
+                            .fetch_add(local_num_existed_in_mem, Ordering::Relaxed);
+
+                        // stats for inserted entries that previously did exist *on-disk*
+                        index_stats.add_mem_count(local_num_existed_on_disk as usize);
+                        index_stats
+                            .entries_missing
+                            .fetch_add(local_num_existed_on_disk, Ordering::Relaxed);
+                        index_stats
+                            .updates_in_mem
+                            .fetch_add(local_num_existed_on_disk, Ordering::Relaxed);
+                    }
+
                     all_accounts_are_zero_lamports_slots.fetch_add(
                         all_accounts_are_zero_lamports_slots_inner,
                         Ordering::Relaxed,
