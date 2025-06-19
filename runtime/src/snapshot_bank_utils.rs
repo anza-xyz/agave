@@ -270,8 +270,6 @@ pub fn bank_from_snapshot_archives(
 
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
-    info!("Rebuilt bank for slot: {}", bank.slot());
-
     let snapshot_archive_info = incremental_snapshot_archive_info.map_or_else(
         || full_snapshot_archive_info.snapshot_archive_info(),
         |incremental_snapshot_archive_info| {
