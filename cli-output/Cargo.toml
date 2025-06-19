@@ -34,7 +34,7 @@ solana-clock = { workspace = true }
 solana-epoch-info = { workspace = true, features = ["serde"] }
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { workspace = true }
 solana-packet = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rpc-client-api = { workspace = true }

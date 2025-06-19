@@ -37,7 +37,7 @@ use {
     },
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_net_utils::PortRange,
     solana_pubkey::Pubkey,
     solana_rent::Rent,

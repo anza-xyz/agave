@@ -17,7 +17,7 @@ use {
     },
 };
 
-const NUM_LAMPORTS_PER_ACCOUNT_DEFAULT: u64 = solana_native_token::LAMPORTS_PER_SOL;
+const NUM_LAMPORTS_PER_ACCOUNT_DEFAULT: u64 = gorchain_native_token::LAMPORTS_PER_SOL;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum ExternalClientType {

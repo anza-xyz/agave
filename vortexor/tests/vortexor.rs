@@ -6,7 +6,7 @@ use {
         cluster::ClusterValidatorInfo,
         local_cluster::{ClusterConfig, LocalCluster},
     },
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::VALIDATOR_PORT_RANGE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,

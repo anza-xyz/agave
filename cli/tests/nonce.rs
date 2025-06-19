@@ -11,7 +11,7 @@ use {
     solana_faucet::faucet::run_local_faucet,
     solana_hash::Hash,
     solana_keypair::{keypair_from_seed, Keypair},
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_nonce_utils::blockhash_query::{self, BlockhashQuery},

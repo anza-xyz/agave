@@ -26,7 +26,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
     solana_message::Message,
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_net_utils::bind_to_unspecified,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,

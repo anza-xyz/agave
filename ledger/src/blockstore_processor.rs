@@ -2338,7 +2338,7 @@ pub mod tests {
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, Instruction},
         solana_keypair::Keypair,
-        solana_native_token::LAMPORTS_PER_SOL,
+        gorchain_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::declare_process_instruction,
         solana_pubkey::Pubkey,
         solana_runtime::{

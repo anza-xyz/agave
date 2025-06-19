@@ -36,7 +36,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_epoch_schedule::EpochSchedule,
     solana_message::Message,
-    solana_native_token::Sol,
+    gorchain_native_token::Sol,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -2002,8 +2002,8 @@ pub fn process_split_stake(
     } else {
         let stake_minimum_delegation = rpc_client.get_stake_minimum_delegation()?;
         if lamports < stake_minimum_delegation {
-            let lamports = Sol(lamports);
-            let stake_minimum_delegation = Sol(stake_minimum_delegation);
+            let lamports = Sol::from(lamports);
+            let stake_minimum_delegation = Sol::from(stake_minimum_delegation);
             return Err(CliError::BadParameter(format!(
                 "need at least {stake_minimum_delegation} for minimum stake delegation, \
                  provided: {lamports}"

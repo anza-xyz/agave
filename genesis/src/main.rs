@@ -32,7 +32,7 @@ use {
     solana_keypair::{read_keypair_file, Keypair},
     solana_ledger::{blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions},
     solana_loader_v3_interface::state::UpgradeableLoaderState,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_poh_config::PohConfig,
     solana_pubkey::Pubkey,
     solana_rent::Rent,

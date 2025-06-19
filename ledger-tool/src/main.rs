@@ -55,7 +55,7 @@ use {
     },
     solana_measure::{measure::Measure, measure_time},
     solana_message::SimpleAddressLoader,
-    solana_native_token::{lamports_to_sol, sol_to_lamports, Sol},
+    gorchain_native_token::{lamports_to_sol, sol_to_lamports, Sol},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
@@ -2644,7 +2644,7 @@ fn main() {
                         println!("Recalculating capitalization");
                         let old_capitalization = bank.set_capitalization();
                         if old_capitalization == bank.capitalization() {
-                            eprintln!("Capitalization was identical: {}", Sol(old_capitalization));
+                            eprintln!("Capitalization was identical: {}", Sol::from(old_capitalization));
                         }
                     }
 
@@ -2893,9 +2893,9 @@ fn main() {
                             / warped_bank.epoch_duration_in_years(base_bank.epoch());
                         println!(
                             "Capitalization: {} => {} (+{} {}%; annualized {}%)",
-                            Sol(base_bank.capitalization()),
-                            Sol(warped_bank.capitalization()),
-                            Sol(warped_bank.capitalization() - base_bank.capitalization()),
+                            Sol::from(base_bank.capitalization()),
+                            Sol::from(warped_bank.capitalization()),
+                            Sol::from(warped_bank.capitalization() - base_bank.capitalization()),
                             interest_per_epoch,
                             interest_per_year,
                         );
@@ -2966,9 +2966,9 @@ fn main() {
                                     "{:<45}({}): {} => {} (+{} {:>4.9}%) {:?}",
                                     format!("{pubkey}"), // format! is needed to pad/justify correctly.
                                     base_account.owner(),
-                                    Sol(base_account.lamports()),
-                                    Sol(warped_account.lamports()),
-                                    Sol(delta),
+                                    Sol::from(base_account.lamports()),
+                                    Sol::from(warped_account.lamports()),
+                                    Sol::from(delta),
                                     ((warped_account.lamports() as f64)
                                         / (base_account.lamports() as f64)
                                         * 100_f64)
@@ -3104,7 +3104,7 @@ fn main() {
                             }
                         }
                         if overall_delta > 0 {
-                            println!("Sum of lamports changes: {}", Sol(overall_delta));
+                            println!("Sum of lamports changes: {}", Sol::from(overall_delta));
                         }
                     } else {
                         if arg_matches.is_present("recalculate_capitalization") {
@@ -3119,7 +3119,7 @@ fn main() {
                         assert_capitalization(&bank);
                         println!("Inflation: {:?}", bank.inflation());
                         println!("RentCollector: {:?}", bank.rent_collector());
-                        println!("Capitalization: {}", Sol(bank.capitalization()));
+                        println!("Capitalization: {}", Sol::from(bank.capitalization()));
                     }
                 }
                 ("compute-slot-cost", Some(arg_matches)) => {

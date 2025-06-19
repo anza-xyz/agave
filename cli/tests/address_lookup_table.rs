@@ -9,7 +9,7 @@ use {
     solana_cli_output::{CliAddressLookupTable, CliAddressLookupTableCreated, OutputFormat},
     solana_faucet::faucet::run_local_faucet,
     solana_keypair::Keypair,
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,

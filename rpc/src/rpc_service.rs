@@ -27,7 +27,7 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
-    solana_native_token::lamports_to_sol,
+    gorchain_native_token::lamports_to_sol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,

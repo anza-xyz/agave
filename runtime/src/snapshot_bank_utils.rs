@@ -1130,7 +1130,7 @@ mod tests {
         },
         solana_genesis_config::create_genesis_config,
         solana_keypair::Keypair,
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        gorchain_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction::sanitized::SanitizedTransaction,

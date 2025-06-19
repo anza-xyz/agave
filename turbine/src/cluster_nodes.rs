@@ -18,7 +18,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_ledger::shred::ShredId,
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_signer::Signer,

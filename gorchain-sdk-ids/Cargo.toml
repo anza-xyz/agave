@@ -1,0 +1,8 @@
+[package]
+name = "gorchain-sdk-ids"
+version = "3.0.0"
+edition = "2021"
+description = "GorChain SDK IDs with custom program addresses"
+
+[dependencies]
+solana-pubkey = { workspace = true }

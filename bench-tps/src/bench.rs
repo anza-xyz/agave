@@ -20,7 +20,7 @@ use {
     solana_keypair::Keypair,
     solana_message::Message,
     solana_metrics::{self, datapoint_info},
-    solana_native_token::Sol,
+    gorchain_native_token::Sol,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
     solana_signer::Signer,
@@ -1188,8 +1188,8 @@ pub fn fund_keypairs<T: 'static + TpsClient + Send + Sync + ?Sized>(
         if funding_key_balance < total + rent {
             error!(
                 "funder has {}, needed {}",
-                Sol(funding_key_balance),
-                Sol(total)
+                Sol::from(funding_key_balance),
+                Sol::from(total)
             );
             let latest_blockhash = get_latest_blockhash(client.as_ref());
             if client
@@ -1227,7 +1227,7 @@ mod tests {
         solana_commitment_config::CommitmentConfig,
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{create_genesis_config, GenesisConfig},
-        solana_native_token::sol_to_lamports,
+        gorchain_native_token::sol_to_lamports,
         solana_nonce::state::State,
         solana_runtime::{bank::Bank, bank_client::BankClient, bank_forks::BankForks},
     };

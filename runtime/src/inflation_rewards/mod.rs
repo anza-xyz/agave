@@ -255,7 +255,7 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
 #[cfg(test)]
 mod tests {
     use {
-        self::points::null_tracer, super::*, solana_native_token::sol_to_lamports,
+        self::points::null_tracer, super::*, gorchain_native_token::sol_to_lamports,
         solana_pubkey::Pubkey, solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state::VoteState, test_case::test_case,
     };

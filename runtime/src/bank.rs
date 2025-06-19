@@ -119,7 +119,7 @@ use {
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
     solana_precompile_error::PrecompileError,
     solana_program_runtime::{

@@ -106,7 +106,7 @@ impl Bank {
 mod tests {
     use {
         super::*, crate::bank::tests::create_genesis_config, solana_account::ReadableAccount,
-        solana_epoch_schedule::EpochSchedule, solana_native_token::LAMPORTS_PER_SOL,
+        solana_epoch_schedule::EpochSchedule, gorchain_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::Pubkey, std::sync::Arc,
     };
 

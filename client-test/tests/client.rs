@@ -5,7 +5,7 @@ use {
     solana_commitment_config::{CommitmentConfig, CommitmentLevel},
     solana_keypair::Keypair,
     solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path_auto_delete},
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_pubsub_client::{nonblocking, pubsub_client::PubsubClient},
     solana_rpc::{

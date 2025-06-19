@@ -487,11 +487,11 @@ pub enum CliError {
     ClientError(#[from] ClientError),
     #[error("Command not recognized: {0}")]
     CommandNotRecognized(String),
-    #[error("Account {1} has insufficient funds for fee ({0} SOL)")]
+    #[error("Account {1} has insufficient funds for fee ({0} GOR)")]
     InsufficientFundsForFee(f64, Pubkey),
-    #[error("Account {1} has insufficient funds for spend ({0} SOL)")]
+    #[error("Account {1} has insufficient funds for spend ({0} GOR)")]
     InsufficientFundsForSpend(f64, Pubkey),
-    #[error("Account {2} has insufficient funds for spend ({0} SOL) + fee ({1} SOL)")]
+    #[error("Account {2} has insufficient funds for spend ({0} GOR) + fee ({1} GOR)")]
     InsufficientFundsForSpendAndFee(f64, f64, Pubkey),
     #[error(transparent)]
     InvalidNonce(solana_rpc_client_nonce_utils::Error),

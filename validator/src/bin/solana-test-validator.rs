@@ -19,7 +19,7 @@ use {
     solana_faucet::faucet::run_local_faucet_with_port,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{

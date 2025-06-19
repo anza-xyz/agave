@@ -17,7 +17,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
     solana_keypair::Keypair,
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_runtime::{
         accounts_background_service::{

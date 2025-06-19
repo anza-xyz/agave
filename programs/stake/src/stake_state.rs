@@ -2236,7 +2236,7 @@ mod tests {
         panic!(
             "stake minimum_balance: {} lamports, {} SOL",
             minimum_balance,
-            minimum_balance as f64 / solana_native_token::LAMPORTS_PER_SOL as f64
+            minimum_balance as f64 / gorchain_native_token::LAMPORTS_PER_SOL as f64
         );
     }
 

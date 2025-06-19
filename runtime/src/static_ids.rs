@@ -1,4 +1,5 @@
 use {
+    gorchain_native_token::native_mint,
     solana_pubkey::Pubkey,
     spl_generic_token::{associated_token_account, token, token_2022},
 };
@@ -8,7 +9,7 @@ pub static STATIC_IDS: std::sync::LazyLock<Vec<Pubkey>> = std::sync::LazyLock::n
     vec![
         associated_token_account::id(),
         token::id(),
-        token::native_mint::id(),
+        native_mint::id(),
         token_2022::id(),
     ]
 });

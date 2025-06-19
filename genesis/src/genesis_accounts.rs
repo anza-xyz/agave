@@ -4,7 +4,7 @@ use {
         unlocks::UnlockInfo,
     },
     solana_genesis_config::{ClusterType, GenesisConfig},
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
 };
 
 // 9 month schedule is 100% after 9 months

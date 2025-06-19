@@ -6,7 +6,7 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_genesis_config::{ClusterType, GenesisConfig},
     solana_keypair::Keypair,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_seed_derivable::SeedDerivable,
@@ -305,16 +305,19 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     initial_accounts.push((*validator_vote_account_pubkey, validator_vote_account));
     initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
 
-    let native_mint_account = solana_account::AccountSharedData::from(Account {
+    // GorChain: Use GOR native mint instead of SOL native mint
+    let gor_native_mint_account = solana_account::AccountSharedData::from(Account {
         owner: spl_generic_token::token::id(),
-        data: spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
+        data: gorchain_native_token::native_mint::ACCOUNT_DATA.to_vec(),
         lamports: sol_to_lamports(1.),
         executable: false,
         rent_epoch: 1,
     });
+    
+    // GorChain: Add GOR native mint with our native mint address
     initial_accounts.push((
-        spl_generic_token::token::native_mint::id(),
-        native_mint_account,
+        gorchain_native_token::native_mint::id(),
+        gor_native_mint_account,
     ));
 
     let mut genesis_config = GenesisConfig {

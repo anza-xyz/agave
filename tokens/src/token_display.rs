@@ -1,13 +1,13 @@
 use {
     solana_account_decoder::parse_token::real_number_string_trimmed,
-    solana_native_token::lamports_to_sol,
+    gorchain_native_token::lamports_to_sol,
     std::{
         fmt::{Debug, Display, Formatter, Result},
         ops::Add,
     },
 };
 
-const SOL_SYMBOL: &str = "◎";
+const GOR_SYMBOL: &str = "Ⓖ";
 
 #[derive(PartialEq, Eq)]
 pub enum TokenType {
@@ -26,7 +26,7 @@ impl Token {
         match &self.token_type {
             TokenType::Sol => {
                 let amount = lamports_to_sol(self.amount);
-                write!(f, "{SOL_SYMBOL}{amount}")
+                write!(f, "{GOR_SYMBOL}{amount}")
             }
             TokenType::SplToken => {
                 let amount = real_number_string_trimmed(self.amount, self.decimals);

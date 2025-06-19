@@ -82,7 +82,7 @@ mod tests_core_bpf_migration {
         solana_instruction::{AccountMeta, Instruction},
         solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
         solana_message::Message,
-        solana_native_token::LAMPORTS_PER_SOL,
+        gorchain_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::loaded_programs::ProgramCacheEntry,
         solana_pubkey::Pubkey,
         solana_sdk_ids::{bpf_loader_upgradeable, native_loader},

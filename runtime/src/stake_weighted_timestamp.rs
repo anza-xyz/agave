@@ -102,7 +102,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use {super::*, solana_account::Account, solana_native_token::sol_to_lamports};
+    use {super::*, solana_account::Account, gorchain_native_token::sol_to_lamports};
 
     #[test]
     fn test_calculate_stake_weighted_timestamp_uses_median() {

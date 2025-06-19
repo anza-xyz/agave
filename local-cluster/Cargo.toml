@@ -38,7 +38,7 @@ solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-logger = { workspace = true }
 solana-message = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }

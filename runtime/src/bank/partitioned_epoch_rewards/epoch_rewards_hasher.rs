@@ -33,7 +33,7 @@ mod tests {
             Bank,
         },
         solana_epoch_schedule::EpochSchedule,
-        solana_native_token::LAMPORTS_PER_SOL,
+        gorchain_native_token::LAMPORTS_PER_SOL,
         std::sync::Arc,
     };
 

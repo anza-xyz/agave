@@ -35,7 +35,7 @@ use {
         blockstore_options::{AccessType, BlockstoreOptions},
         leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule, LeaderSchedule},
     },
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{snapshot_config::SnapshotConfig, snapshot_utils::SnapshotInterval},

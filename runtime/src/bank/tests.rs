@@ -73,7 +73,7 @@ use {
     solana_message::{
         compiled_instruction::CompiledInstruction, Message, MessageHeader, SanitizedMessage,
     },
-    solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+    gorchain_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_packet::PACKET_DATA_SIZE,
     solana_poh_config::PohConfig,

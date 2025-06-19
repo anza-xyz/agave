@@ -31,7 +31,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_hash::Hash,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
+    gorchain_native_token::lamports_to_sol,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
@@ -233,7 +233,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         )
         .subcommand(
             SubCommand::with_name("supply")
-                .about("Get information about the cluster supply of SOL")
+                .about("Get information about the cluster supply of GOR")
                 .arg(
                     Arg::with_name("print_accounts")
                         .long("print-accounts")
@@ -243,7 +243,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
         )
         .subcommand(
             SubCommand::with_name("total-supply")
-                .about("Get total number of SOL")
+                .about("Get total number of GOR")
                 .setting(AppSettings::Hidden),
         )
         .subcommand(
@@ -345,7 +345,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                     Arg::with_name("lamports")
                         .long("lamports")
                         .takes_value(false)
-                        .help("Display balance in lamports instead of SOL"),
+                        .help("Display balance in lamports instead of GOR"),
                 )
                 .arg(pubkey!(
                     Arg::with_name("vote_account_pubkeys")
@@ -370,7 +370,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                     Arg::with_name("lamports")
                         .long("lamports")
                         .takes_value(false)
-                        .help("Display balance in lamports instead of SOL"),
+                        .help("Display balance in lamports instead of GOR"),
                 )
                 .arg(
                     Arg::with_name("number")
@@ -505,7 +505,7 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                     Arg::with_name("lamports")
                         .long("lamports")
                         .takes_value(false)
-                        .help("Display rent in lamports instead of SOL"),
+                        .help("Display rent in lamports instead of GOR"),
                 ),
         )
     }
@@ -1413,7 +1413,7 @@ pub fn process_supply(
 
 pub fn process_total_supply(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {
     let supply = rpc_client.supply()?.value;
-    Ok(format!("{} SOL", lamports_to_sol(supply.total)))
+    Ok(format!("{} GOR", lamports_to_sol(supply.total)))
 }
 
 pub fn process_get_transaction_count(rpc_client: &RpcClient, _config: &CliConfig) -> ProcessResult {

@@ -114,7 +114,7 @@ solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }

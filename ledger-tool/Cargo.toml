@@ -61,7 +61,7 @@ solana-log-collector = { workspace = true }
 solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }

@@ -272,7 +272,7 @@ mod tests {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_keypair::Keypair,
-        solana_native_token::LAMPORTS_PER_SOL,
+        gorchain_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
         solana_stake_interface::{error::StakeError, state::StakeStateV2},

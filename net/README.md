@@ -1,1 +1,0 @@
-../docs/src/contributing/testnet.md

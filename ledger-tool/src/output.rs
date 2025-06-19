@@ -24,7 +24,7 @@ use {
         blockstore_meta::{DuplicateSlotProof, ErasureMeta},
         shred::{self, Shred, ShredType},
     },
-    solana_native_token::lamports_to_sol,
+    gorchain_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_runtime::bank::{Bank, TotalAccountsStats},
     solana_transaction::versioned::VersionedTransaction,

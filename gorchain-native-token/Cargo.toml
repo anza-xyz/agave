@@ -1,0 +1,8 @@
+[package]
+name = "gorchain-native-token"
+version = "3.0.0"
+edition = "2021"
+description = "GorChain native token implementation"
+
+[dependencies]
+solana-pubkey = { workspace = true }

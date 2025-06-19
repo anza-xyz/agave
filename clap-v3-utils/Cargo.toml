@@ -27,7 +27,7 @@ solana-derivation-path = { workspace = true }
 solana-hash = { workspace = true, features = ["borsh"] }
 solana-keypair = { workspace = true, features = ["seed-derivable"] }
 solana-message = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { workspace = true }
 solana-presigner = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-remote-wallet = { workspace = true, features = ["default"] }

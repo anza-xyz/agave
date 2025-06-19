@@ -8,7 +8,7 @@ use {
     solana_faucet::faucet::run_local_faucet,
     solana_fee_structure::FeeStructure,
     solana_keypair::Keypair,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,

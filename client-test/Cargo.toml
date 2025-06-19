@@ -24,7 +24,7 @@ solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
 solana-merkle-tree = { workspace = true }
 solana-message = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-pubsub-client = { workspace = true }

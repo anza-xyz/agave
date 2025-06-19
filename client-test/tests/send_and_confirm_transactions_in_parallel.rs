@@ -9,7 +9,7 @@ use {
     solana_commitment_config::CommitmentConfig,
     solana_keypair::Keypair,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signer::Signer,

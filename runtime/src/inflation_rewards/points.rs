@@ -207,7 +207,7 @@ pub(crate) fn calculate_stake_points_and_credits(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_native_token::sol_to_lamports, solana_vote_program::vote_state::VoteState,
+        super::*, gorchain_native_token::sol_to_lamports, solana_vote_program::vote_state::VoteState,
     };
 
     fn new_stake(

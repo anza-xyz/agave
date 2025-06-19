@@ -30,7 +30,7 @@ use {
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_signer::Signer,

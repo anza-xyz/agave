@@ -317,7 +317,7 @@ mod tests {
         solana_accounts_db::stake_rewards::StakeReward,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
-        solana_native_token::LAMPORTS_PER_SOL,
+        gorchain_native_token::LAMPORTS_PER_SOL,
         solana_rent::Rent,
         solana_reward_info::{RewardInfo, RewardType},
         solana_stake_interface::{

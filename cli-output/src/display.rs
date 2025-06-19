@@ -10,7 +10,7 @@ use {
     solana_clock::UnixTimestamp,
     solana_hash::Hash,
     solana_message::{compiled_instruction::CompiledInstruction, v0::MessageAddressTableLookup},
-    solana_native_token::lamports_to_sol,
+    gorchain_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
     solana_stake_interface as stake,
@@ -68,7 +68,7 @@ pub fn build_balance_message_with_config(
             let ess = if lamports == 1 { "" } else { "s" };
             format!(" lamport{ess}")
         } else {
-            " SOL".to_string()
+            " GOR".to_string()
         }
     } else {
         "".to_string()

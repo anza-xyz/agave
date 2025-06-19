@@ -125,7 +125,7 @@ solana-loader-v4-interface = { workspace = true, features = ["serde"] }
 solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-metrics = { workspace = true }
-solana-native-token = { workspace = true }
+gorchain-native-token = { path = "../gorchain-native-token", version = "=3.0.0" }
 solana-nohash-hasher = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }

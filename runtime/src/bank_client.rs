@@ -302,7 +302,7 @@ impl BankClient {
 mod tests {
     use {
         super::*, solana_genesis_config::create_genesis_config, solana_instruction::AccountMeta,
-        solana_native_token::sol_to_lamports,
+        gorchain_native_token::sol_to_lamports,
     };
 
     #[test]

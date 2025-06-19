@@ -12,7 +12,7 @@ use {
     solana_cli_output::display::format_labeled_address,
     solana_hash::Hash,
     solana_metrics::{datapoint_error, datapoint_info},
-    solana_native_token::{sol_to_lamports, Sol},
+    gorchain_native_token::{sol_to_lamports, Sol},
     solana_notifier::{NotificationType, Notifier},
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
@@ -292,12 +292,12 @@ fn query_endpoint(
 
             let mut failures = vec![];
 
-            let total_current_stake = vote_accounts
+            let total_current_stake: u64 = vote_accounts
                 .current
                 .iter()
                 .map(|vote_account| vote_account.activated_stake)
                 .sum();
-            let total_delinquent_stake = vote_accounts
+            let total_delinquent_stake: u64 = vote_accounts
                 .delinquent
                 .iter()
                 .map(|vote_account| vote_account.activated_stake)
@@ -308,9 +308,9 @@ fn query_endpoint(
             info!(
                 "Current stake: {:.2}% | Total stake: {}, current stake: {}, delinquent: {}",
                 current_stake_percent,
-                Sol(total_stake),
-                Sol(total_current_stake),
-                Sol(total_delinquent_stake)
+                Sol::from(total_stake),
+                Sol::from(total_current_stake),
+                Sol::from(total_delinquent_stake)
             );
 
             if transaction_count > endpoint.last_transaction_count {
@@ -365,7 +365,7 @@ fn query_endpoint(
                     if *balance < config.minimum_validator_identity_balance {
                         failures.push((
                             "balance",
-                            format!("{} has {}", formatted_validator_identity, Sol(*balance)),
+                            format!("{} has {}", formatted_validator_identity, Sol::from(*balance)),
                         ));
                     }
                 }

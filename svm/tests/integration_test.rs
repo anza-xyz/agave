@@ -17,7 +17,7 @@ use {
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::Keypair,
     solana_loader_v3_interface as bpf_loader_upgradeable,
-    solana_native_token::LAMPORTS_PER_SOL,
+    gorchain_native_token::LAMPORTS_PER_SOL,
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,

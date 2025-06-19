@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
     solana_commitment_config::CommitmentConfig,
     solana_core::validator::ValidatorStartProgress,
-    solana_native_token::Sol,
+    gorchain_native_token::Sol,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, request, response::RpcContactInfo},
@@ -292,7 +292,7 @@ fn get_validator_stats(
         confirmed_slot,
         finalized_slot,
         transaction_count,
-        Sol(identity_balance),
+        Sol::from(identity_balance),
         health,
     ))
 }

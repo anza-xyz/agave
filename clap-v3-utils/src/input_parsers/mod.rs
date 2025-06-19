@@ -9,7 +9,7 @@ use {
     solana_cluster_type::ClusterType,
     solana_commitment_config::CommitmentConfig,
     solana_keypair::{read_keypair_file, Keypair},
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::{Pubkey, MAX_SEED_LEN},
     solana_signer::Signer,
     std::str::FromStr,

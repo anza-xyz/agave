@@ -16,7 +16,7 @@ use {
     solana_fee_calculator::FeeRateGovernor,
     solana_fee_structure::FeeStructure,
     solana_keypair::{keypair_from_seed, Keypair},
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_nonce::state::State as NonceState,
     solana_pubkey::Pubkey,
     solana_rent::Rent,

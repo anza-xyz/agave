@@ -31,7 +31,7 @@ use {
     },
     solana_commitment_config::CommitmentConfig,
     solana_message::Message,
-    solana_native_token::lamports_to_sol,
+    gorchain_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,

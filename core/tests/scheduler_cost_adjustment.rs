@@ -10,7 +10,7 @@ use {
     solana_keypair::Keypair,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{bank::Bank, bank_forks::BankForks},

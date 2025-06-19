@@ -341,7 +341,7 @@ pub mod tests {
             create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
         },
         solana_account::AccountSharedData,
-        solana_native_token::sol_to_lamports,
+        gorchain_native_token::sol_to_lamports,
         solana_pubkey as pubkey,
         solana_rent::Rent,
         solana_signer::Signer,

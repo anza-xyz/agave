@@ -5,7 +5,7 @@
     note = "Please use `solana_sdk_ids::sysvar::stake::id` instead"
 )]
 pub use solana_sdk_ids::stake::{check_id, id};
-use {solana_genesis_config::GenesisConfig, solana_native_token::LAMPORTS_PER_SOL};
+use {solana_genesis_config::GenesisConfig, gorchain_native_token::LAMPORTS_PER_SOL};
 
 pub mod config;
 pub mod epoch_rewards;

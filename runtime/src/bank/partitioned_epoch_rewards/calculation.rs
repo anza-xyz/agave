@@ -578,7 +578,7 @@ mod tests {
         },
         rayon::ThreadPoolBuilder,
         solana_account::{accounts_equal, state_traits::StateMut, ReadableAccount},
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        gorchain_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_reward_info::RewardType,
         solana_stake_interface::state::{Delegation, StakeStateV2},
         solana_vote_interface::state::VoteState,

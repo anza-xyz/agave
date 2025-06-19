@@ -926,7 +926,7 @@ mod tests {
             v0::{LoadedAddresses, LoadedMessage},
             LegacyMessage, Message, MessageHeader, SanitizedMessage,
         },
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        gorchain_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
         solana_program_runtime::execution_budget::{
             DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,

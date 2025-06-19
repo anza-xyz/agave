@@ -448,7 +448,7 @@ mod tests {
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},
         solana_keypair::Keypair,
-        solana_native_token::LAMPORTS_PER_SOL,
+        gorchain_native_token::LAMPORTS_PER_SOL,
         solana_pubkey::{self as pubkey, Pubkey},
         solana_signer::Signer as _,
         std::{cmp, collections::HashMap, iter, ops::RangeFull, str::FromStr as _, sync::Arc},

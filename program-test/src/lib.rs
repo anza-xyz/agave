@@ -25,7 +25,7 @@ use {
     },
     solana_keypair::Keypair,
     solana_log_collector::ic_msg,
-    solana_native_token::sol_to_lamports,
+    gorchain_native_token::sol_to_lamports,
     solana_poh_config::PohConfig,
     solana_program_entrypoint::{deserialize, SUCCESS},
     solana_program_error::{ProgramError, ProgramResult},
