@@ -751,16 +751,16 @@ impl Validator {
             block_metadata_notifier,
             slot_status_notifier,
         ) = if let Some(service) = &geyser_plugin_service {
-                (
-                    geyser_plugin_service.get_accounts_update_notifier(),
-                    geyser_plugin_service.get_transaction_notifier(),
-                    geyser_plugin_service.get_entry_notifier(),
-                    geyser_plugin_service.get_block_metadata_notifier(),
-                    geyser_plugin_service.get_slot_status_notifier(),
-                )
-            } else {
-                (None, None, None, None, None)
-            };
+            (
+                service.get_accounts_update_notifier(),
+                service.get_transaction_notifier(),
+                service.get_entry_notifier(),
+                service.get_block_metadata_notifier(),
+                service.get_slot_status_notifier(),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
