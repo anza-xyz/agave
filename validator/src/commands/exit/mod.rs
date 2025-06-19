@@ -122,7 +122,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 fn poll_until_pid_terminates(pid: u32) -> Result<()> {
     let pid = i32::try_from(pid)?;
 
-    println!("Monitoring agave-validator process {pid}");
+    println!("Waiting for agave-validator process {pid} to terminate");
     loop {
         // From man kill(2)
         //
@@ -134,14 +134,15 @@ fn poll_until_pid_terminates(pid: u32) -> Result<()> {
             libc::kill(pid, /*sig:*/ 0)
         };
         if result >= 0 {
-            println!("Waiting for {pid} to terminate ...");
+            // Give the process some time to exit before checking again
+            thread::sleep(Duration::from_millis(500));
         } else {
             let errno = io::Error::last_os_error()
                 .raw_os_error()
                 .ok_or(Error::Dynamic("unable to read raw os error".into()))?;
             match errno {
                 libc::ESRCH => {
-                    println!("Process {pid} has terminated");
+                    println!("Done, agave-validator process {pid} has terminated");
                     break;
                 }
                 libc::EINVAL => {
@@ -161,9 +162,6 @@ fn poll_until_pid_terminates(pid: u32) -> Result<()> {
                 }
             }
         }
-
-        // Give the process some time to shutdown before checking again
-        thread::sleep(Duration::from_millis(500));
     }
 
     Ok(())
