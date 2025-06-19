@@ -33,19 +33,7 @@ use {
 // allow multiple connections for NAT and any open/close overlap
 pub const DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER: usize = 8;
 
-#[deprecated(
-    since = "2.2.0",
-    note = "Use solana_streamer::quic::DEFAULT_MAX_STAKED_CONNECTIONS"
-)]
-pub const MAX_STAKED_CONNECTIONS: usize = 2000;
-
 pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
-
-#[deprecated(
-    since = "2.2.0",
-    note = "Use solana_streamer::quic::DEFAULT_MAX_UNSTAKED_CONNECTIONS"
-)]
-pub const MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
 pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
