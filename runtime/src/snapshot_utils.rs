@@ -1916,12 +1916,17 @@ fn unarchive_snapshot(
     let num_rebuilder_threads = num_cpus::get_physical()
         .saturating_sub(parallel_divisions)
         .max(1);
-    let snapshot_bundle = snapshot_fields_from_files(&file_receiver)?;
-    let accounts_db_fields = snapshot_bundle.accounts_db_fields;
+    let SnapshotFieldsBundle {
+        snapshot_version,
+        bank_fields,
+        accounts_db_fields,
+        append_vec_files,
+        ..
+    } = snapshot_fields_from_files(&file_receiver)?;
     let (storage, measure_untar) = measure_time!(
         SnapshotStorageRebuilder::rebuild_storage(
             &accounts_db_fields,
-            snapshot_bundle.append_vec_files,
+            append_vec_files,
             file_receiver,
             num_rebuilder_threads,
             next_append_vec_id,
@@ -1934,8 +1939,6 @@ fn unarchive_snapshot(
 
     create_snapshot_meta_files_for_unarchived_snapshot(&unpack_dir)?;
 
-    let SnapshotFieldsBundle { bank_fields, .. } = snapshot_bundle;
-
     Ok(UnarchivedSnapshot {
         unpack_dir,
         storage,
@@ -1943,7 +1946,7 @@ fn unarchive_snapshot(
         accounts_db_fields,
         unpacked_snapshots_dir_and_version: UnpackedSnapshotsDirAndVersion {
             unpacked_snapshots_dir,
-            snapshot_version: snapshot_bundle.snapshot_version,
+            snapshot_version,
         },
         measure_untar,
     })
