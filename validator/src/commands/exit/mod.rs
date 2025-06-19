@@ -16,9 +16,17 @@ const DEFAULT_MIN_IDLE_TIME: &str = "10";
 const DEFAULT_MAX_DELINQUENT_STAKE: &str = "5";
 
 #[derive(Debug, PartialEq)]
+pub enum PostExitAction {
+    // Run the agave-validator monitor command indefinitely
+    Monitor,
+    // Block until the exiting validator process has terminated
+    Wait,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct ExitArgs {
     pub force: bool,
-    pub monitor: bool,
+    pub post_exit_action: Option<PostExitAction>,
     pub min_idle_time: usize,
     pub max_delinquent_stake: u8,
     pub skip_new_snapshot_check: bool,
@@ -27,9 +35,17 @@ pub struct ExitArgs {
 
 impl FromClapArgMatches for ExitArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let post_exit_action = if matches.is_present("monitor") {
+            Some(PostExitAction::Monitor)
+        } else if matches.is_present("wait_for_exit") {
+            Some(PostExitAction::Wait)
+        } else {
+            None
+        };
+
         Ok(ExitArgs {
             force: matches.is_present("force"),
-            monitor: matches.is_present("monitor"),
+            post_exit_action,
             min_idle_time: value_t_or_exit!(matches, "min_idle_time", usize),
             max_delinquent_stake: value_t_or_exit!(matches, "max_delinquent_stake", u8),
             skip_new_snapshot_check: matches.is_present("skip_new_snapshot_check"),
@@ -56,6 +72,12 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .long("monitor")
                 .takes_value(false)
                 .help("Monitor the validator after sending the exit request"),
+        )
+        .arg(
+            Arg::with_name("wait_for_exit")
+                .long("wait-for-exit")
+                .conflicts_with("monitor")
+                .help("Wait for the validator to terminate after sending the exit request"),
         )
         .arg(
             Arg::with_name("min_idle_time")
@@ -109,11 +131,11 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
 
     println!("Exit request sent");
 
-    if exit_args.monitor {
-        monitor::execute(matches, ledger_path)?;
-    } else {
-        poll_until_pid_terminates(validator_pid)?;
-    }
+    match exit_args.post_exit_action {
+        None => Ok(()),
+        Some(PostExitAction::Monitor) => monitor::execute(matches, ledger_path),
+        Some(PostExitAction::Wait) => poll_until_pid_terminates(validator_pid),
+    }?;
 
     Ok(())
 }
@@ -187,7 +209,7 @@ mod tests {
                     .parse()
                     .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
                 force: false,
-                monitor: false,
+                post_exit_action: None,
                 skip_new_snapshot_check: false,
                 skip_health_check: false,
             }
@@ -212,12 +234,21 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_exit_with_monitor() {
+    fn verify_args_struct_by_command_exit_with_post_exit_action() {
         verify_args_struct_by_command(
             command(),
             vec![COMMAND, "--monitor"],
             ExitArgs {
-                monitor: true,
+                post_exit_action: Some(PostExitAction::Monitor),
+                ..ExitArgs::default()
+            },
+        );
+
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--wait-for-exit"],
+            ExitArgs {
+                post_exit_action: Some(PostExitAction::Wait),
                 ..ExitArgs::default()
             },
         );
