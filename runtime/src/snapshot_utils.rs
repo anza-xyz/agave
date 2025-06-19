@@ -302,7 +302,7 @@ pub struct UnarchivedSnapshots {
     pub next_append_vec_id: AtomicAccountsFileId,
 }
 
-/// Guard type whick keeps the unpack directories of snapshots alive.
+/// Guard type that keeps the unpack directories of snapshots alive.
 /// Once dropped, the unpack directories are removed.
 #[allow(dead_code)]
 #[derive(Debug)]
