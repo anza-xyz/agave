@@ -137,6 +137,10 @@ pub struct VersionedCrdsValue {
 pub struct Cursor(u64);
 
 impl Cursor {
+    pub fn new(slot: Slot) -> Self {
+        Self(slot)
+    }
+
     fn ordinal(&self) -> u64 {
         self.0
     }
