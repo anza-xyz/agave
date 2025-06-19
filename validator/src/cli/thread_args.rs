@@ -352,7 +352,8 @@ struct TpuTransactionReceiveThreads;
 impl ThreadArg for TpuTransactionReceiveThreads {
     const NAME: &'static str = "tpu_transaction_receive_threads";
     const LONG_NAME: &'static str = "tpu-transaction-receive-threads";
-    const HELP: &'static str = "Number of threadsto use for receiving transactions on the TPU port";
+    const HELP: &'static str =
+        "Number of threads to use for receiving transactions on the TPU port";
 
     fn default() -> usize {
         solana_streamer::quic::default_num_tpu_transaction_receive_threads()
