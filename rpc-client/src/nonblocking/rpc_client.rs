@@ -49,6 +49,7 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{
         net::SocketAddr,
         str::FromStr,
@@ -56,13 +57,6 @@ use {
     },
     tokio::time::sleep,
 };
-// inlined to avoid a solana_program dep
-const MAX_LOCKOUT_HISTORY: usize = 31;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_LOCKOUT_HISTORY,
-    solana_program::vote::state::MAX_LOCKOUT_HISTORY
-);
 
 /// A client of a remote Solana node.
 ///

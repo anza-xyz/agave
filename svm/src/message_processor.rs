@@ -126,8 +126,10 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
-        solana_secp256k1_program::new_secp256k1_instruction,
-        solana_secp256r1_program::new_secp256r1_instruction,
+        solana_secp256k1_program::{
+            eth_address_from_pubkey, new_secp256k1_instruction_with_signature,
+        },
+        solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::TransactionContext,
@@ -598,8 +600,18 @@ mod tests {
     }
 
     fn secp256k1_instruction_for_test() -> Instruction {
+        let message = b"hello";
         let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
-        new_secp256k1_instruction(&secret_key, b"hello")
+        let pubkey = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
+        let (signature, recovery_id) =
+            solana_secp256k1_program::sign_message(&secret_key.serialize(), &message[..]).unwrap();
+        new_secp256k1_instruction_with_signature(
+            &message[..],
+            &signature,
+            recovery_id,
+            &eth_address,
+        )
     }
 
     fn ed25519_instruction_for_test() -> Instruction {
@@ -612,7 +624,17 @@ mod tests {
     fn secp256r1_instruction_for_test() -> Instruction {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let secret_key = EcKey::generate(&group).unwrap();
-        new_secp256r1_instruction(b"hello", secret_key).unwrap()
+        let signature = sign_message(b"hello", &secret_key.private_key_to_der().unwrap()).unwrap();
+        let mut ctx = openssl::bn::BigNumContext::new().unwrap();
+        let pubkey = secret_key
+            .public_key()
+            .to_bytes(
+                &group,
+                openssl::ec::PointConversionForm::COMPRESSED,
+                &mut ctx,
+            )
+            .unwrap();
+        new_secp256r1_instruction_with_signature(b"hello", &signature, &pubkey.try_into().unwrap())
     }
 
     #[test]

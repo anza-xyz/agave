@@ -1,10 +1,9 @@
 [package]
 name = "transfer-from-account"
-version = "2.3.0"
+version = "3.0.0"
 edition = "2021"
 
 [dependencies]
-solana-program = { path = "../../../../sdk/program", version = "=2.2.0" }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

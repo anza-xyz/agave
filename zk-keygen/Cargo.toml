@@ -15,6 +15,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[bin]]
+name = "solana-zk-keygen"
+path = "src/main.rs"
+
 [dependencies]
 bs58 = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo", "derive"] }
@@ -31,10 +38,3 @@ tiny-bip39 = { workspace = true }
 [dev-dependencies]
 solana-pubkey = { workspace = true, features = ["rand"] }
 tempfile = { workspace = true }
-
-[[bin]]
-name = "solana-zk-keygen"
-path = "src/main.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

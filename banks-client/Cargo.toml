@@ -9,15 +9,27 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_banks_client"
+
 [dependencies]
 borsh = { workspace = true }
 futures = { workspace = true }
-solana-account = { workspace = true }
+solana-account = { workspace = true, features = ["bincode"] }
 solana-banks-interface = { workspace = true }
+solana-clock = { workspace = true }
 solana-commitment-config = { workspace = true }
+solana-hash = { workspace = true }
 solana-message = { workspace = true }
-solana-program = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
 solana-signature = { workspace = true }
+solana-sysvar = { workspace = true, features = ["bincode"] }
 solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
@@ -32,10 +44,3 @@ solana-pubkey = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_banks_client"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

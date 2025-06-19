@@ -8,12 +8,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backwards-compatibility)
 
 Release channels have their own copy of this changelog:
-* [edge - v2.3](#edge-channel)
-* [beta - v2.2](https://github.com/anza-xyz/agave/blob/v2.2/CHANGELOG.md)
-* [stable - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
+* [edge - v3.0](#edge-channel)
+* [beta - v2.3](https://github.com/anza-xyz/agave/blob/v2.3/CHANGELOG.md)
+* [stable - v2.2](https://github.com/anza-xyz/agave/blob/v2.2/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 2.3.0 - Unreleased
+## 3.0.0 - Unreleased
+
+### Validator
+
+#### Breaking
+* Remove deprecated arguments
+  * `--accounts-index-memory-limit-mb`
+  * `--accountsdb-repl-bind-address`, `--accountsdb-repl-port`, `--accountsdb-repl-threads`, `--enable-accountsdb-repl`
+  * `--disable-quic-servers`, `--enable-quic-servers`
+  * `--etcd-cacert-file`, `--etcd-cert-file`, `--etcd-domain-name`, `--etcd-endpoint`, `--etcd-key-file`, `--tower-storage`
+  * `--no-check-vote-account`
+  * `--no-rocksdb-compaction`, `--rocksdb-compaction-interval-slots`, `--rocksdb-max-compaction-jitter-slots`
+  * `--replay-slots-concurrently`
+  * `--rpc-pubsub-max-connections`, `--rpc-pubsub-max-fragment-size`, `--rpc-pubsub-max-in-buffer-capacity`, `--rpc-pubsub-max-out-buffer-capacity`, `--enable-cpi-and-log-storage`, `--minimal-rpc-api`
+  * `--skip-poh-verify`
+* Deprecated snapshot archive formats have been removed and are no longer loadable.
+* Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
+
+## 2.3.0
 
 ### Validator
 
@@ -21,7 +39,7 @@ Release channels have their own copy of this changelog:
 * ABI of `TimedTracedEvent` changed, since `PacketBatch` became an enum, which carries different packet batch types. (#5646)
 
 #### Changes
-* Account notifications for Geyser are no longer deduplicated when restorting from a snapshot.
+* Account notifications for Geyser are no longer deduplicated when restoring from a snapshot.
 * Add `--no-snapshots` to disable generating snapshots.
 * `--block-production-method central-scheduler-greedy` is now the default.
 * The default full snapshot interval is now 50,000 slots.
@@ -49,6 +67,11 @@ Release channels have their own copy of this changelog:
 #### Changes
 * `withdraw-stake` now accepts the `AVAILABLE` keyword for the amount, allowing withdrawal of unstaked lamports (#4483)
 * `solana-test-validator` will now bind to localhost (127.0.0.1) by default rather than all interfaces to improve security. Provide `--bind-address 0.0.0.0` to bind to all interfaces to restore the previous default behavior.
+
+### RPC
+
+#### Changes
+* `simulateTransaction` now includes `loadedAccountsDataSize` in its result. `loadedAccountsDataSize` is the total number of bytes loaded for all accounts in the simulated transaction.
 
 ## 2.2.0
 

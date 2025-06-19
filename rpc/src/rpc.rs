@@ -253,7 +253,6 @@ pub struct JsonRpcRequestProcessor {
     max_slots: Arc<MaxSlots>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
     max_complete_transaction_status_slot: Arc<AtomicU64>,
-    max_complete_rewards_slot: Arc<AtomicU64>,
     prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     runtime: Arc<Runtime>,
 }
@@ -417,7 +416,6 @@ impl JsonRpcRequestProcessor {
         max_slots: Arc<MaxSlots>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<Runtime>,
     ) -> (Self, Receiver<TransactionInfo>) {
@@ -440,7 +438,6 @@ impl JsonRpcRequestProcessor {
                 max_slots,
                 leader_schedule_cache,
                 max_complete_transaction_status_slot,
-                max_complete_rewards_slot,
                 prioritization_fee_cache,
                 runtime,
             },
@@ -528,7 +525,6 @@ impl JsonRpcRequestProcessor {
             max_slots: Arc::new(MaxSlots::default()),
             leader_schedule_cache,
             max_complete_transaction_status_slot: Arc::new(AtomicU64::default()),
-            max_complete_rewards_slot: Arc::new(AtomicU64::default()),
             prioritization_fee_cache: Arc::new(PrioritizationFeeCache::default()),
             runtime,
         }
@@ -1282,7 +1278,6 @@ impl JsonRpcRequestProcessor {
             > self
                 .max_complete_transaction_status_slot
                 .load(Ordering::SeqCst)
-            || slot > self.max_complete_rewards_slot.load(Ordering::SeqCst)
         {
             Err(RpcCustomError::BlockStatusNotAvailableYet { slot }.into())
         } else {
@@ -2688,14 +2683,18 @@ fn get_token_program_id_and_mint(
 
 fn _send_transaction(
     meta: JsonRpcRequestProcessor,
+    message_hash: Hash,
     signature: Signature,
+    blockhash: Hash,
     wire_transaction: Vec<u8>,
     last_valid_block_height: u64,
     durable_nonce_info: Option<(Pubkey, Hash)>,
     max_retries: Option<usize>,
 ) -> Result<String> {
     let transaction_info = TransactionInfo::new(
+        message_hash,
         signature,
+        blockhash,
         wire_transaction,
         last_valid_block_height,
         durable_nonce_info,
@@ -3805,6 +3804,7 @@ pub mod rpc_full {
                 Error::internal_error()
             })?;
 
+            let message_hash = transaction.message().hash();
             let signature = if !transaction.signatures.is_empty() {
                 transaction.signatures[0]
             } else {
@@ -3813,7 +3813,9 @@ pub mod rpc_full {
 
             _send_transaction(
                 meta,
+                message_hash,
                 signature,
+                blockhash,
                 wire_transaction,
                 last_valid_block_height,
                 None,
@@ -3859,15 +3861,17 @@ pub mod rpc_full {
                 preflight_bank,
                 preflight_bank.get_reserved_account_keys(),
             )?;
+            let blockhash = *transaction.message().recent_blockhash();
+            let message_hash = *transaction.message_hash();
             let signature = *transaction.signature();
 
             let mut last_valid_block_height = preflight_bank
-                .get_blockhash_last_valid_block_height(transaction.message().recent_blockhash())
+                .get_blockhash_last_valid_block_height(&blockhash)
                 .unwrap_or(0);
 
             let durable_nonce_info = transaction
                 .get_durable_nonce()
-                .map(|&pubkey| (pubkey, *transaction.message().recent_blockhash()));
+                .map(|&pubkey| (pubkey, blockhash));
             if durable_nonce_info.is_some() || (skip_preflight && last_valid_block_height == 0) {
                 // While it uses a defined constant, this last_valid_block_height value is chosen arbitrarily.
                 // It provides a fallback timeout for durable-nonce transaction retries in case of
@@ -3904,6 +3908,7 @@ pub mod rpc_full {
                     logs,
                     post_simulation_accounts: _,
                     units_consumed,
+                    loaded_accounts_data_size,
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
                 } = preflight_bank.simulate_transaction(&transaction, false)
@@ -3923,6 +3928,7 @@ pub mod rpc_full {
                             logs: Some(logs),
                             accounts: None,
                             units_consumed: Some(units_consumed),
+                            loaded_accounts_data_size: Some(loaded_accounts_data_size),
                             return_data: return_data.map(|return_data| return_data.into()),
                             inner_instructions: None,
                             replacement_blockhash: None,
@@ -3934,7 +3940,9 @@ pub mod rpc_full {
 
             _send_transaction(
                 meta,
+                message_hash,
                 signature,
+                blockhash,
                 wire_transaction,
                 last_valid_block_height,
                 durable_nonce_info,
@@ -4002,6 +4010,7 @@ pub mod rpc_full {
                 logs,
                 post_simulation_accounts,
                 units_consumed,
+                loaded_accounts_data_size,
                 return_data,
                 inner_instructions,
             } = bank.simulate_transaction(&transaction, enable_cpi_recording);
@@ -4068,6 +4077,7 @@ pub mod rpc_full {
                     logs: Some(logs),
                     accounts,
                     units_consumed: Some(units_consumed),
+                    loaded_accounts_data_size: Some(loaded_accounts_data_size),
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
                     replacement_blockhash: blockhash,
@@ -4548,12 +4558,14 @@ pub mod tests {
             commitment::{BlockCommitment, CommitmentSlots},
             non_circulating_supply::non_circulating_accounts,
         },
+        solana_sdk_ids::bpf_loader_upgradeable,
         solana_send_transaction_service::{
             tpu_info::NullTpuInfo,
             transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
         solana_sha256_hasher::hash,
         solana_signer::Signer,
+        solana_svm::account_loader::TRANSACTION_ACCOUNT_BASE_SIZE,
         solana_system_interface::{instruction as system_instruction, program as system_program},
         solana_system_transaction as system_transaction,
         solana_sysvar::slot_hashes::SlotHashes,
@@ -4628,6 +4640,22 @@ pub mod tests {
         } else {
             panic!("Expected single response");
         }
+    }
+
+    fn expected_loaded_accounts_data_size(bank: &Bank, tx: &Transaction) -> u32 {
+        let mut loaded_accounts_data_size = 0;
+        for key in tx.message.account_keys.iter() {
+            if let Some(account) = bank.get_account(key) {
+                assert!(
+                    *account.owner() != bpf_loader_upgradeable::id(),
+                    "LoaderV3 is not supported; to add it, parse the program account and add its programdata size.",
+                );
+                loaded_accounts_data_size +=
+                    (account.data().len() + TRANSACTION_ACCOUNT_BASE_SIZE) as u32;
+            }
+        }
+
+        loaded_accounts_data_size
     }
 
     fn test_builtin_processor(
@@ -4774,7 +4802,6 @@ pub mod tests {
             let max_slots = Arc::new(MaxSlots::default());
             // note that this means that slot 0 will always be considered complete
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::new(0));
-            let max_complete_rewards_slot = Arc::new(AtomicU64::new(0));
             let optimistically_confirmed_bank =
                 OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
 
@@ -4800,7 +4827,6 @@ pub mod tests {
                 max_slots.clone(),
                 Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
                 max_complete_transaction_status_slot.clone(),
-                max_complete_rewards_slot,
                 Arc::new(PrioritizationFeeCache::default()),
                 service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
             )
@@ -5978,6 +6004,8 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
+        let loaded_accounts_data_size = expected_loaded_accounts_data_size(&bank, &tx);
+
         // Good signature with sigVerify=true
         let req = format!(
             r#"{{"jsonrpc":"2.0",
@@ -6017,6 +6045,7 @@ pub mod tests {
                     ],
                     "err":null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6103,6 +6132,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6133,6 +6163,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6187,6 +6218,7 @@ pub mod tests {
                     "err":"BlockhashNotFound",
                     "accounts":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize":0,
                     "logs":[],
                     "replacementBlockhash": null,
                     "returnData": null,
@@ -6220,6 +6252,7 @@ pub mod tests {
                     "accounts":null,
                     "err":null,
                     "innerInstructions":null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6312,6 +6345,8 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
+        let loaded_accounts_data_size = expected_loaded_accounts_data_size(&bank, &tx);
+
         let req = format!(
             r#"{{"jsonrpc":"2.0",
                  "id":1,
@@ -6368,6 +6403,7 @@ pub mod tests {
                     ],
                     "err": null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program 11111111111111111111111111111111 invoke [1]",
                         "Program 11111111111111111111111111111111 success"
@@ -6424,6 +6460,8 @@ pub mod tests {
         // Simulation bank must be frozen
         bank.freeze();
 
+        let loaded_accounts_data_size = expected_loaded_accounts_data_size(&bank, &tx);
+
         // `innerInstructions` not provided, should not be in response
         let req = format!(
             r#"{{"jsonrpc":"2.0",
@@ -6445,6 +6483,7 @@ pub mod tests {
                     "accounts": null,
                     "err":null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6488,6 +6527,7 @@ pub mod tests {
                     "accounts": null,
                     "err":null,
                     "innerInstructions": null,
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6552,6 +6592,7 @@ pub mod tests {
                         ]
                         }
                     ],
+                    "loadedAccountsDataSize": loaded_accounts_data_size,
                     "logs":[
                         "Program TestProgram11111111111111111111111111111111 invoke [1]",
                         "I am logging from a builtin program!",
@@ -6775,7 +6816,6 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
-            Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
             runtime.clone(),
         );
@@ -6813,7 +6853,7 @@ pub mod tests {
         assert_eq!(
             res,
             Some(
-                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
+                r#"{"jsonrpc":"2.0","error":{"code":-32002,"message":"Transaction simulation failed: Blockhash not found","data":{"accounts":null,"err":"BlockhashNotFound","innerInstructions":null,"loadedAccountsDataSize":0,"logs":[],"replacementBlockhash":null,"returnData":null,"unitsConsumed":0}},"id":1}"#.to_string(),
             )
         );
 
@@ -7078,7 +7118,6 @@ pub mod tests {
             Arc::new(RwLock::new(LargestAccountsCache::new(30))),
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
-            Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
             runtime,
@@ -8749,11 +8788,9 @@ pub mod tests {
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let mut pending_optimistically_confirmed_banks = HashSet::new();
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
             exit,
             max_complete_transaction_status_slot.clone(),
-            max_complete_rewards_slot.clone(),
             bank_forks.clone(),
             block_commitment_cache.clone(),
             optimistically_confirmed_bank.clone(),
@@ -8782,7 +8819,6 @@ pub mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             Arc::new(PrioritizationFeeCache::default()),
             service_runtime(rpc_threads, rpc_blocking_threads, rpc_niceness_adj),
         );

@@ -7,7 +7,7 @@ use {
 use {
     crate::{
         bank::{Bank, BankSlotDelta},
-        epoch_stakes::EpochStakes,
+        epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::{bank_from_streams, BankIncrementalSnapshotPersistence},
         snapshot_archive_info::{
@@ -37,7 +37,7 @@ use {
         },
         accounts_hash::MerkleOrLatticeAccountsHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
-        utils::delete_contents_of_path,
+        utils::remove_dir_contents,
     },
     solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot},
@@ -52,10 +52,6 @@ use {
         sync::{atomic::AtomicBool, Arc},
     },
 };
-
-pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 50_000;
-pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 100;
-pub const DISABLED_SNAPSHOT_ARCHIVE_INTERVAL: Slot = Slot::MAX;
 
 pub fn serialize_status_cache(
     slot_deltas: &[BankSlotDelta],
@@ -384,7 +380,7 @@ pub fn bank_from_snapshot_dir(
     // Clear the contents of the account paths run directories.  When constructing the bank, the appendvec
     // files will be extracted from the snapshot hardlink directories into these run/ directories.
     for path in account_paths {
-        delete_contents_of_path(path);
+        remove_dir_contents(path);
     }
 
     let next_append_vec_id = Arc::new(AtomicAccountsFileId::new(0));
@@ -860,7 +856,7 @@ fn verify_epoch_stakes(bank: &Bank) -> std::result::Result<(), VerifyEpochStakes
 /// This version of the function exists to facilitate testing.
 /// Normal callers should use `verify_epoch_stakes()`.
 fn _verify_epoch_stakes(
-    epoch_stakes_map: &HashMap<Epoch, EpochStakes>,
+    epoch_stakes_map: &HashMap<Epoch, VersionedEpochStakes>,
     required_epochs: RangeInclusive<Epoch>,
 ) -> std::result::Result<(), VerifyEpochStakesError> {
     // Ensure epoch stakes from the snapshot does not contain entries for invalid epochs.
@@ -1310,7 +1306,7 @@ mod tests {
         bank1.fill_bank_with_ticks_for_tests();
 
         // Mark the entry for pubkey1 as obsolete in slot0
-        account_storage_entry.mark_account_obsolete(offset, 0, slot);
+        account_storage_entry.mark_accounts_obsolete(vec![(offset, 0)].into_iter(), slot);
 
         let (_tmp_dir, accounts_dir) = create_tmp_accounts_dir_for_tests();
         let bank_snapshots_dir = tempfile::TempDir::new().unwrap();

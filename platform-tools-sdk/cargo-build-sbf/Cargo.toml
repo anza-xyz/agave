@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[[bin]]
+name = "cargo-build-sbf"
+path = "src/main.rs"
+
+[features]
+program = []
+
 [dependencies]
 bzip2 = { workspace = true }
 cargo_metadata = { workspace = true }
@@ -18,7 +25,7 @@ log = { workspace = true, features = ["std"] }
 regex = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "rustls-tls"] }
 semver = { workspace = true }
-solana-file-download = "=2.2.1"
+solana-file-download = "=2.2.2"
 solana-keypair = "=2.2.1"
 solana-logger = "=2.3.1"
 tar = { workspace = true }
@@ -27,10 +34,3 @@ tar = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 serial_test = { workspace = true }
-
-[features]
-program = []
-
-[[bin]]
-name = "cargo-build-sbf"
-path = "src/main.rs"

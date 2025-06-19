@@ -32,12 +32,14 @@ use {
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
+        bank::Bank,
+        bank_forks::BankForks,
+        commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
-        snapshot_utils,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils::{self, SnapshotInterval},
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
@@ -280,14 +282,17 @@ impl RpcRequestMiddleware {
         }
         let snapshot_timeout = self.snapshot_config.as_ref().and_then(|config| {
             snapshot_type.map(|st| {
-                let slots = match st {
-                    SnapshotKind::Full => config.full_snapshot_archive_interval_slots,
-                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval_slots,
+                let interval = match st {
+                    SnapshotKind::Full => config.full_snapshot_archive_interval,
+                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval,
                 };
-                let computed = if slots == DISABLED_SNAPSHOT_ARCHIVE_INTERVAL {
-                    Duration::ZERO
-                } else {
-                    Duration::from_millis(slots.saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT))
+                let computed = match interval {
+                    SnapshotInterval::Disabled => Duration::ZERO,
+                    SnapshotInterval::Slots(slots) => Duration::from_millis(
+                        slots
+                            .get()
+                            .saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT),
+                    ),
                 };
                 let fallback = match st {
                     SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
@@ -484,7 +489,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
-    pub max_complete_rewards_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub client_option: ClientOption<'a>,
 }
@@ -548,7 +552,6 @@ impl JsonRpcService {
                     config.leader_schedule_cache,
                     client.clone(),
                     config.max_complete_transaction_status_slot,
-                    config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
                     runtime,
                 )?;
@@ -599,7 +602,6 @@ impl JsonRpcService {
                     config.leader_schedule_cache,
                     client,
                     config.max_complete_transaction_status_slot,
-                    config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
                     runtime,
                 )?;
@@ -630,7 +632,6 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         connection_cache: Arc<ConnectionCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Result<Self, String> {
         let runtime = service_runtime(
@@ -678,7 +679,6 @@ impl JsonRpcService {
             leader_schedule_cache,
             client.clone(),
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
             runtime,
         )?;
@@ -713,7 +713,6 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         client: Client,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
@@ -766,7 +765,6 @@ impl JsonRpcService {
                                 blockstore.clone(),
                                 block_commitment_cache.clone(),
                                 max_complete_transaction_status_slot.clone(),
-                                max_complete_rewards_slot.clone(),
                                 ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
                             )))
@@ -807,7 +805,6 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
             Arc::clone(&runtime),
         );
@@ -1023,7 +1020,6 @@ mod tests {
             Arc::new(LeaderScheduleCache::default()),
             connection_cache,
             Arc::new(AtomicU64::default()),
-            Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         )
         .expect("assume successful JsonRpcService start");
@@ -1137,49 +1133,57 @@ mod tests {
         assert!(!rrm.is_file_get_path("/incremental-snapshot.tar.bz2"));
 
         assert!(!rrm.is_file_get_path(
-            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm.is_file_get_path(
-            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
-            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
-        ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
-        assert!(rrm_with_snapshot_config
+        assert!(rrm_with_snapshot_config.is_file_get_path(
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.lz4"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+        ));
+        assert!(!rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"));
-        assert!(rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
-        ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.lz4"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
 
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
 
-        assert!(!rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar"));
+        assert!(
+            !rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar.zst")
+        );
         assert!(!rrm_with_snapshot_config
-            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar"));
+            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar.zst"));
 
         assert!(!rrm.is_file_get_path("/"));
         assert!(!rrm.is_file_get_path("//"));
@@ -1195,20 +1199,23 @@ mod tests {
         assert!(!rrm.is_file_get_path("..//"));
         assert!(!rrm.is_file_get_path("🎣"));
 
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
     }
 

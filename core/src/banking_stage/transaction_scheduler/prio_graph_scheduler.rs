@@ -24,8 +24,8 @@ use {
     prio_graph::{AccessKind, GraphNode, PrioGraph},
     solana_cost_model::block_cost_limits::MAX_BLOCK_UNITS,
     solana_measure::measure_us,
-    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_pubkey::Pubkey,
+    solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm_transaction::svm_message::SVMMessage,
     std::num::Saturating,
 };
@@ -265,10 +265,10 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
                             >= self.config.target_transactions_per_batch
                         {
                             num_sent += self.common.send_batch(
-                                    &mut batches,
-                                    thread_id,
-                                    self.config.target_transactions_per_batch,
-                                )?;
+                                &mut batches,
+                                thread_id,
+                                self.config.target_transactions_per_batch,
+                            )?;
                         }
 
                         // if the thread is at max_cu_per_thread, remove it from the schedulable threads
@@ -291,7 +291,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
             }
 
             // Send all non-empty batches
-            num_sent += self.common
+            num_sent += self
+                .common
                 .send_batches(&mut batches, self.config.target_transactions_per_batch)?;
 
             // Refresh window budget and do chunked pops
@@ -305,7 +306,8 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for PrioGraphScheduler<Tx> {
         }
 
         // Send batches for any remaining transactions
-        num_sent += self.common
+        num_sent += self
+            .common
             .send_batches(&mut batches, self.config.target_transactions_per_batch)?;
 
         // Push unschedulable ids back into the container
@@ -433,12 +435,12 @@ mod tests {
         },
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_compute_budget_interface::ComputeBudgetInstruction,
         solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_keypair::Keypair,
+        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},

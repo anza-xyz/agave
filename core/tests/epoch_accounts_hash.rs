@@ -32,7 +32,7 @@ use {
         snapshot_bank_utils,
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
-        snapshot_utils,
+        snapshot_utils::{self, SnapshotInterval},
     },
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
@@ -40,6 +40,7 @@ use {
     solana_time_utils::timestamp,
     std::{
         mem::ManuallyDrop,
+        num::NonZeroU64,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex, RwLock,
@@ -79,8 +80,12 @@ impl TestEnvironment {
         incremental_snapshot_archive_interval_slots: Slot,
     ) -> TestEnvironment {
         let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
+            full_snapshot_archive_interval: SnapshotInterval::Slots(
+                NonZeroU64::new(full_snapshot_archive_interval_slots).unwrap(),
+            ),
+            incremental_snapshot_archive_interval: SnapshotInterval::Slots(
+                NonZeroU64::new(incremental_snapshot_archive_interval_slots).unwrap(),
+            ),
             ..SnapshotConfig::default()
         };
         Self::_new(snapshot_config)

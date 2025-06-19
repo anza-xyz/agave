@@ -121,11 +121,7 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
             NonZeroUsize
         ),
         rayon_global_threads: value_t_or_exit!(matches, RayonGlobalThreadsArg::NAME, NonZeroUsize),
-        replay_forks_threads: if matches.is_present("replay_slots_concurrently") {
-            NonZeroUsize::new(4).expect("4 is non-zero")
-        } else {
-            value_t_or_exit!(matches, ReplayForksThreadsArg::NAME, NonZeroUsize)
-        },
+        replay_forks_threads: value_t_or_exit!(matches, ReplayForksThreadsArg::NAME, NonZeroUsize),
         replay_transactions_threads: value_t_or_exit!(
             matches,
             ReplayTransactionsThreadsArg::NAME,

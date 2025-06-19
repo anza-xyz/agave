@@ -99,6 +99,9 @@ pub enum AppendVecError {
 
     #[error("offset ({0}) is larger than file size ({1})")]
     OffsetOutOfBounds(usize, usize),
+
+    #[error("file size ({1}) and current length ({0}) do not match for '{0}'")]
+    SizeMismatch(PathBuf, usize, u64),
 }
 
 /// A slice whose contents are known to be valid.
@@ -443,6 +446,35 @@ impl AppendVec {
         Ok((new, num_accounts))
     }
 
+    /// Creates a new AppendVec for the underlying storage at `path`
+    ///
+    /// This version of `new()` may only be called when reconstructing storages as part of startup.
+    /// It trusts the snapshot's value for `current_len`, and relies on later index generation or
+    /// accounts verification to ensure it is valid.
+    pub fn new_for_startup(
+        path: impl Into<PathBuf>,
+        current_len: usize,
+        storage_access: StorageAccess,
+    ) -> Result<Self> {
+        let new = Self::new_from_file_unchecked(path, current_len, storage_access)?;
+
+        // The current_len is allowed to be either exactly the same as file_size, or
+        // u64-aligned-equivalent to file_size.  This is because `flush` and `shink` compute the
+        // required file size with *aligned* stored size per account, including the very last
+        // account.  So the file size may have padding to the next u64-alignment.
+        // For our usage, this is still safe as these padding bytes could never be used for an
+        // account.  This renders the `get_` and `scan_` functions safe.
+        if (current_len as u64 == new.file_size)
+            || (u64_align!(current_len) as u64 == new.file_size)
+        {
+            Ok(new)
+        } else {
+            Err(AccountsFileError::AppendVecError(
+                AppendVecError::SizeMismatch(new.path.clone(), current_len, new.file_size),
+            ))
+        }
+    }
+
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
     #[cfg_attr(not(unix), allow(unused_variables))]
     pub fn new_from_file_unchecked(
@@ -616,8 +648,38 @@ impl AppendVec {
         ValidSlice(&mmap[..self.len()])
     }
 
-    /// calls `callback` with the stored account metadata for the account at `offset` if its data doesn't overrun
-    /// the internal buffer. Otherwise return None.
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
+        &self,
+        offset: usize,
+        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
+    ) -> Option<Ret> {
+        self.get_stored_account_no_data_callback(offset, |stored_account| {
+            let account = StoredAccountInfoWithoutData {
+                pubkey: stored_account.pubkey(),
+                lamports: stored_account.lamports(),
+                owner: stored_account.owner(),
+                data_len: stored_account.data_len() as usize,
+                executable: stored_account.executable(),
+                rent_epoch: stored_account.rent_epoch(),
+            };
+            callback(account)
+        })
+    }
+
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
         offset: usize,
@@ -835,23 +897,6 @@ impl AppendVec {
                 })
             }
         }
-    }
-
-    /// Returns the `IndexInfo` for the account at `offset`.
-    ///
-    /// Only intended to be used with the accounts index.
-    pub(crate) fn get_account_index_info(&self, offset: usize) -> Option<IndexInfo> {
-        self.get_stored_account_no_data_callback(offset, |account| IndexInfo {
-            stored_size_aligned: account.stored_size,
-            index_info: IndexInfoInner {
-                pubkey: *account.pubkey(),
-                lamports: account.lamports(),
-                offset: account.offset(),
-                data_len: account.data_len(),
-                executable: account.executable(),
-                rent_epoch: account.rent_epoch(),
-            },
-        })
     }
 
     /// Return Ok(index_of_matching_owner) if the account owner at `offset` is one of the pubkeys in `owners`.

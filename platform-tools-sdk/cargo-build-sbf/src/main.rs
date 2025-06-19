@@ -47,6 +47,7 @@ pub struct Config<'a> {
     jobs: Option<String>,
     arch: &'a str,
     optimize_size: bool,
+    lto: bool,
 }
 
 impl Default for Config<'_> {
@@ -78,6 +79,7 @@ impl Default for Config<'_> {
             jobs: None,
             arch: "v0",
             optimize_size: false,
+            lto: false,
         }
     }
 }
@@ -553,6 +555,12 @@ fn invoke_cargo(config: &Config) {
     if config.optimize_size {
         target_rustflags = Cow::Owned(format!("{} -C opt-level=s", &target_rustflags));
     }
+    if config.lto {
+        target_rustflags = Cow::Owned(format!(
+            "{} -C embed-bitcode=yes -C lto=fat",
+            &target_rustflags
+        ));
+    }
     if config.debug {
         // Replace with -Zsplit-debuginfo=packed when stabilized.
         target_rustflags = Cow::Owned(format!("{} -g", &target_rustflags));
@@ -878,6 +886,14 @@ fn main() {
                 .takes_value(false)
                 .help("Optimize program for size. This option may reduce program size, potentially increasing CU consumption.")
         )
+        .arg(
+            Arg::new("lto")
+                .long("lto")
+                .takes_value(false)
+                .help("Enable Link-Time Optimization (LTO) for all crates being built. \
+                This option may decrease program size and CU consumption. The default option is LTO \
+                disabled, as one may get mixed results with it.")
+        )
         .get_matches_from(args);
 
     let sbf_sdk: PathBuf = matches.value_of_t_or_exit("sbf_sdk");
@@ -948,6 +964,7 @@ fn main() {
         jobs: matches.value_of_t("jobs").ok(),
         arch: matches.value_of("arch").unwrap(),
         optimize_size: matches.is_present("optimize_size"),
+        lto: matches.is_present("lto"),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {

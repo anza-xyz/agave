@@ -17,12 +17,15 @@ use {
         BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation,
     },
+    solana_clock::Slot,
     solana_commitment_config::CommitmentLevel,
+    solana_hash::Hash,
     solana_message::Message,
-    solana_program::{
-        clock::Slot, hash::Hash, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar,
-    },
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_signature::Signature,
+    solana_sysvar::Sysvar,
     solana_transaction::versioned::VersionedTransaction,
     tarpc::{
         client::{self, NewClient, RequestDispatch},

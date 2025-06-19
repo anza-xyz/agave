@@ -17,20 +17,18 @@ use {
     anyhow::Result,
     log::*,
     prost::Message,
+    solana_clock::{Epoch, Slot},
     solana_entry::entry::VerifyRecyclers,
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         restart_crds_values::RestartLastVotedForkSlots,
     },
+    solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::Blockstore,
         blockstore_processor::{process_single_slot, ConfirmationProgress, ProcessOptions},
         leader_schedule_cache::LeaderScheduleCache,
-    },
-    solana_program::{
-        clock::{Epoch, Slot},
-        hash::Hash,
     },
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -663,7 +661,6 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
                 &opts,
                 &recyclers,
                 &mut progress,
-                None,
                 None,
                 None,
                 None,
@@ -1443,6 +1440,7 @@ mod tests {
             crds_value::CrdsValue,
             restart_crds_values::{RestartHeaviestFork, RestartLastVotedForkSlots},
         },
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{create_new_ledger, entries_to_test_shreds, Blockstore},
@@ -1450,13 +1448,9 @@ mod tests {
             blockstore_processor::{fill_blockstore_slot_with_ticks, test_process_blockstore},
             get_tmp_ledger_path_auto_delete,
         },
-        solana_program::{
-            hash::Hash,
-            vote::state::{TowerSync, Vote},
-        },
         solana_pubkey::Pubkey,
         solana_runtime::{
-            epoch_stakes::EpochStakes,
+            epoch_stakes::VersionedEpochStakes,
             genesis_utils::{
                 create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
             },
@@ -1469,6 +1463,7 @@ mod tests {
         solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
         solana_vote::vote_account::VoteAccount,
+        solana_vote_interface::state::{TowerSync, Vote},
         solana_vote_program::vote_state::create_account_with_authorized,
         std::{fs::remove_file, sync::Arc, thread::Builder},
         tempfile::TempDir,
@@ -2023,8 +2018,8 @@ mod tests {
                 )
             })
             .collect();
-        let epoch2_eopch_stakes = EpochStakes::new_for_tests(vote_accounts_hash_map, 2);
-        new_root_bank.set_epoch_stakes_for_test(2, epoch2_eopch_stakes);
+        let epoch2_epoch_stakes = VersionedEpochStakes::new_for_tests(vote_accounts_hash_map, 2);
+        new_root_bank.set_epoch_stakes_for_test(2, epoch2_epoch_stakes);
         let _ = insert_slots_into_blockstore(
             test_state.blockstore.clone(),
             0,
@@ -2053,7 +2048,6 @@ mod tests {
             &opts,
             &recyclers,
             &mut progress,
-            None,
             None,
             None,
             None,

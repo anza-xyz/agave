@@ -11,7 +11,7 @@ use {
         cluster_info::ClusterInfo, contact_info::ContactInfo, crds::Cursor, epoch_slots::EpochSlots,
     },
     solana_pubkey::Pubkey,
-    solana_runtime::{bank::Bank, epoch_stakes::EpochStakes},
+    solana_runtime::{bank::Bank, epoch_stakes::VersionedEpochStakes},
     solana_time_utils::AtomicInterval,
     std::{
         collections::{HashMap, VecDeque},
@@ -42,8 +42,8 @@ struct EpochStakeInfo {
     total_stake: Stake,
 }
 
-impl From<&EpochStakes> for EpochStakeInfo {
-    fn from(stakes: &EpochStakes) -> Self {
+impl From<&VersionedEpochStakes> for EpochStakeInfo {
+    fn from(stakes: &VersionedEpochStakes) -> Self {
         let validator_stakes = ValidatorStakesMap::from_iter(
             stakes
                 .node_id_to_vote_accounts()

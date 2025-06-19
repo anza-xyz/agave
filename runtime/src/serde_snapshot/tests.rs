@@ -147,13 +147,12 @@ mod serde_snapshot_tests {
             io::copy(&mut reader, &mut writer)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, num_accounts) =
+            let (accounts_file, _num_accounts) =
                 AccountsFile::new_from_file(output_path, reader.len(), storage_access)?;
             let new_storage_entry = AccountStorageEntry::new_existing(
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
-                num_accounts,
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
@@ -225,7 +224,7 @@ mod serde_snapshot_tests {
         let mut pubkeys: Vec<Pubkey> = vec![];
         create_test_accounts(&accounts, &mut pubkeys, 100, slot);
         check_accounts_local(&accounts, &pubkeys, 100);
-        accounts.add_root(slot);
+        accounts.accounts_db.add_root_and_flush_write_cache(slot);
         let accounts_delta_hash = accounts.accounts_db.calculate_accounts_delta_hash(slot);
         let accounts_hash = AccountsHash(Hash::new_unique());
         accounts

@@ -1,0 +1,19 @@
+[package]
+name = "agave-io-uring"
+description = "Agave io_uring wrapper"
+documentation = "https://docs.rs/agave-io-uring"
+version = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+license = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+libc = { workspace = true }
+log = { workspace = true }
+slab = { workspace = true }
+smallvec = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = { workspace = true }

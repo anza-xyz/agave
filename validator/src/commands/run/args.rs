@@ -4,8 +4,8 @@ use {
     solana_clap_utils::{
         hidden_unless_forced,
         input_validators::{
-            is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
-            is_slot, is_within_range, validate_cpu_ranges,
+            is_keypair_or_ask_keyword, is_non_zero, is_parsable, is_pow2, is_pubkey,
+            is_pubkey_or_keypair, is_slot, is_within_range, validate_cpu_ranges,
             validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
@@ -126,7 +126,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .value_name("RPC_URL")
             .requires("entrypoint")
-            .conflicts_with_all(&["no_check_vote_account", "no_voting"])
+            .conflicts_with_all(&["no_voting"])
             .help(
                 "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
                  must expose `--full-rpc-api`",
@@ -162,7 +162,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("full_rpc_api")
             .long("full-rpc-api")
-            .conflicts_with("minimal_rpc_api")
             .takes_value(false)
             .help("Expose RPC methods for querying chain state and transaction history"),
     )
@@ -350,10 +349,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("HOST")
             .takes_value(true)
             .validator(solana_net_utils::is_host)
-            .help(
-                "Gossip DNS name or IP address for the validator to advertise in gossip \
-                 [default: ask --entrypoint, or 127.0.0.1 when --entrypoint is not provided]",
-            ),
+            .hidden(hidden_unless_forced())
+            .help("DEPRECATED: Use --bind-address instead."),
     )
     .arg(
         Arg::with_name("public_tpu_addr")
@@ -377,15 +374,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
                 "Specify TPU Forwards address to advertise in gossip [default: ask \
                  --entrypoint or localhostwhen --entrypoint is not provided]",
             ),
-    )
-    .arg(
-        Arg::with_name("tpu_vortexor_receiver_address")
-            .long("tpu-vortexor-receiver-address")
-            .value_name("HOST:PORT")
-            .takes_value(true)
-            .hidden(hidden_unless_forced())
-            .validator(solana_net_utils::is_host_port)
-            .help("TPU Vortexor Receiver address to which verified transaction packet will be forwarded."),
     )
     .arg(
         Arg::with_name("public_rpc_addr")
@@ -440,12 +428,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .takes_value(true)
             .default_value(&default_args.incremental_snapshot_archive_interval_slots)
+            .validator(is_non_zero)
             .help("Number of slots between generating snapshots")
             .long_help(
                 "Number of slots between generating snapshots. \
                  If incremental snapshots are enabled, this sets the incremental snapshot interval. \
                  If incremental snapshots are disabled, this sets the full snapshot interval. \
-                 To disable all snapshot generation, see --no-snapshots.",
+                 Must be greater than zero.",
             ),
     )
     .arg(
@@ -454,10 +443,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .takes_value(true)
             .default_value(&default_args.full_snapshot_archive_interval_slots)
+            .validator(is_non_zero)
             .help("Number of slots between generating full snapshots")
             .long_help(
-                "Number of slots between generating full snapshots. Must be a multiple of the \
-                 incremental snapshot interval. Only used when incremental snapshots are enabled.",
+                "Number of slots between generating full snapshots. \
+                 Only used when incremental snapshots are enabled. \
+                 Must be greater than the incremental snapshot interval. \
+                 Must be greater than zero.",
             ),
     )
     .arg(

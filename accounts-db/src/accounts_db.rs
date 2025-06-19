@@ -1126,12 +1126,7 @@ impl AccountStorageEntry {
         })
     }
 
-    pub fn new_existing(
-        slot: Slot,
-        id: AccountsFileId,
-        accounts: AccountsFile,
-        _num_accounts: usize,
-    ) -> Self {
+    pub fn new_existing(slot: Slot, id: AccountsFileId, accounts: AccountsFile) -> Self {
         Self {
             id,
             slot,
@@ -1176,12 +1171,18 @@ impl AccountStorageEntry {
         self.alive_bytes.load(Ordering::Acquire)
     }
 
-    /// Marks the account at the given offset as obsolete
-    pub fn mark_account_obsolete(&self, offset: Offset, data_len: usize, slot: Slot) {
-        self.obsolete_accounts
-            .write()
-            .unwrap()
-            .push((offset, data_len, slot));
+    /// Marks the accounts at the given offsets as obsolete
+    pub fn mark_accounts_obsolete(
+        &self,
+        newly_obsolete_accounts: impl ExactSizeIterator<Item = (Offset, usize)>,
+        slot: Slot,
+    ) {
+        let mut obsolete_accounts_list = self.obsolete_accounts.write().unwrap();
+        obsolete_accounts_list.reserve(newly_obsolete_accounts.len());
+
+        for (offset, data_len) in newly_obsolete_accounts {
+            obsolete_accounts_list.push((offset, data_len, slot));
+        }
     }
 
     /// Returns the accounts that were marked obsolete as of the passed in slot
@@ -1263,21 +1264,6 @@ impl AccountStorageEntry {
         let mut count_and_status = self.count_and_status.lock_write();
         *count_and_status = (count_and_status.0 + num_accounts, count_and_status.1);
         self.alive_bytes.fetch_add(num_bytes, Ordering::Release);
-    }
-
-    // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
-    // So also mark this function as DCOU to squelch an "unused function" clippy warning.
-    #[cfg(feature = "dev-context-only-utils")]
-    fn try_available(&self) -> bool {
-        let mut count_and_status = self.count_and_status.lock_write();
-        let (count, status) = *count_and_status;
-
-        if status == AccountStorageStatus::Available {
-            *count_and_status = (count, AccountStorageStatus::Candidate);
-            true
-        } else {
-            false
-        }
     }
 
     /// returns # of accounts remaining in the storage
@@ -1771,9 +1757,8 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
         let some_data_len = 5;
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
-        accounts_db.store_uncached(some_slot, &[(&key, &account)]);
-        accounts_db.add_root(0);
-
+        accounts_db.store_for_tests(some_slot, &[(&key, &account)]);
+        accounts_db.add_root_and_flush_write_cache(0);
         accounts_db
     }
 }
@@ -2112,6 +2097,7 @@ impl AccountsDb {
             reset_accounts,
             pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
+            MarkAccountsObsolete::No,
         );
         measure.stop();
         debug!("{}", measure);
@@ -2438,28 +2424,11 @@ impl AccountsDb {
         is_startup: bool,
         timings: &mut CleanKeyTimings,
         epoch_schedule: &EpochSchedule,
-        old_storages_policy: OldStoragesPolicy,
     ) -> CleaningCandidates {
         let oldest_non_ancient_slot = self.get_oldest_non_ancient_slot(epoch_schedule);
         let mut dirty_store_processing_time = Measure::start("dirty_store_processing");
         let max_root_inclusive = self.accounts_index.max_root_inclusive();
         let max_slot_inclusive = max_clean_root_inclusive.unwrap_or(max_root_inclusive);
-
-        if old_storages_policy == OldStoragesPolicy::Clean {
-            let slot_one_epoch_old =
-                max_root_inclusive.saturating_sub(epoch_schedule.slots_per_epoch);
-            // do nothing special for these 100 old storages that will likely get cleaned up shortly
-            let acceptable_straggler_slot_count = 100;
-            let old_slot_cutoff =
-                slot_one_epoch_old.saturating_sub(acceptable_straggler_slot_count);
-            let (old_storages, old_slots) = self.get_storages(..old_slot_cutoff);
-            let num_old_storages = old_storages.len();
-            for (old_slot, old_storage) in std::iter::zip(old_slots, old_storages) {
-                self.dirty_stores.entry(old_slot).or_insert(old_storage);
-            }
-            info!("Marked {num_old_storages} old storages as dirty");
-        }
-
         let mut dirty_stores = Vec::with_capacity(self.dirty_stores.len());
         // find the oldest dirty slot
         // we'll add logging if that append vec cannot be marked dead
@@ -2571,16 +2540,7 @@ impl AccountsDb {
 
     /// Call clean_accounts() with the common parameters that tests/benches use.
     pub fn clean_accounts_for_tests(&self) {
-        self.clean_accounts(
-            None,
-            false,
-            &EpochSchedule::default(),
-            if self.ancient_append_vec_offset.is_some() {
-                OldStoragesPolicy::Leave
-            } else {
-                OldStoragesPolicy::Clean
-            },
-        )
+        self.clean_accounts(None, false, &EpochSchedule::default())
     }
 
     /// called with cli argument to verify refcounts are correct on all accounts
@@ -2689,7 +2649,6 @@ impl AccountsDb {
         max_clean_root_inclusive: Option<Slot>,
         is_startup: bool,
         epoch_schedule: &EpochSchedule,
-        old_storages_policy: OldStoragesPolicy,
     ) {
         if self.exhaustively_verify_refcounts {
             //at startup use all cores to verify refcounts
@@ -2722,7 +2681,6 @@ impl AccountsDb {
             is_startup,
             &mut key_timings,
             epoch_schedule,
-            old_storages_policy,
         );
         measure_construct_candidates.stop();
         drop(active_guard);
@@ -2995,6 +2953,7 @@ impl AccountsDb {
             reset_accounts,
             &pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(&self.clean_accounts_stats.purge_stats),
+            MarkAccountsObsolete::No,
         );
 
         reclaims_time.stop();
@@ -3172,6 +3131,11 @@ impl AccountsDb {
     ///   cleaned up/removed via `process_dead_slots`. For instance, on store, no slots should
     ///   be cleaned up, but during the background clean accounts purges accounts from old rooted
     ///   slots, so outdated slots may be removed.
+    /// * 'mark_accounts_obsolete' - Whether to mark accounts as obsolete or not. If `Yes`, then
+    ///   obsolete account entry will be marked in the storage so snapshots/accounts hash can
+    ///   determine the state of the account at a specified slot. This should only be done if the
+    ///   account is already unrefed and removed from the accounts index
+    ///   It must be unrefed and removed to avoid double counting or missed counting in shrink
     fn handle_reclaims<'a, I>(
         &'a self,
         reclaims: Option<I>,
@@ -3179,14 +3143,19 @@ impl AccountsDb {
         reset_accounts: bool,
         pubkeys_removed_from_accounts_index: &PubkeysRemovedFromAccountsIndex,
         handle_reclaims: HandleReclaims<'a>,
+        mark_accounts_obsolete: MarkAccountsObsolete,
     ) -> ReclaimResult
     where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
     {
         let mut reclaim_result = ReclaimResult::default();
         if let Some(reclaims) = reclaims {
-            let (dead_slots, reclaimed_offsets) =
-                self.remove_dead_accounts(reclaims, expected_single_dead_slot, reset_accounts);
+            let (dead_slots, reclaimed_offsets) = self.remove_dead_accounts(
+                reclaims,
+                expected_single_dead_slot,
+                reset_accounts,
+                mark_accounts_obsolete,
+            );
             reclaim_result.1 = reclaimed_offsets;
 
             if let HandleReclaims::ProcessDeadSlots(purge_stats) = handle_reclaims {
@@ -4318,15 +4287,7 @@ impl AccountsDb {
         let maybe_clean = || {
             if self.dirty_stores.len() > DIRTY_STORES_CLEANING_THRESHOLD {
                 let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
-                self.clean_accounts(
-                    latest_full_snapshot_slot,
-                    is_startup,
-                    epoch_schedule,
-                    // Leave any old storages alone for now.  Once the validator is running
-                    // normal, calls to clean_accounts() will have the correct policy based
-                    // on if ancient storages are enabled or not.
-                    OldStoragesPolicy::Leave,
-                );
+                self.clean_accounts(latest_full_snapshot_slot, is_startup, epoch_schedule);
             }
         };
 
@@ -5152,44 +5113,6 @@ impl AccountsDb {
         }
     }
 
-    // This function is only called by `store_uncached()`, which is DCOU and only called by tests.
-    // So also mark this function as DCOU to squelch an "unused function" clippy warning.
-    #[cfg(feature = "dev-context-only-utils")]
-    fn find_storage_candidate(&self, slot: Slot) -> Arc<AccountStorageEntry> {
-        let mut get_slot_stores = Measure::start("get_slot_stores");
-        let store = self.storage.get_slot_storage_entry(slot);
-        get_slot_stores.stop();
-        self.stats
-            .store_get_slot_store
-            .fetch_add(get_slot_stores.as_us(), Ordering::Relaxed);
-        let mut find_existing = Measure::start("find_existing");
-        if let Some(store) = store {
-            if store.try_available() {
-                let ret = store.clone();
-                drop(store);
-                find_existing.stop();
-                self.stats
-                    .store_find_existing
-                    .fetch_add(find_existing.as_us(), Ordering::Relaxed);
-                return ret;
-            }
-        }
-        find_existing.stop();
-        self.stats
-            .store_find_existing
-            .fetch_add(find_existing.as_us(), Ordering::Relaxed);
-
-        let store = self.create_store(slot, self.file_size, "store", &self.paths);
-
-        // try_available is like taking a lock on the store,
-        // preventing other threads from using it.
-        // It must succeed here and happen before insert,
-        // otherwise another thread could also grab it from the index.
-        assert!(store.try_available());
-        self.insert_store(slot, store.clone());
-        store
-    }
-
     fn has_space_available(&self, slot: Slot, size: u64) -> bool {
         let store = self.storage.get_slot_storage_entry(slot).unwrap();
         if store.status() == AccountStorageStatus::Available
@@ -5470,6 +5393,7 @@ impl AccountsDb {
         // storage entries
         let mut handle_reclaims_elapsed = Measure::start("handle_reclaims_elapsed");
         // Slot should be dead after removing all its account entries
+        // There is no reason to mark accounts obsolete as the slot storage is being purged
         let expected_dead_slot = Some(remove_slot);
         self.handle_reclaims(
             (!reclaims.is_empty()).then(|| reclaims.iter()),
@@ -5477,6 +5401,7 @@ impl AccountsDb {
             false,
             &pubkeys_removed_from_accounts_index,
             HandleReclaims::ProcessDeadSlots(purge_stats),
+            MarkAccountsObsolete::No,
         );
         handle_reclaims_elapsed.stop();
         purge_stats
@@ -7310,6 +7235,7 @@ impl AccountsDb {
         reclaims: I,
         expected_slot: Option<Slot>,
         reset_accounts: bool,
+        mark_accounts_obsolete: MarkAccountsObsolete,
     ) -> (IntSet<Slot>, SlotOffsets)
     where
         I: Iterator<Item = &'a (Slot, AccountInfo)>,
@@ -7365,6 +7291,16 @@ impl AccountsDb {
                             .map(|len| store.accounts.calculate_stored_size(*len))
                             .sum();
                         store.remove_accounts(dead_bytes, reset_accounts, offsets.len());
+
+                        if let MarkAccountsObsolete::Yes(slot_marked_obsolete) =
+                            mark_accounts_obsolete
+                        {
+                            store.mark_accounts_obsolete(
+                                offsets.into_iter().zip(data_lens),
+                                slot_marked_obsolete,
+                            );
+                        }
+
                         if Self::is_shrinking_productive(&store)
                             && self.is_candidate_for_shrink(&store)
                         {
@@ -7592,16 +7528,10 @@ impl AccountsDb {
             .fetch_add(measure.as_us(), Ordering::Relaxed);
     }
 
-    pub fn store_cached<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-    ) {
+    pub fn store_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
         self.store(
             accounts,
-            &StoreTo::Cache,
-            transactions,
-            StoreReclaims::Default,
+            None,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
     }
@@ -7611,35 +7541,13 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.store(
-            accounts,
-            &StoreTo::Cache,
-            transactions,
-            StoreReclaims::Default,
-            UpdateIndexThreadSelection::Inline,
-        );
-    }
-
-    /// Store the account update.
-    /// only called by tests
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn store_uncached(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
-        let storage = self.find_storage_candidate(slot);
-        self.store(
-            (slot, accounts),
-            &StoreTo::Storage(&storage),
-            None,
-            StoreReclaims::Default,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-        );
+        self.store(accounts, transactions, UpdateIndexThreadSelection::Inline);
     }
 
     fn store<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        store_to: &StoreTo,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         // If all transactions in a batch are errored,
@@ -7657,13 +7565,7 @@ impl AccountsDb {
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
 
-        self.store_accounts_unfrozen(
-            accounts,
-            store_to,
-            transactions,
-            reclaim,
-            update_index_thread_selection,
-        );
+        self.store_accounts_unfrozen(accounts, transactions, update_index_thread_selection);
         self.report_store_timings();
     }
 
@@ -7811,9 +7713,7 @@ impl AccountsDb {
     fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
-        store_to: &StoreTo,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
-        reclaim: StoreReclaims,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
         // This path comes from a store to a non-frozen slot.
@@ -7824,9 +7724,16 @@ impl AccountsDb {
         // hold just 1 ref from this slot.
         let reset_accounts = true;
 
+        // We are storing accounts unfrozen accounts which
+        // will always be stored in the cache
+        let store_to = StoreTo::Cache;
+        // If the store is stored to the cache, reclaims are not needed
+        // Default behavior for cache stores is to ignore reclaims
+        let reclaim = StoreReclaims::Default;
+
         self.store_accounts_custom(
             accounts,
-            store_to,
+            &store_to,
             reset_accounts,
             transactions,
             reclaim,
@@ -7935,6 +7842,7 @@ impl AccountsDb {
                 &HashSet::default(),
                 // this callsite does NOT process dead slots
                 HandleReclaims::DoNotProcessDeadSlots,
+                MarkAccountsObsolete::No,
             );
             handle_reclaims_time.stop();
             handle_reclaims_elapsed = handle_reclaims_time.as_us();
@@ -8104,23 +8012,20 @@ impl AccountsDb {
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
             // there were duplicate pubkeys in this same slot
             // Some were not inserted. This means some info like stored data is off.
-            duplicates_this_slot
-                .into_iter()
-                .filter_map(|(pubkey, (_slot, info))| {
-                    let duplicate = storage.accounts.get_account_index_info(info.offset());
-                    duplicate
-                        .as_ref()
-                        .inspect(|duplicate| assert_eq!(pubkey, duplicate.index_info.pubkey));
-                    duplicate
-                })
-                .for_each(|duplicate| {
-                    stored_size_alive =
-                        stored_size_alive.saturating_sub(duplicate.stored_size_aligned);
-                    if !duplicate.is_zero_lamport() {
-                        accounts_data_len =
-                            accounts_data_len.saturating_sub(duplicate.index_info.data_len);
-                    }
-                });
+            for (pubkey, (_slot, info)) in duplicates_this_slot {
+                storage.accounts.get_stored_account_without_data_callback(
+                    info.offset(),
+                    |duplicate_account| {
+                        assert_eq!(pubkey, *duplicate_account.pubkey());
+                        let data_len = duplicate_account.data_len;
+                        let stored_size_aligned = storage.accounts.calculate_stored_size(data_len);
+                        stored_size_alive = stored_size_alive.saturating_sub(stored_size_aligned);
+                        if !duplicate_account.is_zero_lamport() {
+                            accounts_data_len = accounts_data_len.saturating_sub(data_len as u64);
+                        }
+                    },
+                );
+            }
         }
 
         {
@@ -8802,6 +8707,16 @@ enum HandleReclaims<'a> {
     DoNotProcessDeadSlots,
 }
 
+/// Specify whether obsolete accounts should be marked or not during reclaims
+/// They should only be marked if they are also getting unreffed in the index
+/// Temporariliy allow dead code until the feature is implemented
+#[derive(Debug, Copy, Clone)]
+enum MarkAccountsObsolete {
+    #[allow(dead_code)]
+    Yes(Slot),
+    No,
+}
+
 /// Which accounts hash calculation is being performed?
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum CalcAccountsHashKind {
@@ -8824,20 +8739,6 @@ pub(crate) enum UpdateIndexThreadSelection {
     Inline,
     /// Use a thread-pool if the number of updates exceeds a threshold
     PoolWithThreshold,
-}
-
-/// How should old storages be handled in clean_accounts()?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum OldStoragesPolicy {
-    /// Clean all old storages, even if they were not explictly marked as dirty.
-    ///
-    /// This is the default behavior when not skipping rewrites.
-    Clean,
-    /// Leave all old storages.
-    ///
-    /// When skipping rewrites, we intentionally will have ancient storages.
-    /// Do not clean them up automatically in clean_accounts().
-    Leave,
 }
 
 // These functions/fields are only usable from a dev context (i.e. tests and benches)
@@ -8929,9 +8830,7 @@ impl AccountsDb {
     pub fn store_for_tests(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
         self.store(
             (slot, accounts),
-            &StoreTo::Cache,
             None,
-            StoreReclaims::Default,
             UpdateIndexThreadSelection::PoolWithThreshold,
         );
     }
@@ -9082,10 +8981,7 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
 /// A set of utility functions used for testing and benchmarking
 #[cfg(feature = "dev-context-only-utils")]
 pub mod test_utils {
-    use {
-        super::*,
-        crate::{accounts::Accounts, append_vec::aligned_stored_size},
-    };
+    use {super::*, crate::accounts::Accounts};
 
     pub fn create_test_accounts(
         accounts: &Accounts,
@@ -9094,26 +8990,6 @@ pub mod test_utils {
         slot: Slot,
     ) {
         let data_size = 0;
-        if accounts
-            .accounts_db
-            .storage
-            .get_slot_storage_entry(slot)
-            .is_none()
-        {
-            // Some callers relied on old behavior where the file size was rounded up to the
-            // next page size because they append to the storage file after it was written.
-            // This behavior is not supported by a normal running validator.  Since this function
-            // is only called by tests/benches, add some extra capacity to the file to not break
-            // the tests/benches.  Those tests/benches should be updated though!  Bypassing the
-            // write cache in general is not supported.
-            let bytes_required = num * aligned_stored_size(data_size) + 4096;
-            // allocate an append vec for this slot that can hold all the test accounts. This prevents us from creating more than 1 append vec for this slot.
-            _ = accounts.accounts_db.create_and_insert_store(
-                slot,
-                bytes_required as u64,
-                "create_test_accounts",
-            );
-        }
 
         for t in 0..num {
             let pubkey = solana_pubkey::new_rand();
@@ -9122,7 +8998,7 @@ pub mod test_utils {
                 data_size,
                 AccountSharedData::default().owner(),
             );
-            accounts.store_slow_uncached(slot, &pubkey, &account);
+            accounts.store_cached((slot, &[(&pubkey, &account)][..]), None);
             pubkeys.push(pubkey);
         }
     }
@@ -9133,7 +9009,7 @@ pub mod test_utils {
         for pubkey in pubkeys {
             let amount = thread_rng().gen_range(0..10);
             let account = AccountSharedData::new(amount, 0, AccountSharedData::default().owner());
-            accounts.store_slow_uncached(slot, pubkey, &account);
+            accounts.store_cached((slot, &[(pubkey, &account)][..]), None);
         }
     }
 }

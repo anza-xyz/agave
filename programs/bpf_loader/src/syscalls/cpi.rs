@@ -1,5 +1,6 @@
 use {
     super::*,
+    crate::{translate_inner, translate_slice_inner, translate_type_inner},
     scopeguard::defer,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
@@ -9,25 +10,10 @@ use {
     solana_transaction_context::BorrowedAccount,
     std::{mem, ptr},
 };
-// consts inlined to avoid solana-program dep
+
 const MAX_CPI_INSTRUCTION_DATA_LEN: u64 = 10 * 1024;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_CPI_INSTRUCTION_DATA_LEN,
-    solana_program::syscalls::MAX_CPI_INSTRUCTION_DATA_LEN
-);
 const MAX_CPI_INSTRUCTION_ACCOUNTS: u8 = u8::MAX;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_CPI_INSTRUCTION_ACCOUNTS,
-    solana_program::syscalls::MAX_CPI_INSTRUCTION_ACCOUNTS
-);
 const MAX_CPI_ACCOUNT_INFOS: usize = 128;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_CPI_ACCOUNT_INFOS,
-    solana_program::syscalls::MAX_CPI_ACCOUNT_INFOS
-);
 
 fn check_account_info_pointer(
     invoke_context: &InvokeContext,
@@ -46,6 +32,31 @@ fn check_account_info_pointer(
         return Err(SyscallError::InvalidPointer.into());
     }
     Ok(())
+}
+
+// This version is missing lifetime 'a of the return type in the parameter &MemoryMapping.
+fn translate_type_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    check_aligned: bool,
+) -> Result<&'a mut T, Error> {
+    translate_type_inner!(memory_mapping, AccessType::Store, vm_addr, T, check_aligned)
+}
+// This version is missing the lifetime 'a of the return type in the parameter &MemoryMapping.
+fn translate_slice_mut<'a, T>(
+    memory_mapping: &MemoryMapping,
+    vm_addr: u64,
+    len: u64,
+    check_aligned: bool,
+) -> Result<&'a mut [T], Error> {
+    translate_slice_inner!(
+        memory_mapping,
+        AccessType::Store,
+        vm_addr,
+        len,
+        T,
+        check_aligned,
+    )
 }
 
 /// Host side representation of AccountInfo or SolAccountInfo passed to the CPI syscall.
@@ -726,7 +737,7 @@ fn translate_account_infos<'a, T, F>(
     account_infos_addr: u64,
     account_infos_len: u64,
     key_addr: F,
-    memory_mapping: &MemoryMapping,
+    memory_mapping: &'a MemoryMapping,
     invoke_context: &mut InvokeContext,
 ) -> Result<(&'a [T], Vec<&'a Pubkey>), Error>
 where

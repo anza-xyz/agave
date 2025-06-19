@@ -4,8 +4,8 @@
 use {
     crate::mock_bank::{
         create_custom_loader, deploy_program_with_upgrade_authority, program_address,
-        register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH, EXECUTION_SLOT,
-        WALLCLOCK_TIME,
+        program_data_size, register_builtins, MockBankCallback, MockForkGraph, EXECUTION_EPOCH,
+        EXECUTION_SLOT, WALLCLOCK_TIME,
     },
     agave_feature_set::{self as feature_set, FeatureSet},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount, PROGRAM_OWNERS},
@@ -2193,14 +2193,20 @@ fn simd83_fee_payer_deallocate() -> Vec<SvmTestEntry> {
     vec![test_entry]
 }
 
-fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
+fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Vec<SvmTestEntry> {
     let mut test_entries = vec![];
 
     let program_name = "write-to-account";
     let program_id = program_address(program_name);
+    let program_size = program_data_size(program_name);
 
     let mut common_test_entry = SvmTestEntry::default();
     common_test_entry.add_initial_program(program_name);
+    if !formalize_loaded_transaction_data_size {
+        common_test_entry
+            .disabled_features
+            .push(feature_set::formalize_loaded_transaction_data_size::id());
+    }
 
     let fee_payer_keypair = Keypair::new();
     let fee_payer = fee_payer_keypair.pubkey();
@@ -2223,11 +2229,20 @@ fn simd83_account_reallocate() -> Vec<SvmTestEntry> {
     let target_start_size = 100;
     common_test_entry.add_initial_account(target, &mk_target(target_start_size));
 
+    // we set a budget that is enough pre-large-realloc but not enough post-large-realloc
+    // the relevant feature counts programdata size, so if enabled, we add breathing room
+    // this test has nothing to do with the feature
+    let size_budget = Some(if formalize_loaded_transaction_data_size {
+        (program_size + MAX_PERMITTED_DATA_INCREASE) as u32
+    } else {
+        MAX_PERMITTED_DATA_INCREASE as u32
+    });
+
     let print_transaction = WriteProgramInstruction::Print.create_transaction(
         program_id,
         &fee_payer_keypair,
         target,
-        Some(MAX_PERMITTED_DATA_INCREASE.try_into().unwrap()),
+        size_budget,
     );
 
     common_test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
@@ -2338,7 +2353,8 @@ fn program_cache_update_tombstone() -> Vec<SvmTestEntry> {
 #[test_case(simd83_nonce_reuse(true))]
 #[test_case(simd83_account_deallocate())]
 #[test_case(simd83_fee_payer_deallocate())]
-#[test_case(simd83_account_reallocate())]
+#[test_case(simd83_account_reallocate(false))]
+#[test_case(simd83_account_reallocate(true))]
 #[test_case(program_cache_update_tombstone())]
 fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     for test_entry in test_entries {

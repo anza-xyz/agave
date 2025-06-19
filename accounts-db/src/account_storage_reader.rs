@@ -177,7 +177,7 @@ mod tests {
         let offset = 0;
         // Mark the obsolete accounts in storage
         let mut size = storage.accounts.get_account_data_lens(&[0]);
-        storage.mark_account_obsolete(offset, size.pop().unwrap(), 0);
+        storage.mark_accounts_obsolete(vec![(offset, size.pop().unwrap())].into_iter(), 0);
 
         _ = AccountStorageReader::new(&storage, None).unwrap();
     }
@@ -260,10 +260,10 @@ mod tests {
         assert_eq!(obsolete_account_offset.len(), number_of_accounts_to_remove);
 
         // Mark the obsolete accounts in storage
-        obsolete_account_offset.into_iter().for_each(|offset| {
-            let mut size = storage.accounts.get_account_data_lens(&[offset]);
-            storage.mark_account_obsolete(offset, size.pop().unwrap(), 0);
-        });
+        let data_lens = storage
+            .accounts
+            .get_account_data_lens(&obsolete_account_offset);
+        storage.mark_accounts_obsolete(obsolete_account_offset.into_iter().zip(data_lens), 0);
 
         let storage = storage
             .reopen_as_readonly(storage_access)
@@ -311,8 +311,7 @@ mod tests {
             );
 
             // Create a new AccountStorageEntry from the output file
-            let new_storage =
-                AccountStorageEntry::new_existing(slot, 0, accounts_file, num_accounts);
+            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file);
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());
@@ -376,7 +375,10 @@ mod tests {
         let mut slot_marked_dead = 0;
         obsolete_account_offset.into_iter().for_each(|offset| {
             let mut size = storage.accounts.get_account_data_lens(&[offset]);
-            storage.mark_account_obsolete(offset, size.pop().unwrap(), slot_marked_dead);
+            storage.mark_accounts_obsolete(
+                vec![(offset, size.pop().unwrap())].into_iter(),
+                slot_marked_dead,
+            );
             slot_marked_dead += 1;
         });
 
@@ -401,13 +403,12 @@ mod tests {
             // Close the file
             drop(output_file);
 
-            let (accounts_file, num_accounts) =
+            let (accounts_file, _num_accounts) =
                 AccountsFile::new_from_file(temp_file_path, current_len, StorageAccess::File)
                     .unwrap();
 
             // Create a new AccountStorageEntry from the output file
-            let new_storage =
-                AccountStorageEntry::new_existing(slot, 0, accounts_file, num_accounts);
+            let new_storage = AccountStorageEntry::new_existing(slot, 0, accounts_file);
 
             // Verify that the new storage has the same length as the reader
             assert_eq!(new_storage.accounts.len(), reader.len());

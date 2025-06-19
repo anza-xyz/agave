@@ -103,6 +103,8 @@ where
     let mut total_count: u64 = 0;
 
     let mut total_entries = 0;
+    let mut sanitized_paths_cache = Vec::new();
+
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
@@ -167,9 +169,9 @@ where
             // account_paths returned by `entry_checker`. We want to unpack into
             // account_path/<account> instead of account_path/accounts/<account> so we strip the
             // accounts/ prefix.
-            sanitize_path(&account, unpack_dir)
+            sanitize_path(&account, unpack_dir, &mut sanitized_paths_cache)
         } else {
-            sanitize_path(&path, unpack_dir)
+            sanitize_path(&path, unpack_dir, &mut sanitized_paths_cache)
         }?; // ? handles file system errors
         let Some(entry_path) = entry_path else {
             continue; // skip it
@@ -216,7 +218,11 @@ where
 // return Err on file system error
 // return Some(path) if path is good
 // return None if we should skip this file
-fn sanitize_path(entry_path: &Path, dst: &Path) -> Result<Option<PathBuf>> {
+fn sanitize_path(
+    entry_path: &Path,
+    dst: &Path,
+    cache: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<Option<PathBuf>> {
     // We cannot call unpack_in because it errors if we try to use 2 account paths.
     // So, this code is borrowed from unpack_in
     // ref: https://docs.rs/tar/*/tar/struct.Entry.html#method.unpack_in
@@ -253,11 +259,16 @@ fn sanitize_path(entry_path: &Path, dst: &Path) -> Result<Option<PathBuf>> {
         return SKIP;
     };
 
-    fs::create_dir_all(parent)?;
+    if let Err(insert_at) = cache.binary_search_by(|(dst_cached, parent_cached)| {
+        parent.cmp(parent_cached).then_with(|| dst.cmp(dst_cached))
+    }) {
+        fs::create_dir_all(parent)?;
 
-    // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
-    // ignore return value here
-    validate_inside_dst(dst, parent)?;
+        // Here we are different than untar_in. The code for tar::unpack_in internally calling unpack is a little different.
+        // ignore return value here
+        validate_inside_dst(dst, parent)?;
+        cache.insert(insert_at, (dst.to_path_buf(), parent.to_path_buf()));
+    }
     let target = parent.join(entry_path.file_name().unwrap());
 
     Ok(Some(target))

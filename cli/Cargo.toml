@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[bin]]
+name = "solana"
+path = "src/main.rs"
+
 [dependencies]
 agave-feature-set = { workspace = true }
 bincode = { workspace = true }
@@ -31,6 +38,7 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account = "=2.2.1"
 solana-account-decoder = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
 solana-borsh = "=2.2.1"
 solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
@@ -41,9 +49,9 @@ solana-clock = "=2.2.2"
 solana-cluster-type = "=2.2.1"
 solana-commitment-config = "=2.2.1"
 solana-compute-budget-interface = { version = "=2.2.2", features = ["borsh"] }
+solana-config-interface = "=1.0.0"
 solana-config-program-client = { workspace = true, features = ["serde"] }
 solana-connection-cache = { workspace = true }
-solana-decode-error = "=2.2.1"
 solana-epoch-schedule = "=2.2.1"
 solana-feature-gate-client = "=0.0.2"
 solana-feature-gate-interface = "=2.2.2"
@@ -61,7 +69,6 @@ solana-native-token = "=2.2.2"
 solana-nonce = "=2.2.1"
 solana-offchain-message = { version = "=2.2.1", features = ["verify"] }
 solana-packet = "=2.2.1"
-solana-program = { version = "=2.2.1", default-features = false }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { version = "=2.4.0", default-features = false }
 solana-pubsub-client = { workspace = true }
@@ -82,7 +89,7 @@ solana-system-interface = { version = "=1.0", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
 solana-tps-client = { workspace = true }
 solana-tpu-client = { workspace = true, features = ["default"] }
-solana-transaction = "=2.2.2"
+solana-transaction = "=2.2.3"
 solana-transaction-error = "=2.2.1"
 solana-transaction-status = { workspace = true }
 solana-udp-client = { workspace = true }
@@ -103,10 +110,3 @@ solana-streamer = { workspace = true }
 solana-test-validator = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
-
-[[bin]]
-name = "solana"
-path = "src/main.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

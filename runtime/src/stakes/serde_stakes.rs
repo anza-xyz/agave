@@ -1,14 +1,13 @@
 use {
-    super::{StakeAccount, Stakes, StakesEnum},
+    super::{StakeAccount, Stakes},
     crate::stake_history::StakeHistory,
     im::HashMap as ImHashMap,
     serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_stake_interface::state::Delegation,
     solana_stake_program::stake_state::Stake,
     solana_vote::vote_account::VoteAccounts,
-    std::sync::Arc,
+    std::{collections::HashMap, sync::Arc},
 };
 
 /// Wrapper struct with custom serialization to support serializing
@@ -19,6 +18,22 @@ use {
 pub enum SerdeStakesToStakeFormat {
     Stake(Stakes<Stake>),
     Account(Stakes<StakeAccount>),
+}
+
+impl SerdeStakesToStakeFormat {
+    pub fn vote_accounts(&self) -> &VoteAccounts {
+        match self {
+            Self::Stake(stakes) => stakes.vote_accounts(),
+            Self::Account(stakes) => stakes.vote_accounts(),
+        }
+    }
+
+    pub fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
+        match self {
+            Self::Stake(stakes) => stakes.staked_nodes(),
+            Self::Account(stakes) => stakes.staked_nodes(),
+        }
+    }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -37,12 +52,9 @@ impl PartialEq<Self> for SerdeStakesToStakeFormat {
     }
 }
 
-impl From<SerdeStakesToStakeFormat> for StakesEnum {
-    fn from(stakes: SerdeStakesToStakeFormat) -> Self {
-        match stakes {
-            SerdeStakesToStakeFormat::Stake(stakes) => Self::Stakes(stakes),
-            SerdeStakesToStakeFormat::Account(stakes) => Self::Accounts(stakes),
-        }
+impl From<Stakes<StakeAccount>> for SerdeStakesToStakeFormat {
+    fn from(stakes: Stakes<StakeAccount>) -> Self {
+        Self::Account(stakes)
     }
 }
 
@@ -68,44 +80,7 @@ impl<'de> Deserialize<'de> for SerdeStakesToStakeFormat {
     }
 }
 
-// In order to maintain backward compatibility, the StakesEnum in EpochStakes
-// and SerializableVersionedBank should be serialized as Stakes<Delegation>.
-pub(crate) mod serde_stakes_to_delegation_format {
-    use {
-        super::*,
-        serde::{Deserialize, Deserializer, Serialize, Serializer},
-    };
-
-    pub(crate) fn serialize<S>(stakes: &StakesEnum, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match stakes {
-            StakesEnum::Delegations(stakes) => stakes.serialize(serializer),
-            StakesEnum::Stakes(stakes) => serialize_stakes_to_delegation_format(stakes, serializer),
-            StakesEnum::Accounts(stakes) => {
-                serialize_stake_accounts_to_delegation_format(stakes, serializer)
-            }
-        }
-    }
-
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<StakesEnum>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let stakes = Stakes::<Delegation>::deserialize(deserializer)?;
-        Ok(Arc::new(StakesEnum::Delegations(stakes)))
-    }
-}
-
-fn serialize_stakes_to_delegation_format<S: Serializer>(
-    stakes: &Stakes<Stake>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    SerdeStakesToDelegationFormat::from(stakes.clone()).serialize(serializer)
-}
-
-fn serialize_stake_accounts_to_delegation_format<S: Serializer>(
+pub(crate) fn serialize_stake_accounts_to_delegation_format<S: Serializer>(
     stakes: &Stakes<StakeAccount>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -258,7 +233,8 @@ impl Serialize for SerdeStakeAccountMapToStakeFormat {
 mod tests {
     use {
         super::*, crate::stakes::StakesCache, rand::Rng, solana_rent::Rent,
-        solana_stake_program::stake_state, solana_vote_program::vote_state,
+        solana_stake_interface::state::Delegation, solana_stake_program::stake_state,
+        solana_vote_program::vote_state,
     };
 
     #[test]
@@ -292,21 +268,37 @@ mod tests {
         let wrapped_stakes = SerdeStakesToStakeFormat::Account(stake_account_stakes.clone());
         let serialized_stakes = bincode::serialize(&wrapped_stakes).unwrap();
         let stake_stakes = bincode::deserialize::<Stakes<Stake>>(&serialized_stakes).unwrap();
-        assert_eq!(
-            StakesEnum::Stakes(stake_stakes),
-            StakesEnum::Accounts(stake_account_stakes)
-        );
+        let expected_stake_stakes = Stakes::<Stake>::from(stake_account_stakes);
+        assert_eq!(expected_stake_stakes, stake_stakes);
     }
 
     #[test]
     fn test_serde_stakes_to_delegation_format() {
-        #[derive(Debug, PartialEq, Deserialize, Serialize)]
-        struct Dummy {
+        #[derive(Debug, Serialize)]
+        struct SerializableDummy {
             head: String,
-            #[serde(with = "serde_stakes_to_delegation_format")]
-            stakes: Arc<StakesEnum>,
+            #[serde(serialize_with = "serialize_stake_accounts_to_delegation_format")]
+            stakes: Stakes<StakeAccount>,
             tail: String,
         }
+
+        #[derive(Debug, PartialEq, Deserialize)]
+        struct DeserializableDummy {
+            head: String,
+            stakes: Stakes<Delegation>,
+            tail: String,
+        }
+
+        impl From<SerializableDummy> for DeserializableDummy {
+            fn from(dummy: SerializableDummy) -> Self {
+                DeserializableDummy {
+                    head: dummy.head,
+                    stakes: dummy.stakes.into(),
+                    tail: dummy.tail,
+                }
+            }
+        }
+
         let mut rng = rand::thread_rng();
         let stakes_cache = StakesCache::new(Stakes {
             unused: rng.gen(),
@@ -338,22 +330,18 @@ mod tests {
         let stakes: Stakes<StakeAccount> = stakes_cache.stakes().clone();
         assert!(stakes.vote_accounts.as_ref().len() >= 5);
         assert!(stakes.stake_delegations.len() >= 50);
-        let dummy = Dummy {
+        let dummy = SerializableDummy {
             head: String::from("dummy-head"),
-            stakes: Arc::new(StakesEnum::from(stakes.clone())),
+            stakes: stakes.clone(),
             tail: String::from("dummy-tail"),
         };
         assert!(dummy.stakes.vote_accounts().as_ref().len() >= 5);
         let data = bincode::serialize(&dummy).unwrap();
-        let other: Dummy = bincode::deserialize(&data).unwrap();
-        assert_eq!(other, dummy);
+        let other: DeserializableDummy = bincode::deserialize(&data).unwrap();
+        assert_eq!(other, dummy.into());
         let stakes = Stakes::<Delegation>::from(stakes);
         assert!(stakes.vote_accounts.as_ref().len() >= 5);
         assert!(stakes.stake_delegations.len() >= 50);
-        let other = match &*other.stakes {
-            StakesEnum::Accounts(_) | StakesEnum::Stakes(_) => panic!("wrong type!"),
-            StakesEnum::Delegations(delegations) => delegations,
-        };
-        assert_eq!(other, &stakes)
+        assert_eq!(other.stakes, stakes)
     }
 }

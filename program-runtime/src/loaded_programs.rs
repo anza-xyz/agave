@@ -763,7 +763,7 @@ impl ProgramCacheForTxBatch {
         // programs that are loaded for the transaction batch.
         self.modified_entries
             .get(key)
-            .or(self.entries.get(key))
+            .or_else(|| self.entries.get(key))
             .map(|entry| {
                 if entry.is_implicit_delay_visibility_tombstone(self.slot) {
                     // Found a program entry on the current fork, but it's not effective

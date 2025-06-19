@@ -2,8 +2,7 @@ use {
     crate::{
         blockstore::Blockstore,
         blockstore_processor::{
-            self, BlockMetaSender, BlockstoreProcessorError, ProcessOptions,
-            TransactionStatusSender,
+            self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -85,7 +84,6 @@ pub fn load(
     snapshot_config: &SnapshotConfig,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -96,7 +94,7 @@ pub fn load(
         account_paths,
         snapshot_config,
         &process_options,
-        block_meta_sender,
+        transaction_status_sender,
         entry_notification_sender,
         accounts_update_notifier,
         exit,
@@ -107,7 +105,6 @@ pub fn load(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender,
-        block_meta_sender,
         entry_notification_sender,
         None, // snapshot_controller
     )
@@ -123,7 +120,7 @@ pub fn load_bank_forks(
     account_paths: Vec<PathBuf>,
     snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
-    block_meta_sender: Option<&BlockMetaSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -191,7 +188,7 @@ pub fn load_bank_forks(
                 blockstore,
                 account_paths,
                 process_options,
-                block_meta_sender,
+                transaction_status_sender,
                 entry_notification_sender,
                 accounts_update_notifier,
                 exit,

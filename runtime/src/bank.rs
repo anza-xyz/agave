@@ -41,7 +41,7 @@ use {
             partitioned_epoch_rewards::{EpochRewardStatus, StakeRewards, VoteRewardsAccounts},
         },
         bank_forks::BankForks,
-        epoch_stakes::{split_epoch_stakes, EpochStakes, NodeVoteAccounts, VersionedEpochStakes},
+        epoch_stakes::{NodeVoteAccounts, VersionedEpochStakes},
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollectorWithMetrics,
@@ -53,7 +53,7 @@ use {
             calculate_stake_weighted_timestamp, MaxAllowableDrift,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW_V2,
         },
-        stakes::{Stakes, StakesCache, StakesEnum},
+        stakes::{SerdeStakesToStakeFormat, Stakes, StakesCache},
         status_cache::{SlotDelta, StatusCache},
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
@@ -64,6 +64,7 @@ use {
     ahash::{AHashSet, RandomState},
     dashmap::{DashMap, DashSet},
     log::*,
+    partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{
         iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
         ThreadPoolBuilder,
@@ -78,8 +79,7 @@ use {
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, OldStoragesPolicy, PubkeyHashAccount,
-            VerifyAccountsHashAndLamportsConfig,
+            DuplicatesLtHash, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
             AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
@@ -334,6 +334,7 @@ pub struct TransactionSimulationResult {
     pub logs: TransactionLogMessages,
     pub post_simulation_accounts: Vec<TransactionAccount>,
     pub units_consumed: u64,
+    pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
 }
@@ -450,7 +451,7 @@ pub struct BankFieldsToDeserialize {
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
     pub(crate) stakes: Stakes<Delegation>,
-    pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
+    pub(crate) versioned_epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
     pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
@@ -496,8 +497,7 @@ pub struct BankFieldsToSerialize {
     pub rent_collector: RentCollector,
     pub epoch_schedule: EpochSchedule,
     pub inflation: Inflation,
-    pub stakes: StakesEnum,
-    pub epoch_stakes: HashMap<Epoch, EpochStakes>,
+    pub stakes: Stakes<StakeAccount<Delegation>>,
     pub is_delta: bool,
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
@@ -583,6 +583,7 @@ impl PartialEq for Bank {
             stats_for_accounts_lt_hash: _,
             block_id,
             bank_hash_stats: _,
+            epoch_rewards_calculation_cache: _,
             // Ignore new fields explicitly if they do not impact PartialEq.
             // Adding ".." will remove compile-time checks that if a new field
             // is added to the struct, this PartialEq is accordingly updated.
@@ -658,8 +659,7 @@ impl BankFieldsToSerialize {
             rent_collector: RentCollector::default(),
             epoch_schedule: EpochSchedule::default(),
             inflation: Inflation::default(),
-            stakes: Stakes::<Delegation>::default().into(),
-            epoch_stakes: HashMap::default(),
+            stakes: Stakes::<StakeAccount<Delegation>>::default(),
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
@@ -844,7 +844,7 @@ pub struct Bank {
 
     /// staked nodes on epoch boundaries, saved off when a bank.slot() is at
     ///   a leader schedule calculation boundary
-    epoch_stakes: HashMap<Epoch, EpochStakes>,
+    epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
 
     /// A boolean reflecting whether any entries were recorded into the PoH
     /// stream for the slot == self.slot
@@ -941,6 +941,11 @@ pub struct Bank {
 
     /// Accounts stats for computing the bank hash
     bank_hash_stats: AtomicBankHashStats,
+
+    /// The cache of epoch rewards calculation results
+    /// This is used to avoid recalculating the same epoch rewards at epoch boundary.
+    /// The hashmap is keyed by parent_hash.
+    epoch_rewards_calculation_cache: Arc<Mutex<HashMap<Hash, Arc<PartitionedRewardsCalculation>>>>,
 }
 
 #[derive(Debug)]
@@ -1107,7 +1112,7 @@ impl Bank {
             epoch_schedule: EpochSchedule::default(),
             inflation: Arc::<RwLock<Inflation>>::default(),
             stakes_cache: StakesCache::default(),
-            epoch_stakes: HashMap::<Epoch, EpochStakes>::default(),
+            epoch_stakes: HashMap::<Epoch, VersionedEpochStakes>::default(),
             is_delta: AtomicBool::default(),
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
             cluster_type: Option::<ClusterType>::default(),
@@ -1140,6 +1145,7 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
+            epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
         bank.transaction_processor =
@@ -1196,10 +1202,10 @@ impl Bank {
         //  slot = 0 and genesis configuration
         {
             let stakes = bank.stakes_cache.stakes().clone();
-            let stakes = Arc::new(StakesEnum::from(stakes));
+            let stakes = SerdeStakesToStakeFormat::from(stakes);
             for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
                 bank.epoch_stakes
-                    .insert(epoch, EpochStakes::new(stakes.clone(), epoch));
+                    .insert(epoch, VersionedEpochStakes::new(stakes.clone(), epoch));
             }
             bank.update_stake_history(None);
         }
@@ -1396,6 +1402,7 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::default(),
+            epoch_rewards_calculation_cache: parent.epoch_rewards_calculation_cache.clone(),
         };
 
         let (_, ancestors_time_us) = measure_us!({
@@ -1839,7 +1846,7 @@ impl Bank {
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),
-            epoch_stakes: fields.epoch_stakes,
+            epoch_stakes: fields.versioned_epoch_stakes,
             is_delta: AtomicBool::new(fields.is_delta),
             rewards: RwLock::new(vec![]),
             cluster_type: Some(genesis_config.cluster_type),
@@ -1873,11 +1880,19 @@ impl Bank {
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
             bank_hash_stats: AtomicBankHashStats::new(&fields.bank_hash_stats),
+            epoch_rewards_calculation_cache: Arc::new(Mutex::new(HashMap::default())),
         };
 
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
+        // TODO: Only create the thread pool if we need to recalculate rewards,
+        // i.e. epoch_reward_status is active. Currently, this thread pool is
+        // always created and used for recalculate_partitioned_rewards and
+        // lt_hash calculation. Once lt_hash feature is active, lt_hash won't
+        // need the thread pool. Thereby, after lt_hash feature activation, we
+        // can change to create the thread pool only when we need to recalculate
+        // rewards.
         let thread_pool = ThreadPoolBuilder::new()
             .thread_name(|i| format!("solBnkNewFlds{i:02}"))
             .build()
@@ -2002,7 +2017,6 @@ impl Bank {
 
     /// Return subset of bank fields representing serializable state
     pub(crate) fn get_fields_to_serialize(&self) -> BankFieldsToSerialize {
-        let (epoch_stakes, versioned_epoch_stakes) = split_epoch_stakes(self.epoch_stakes.clone());
         BankFieldsToSerialize {
             blockhash_queue: self.blockhash_queue.read().unwrap().clone(),
             ancestors: AncestorsForSerialization::from(&self.ancestors),
@@ -2030,11 +2044,10 @@ impl Bank {
             rent_collector: self.rent_collector.clone(),
             epoch_schedule: self.epoch_schedule.clone(),
             inflation: *self.inflation.read().unwrap(),
-            stakes: StakesEnum::from(self.stakes_cache.stakes().clone()),
-            epoch_stakes,
+            stakes: self.stakes_cache.stakes().clone(),
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
-            versioned_epoch_stakes,
+            versioned_epoch_stakes: self.epoch_stakes.clone(),
             accounts_lt_hash: self
                 .is_accounts_lt_hash_enabled()
                 .then(|| self.accounts_lt_hash.lock().unwrap().clone()),
@@ -2303,8 +2316,8 @@ impl Bank {
                 epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES)
             });
             let stakes = self.stakes_cache.stakes().clone();
-            let stakes = Arc::new(StakesEnum::from(stakes));
-            let new_epoch_stakes = EpochStakes::new(stakes, leader_schedule_epoch);
+            let stakes = SerdeStakesToStakeFormat::from(stakes);
+            let new_epoch_stakes = VersionedEpochStakes::new(stakes, leader_schedule_epoch);
             info!(
                 "new epoch stakes, epoch: {}, total_stake: {}",
                 leader_schedule_epoch,
@@ -2329,7 +2342,7 @@ impl Bank {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_epoch_stakes_for_test(&mut self, epoch: Epoch, stakes: EpochStakes) {
+    pub fn set_epoch_stakes_for_test(&mut self, epoch: Epoch, stakes: VersionedEpochStakes) {
         self.epoch_stakes.insert(epoch, stakes);
     }
 
@@ -2519,12 +2532,14 @@ impl Bank {
     fn update_reward_history(
         &self,
         stake_rewards: StakeRewards,
-        mut vote_rewards: Vec<(Pubkey, RewardInfo)>,
+        vote_rewards: &[(Pubkey, RewardInfo)],
     ) {
         let additional_reserve = stake_rewards.len() + vote_rewards.len();
         let mut rewards = self.rewards.write().unwrap();
         rewards.reserve(additional_reserve);
-        rewards.append(&mut vote_rewards);
+        vote_rewards.iter().for_each(|(vote_pubkey, vote_reward)| {
+            rewards.push((*vote_pubkey, *vote_reward));
+        });
         stake_rewards
             .into_iter()
             .filter(|x| x.get_stake_reward() > 0)
@@ -3325,6 +3340,7 @@ impl Bank {
             return_data,
             inner_instructions,
             units_consumed,
+            loaded_accounts_data_size,
         ) = match processing_result {
             Ok(processed_tx) => match processed_tx {
                 ProcessedTransaction::Executed(executed_tx) => {
@@ -3342,13 +3358,20 @@ impl Bank {
                         details.return_data,
                         details.inner_instructions,
                         details.executed_units,
+                        executed_tx.loaded_transaction.loaded_accounts_data_size,
                     )
                 }
-                ProcessedTransaction::FeesOnly(fees_only_tx) => {
-                    (vec![], Err(fees_only_tx.load_error), None, None, None, 0)
-                }
+                ProcessedTransaction::FeesOnly(fees_only_tx) => (
+                    vec![],
+                    Err(fees_only_tx.load_error),
+                    None,
+                    None,
+                    None,
+                    0,
+                    fees_only_tx.rollback_accounts.data_size() as u32,
+                ),
             },
-            Err(error) => (vec![], Err(error), None, None, None, 0),
+            Err(error) => (vec![], Err(error), None, None, None, 0, 0),
         };
         let logs = logs.unwrap_or_default();
 
@@ -3357,6 +3380,7 @@ impl Bank {
             logs,
             post_simulation_accounts,
             units_consumed,
+            loaded_accounts_data_size,
             return_data,
             inner_instructions,
         }
@@ -4659,10 +4683,7 @@ impl Bank {
     /// Process a Transaction. This is used for unit tests and simply calls the vector
     /// Bank::process_transactions method.
     pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
-        self.try_process_transactions(std::iter::once(tx))?[0].clone()?;
-        tx.signatures
-            .first()
-            .map_or(Ok(()), |sig| self.get_signature_status(sig).unwrap())
+        self.try_process_transactions(std::iter::once(tx))?[0].clone()
     }
 
     /// Process a Transaction and store metadata. This is used for tests and the banks services. It
@@ -4726,7 +4747,7 @@ impl Bank {
         )
         .0
         .into_iter()
-        .map(|commit_result| commit_result.map(|_| ()))
+        .map(|commit_result| commit_result.and_then(|committed_tx| committed_tx.status))
         .collect()
     }
 
@@ -5247,6 +5268,17 @@ impl Bank {
         rcache
             .get_status(signature, blockhash, &self.ancestors)
             .map(|v| v.1)
+    }
+
+    pub fn get_committed_transaction_status_and_slot(
+        &self,
+        message_hash: &Hash,
+        transaction_blockhash: &Hash,
+    ) -> Option<(Slot, bool)> {
+        let rcache = self.status_cache.read().unwrap();
+        rcache
+            .get_status(message_hash, transaction_blockhash, &self.ancestors)
+            .map(|(slot, status)| (slot, status.is_ok()))
     }
 
     pub fn get_signature_status_slot(&self, signature: &Signature) -> Option<(Slot, Result<()>)> {
@@ -6026,7 +6058,6 @@ impl Bank {
                     Some(latest_full_snapshot_slot),
                     true,
                     self.epoch_schedule(),
-                    self.clean_accounts_old_storages_policy(),
                 );
                 info!("Cleaning... Done.");
             } else {
@@ -6209,7 +6240,7 @@ impl Bank {
     }
 
     /// Get the EpochStakes for the current Bank::epoch
-    pub fn current_epoch_stakes(&self) -> &EpochStakes {
+    pub fn current_epoch_stakes(&self) -> &VersionedEpochStakes {
         // The stakes for a given epoch (E) in self.epoch_stakes are keyed by leader schedule epoch
         // (E + 1) so the stakes for the current epoch are stored at self.epoch_stakes[E + 1]
         self.epoch_stakes
@@ -6218,11 +6249,11 @@ impl Bank {
     }
 
     /// Get the EpochStakes for a given epoch
-    pub fn epoch_stakes(&self, epoch: Epoch) -> Option<&EpochStakes> {
+    pub fn epoch_stakes(&self, epoch: Epoch) -> Option<&VersionedEpochStakes> {
         self.epoch_stakes.get(&epoch)
     }
 
-    pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, EpochStakes> {
+    pub fn epoch_stakes_map(&self) -> &HashMap<Epoch, VersionedEpochStakes> {
         &self.epoch_stakes
     }
 
@@ -6373,7 +6404,6 @@ impl Bank {
             Some(highest_slot_to_clean),
             false,
             self.epoch_schedule(),
-            self.clean_accounts_old_storages_policy(),
         );
     }
 
@@ -6409,15 +6439,6 @@ impl Bank {
             .accounts_db
             .test_skip_rewrites_but_include_in_bank_hash;
         can_skip_rewrites || test_skip_rewrites_but_include_in_bank_hash
-    }
-
-    /// Returns how clean_accounts() should handle old storages
-    fn clean_accounts_old_storages_policy(&self) -> OldStoragesPolicy {
-        if self.are_ancient_storages_enabled() {
-            OldStoragesPolicy::Leave
-        } else {
-            OldStoragesPolicy::Clean
-        }
     }
 
     pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<CostTracker>> {
@@ -6878,6 +6899,10 @@ impl Bank {
 
     pub fn get_bank_hash_stats(&self) -> BankHashStats {
         self.bank_hash_stats.load()
+    }
+
+    pub fn clear_epoch_rewards_cache(&self) {
+        self.epoch_rewards_calculation_cache.lock().unwrap().clear();
     }
 }
 

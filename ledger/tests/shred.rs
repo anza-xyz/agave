@@ -5,8 +5,9 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        max_entries_per_n_shred, verify_test_data_shred, ProcessShredsStats, ReedSolomonCache,
-        Shred, Shredder, DATA_SHREDS_PER_FEC_BLOCK, LEGACY_SHRED_DATA_CAPACITY,
+        max_entries_per_n_shred, recover, verify_test_data_shred, ProcessShredsStats,
+        ReedSolomonCache, Shred, ShredData, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+        LEGACY_SHRED_DATA_CAPACITY,
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -32,11 +33,10 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
-    let num_entries = max_entries_per_n_shred(
-        &entry,
-        num_data_shreds as u64,
-        Some(LEGACY_SHRED_DATA_CAPACITY),
-    );
+    let chained_merkle_root = Some(Hash::default());
+    let merkle_capacity = ShredData::capacity(Some((6, true, is_last_in_slot))).unwrap();
+    let num_entries =
+        max_entries_per_n_shred(&entry, num_data_shreds as u64, Some(merkle_capacity));
 
     let entries: Vec<_> = (0..num_entries)
         .map(|_| {
@@ -50,14 +50,15 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
 
     let reed_solomon_cache = ReedSolomonCache::default();
     let serialized_entries = bincode::serialize(&entries).unwrap();
+
     let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
         &keypair,
         &entries,
         is_last_in_slot,
-        None,  // chained_merkle_root
-        0,     // next_shred_index
-        0,     // next_code_index
-        false, // merkle_variant
+        chained_merkle_root,
+        0,    // next_shred_index
+        0,    // next_code_index
+        true, // merkle_variant
         &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
@@ -86,10 +87,12 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
             .filter_map(|(i, b)| if i % 2 != 0 { Some(b.clone()) } else { None })
             .collect();
 
-        let recovered_data =
-            Shredder::try_recovery(shred_info.clone(), &reed_solomon_cache).unwrap();
+        let recovered_data = recover(shred_info.clone(), &reed_solomon_cache)
+            .unwrap()
+            .map(|result| result.unwrap())
+            .filter(|shred| shred.is_data());
 
-        for (i, recovered_shred) in recovered_data.into_iter().enumerate() {
+        for (i, recovered_shred) in recovered_data.enumerate() {
             let index = shred_start_index + (i * 2);
             verify_test_data_shred(
                 &recovered_shred,

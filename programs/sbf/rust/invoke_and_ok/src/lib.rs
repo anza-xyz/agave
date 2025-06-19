@@ -1,15 +1,15 @@
 //! Invokes an instruction and return ok no matter what, the instruction invoked
 //! uses the instruction data provided and all the accounts
 
-use solana_program::{
-    account_info::AccountInfo,
-    entrypoint::ProgramResult,
-    instruction::{AccountMeta, Instruction},
-    program::invoke,
-    pubkey::Pubkey,
+use {
+    solana_account_info::AccountInfo,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_program::program::invoke,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],

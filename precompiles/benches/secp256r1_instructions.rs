@@ -5,12 +5,13 @@ use {
     agave_feature_set::FeatureSet,
     agave_precompiles::secp256r1::verify,
     openssl::{
+        bn::BigNumContext,
         ec::{EcGroup, EcKey},
         nid::Nid,
     },
     rand0_7::{thread_rng, Rng},
     solana_instruction::Instruction,
-    solana_secp256r1_program::new_secp256r1_instruction,
+    solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
     test::Bencher,
 };
 
@@ -25,7 +26,22 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
             let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
             let secp_privkey = EcKey::generate(&group).unwrap();
             let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
-            new_secp256r1_instruction(&message, secp_privkey).unwrap()
+            let signature =
+                sign_message(&message, &secp_privkey.private_key_to_der().unwrap()).unwrap();
+            let mut ctx = BigNumContext::new().unwrap();
+            let pubkey = secp_privkey
+                .public_key()
+                .to_bytes(
+                    &group,
+                    openssl::ec::PointConversionForm::COMPRESSED,
+                    &mut ctx,
+                )
+                .unwrap();
+            new_secp256r1_instruction_with_signature(
+                &message,
+                &signature,
+                &pubkey.try_into().unwrap(),
+            )
         })
         .collect()
 }

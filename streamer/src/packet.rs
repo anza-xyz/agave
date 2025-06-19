@@ -18,6 +18,14 @@ pub use {
     },
 };
 
+/** Receive multiple messages from `sock` into buffer provided in `batch`.
+This is a wrapper around recvmmsg(7) call.
+
+ This function is *supposed to* timeout in 1 second and *may* block forever
+ due to a bug in the linux kernel.
+ You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
+ prior to calling this function if you require this to actually time out after 1 second.
+*/
 pub(crate) fn recv_from(
     batch: &mut PinnedPacketBatch,
     socket: &UdpSocket,

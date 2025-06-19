@@ -15,12 +15,10 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Epoch, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_decode_error::DecodeError,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
     solana_keypair::{read_keypair_file, Keypair},
     solana_offchain_message::OffchainMessage,
-    solana_program::stake::{instruction::LockupArgs, state::Lockup},
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_rpc_client::rpc_client::RpcClient,
@@ -31,6 +29,7 @@ use {
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
     solana_signature::Signature,
     solana_signer::{Signer, SignerError},
+    solana_stake_interface::{instruction::LockupArgs, state::Lockup},
     solana_tps_client::{utils::create_connection_cache, TpsClient},
     solana_tpu_client::tpu_client::{
         TpuClient, TpuClientConfig, DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_ENABLE_UDP,
@@ -1737,12 +1736,11 @@ pub fn request_and_confirm_airdrop(
 
 pub fn common_error_adapter<E>(ix_error: &InstructionError) -> Option<E>
 where
-    E: 'static + std::error::Error + DecodeError<E> + FromPrimitive,
+    E: 'static + std::error::Error + FromPrimitive,
 {
-    if let InstructionError::Custom(code) = ix_error {
-        E::decode_custom_error_to_enum(*code)
-    } else {
-        None
+    match ix_error {
+        InstructionError::Custom(code) => E::from_u32(*code),
+        _ => None,
     }
 }
 
@@ -1751,7 +1749,7 @@ pub fn log_instruction_custom_error<E>(
     config: &CliConfig,
 ) -> ProcessResult
 where
-    E: 'static + std::error::Error + DecodeError<E> + FromPrimitive,
+    E: 'static + std::error::Error + FromPrimitive,
 {
     log_instruction_custom_error_ex::<E, _>(result, &config.output_format, common_error_adapter)
 }
@@ -1762,7 +1760,7 @@ pub fn log_instruction_custom_error_ex<E, F>(
     error_adapter: F,
 ) -> ProcessResult
 where
-    E: 'static + std::error::Error + DecodeError<E> + FromPrimitive,
+    E: 'static + std::error::Error + FromPrimitive,
     F: Fn(&InstructionError) -> Option<E>,
 {
     match result {

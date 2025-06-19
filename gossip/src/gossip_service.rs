@@ -304,7 +304,7 @@ fn spy(
             .into_iter()
             .map(|x| x.0)
             .collect::<Vec<_>>();
-        tvu_peers = spy_ref.all_tvu_peers();
+        tvu_peers = spy_ref.tvu_peers(|q| q.clone());
 
         let found_nodes_by_pubkey = if let Some(pubkeys) = find_nodes_by_pubkey {
             pubkeys
@@ -324,8 +324,8 @@ fn spy(
 
         if let Some(num) = num_nodes {
             // Only consider validators and archives for `num_nodes`
-            let mut nodes: Vec<_> = tvu_peers.iter().collect();
-            nodes.sort_unstable_by_key(|node| node.pubkey());
+            let mut nodes: Vec<ContactInfo> = tvu_peers.clone();
+            nodes.sort_unstable_by_key(|node| *node.pubkey());
             nodes.dedup();
 
             if nodes.len() >= num {

@@ -44,7 +44,7 @@ jobs:
       - name: Run build
         run: |
           cd svm/examples
-          cargo build --tests
+          cargo build
 
       - name: Run tests
         run: |

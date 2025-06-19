@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 aquamarine = { workspace = true }
@@ -49,6 +52,3 @@ solana-system-transaction = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-unified-scheduler-pool = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
-
-[features]
-dev-context-only-utils = []

@@ -16,7 +16,6 @@ use {
     },
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
-    rand::{thread_rng, Rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource, accounts_hash::CalcAccountsHashConfig,
@@ -38,7 +37,10 @@ use {
 };
 
 const INTERVAL_MS: u64 = 100;
-const CLEAN_INTERVAL_BLOCKS: u64 = 100;
+// Set the clean interval duration to be approximately how long before the next incremental
+// snapshot request is received, plus some buffer.  The default incremental snapshot interval is
+// 100 slots, which ends up being 40 seconds plus buffer.
+const CLEAN_INTERVAL: Duration = Duration::from_secs(50);
 const SHRINK_INTERVAL: Duration = Duration::from_secs(1);
 
 pub type SnapshotRequestSender = Sender<SnapshotRequest>;
@@ -141,14 +143,14 @@ pub struct SnapshotRequestHandler {
 }
 
 impl SnapshotRequestHandler {
-    // Returns the latest requested snapshot block height and storages
+    // Returns the latest requested snapshot slot and storages
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
-    ) -> Option<Result<u64, SnapshotError>> {
+    ) -> Option<Result<Slot, SnapshotError>> {
         let (snapshot_request, num_outstanding_requests, num_re_enqueued_requests) =
             self.get_next_snapshot_request()?;
 
@@ -273,7 +275,7 @@ impl SnapshotRequestHandler {
         snapshot_request: SnapshotRequest,
         accounts_package_kind: AccountsPackageKind,
         exit: &AtomicBool,
-    ) -> Result<u64, SnapshotError> {
+    ) -> Result<Slot, SnapshotError> {
         info!("handling snapshot request: {snapshot_request:?}, {accounts_package_kind:?}");
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
         let SnapshotRequest {
@@ -414,7 +416,25 @@ impl SnapshotRequestHandler {
             ("non_snapshot_time_us", non_snapshot_time_us, i64),
             ("shrink_ancient_time_us", shrink_ancient_time_us, i64),
         );
-        Ok(snapshot_root_bank.block_height())
+        Ok(snapshot_root_bank.slot())
+    }
+
+    /// Returns the slot of the next snapshot request to be handled
+    fn peek_next_snapshot_request_slot(&self) -> Option<Slot> {
+        // We reuse `get_next_snapshot_request()` here, since it already implements all the logic
+        // for getting the highest priority request, *AND* we leverage its test coverage.
+        // Additionally, since `get_next_snapshot_request()` drops old requests, we might get to
+        // proactively clean up old banks earlier as well!
+        let (next_request, _, _) = self.get_next_snapshot_request()?;
+        let next_slot = next_request.snapshot_root_bank.slot();
+
+        // make sure to re-enqueue the request, otherwise we'd lose it!
+        self.snapshot_controller
+            .request_sender()
+            .try_send(next_request)
+            .expect("re-enqueue snapshot request");
+
+        Some(next_slot)
     }
 }
 
@@ -490,14 +510,14 @@ pub struct AbsRequestHandlers {
 }
 
 impl AbsRequestHandlers {
-    // Returns the latest requested snapshot block height, if one exists
+    // Returns the latest requested snapshot slot, if one exists
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
         test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
-    ) -> Option<Result<u64, SnapshotError>> {
+    ) -> Option<Result<Slot, SnapshotError>> {
         self.snapshot_request_handler.handle_snapshot_requests(
             test_hash_calculation,
             non_snapshot_time_us,
@@ -520,7 +540,7 @@ impl AccountsBackgroundService {
     ) -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let stop = Arc::new(AtomicBool::new(false));
-        let mut last_cleaned_block_height = 0;
+        let mut last_cleaned_slot = 0;
         let mut removed_slots_count = 0;
         let mut total_remove_slots_time = 0;
         let t_background = Builder::new()
@@ -533,6 +553,7 @@ impl AccountsBackgroundService {
                     info!("AccountsBackgroundService has started");
                     let mut stats = StatsManager::new();
                     let mut last_snapshot_end_time = None;
+                    let mut previous_clean_time = Instant::now();
                     let mut previous_shrink_time = Instant::now();
 
                     loop {
@@ -599,11 +620,11 @@ impl AccountsBackgroundService {
 
                             last_snapshot_end_time = Some(Instant::now());
                             match snapshot_handle_result {
-                                Ok(snapshot_block_height) => {
+                                Ok(snapshot_slot) => {
                                     assert!(
-                                        last_cleaned_block_height <= snapshot_block_height,
-                                        "last cleaned block height: {last_cleaned_block_height}, \
-                                         snapshot request block height: {snapshot_block_height}, \
+                                        last_cleaned_slot <= snapshot_slot,
+                                        "last cleaned slot: {last_cleaned_slot}, \
+                                         snapshot request slot: {snapshot_slot}, \
                                          is startup verification complete: {}, \
                                          enqueued snapshot requests: {:?}",
                                         bank.is_startup_verification_complete(),
@@ -613,7 +634,9 @@ impl AccountsBackgroundService {
                                             .try_iter()
                                             .collect::<Vec<_>>(),
                                     );
-                                    last_cleaned_block_height = snapshot_block_height;
+                                    last_cleaned_slot = snapshot_slot;
+                                    previous_clean_time = Instant::now();
+                                    previous_shrink_time = Instant::now();
                                 }
                                 Err(err) => {
                                     error!(
@@ -624,41 +647,54 @@ impl AccountsBackgroundService {
                                     break;
                                 }
                             }
-                        } else if bank.block_height() - last_cleaned_block_height
-                            > (CLEAN_INTERVAL_BLOCKS + thread_rng().gen_range(0..10))
-                        {
-                            // Note that the flush will do an internal clean of the
-                            // cache up to bank.slot(), so should be safe as long
-                            // as any later snapshots that are taken are of
-                            // slots >= bank.slot()
-                            bank.force_flush_accounts_cache();
-                            bank.clean_accounts();
-                            last_cleaned_block_height = bank.block_height();
-                            // Do not 'shrink' until *after* the startup verification is complete.
-                            // This is because startup verification needs to get the snapshot
-                            // storages *as they existed at startup* (to calculate the accounts
-                            // hash).  If 'shrink' were to run, then it is possible startup
-                            // verification (1) could race with 'shrink', and fail to assert that
-                            // shrinking is not in progress, or (2) could get snapshot storages
-                            // that were newer than what was in the snapshot itself.
-                            if bank.is_startup_verification_complete() {
-                                bank.shrink_ancient_slots();
-                                bank.shrink_candidate_slots();
-                            }
                         } else {
-                            // Note that the flush will do an internal clean of the
-                            // cache up to bank.slot(), so should be safe as long
-                            // as any later snapshots that are taken are of
-                            // slots >= bank.slot()
-                            bank.flush_accounts_cache_if_needed();
+                            // we didn't handle a snapshot request, so do flush/clean/shrink
 
-                            // See justification above for why we skip 'shrink' here.
-                            if bank.is_startup_verification_complete() {
-                                let duration_since_previous_shrink = previous_shrink_time.elapsed();
-                                if duration_since_previous_shrink > SHRINK_INTERVAL {
-                                    previous_shrink_time = Instant::now();
-                                    bank.shrink_candidate_slots();
+                            let next_snapshot_request_slot = request_handlers
+                                .snapshot_request_handler
+                                .peek_next_snapshot_request_slot();
+
+                            // We cannot clean past the next snapshot request slot because it may
+                            // have zero-lamport accounts.  See the comments in
+                            // Bank::clean_accounts() for more information.
+                            let max_clean_slot_inclusive = cmp::min(
+                                next_snapshot_request_slot.unwrap_or(Slot::MAX),
+                                bank.slot(),
+                            )
+                            .saturating_sub(1);
+
+                            let duration_since_previous_clean = previous_clean_time.elapsed();
+                            let should_clean = duration_since_previous_clean > CLEAN_INTERVAL;
+
+                            // if we're cleaning, then force flush, otherwise be lazy
+                            let force_flush = should_clean;
+                            bank.rc
+                                .accounts
+                                .accounts_db
+                                .flush_accounts_cache(force_flush, Some(max_clean_slot_inclusive));
+
+                            if should_clean {
+                                bank.rc.accounts.accounts_db.clean_accounts(
+                                    Some(max_clean_slot_inclusive),
+                                    false,
+                                    bank.epoch_schedule(),
+                                );
+                                last_cleaned_slot = max_clean_slot_inclusive;
+                                previous_clean_time = Instant::now();
+                            }
+
+                            let duration_since_previous_shrink = previous_shrink_time.elapsed();
+                            let should_shrink = duration_since_previous_shrink > SHRINK_INTERVAL;
+                            // To avoid pathological interactions between the clean and shrink
+                            // timers, call shrink for either should_shrink or should_clean.
+                            if should_shrink || should_clean {
+                                if should_clean {
+                                    // We used to only squash (aka shrink ancients) when we also
+                                    // cleaned, so keep that same behavior here for now.
+                                    bank.shrink_ancient_slots();
                                 }
+                                bank.shrink_candidate_slots();
+                                previous_shrink_time = Instant::now();
                             }
                         }
                         stats.record_and_maybe_submit(start_time.elapsed());
@@ -820,7 +856,7 @@ mod test {
         super::*,
         crate::{
             bank::epoch_accounts_hash_utils, genesis_utils::create_genesis_config,
-            snapshot_config::SnapshotConfig,
+            snapshot_config::SnapshotConfig, snapshot_utils::SnapshotInterval,
         },
         crossbeam_channel::unbounded,
         solana_account::AccountSharedData,
@@ -828,6 +864,7 @@ mod test {
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
+        std::num::NonZeroU64,
     };
 
     #[test]
@@ -874,8 +911,12 @@ mod test {
         const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 30;
 
         let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots: FULL_SNAPSHOT_INTERVAL,
-            incremental_snapshot_archive_interval_slots: INCREMENTAL_SNAPSHOT_INTERVAL,
+            full_snapshot_archive_interval: SnapshotInterval::Slots(
+                NonZeroU64::new(FULL_SNAPSHOT_INTERVAL).unwrap(),
+            ),
+            incremental_snapshot_archive_interval: SnapshotInterval::Slots(
+                NonZeroU64::new(INCREMENTAL_SNAPSHOT_INTERVAL).unwrap(),
+            ),
             ..SnapshotConfig::default()
         };
 

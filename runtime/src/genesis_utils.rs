@@ -219,10 +219,20 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     }
 }
 
+pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
+    do_activate_all_features::<true>(genesis_config);
+}
+
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
+    do_activate_all_features::<false>(genesis_config);
+}
+
+fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
-        activate_feature(genesis_config, *feature_id);
+        if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
+            activate_feature(genesis_config, *feature_id);
+        }
     }
 }
 

@@ -1,13 +1,14 @@
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::ffi::{CStr, CString};
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
-        epoch_stakes::{EpochStakes, VersionedEpochStakes},
+        epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
         serde_snapshot::storage::SerializableAccountStorageEntry,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
-        stakes::{serde_stakes_to_delegation_format, Stakes, StakesEnum},
+        stake_account::StakeAccount,
+        stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
     },
     bincode::{self, config::Options, Error},
     log::*,
@@ -158,7 +159,7 @@ struct DeserializableVersionedBank {
     stakes: Stakes<Delegation>,
     #[allow(dead_code)]
     unused_accounts: UnusedAccounts,
-    epoch_stakes: HashMap<Epoch, EpochStakes>,
+    unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
 }
 
@@ -193,12 +194,12 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             epoch_schedule: dvb.epoch_schedule,
             inflation: dvb.inflation,
             stakes: dvb.stakes,
-            epoch_stakes: dvb.epoch_stakes,
             is_delta: dvb.is_delta,
             incremental_snapshot_persistence: None,
             epoch_accounts_hash: None,
-            accounts_lt_hash: None, // populated from ExtraFieldsToDeserialize
-            bank_hash_stats: BankHashStats::default(), // populated from AccountsDbFields
+            versioned_epoch_stakes: HashMap::default(), // populated from ExtraFieldsToDeserialize
+            accounts_lt_hash: None,                     // populated from ExtraFieldsToDeserialize
+            bank_hash_stats: BankHashStats::default(),  // populated from AccountsDbFields
         }
     }
 }
@@ -235,10 +236,10 @@ struct SerializableVersionedBank {
     rent_collector: RentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    #[serde(serialize_with = "serde_stakes_to_delegation_format::serialize")]
-    stakes: StakesEnum,
+    #[serde(serialize_with = "serialize_stake_accounts_to_delegation_format")]
+    stakes: Stakes<StakeAccount<Delegation>>,
     unused_accounts: UnusedAccounts,
-    epoch_stakes: HashMap<Epoch, EpochStakes>,
+    unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
 }
 
@@ -275,7 +276,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             inflation: rhs.inflation,
             stakes: rhs.stakes,
             unused_accounts: UnusedAccounts::default(),
-            epoch_stakes: rhs.epoch_stakes,
+            unused_epoch_stakes: HashMap::default(),
             is_delta: rhs.is_delta,
         }
     }
@@ -431,8 +432,15 @@ fn deserialize_bank_fields<R>(
 where
     R: Read,
 {
-    let mut bank_fields: BankFieldsToDeserialize =
-        deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
+    let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
+    if !deserializable_bank.unused_epoch_stakes.is_empty() {
+        return Err(Box::new(bincode::ErrorKind::Custom(
+            "Expected deserialized bank's unused_epoch_stakes field \
+             to be empty"
+                .to_string(),
+        )));
+    }
+    let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);
     let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
     let extra_fields = deserialize_from(stream)?;
 
@@ -450,15 +458,7 @@ where
         .clone_with_lamports_per_signature(lamports_per_signature);
     bank_fields.incremental_snapshot_persistence = incremental_snapshot_persistence;
     bank_fields.epoch_accounts_hash = epoch_accounts_hash;
-
-    // If we deserialize the new epoch stakes, add all of the entries into the
-    // other deserialized map which could still have old epoch stakes entries
-    bank_fields.epoch_stakes.extend(
-        versioned_epoch_stakes
-            .into_iter()
-            .map(|(epoch, versioned_epoch_stakes)| (epoch, versioned_epoch_stakes.into())),
-    );
-
+    bank_fields.versioned_epoch_stakes = versioned_epoch_stakes;
     bank_fields.accounts_lt_hash = accounts_lt_hash.map(Into::into);
 
     Ok((bank_fields, accounts_db_fields))
@@ -916,13 +916,12 @@ pub(crate) fn reconstruct_single_storage(
     append_vec_id: AccountsFileId,
     storage_access: StorageAccess,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let (accounts_file, num_accounts) =
-        AccountsFile::new_from_file(append_vec_path, current_len, storage_access)?;
+    let accounts_file =
+        AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         append_vec_id,
         accounts_file,
-        num_accounts,
     )))
 }
 
@@ -936,7 +935,7 @@ pub(crate) fn remap_append_vec_file(
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
 ) -> io::Result<(AccountsFileId, PathBuf)> {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     let append_vec_path_cstr = cstring_from_path(append_vec_path)?;
 
     let mut remapped_append_vec_path = append_vec_path.to_path_buf();
@@ -1283,7 +1282,7 @@ fn rename_no_replace(src: &CStr, dest: &CStr) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn cstring_from_path(path: &Path) -> io::Result<CString> {
     // It is better to allocate here than use the stack. Jemalloc is going to give us a chunk of a
     // preallocated small arena anyway. Instead if we used the stack since PATH_MAX=4096 it would
