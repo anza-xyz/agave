@@ -344,7 +344,7 @@ impl ThreadArg for TpuTransactionForwardReceiveThreadArgs {
         "Number of threads to use for receiving transactions on the TPU fowards port";
 
     fn default() -> usize {
-        get_max_thread_count()
+        solana_streamer::quic::default_num_tpu_transaction_forward_receive_threads()
     }
 }
 
@@ -355,7 +355,7 @@ impl ThreadArg for TpuTransactionReceiveThreads {
     const HELP: &'static str = "Number of threadsto use for receiving transactions on the TPU port";
 
     fn default() -> usize {
-        get_max_thread_count()
+        solana_streamer::quic::default_num_tpu_transaction_receive_threads()
     }
 }
 
@@ -367,7 +367,7 @@ impl ThreadArg for TpuVoteTransactionReceiveThreads {
         "Number of threads to use for receiving transactions on the TPU vote port";
 
     fn default() -> usize {
-        get_max_thread_count()
+        solana_streamer::quic::default_num_tpu_vote_transaction_receive_threads()
     }
 }
 

@@ -33,6 +33,7 @@ itertools = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["net"] }
+num_cpus = { workspace = true }
 pem = { workspace = true }
 percentage = { workspace = true }
 quinn = { workspace = true }
@@ -49,7 +50,6 @@ solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-quic-definitions = { workspace = true }
-solana-rayon-threadlimit = { workspace = true }
 solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-time-utils = { workspace = true }

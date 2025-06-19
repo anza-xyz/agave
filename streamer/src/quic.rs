@@ -16,7 +16,6 @@ use {
     solana_quic_definitions::{
         NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
     },
-    solana_rayon_threadlimit::get_max_thread_count,
     solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
@@ -62,6 +61,18 @@ pub const DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE: u64 = 8;
 pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 
 pub const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
+
+pub fn default_num_tpu_transaction_forward_receive_threads() -> usize {
+    num_cpus::get()
+}
+
+pub fn default_num_tpu_transaction_receive_threads() -> usize {
+    num_cpus::get()
+}
+
+pub fn default_num_tpu_vote_transaction_receive_threads() -> usize {
+    num_cpus::get()
+}
 
 pub struct SpawnServerResult {
     pub endpoints: Vec<Endpoint>,
@@ -629,7 +640,7 @@ impl Default for QuicServerParams {
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: DEFAULT_TPU_COALESCE,
             coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
-            num_threads: NonZeroUsize::new(get_max_thread_count().min(1)).expect("1 is non-zero"),
+            num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
         }
     }
 }
