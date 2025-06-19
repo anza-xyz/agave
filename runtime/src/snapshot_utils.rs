@@ -306,7 +306,7 @@ pub struct UnarchivedSnapshots {
 /// Once dropped, the unpack directories are removed.
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct UnarchivedSnapshotGuard {
+pub struct UnarchivedSnapshotsGuard {
     full_unpack_dir: TempDir,
     incremental_unpack_dir: Option<TempDir>,
 }
@@ -1591,7 +1591,7 @@ pub fn verify_and_unarchive_snapshots(
     incremental_snapshot_archive_info: Option<&IncrementalSnapshotArchiveInfo>,
     account_paths: &[PathBuf],
     storage_access: StorageAccess,
-) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotGuard)> {
+) -> Result<(UnarchivedSnapshots, UnarchivedSnapshotsGuard)> {
     check_are_snapshots_compatible(
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
@@ -1674,7 +1674,7 @@ pub fn verify_and_unarchive_snapshots(
             incremental_measure_untar,
             next_append_vec_id,
         },
-        UnarchivedSnapshotGuard {
+        UnarchivedSnapshotsGuard {
             full_unpack_dir,
             incremental_unpack_dir,
         },
