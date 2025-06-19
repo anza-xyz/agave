@@ -645,6 +645,20 @@ impl Default for QuicServerParams {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl QuicServerParams {
+    pub const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+
+    pub fn default_for_tests() -> Self {
+        // Shrink the channel size to avoid a massive allocation for tests
+        Self {
+            coalesce_channel_size: 100_000,
+            num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
+            ..Self::default()
+        }
+    }
+}
+
 pub fn spawn_server_multi(
     thread_name: &'static str,
     metrics_name: &'static str,
@@ -690,10 +704,7 @@ pub fn spawn_server_multi(
 mod test {
     use {
         super::*,
-        crate::nonblocking::{
-            quic::test::*,
-            testing_utilities::{check_multiple_streams, DEFAULT_NUM_SERVER_THREADS_FOR_TEST},
-        },
+        crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
         crossbeam_channel::unbounded,
         solana_net_utils::bind_to_localhost,
         std::net::SocketAddr,
@@ -702,7 +713,7 @@ mod test {
     fn rt_for_test() -> Runtime {
         rt(
             "solQuicTestRt".to_string(),
-            DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
+            QuicServerParams::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
         )
     }
 
@@ -730,11 +741,7 @@ mod test {
             sender,
             exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                num_threads: DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
-                ..Default::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
         (t, exit, receiver, server_address)
@@ -791,8 +798,7 @@ mod test {
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
+                ..QuicServerParams::default_for_tests()
             },
         )
         .unwrap();
@@ -837,8 +843,7 @@ mod test {
             staked_nodes,
             QuicServerParams {
                 max_unstaked_connections: 0,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
+                ..QuicServerParams::default_for_tests()
             },
         )
         .unwrap();
