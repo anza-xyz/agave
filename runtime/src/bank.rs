@@ -82,7 +82,7 @@ use {
             DuplicatesLtHash, PubkeyHashAccount, VerifyAccountsHashAndLamportsConfig,
         },
         accounts_hash::{
-            AccountHash, AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
+            AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
             IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
         },
         accounts_index::{IndexKey, ScanConfig, ScanResult},
@@ -512,7 +512,6 @@ impl PartialEq for Bank {
         // Suppress rustfmt until https://github.com/rust-lang/rustfmt/issues/5920 is fixed ...
         #[rustfmt::skip]
         let Self {
-            skipped_rewrites: _,
             rc: _,
             status_cache: _,
             blockhash_queue,
@@ -881,10 +880,6 @@ pub struct Bank {
     /// The change to accounts data size in this Bank, due to off-chain events (i.e. rent collection)
     accounts_data_size_delta_off_chain: AtomicI64,
 
-    /// until the skipped rewrites feature is activated, it is possible to skip rewrites and still include
-    /// the account hash of the accounts that would have been rewritten as bank hash expects.
-    skipped_rewrites: Mutex<HashMap<Pubkey, AccountHash>>,
-
     epoch_reward_status: EpochRewardStatus,
 
     transaction_processor: TransactionBatchProcessor<BankForks>,
@@ -1068,7 +1063,6 @@ impl AtomicBankHashStats {
 impl Bank {
     fn default_with_accounts(accounts: Accounts) -> Self {
         let mut bank = Self {
-            skipped_rewrites: Mutex::default(),
             rc: BankRc::new(accounts),
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::<BlockhashQueue>::default(),
@@ -1305,7 +1299,6 @@ impl Bank {
 
         let accounts_data_size_initial = parent.load_accounts_data_size();
         let mut new = Self {
-            skipped_rewrites: Mutex::default(),
             rc,
             status_cache,
             slot,
@@ -1799,7 +1792,6 @@ impl Bank {
         info!("Loading Stakes took: {stakes_time}");
         let stakes_accounts_load_duration = now.elapsed();
         let mut bank = Self {
-            skipped_rewrites: Mutex::default(),
             rc: bank_rc,
             status_cache: Arc::<RwLock<BankStatusCache>>::default(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
@@ -1894,7 +1886,6 @@ impl Bank {
         );
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
-        bank.rebuild_skipped_rewrites();
 
         let mut calculate_accounts_lt_hash_duration = None;
         if let Some(accounts_lt_hash) = fields.accounts_lt_hash {
@@ -3914,79 +3905,6 @@ impl Bank {
             });
     }
 
-    /// After deserialize, populate skipped rewrites with accounts that would normally
-    /// have had their data rewritten in this slot due to rent collection (but didn't).
-    ///
-    /// This is required when starting up from a snapshot to verify the bank hash.
-    ///
-    /// A second usage is from the `bank_to_xxx_snapshot_archive()` functions.  These fns call
-    /// `Bank::rehash()` to handle if the user manually modified any accounts and thus requires
-    /// calculating the bank hash again.  Since calculating the bank hash *takes* the skipped
-    /// rewrites, this second time will not have any skipped rewrites, and thus the hash would be
-    /// updated to the wrong value.  So, rebuild the skipped rewrites before rehashing.
-    fn rebuild_skipped_rewrites(&self) {
-        // If the feature gate to *not* add rent collection rewrites to the bank hash is enabled,
-        // then do *not* add anything to our skipped_rewrites.
-        if self.bank_hash_skips_rent_rewrites() {
-            return;
-        }
-
-        let (skipped_rewrites, measure_skipped_rewrites) =
-            measure_time!(self.calculate_skipped_rewrites());
-        info!(
-            "Rebuilding skipped rewrites of {} accounts{measure_skipped_rewrites}",
-            skipped_rewrites.len()
-        );
-
-        *self.skipped_rewrites.lock().unwrap() = skipped_rewrites;
-    }
-
-    /// Calculates (and returns) skipped rewrites for this bank
-    ///
-    /// Refer to `rebuild_skipped_rewrites()` for more documentation.
-    /// This implementation is purposely separate to facilitate testing.
-    ///
-    /// The key observation is that accounts in Bank::skipped_rewrites are only used IFF the
-    /// specific account is *not* already in the accounts delta hash.  If an account is not in
-    /// the accounts delta hash, then it means the account was not modified.  Since (basically)
-    /// all accounts are rent exempt, this means (basically) all accounts are unmodified by rent
-    /// collection.  So we just need to load the accounts that would've been checked for rent
-    /// collection, hash them, and add them to Bank::skipped_rewrites.
-    ///
-    /// As of this writing, there are ~350 million acounts on mainnet-beta.
-    /// Rent collection almost always collects a single slot at a time.
-    /// So 1 slot of 432,000, of 350 million accounts, is ~800 accounts per slot.
-    /// Since we haven't started processing anything yet, it should be fast enough to simply
-    /// load the accounts directly.
-    /// Empirically, this takes about 3-4 milliseconds.
-    fn calculate_skipped_rewrites(&self) -> HashMap<Pubkey, AccountHash> {
-        // The returned skipped rewrites may include accounts that were actually *not* skipped!
-        // (This is safe, as per the fn's documentation above.)
-        self.get_accounts_for_skipped_rewrites()
-            .map(|(pubkey, account_hash, _account)| (pubkey, account_hash))
-            .collect()
-    }
-
-    /// Loads accounts that were selected for rent collection this slot.
-    /// After loading the accounts, also calculate and return the account hashes.
-    /// This is used when dealing with skipped rewrites.
-    fn get_accounts_for_skipped_rewrites(
-        &self,
-    ) -> impl Iterator<Item = (Pubkey, AccountHash, AccountSharedData)> + '_ {
-        self.rent_collection_partitions()
-            .into_iter()
-            .map(accounts_partition::pubkey_range_from_partition)
-            .flat_map(|pubkey_range| {
-                self.rc
-                    .accounts
-                    .load_to_collect_rent_eagerly(&self.ancestors, pubkey_range)
-            })
-            .map(|(pubkey, account, _slot)| {
-                let account_hash = AccountsDb::hash_account(&account, &pubkey);
-                (pubkey, account_hash, account)
-            })
-    }
-
     /// Returns the accounts, sorted by pubkey, that were part of accounts delta hash calculation
     /// This is used when writing a bank hash details file.
     pub(crate) fn get_accounts_for_bank_hash_details(&self) -> Vec<PubkeyHashAccount> {
@@ -3994,28 +3912,6 @@ impl Bank {
 
         let mut accounts_written_this_slot =
             accounts_db.get_pubkey_hash_account_for_slot(self.slot());
-
-        // If we are skipping rewrites but also include them in the accounts delta hash, then we
-        // need to go load those accounts and add them to the list of accounts written this slot.
-        if !self.bank_hash_skips_rent_rewrites()
-            && accounts_db.test_skip_rewrites_but_include_in_bank_hash
-        {
-            let pubkeys_written_this_slot: HashSet<_> = accounts_written_this_slot
-                .iter()
-                .map(|pubkey_hash_account| pubkey_hash_account.pubkey)
-                .collect();
-
-            let rent_collection_accounts = self.get_accounts_for_skipped_rewrites();
-            for (pubkey, hash, account) in rent_collection_accounts {
-                if !pubkeys_written_this_slot.contains(&pubkey) {
-                    accounts_written_this_slot.push(PubkeyHashAccount {
-                        pubkey,
-                        hash,
-                        account,
-                    });
-                }
-            }
-        }
 
         // Sort the accounts by pubkey to match the order of the accounts delta hash.
         // This also makes comparison of files from different nodes deterministic.
@@ -4124,15 +4020,6 @@ impl Bank {
         }
     }
 
-    /// true if rent collection does NOT rewrite accounts whose pubkey indicates
-    ///  it is time for rent collection, but the account is rent exempt.
-    /// false if rent collection DOES rewrite accounts if the account is rent exempt
-    /// This is the default behavior historically.
-    fn bank_hash_skips_rent_rewrites(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::skip_rent_rewrites::id())
-    }
-
     /// Update rent exempt status for `accounts`
     ///
     /// This fn is called inside a parallel loop from `collect_rent_in_partition()`.  Avoid adding
@@ -4150,13 +4037,6 @@ impl Bank {
             Vec::<(&Pubkey, &AccountSharedData)>::with_capacity(accounts.len());
         let mut time_collecting_rent_us = 0;
         let mut time_storing_accounts_us = 0;
-        let can_skip_rewrites = self.bank_hash_skips_rent_rewrites();
-        let test_skip_rewrites_but_include_in_bank_hash = self
-            .rc
-            .accounts
-            .accounts_db
-            .test_skip_rewrites_but_include_in_bank_hash;
-        let mut skipped_rewrites = Vec::default();
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let rent_epoch_pre = account.rent_epoch();
             let ((), collect_rent_us) = measure_us!(update_rent_exempt_status_for_account(
@@ -4169,36 +4049,16 @@ impl Bank {
             // did the account change in any way due to rent collection?
             let account_changed = rent_epoch_post != rent_epoch_pre;
 
-            // always store the account, regardless if it changed or not
-            let always_store_accounts =
-                !can_skip_rewrites && !test_skip_rewrites_but_include_in_bank_hash;
-
-            // only store accounts where we collected rent
-            // but get the hash for all these accounts even if collected rent is 0 (= not updated).
-            // Also, there's another subtle side-effect from rewrites: this
-            // ensures we verify the whole on-chain state (= all accounts)
-            // via the bank delta hash slowly once per an epoch.
-            if account_changed || always_store_accounts {
-                if account_changed {
-                    datapoint_info!(
-                        "bank-rent_collection_updated_only_rent_epoch",
-                        ("slot", self.slot(), i64),
-                        ("pubkey", pubkey.to_string(), String),
-                        ("rent_epoch_pre", rent_epoch_pre, i64),
-                        ("rent_epoch_post", rent_epoch_post, i64),
-                    );
-                }
+            // only store accounts where we updated rent epoch
+            if account_changed {
+                datapoint_info!(
+                    "bank-rent_collection_updated_only_rent_epoch",
+                    ("slot", self.slot(), i64),
+                    ("pubkey", pubkey.to_string(), String),
+                    ("rent_epoch_pre", rent_epoch_pre, i64),
+                    ("rent_epoch_post", rent_epoch_post, i64),
+                );
                 accounts_to_store.push((pubkey, account));
-            } else if !account_changed
-                && !can_skip_rewrites
-                && test_skip_rewrites_but_include_in_bank_hash
-            {
-                // include rewrites that we skipped in the accounts delta hash.
-                // This is what consensus requires prior to activation of bank_hash_skips_rent_rewrites.
-                // This code path exists to allow us to test the long term effects on validators when the skipped rewrites
-                // feature is enabled.
-                let hash = AccountsDb::hash_account(account, pubkey);
-                skipped_rewrites.push((*pubkey, hash));
             }
         }
 
@@ -4211,7 +4071,6 @@ impl Bank {
         }
 
         CollectRentFromAccountsInfo {
-            skipped_rewrites,
             time_collecting_rent_us,
             time_storing_accounts_us,
             num_accounts: accounts.len(),
@@ -4225,9 +4084,7 @@ impl Bank {
     }
 
     /// load accounts with pubkeys in 'subrange_full', update
-    /// 'account.rent_epoch' as necessary, and store accounts, whether rent was
-    /// collected or not (depending on whether we skipping rewrites is enabled)
-    /// update bank's rewrites set for all rewrites that were skipped
+    /// 'account.rent_epoch' as necessary,
     fn update_rent_exempt_status_in_range(
         &self,
         subrange_full: RangeInclusive<Pubkey>,
@@ -4284,11 +4141,6 @@ impl Bank {
                     CollectRentInPartitionInfo::default,
                     CollectRentInPartitionInfo::reduce,
                 );
-
-            self.skipped_rewrites
-                .lock()
-                .unwrap()
-                .extend(results.skipped_rewrites);
 
             // We cannot assert here that we collected from all expected keys.
             // Some accounts may have been topped off or may have had all funds removed and gone to 0 lamports.
@@ -5189,11 +5041,7 @@ impl Bank {
                 self.rc
                     .accounts
                     .accounts_db
-                    .calculate_accounts_delta_hash_internal(
-                        slot,
-                        None,
-                        self.skipped_rewrites.lock().unwrap().clone(),
-                    )
+                    .calculate_accounts_delta_hash_internal(slot, None)
             })
         });
 
@@ -6300,26 +6148,10 @@ impl Bank {
     }
 
     pub(crate) fn shrink_ancient_slots(&self) {
-        // Invoke ancient slot shrinking only when the validator is
-        // explicitly configured to do so. This condition may be
-        // removed when the skip rewrites feature is enabled.
-        if self.are_ancient_storages_enabled() {
-            self.rc
-                .accounts
-                .accounts_db
-                .shrink_ancient_slots(self.epoch_schedule())
-        }
-    }
-
-    /// Returns if ancient storages are enabled or not
-    pub fn are_ancient_storages_enabled(&self) -> bool {
-        let can_skip_rewrites = self.bank_hash_skips_rent_rewrites();
-        let test_skip_rewrites_but_include_in_bank_hash = self
-            .rc
+        self.rc
             .accounts
             .accounts_db
-            .test_skip_rewrites_but_include_in_bank_hash;
-        can_skip_rewrites || test_skip_rewrites_but_include_in_bank_hash
+            .shrink_ancient_slots(self.epoch_schedule())
     }
 
     pub fn read_cost_tracker(&self) -> LockResult<RwLockReadGuard<CostTracker>> {
@@ -7177,7 +7009,6 @@ enum ApplyFeatureActivationsCaller {
 /// process later.
 #[derive(Debug, Default)]
 struct CollectRentFromAccountsInfo {
-    skipped_rewrites: Vec<(Pubkey, AccountHash)>,
     time_collecting_rent_us: u64,
     time_storing_accounts_us: u64,
     num_accounts: usize,
@@ -7187,7 +7018,6 @@ struct CollectRentFromAccountsInfo {
 /// `collect_rent_in_partition()`—and then perform a reduce on all of them.
 #[derive(Debug, Default)]
 struct CollectRentInPartitionInfo {
-    skipped_rewrites: Vec<(Pubkey, AccountHash)>,
     time_loading_accounts_us: u64,
     time_collecting_rent_us: u64,
     time_storing_accounts_us: u64,
@@ -7200,7 +7030,6 @@ impl CollectRentInPartitionInfo {
     #[must_use]
     fn new(info: CollectRentFromAccountsInfo, time_loading_accounts: Duration) -> Self {
         Self {
-            skipped_rewrites: info.skipped_rewrites,
             time_loading_accounts_us: time_loading_accounts.as_micros() as u64,
             time_collecting_rent_us: info.time_collecting_rent_us,
             time_storing_accounts_us: info.time_storing_accounts_us,
@@ -7215,7 +7044,6 @@ impl CollectRentInPartitionInfo {
     #[must_use]
     fn reduce(lhs: Self, rhs: Self) -> Self {
         Self {
-            skipped_rewrites: [lhs.skipped_rewrites, rhs.skipped_rewrites].concat(),
             time_loading_accounts_us: lhs
                 .time_loading_accounts_us
                 .saturating_add(rhs.time_loading_accounts_us),

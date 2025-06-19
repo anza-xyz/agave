@@ -13,9 +13,6 @@ use {
             create_genesis_config_with_leader, create_genesis_config_with_vote_accounts,
             genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
-        snapshot_bank_utils,
-        snapshot_config::SnapshotConfig,
-        snapshot_utils,
         stake_history::StakeHistory,
         stakes::InvalidCacheEntryReason,
         status_cache::MAX_CACHE_ENTRIES,
@@ -39,11 +36,9 @@ use {
     solana_accounts_db::{
         accounts::AccountAddressFilter,
         accounts_db::DEFAULT_ACCOUNTS_SHRINK_RATIO,
-        accounts_hash::{AccountsDeltaHash, AccountsHasher},
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, IndexKey, ScanConfig, ScanError, ITER_BATCH_SIZE,
         },
-        accounts_partition,
         ancestors::Ancestors,
     },
     solana_client_traits::SyncClient,
@@ -141,7 +136,6 @@ use {
         thread::Builder,
         time::{Duration, Instant},
     },
-    tempfile::TempDir,
     test_case::test_case,
 };
 
@@ -926,10 +920,6 @@ fn test_rent_eager_collect_rent_in_partition() {
     activate_all_features(&mut genesis_config);
     genesis_config
         .accounts
-        .remove(&feature_set::skip_rent_rewrites::id())
-        .unwrap();
-    genesis_config
-        .accounts
         .remove(&feature_set::disable_partitioned_rent_collection::id())
         .unwrap();
 
@@ -983,10 +973,7 @@ fn test_rent_eager_collect_rent_in_partition() {
         bank.get_account(&rent_exempt_pubkey).unwrap().rent_epoch(),
         RENT_EXEMPT_RENT_EPOCH
     );
-    assert_eq!(
-        bank.slots_by_pubkey(&rent_due_pubkey),
-        vec![genesis_slot, some_slot]
-    );
+    assert_eq!(bank.slots_by_pubkey(&rent_due_pubkey), vec![genesis_slot]);
     assert_eq!(
         bank.slots_by_pubkey(&rent_exempt_pubkey),
         vec![genesis_slot, some_slot]
@@ -1012,73 +999,63 @@ pub(in crate::bank) fn new_from_parent_next_epoch(
     new_bank_from_parent_with_bank_forks(bank_forks, parent, &Pubkey::default(), slot)
 }
 
+/// test that only rent exempt accounts without rent epoch set to u64::MAX
+/// are updated to rent exempt status
 #[test]
-/// tests that an account which has already had rent collected IN this slot does not skip rewrites
-fn test_collect_rent_from_accounts() {
-    solana_logger::setup();
+fn test_update_rent_exempt_status_for_accounts() {
+    let address1 = Pubkey::new_unique();
+    let address2 = Pubkey::new_unique();
+    let address3 = Pubkey::new_unique();
 
-    for skip_rewrites in [false, true] {
-        let address1 = Pubkey::new_unique();
-        let address2 = Pubkey::new_unique();
-        let address3 = Pubkey::new_unique();
+    let (genesis_bank, bank_forks) = create_simple_test_arc_bank(100000);
+    let first_bank = new_from_parent(genesis_bank.clone());
+    let first_bank = bank_forks
+        .write()
+        .unwrap()
+        .insert(first_bank)
+        .clone_without_scheduler();
 
-        let (genesis_bank, bank_forks) = create_simple_test_arc_bank(100000);
-        let mut first_bank = new_from_parent(genesis_bank.clone());
-        if skip_rewrites {
-            first_bank.activate_feature(&feature_set::skip_rent_rewrites::id());
-        }
-        let first_bank = bank_forks
-            .write()
-            .unwrap()
-            .insert(first_bank)
-            .clone_without_scheduler();
+    let first_slot = 1;
+    assert_eq!(first_slot, first_bank.slot());
+    let epoch_delta = 4;
+    let later_bank = new_from_parent_next_epoch(first_bank, bank_forks.as_ref(), epoch_delta); // a bank a few epochs in the future
+    let later_slot = later_bank.slot();
+    assert!(later_bank.epoch() == genesis_bank.epoch() + epoch_delta);
 
-        let first_slot = 1;
-        assert_eq!(first_slot, first_bank.slot());
-        let epoch_delta = 4;
-        let later_bank = new_from_parent_next_epoch(first_bank, bank_forks.as_ref(), epoch_delta); // a bank a few epochs in the future
-        let later_slot = later_bank.slot();
-        assert!(later_bank.epoch() == genesis_bank.epoch() + epoch_delta);
+    let data_size = 0; // make sure we're rent exempt
+    let lamports = later_bank.get_minimum_balance_for_rent_exemption(data_size); // cannot be 0 or we zero out rent_epoch in rent collection and we need to be rent exempt
+    let mut account1 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
+    let mut account2 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
+    let mut account3 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
+    account1.set_rent_epoch(later_bank.epoch() - 1); // non-zero, but less than later_bank's epoch
+    account2.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH); // already marked as rent exempt
+    account3.set_rent_epoch(0); // stake accounts in genesis have a rent epoch of 0
 
-        let data_size = 0; // make sure we're rent exempt
-        let lamports = later_bank.get_minimum_balance_for_rent_exemption(data_size); // cannot be 0 or we zero out rent_epoch in rent collection and we need to be rent exempt
-        let mut account1 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
-        let mut account2 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
-        let mut account3 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
-        account1.set_rent_epoch(later_bank.epoch() - 1); // non-zero, but less than later_bank's epoch
-        account2.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH); // already marked as rent exempt
-        account3.set_rent_epoch(0); // stake accounts in genesis have a rent epoch of 0
+    // loaded from previous slot, so we skip rent collection on it
+    let _result = later_bank.update_rent_exempt_status_for_accounts(vec![
+        (address1, account1, later_slot - 1),
+        (address2, account2, later_slot - 1),
+        (address3, account3, later_slot - 1),
+    ]);
 
-        // loaded from previous slot, so we skip rent collection on it
-        let _result = later_bank.update_rent_exempt_status_for_accounts(vec![
-            (address1, account1, later_slot - 1),
-            (address2, account2, later_slot - 1),
-            (address3, account3, later_slot - 1),
-        ]);
+    let deltas = later_bank
+        .rc
+        .accounts
+        .accounts_db
+        .get_pubkey_hash_for_slot(later_slot)
+        .0;
 
-        let deltas = later_bank
-            .rc
-            .accounts
-            .accounts_db
-            .get_pubkey_hash_for_slot(later_slot)
-            .0;
+    // ensure account1 *is* stored because the account *did* change
+    // (its rent epoch must be updated to RENT_EXEMPT_RENT_EPOCH)
+    assert!(deltas.iter().map(|(pubkey, _)| pubkey).contains(&address1));
 
-        // ensure account1 *is* stored because the account *did* change
-        // (its rent epoch must be updated to RENT_EXEMPT_RENT_EPOCH)
-        assert!(deltas.iter().map(|(pubkey, _)| pubkey).contains(&address1));
+    // ensure account2 is *not* stored
+    // (because the account did *not* change)
+    assert!(!deltas.iter().map(|(pubkey, _)| pubkey).contains(&address2),);
 
-        // if doing rewrites, ensure account2 *is* stored
-        // if skipping rewrites, ensure account2 is *not* stored
-        // (because the account did *not* change)
-        assert_eq!(
-            deltas.iter().map(|(pubkey, _)| pubkey).contains(&address2),
-            !skip_rewrites,
-        );
-
-        // ensure account3 *is* stored because the account *did* change
-        // (same as account1 above)
-        assert!(deltas.iter().map(|(pubkey, _)| pubkey).contains(&address3));
-    }
+    // ensure account3 *is* stored because the account *did* change
+    // (same as account1 above)
+    assert!(deltas.iter().map(|(pubkey, _)| pubkey).contains(&address3));
 }
 
 #[test]
@@ -11958,245 +11935,6 @@ fn test_last_restart_slot() {
     let bank7 = Arc::new(Bank::new_from_parent(bank6, &Pubkey::default(), 7));
     assert!(!last_restart_slot_dirty(&bank7));
     assert_eq!(get_last_restart_slot(&bank7), Some(6));
-}
-
-/// Test that rehashing works with skipped rewrites
-///
-/// Since `bank_to_xxx_snapshot_archive()` calls `Bank::rehash()`, we must ensure that rehashing
-/// works properly when also using `test_skip_rewrites_but_include_in_bank_hash`.
-#[test]
-fn test_rehash_with_skipped_rewrites() {
-    let accounts_db_config = AccountsDbConfig {
-        test_skip_rewrites_but_include_in_bank_hash: true,
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
-    let bank = Arc::new(Bank::new_with_paths(
-        &GenesisConfig::default(),
-        Arc::new(RuntimeConfig::default()),
-        Vec::default(),
-        None,
-        None,
-        false,
-        Some(accounts_db_config),
-        None,
-        Some(Pubkey::new_unique()),
-        Arc::new(AtomicBool::new(false)),
-        None,
-        None,
-    ));
-    // This test is only meaningful while the bank hash contains rewrites.
-    // Once this feature is enabled, it may be possible to remove this test entirely.
-    assert!(!bank.bank_hash_skips_rent_rewrites());
-
-    // Store an account *in this bank* that will be checked for rent collection *in the next bank*
-    let pubkey = {
-        let rent_collection_partition = bank
-            .variable_cycle_partitions_between_slots(bank.slot(), bank.slot() + 1)
-            .last()
-            .copied()
-            .unwrap();
-        let pubkey_range =
-            accounts_partition::pubkey_range_from_partition(rent_collection_partition);
-        *pubkey_range.end()
-    };
-    let mut account = AccountSharedData::new(123_456_789, 0, &Pubkey::default());
-    // The account's rent epoch must be set to EXEMPT
-    // in order for its rewrite to be skipped by rent collection.
-    account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-    bank.store_account_and_update_capitalization(&pubkey, &account);
-
-    // Create a new bank that will do rent collection on the account stored in the previous slot
-    let bank = Arc::new(Bank::new_from_parent(
-        bank.clone(),
-        &Pubkey::new_unique(),
-        bank.slot() + 1,
-    ));
-
-    // Freeze the bank to trigger rent collection and hash calculation
-    bank.freeze();
-
-    // Ensure the bank hash is the same before and after rehashing
-    let bank_hash = bank.hash();
-    bank.rehash();
-    let bank_rehash = bank.hash();
-    assert_eq!(bank_rehash, bank_hash);
-}
-
-/// Test that skipped_rewrites are properly rebuilt when booting from a snapshot
-/// that was generated by a node skipping rewrites.
-#[test]
-fn test_rebuild_skipped_rewrites() {
-    let genesis_config = GenesisConfig::default();
-    let accounts_db_config = AccountsDbConfig {
-        test_skip_rewrites_but_include_in_bank_hash: true,
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
-    let bank = Arc::new(Bank::new_with_paths(
-        &genesis_config,
-        Arc::new(RuntimeConfig::default()),
-        Vec::default(),
-        None,
-        None,
-        false,
-        Some(accounts_db_config.clone()),
-        None,
-        Some(Pubkey::new_unique()),
-        Arc::new(AtomicBool::new(false)),
-        None,
-        None,
-    ));
-    // This test is only meaningful while the bank hash contains rewrites.
-    // Once this feature is enabled, it may be possible to remove this test entirely.
-    assert!(!bank.bank_hash_skips_rent_rewrites());
-
-    // Store an account *in this bank* that will be checked for rent collection *in the next bank*
-    let pubkey = {
-        let rent_collection_partition = bank
-            .variable_cycle_partitions_between_slots(bank.slot(), bank.slot() + 1)
-            .last()
-            .copied()
-            .unwrap();
-        let pubkey_range =
-            accounts_partition::pubkey_range_from_partition(rent_collection_partition);
-        *pubkey_range.end()
-    };
-    let mut account = AccountSharedData::new(123_456_789, 0, &Pubkey::default());
-    // The account's rent epoch must be set to EXEMPT
-    // in order for its rewrite to be skipped by rent collection.
-    account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-    bank.store_account_and_update_capitalization(&pubkey, &account);
-
-    // Create a new bank that will do rent collection on the account stored in the previous slot
-    let bank = Arc::new(Bank::new_from_parent(
-        bank.clone(),
-        &Pubkey::new_unique(),
-        bank.slot() + 1,
-    ));
-
-    // This fn is called within freeze(), but freeze() *consumes* Self::skipped_rewrites!
-    // For testing, we want to know what's in the skipped rewrites, so we perform
-    // rent collection manually.
-    bank.run_partitioned_rent_exempt_status_updates();
-    let actual_skipped_rewrites = bank.skipped_rewrites.lock().unwrap().clone();
-    // Ensure skipped rewrites now includes the account we stored above
-    assert!(actual_skipped_rewrites.contains_key(&pubkey));
-    // Ensure the calculated skipped rewrites match the actual ones
-    let calculated_skipped_rewrites = bank.calculate_skipped_rewrites();
-    assert_eq!(calculated_skipped_rewrites, actual_skipped_rewrites);
-
-    // required in order to snapshot the bank
-    bank.fill_bank_with_ticks_for_tests();
-
-    // Now take a snapshot!
-    let (_tmp_dir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
-    let bank_snapshots_dir = TempDir::new().unwrap();
-    let full_snapshot_archives_dir = TempDir::new().unwrap();
-    let incremental_snapshot_archives_dir = TempDir::new().unwrap();
-    let full_snapshot_archive = snapshot_bank_utils::bank_to_full_snapshot_archive(
-        bank_snapshots_dir.path(),
-        &bank,
-        None,
-        full_snapshot_archives_dir.path(),
-        incremental_snapshot_archives_dir.path(),
-        SnapshotConfig::default().archive_format,
-    )
-    .unwrap();
-
-    // Rebuild the bank and ensure it passes verification
-    let (snapshot_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
-        &[accounts_dir],
-        bank_snapshots_dir.path(),
-        &full_snapshot_archive,
-        None,
-        &genesis_config,
-        &RuntimeConfig::default(),
-        None,
-        None,
-        None,
-        false,
-        false,
-        false,
-        false,
-        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
-        None,
-        Arc::new(AtomicBool::new(false)),
-    )
-    .unwrap();
-    snapshot_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
-    assert_eq!(bank.as_ref(), &snapshot_bank);
-
-    // Ensure the snapshot bank's skipped rewrites match the original bank's
-    let snapshot_skipped_rewrites = snapshot_bank.calculate_skipped_rewrites();
-    assert_eq!(snapshot_skipped_rewrites, actual_skipped_rewrites);
-}
-
-/// Test that getting accounts for BankHashDetails works with skipped rewrites
-#[test_case(true; "skip rewrites")]
-#[test_case(false; "do rewrites")]
-fn test_get_accounts_for_bank_hash_details(skip_rewrites: bool) {
-    let genesis_config = GenesisConfig::default();
-    let accounts_db_config = AccountsDbConfig {
-        test_skip_rewrites_but_include_in_bank_hash: skip_rewrites,
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
-    let bank = Arc::new(Bank::new_with_paths(
-        &genesis_config,
-        Arc::new(RuntimeConfig::default()),
-        Vec::default(),
-        None,
-        None,
-        false,
-        Some(accounts_db_config.clone()),
-        None,
-        Some(Pubkey::new_unique()),
-        Arc::new(AtomicBool::new(false)),
-        None,
-        None,
-    ));
-    // This test is only meaningful while the bank hash contains rewrites.
-    // Once this feature is enabled, it may be possible to remove this test entirely.
-    assert!(!bank.bank_hash_skips_rent_rewrites());
-
-    // Store an account *in this bank* that will be checked for rent collection *in the next bank*
-    let pubkey = {
-        let rent_collection_partition = bank
-            .variable_cycle_partitions_between_slots(bank.slot(), bank.slot() + 1)
-            .last()
-            .copied()
-            .unwrap();
-        let pubkey_range =
-            accounts_partition::pubkey_range_from_partition(rent_collection_partition);
-        *pubkey_range.end()
-    };
-    let mut account = AccountSharedData::new(123_456_789, 0, &Pubkey::default());
-    // The account's rent epoch must be set to EXEMPT
-    // in order for its rewrite to be skipped by rent collection.
-    account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
-    bank.store_account_and_update_capitalization(&pubkey, &account);
-
-    // Create a new bank that will do rent collection on the account stored in the previous slot
-    let bank = Bank::new_from_parent(bank.clone(), &Pubkey::new_unique(), bank.slot() + 1);
-
-    // Freeze the bank to do rent collection and calculate the accounts delta hash
-    bank.freeze();
-
-    // Ensure that the accounts returned by `get_accounts_for_bank_hash_details()` produces the
-    // same AccountsDeltaHash as the actual value stored in the Bank.
-    let calculated_accounts_delta_hash = {
-        let accounts = bank.get_accounts_for_bank_hash_details();
-        let hashes = accounts
-            .into_iter()
-            .map(|account| (account.pubkey, account.hash))
-            .collect();
-        AccountsDeltaHash(AccountsHasher::accumulate_account_hashes(hashes))
-    };
-    let actual_accounts_delta_hash = bank
-        .rc
-        .accounts
-        .accounts_db
-        .get_accounts_delta_hash(bank.slot())
-        .unwrap();
-    assert_eq!(calculated_accounts_delta_hash, actual_accounts_delta_hash);
 }
 
 /// Test that simulations report the compute units of failed transactions

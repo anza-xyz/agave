@@ -128,7 +128,7 @@ impl<'a> SnapshotMinimizer<'a> {
     }
 
     /// Used to get rent collection accounts in `minimize`
-    /// Add all pubkeys we would collect rent from or rewrite to `minimized_account_set`.
+    /// Add all pubkeys we would collect rent from to `minimized_account_set`.
     /// related to Bank::rent_collection_partitions
     fn get_rent_collection_accounts(&self) {
         let partitions = if !self.bank.use_fixed_collection_cycle() {

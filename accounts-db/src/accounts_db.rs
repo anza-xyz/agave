@@ -362,7 +362,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-    test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
     enable_experimental_accumulator_hash: false,
@@ -389,7 +388,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     skip_initial_hash_calc: false,
     exhaustively_verify_refcounts: false,
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
-    test_skip_rewrites_but_include_in_bank_hash: false,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
     enable_experimental_accumulator_hash: false,
@@ -517,7 +515,6 @@ pub struct AccountsDbConfig {
     pub ancient_storage_ideal_size: Option<u64>,
     pub max_ancient_storages: Option<usize>,
     pub hash_calculation_pubkey_bins: Option<usize>,
-    pub test_skip_rewrites_but_include_in_bank_hash: bool,
     pub skip_initial_hash_calc: bool,
     pub exhaustively_verify_refcounts: bool,
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
@@ -1371,9 +1368,6 @@ pub struct AccountsDb {
 
     pub storage: AccountStorage,
 
-    /// true if this client should skip rewrites but still include those rewrites in the bank hash as if rewrites had occurred.
-    pub test_skip_rewrites_but_include_in_bank_hash: bool,
-
     pub accounts_cache: AccountsCache,
 
     write_cache_limit_bytes: Option<u64>,
@@ -1919,8 +1913,6 @@ impl AccountsDb {
             write_cache_limit_bytes: accounts_db_config.write_cache_limit_bytes,
             partitioned_epoch_rewards_config: accounts_db_config.partitioned_epoch_rewards_config,
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
-            test_skip_rewrites_but_include_in_bank_hash: accounts_db_config
-                .test_skip_rewrites_but_include_in_bank_hash,
             storage_access: accounts_db_config.storage_access,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             is_experimental_accumulator_hash_enabled: accounts_db_config
@@ -6117,11 +6109,6 @@ impl AccountsDb {
                     .swap(0, Ordering::Relaxed),
                 i64
             ),
-            (
-                "skipped_rewrites_num",
-                self.stats.skipped_rewrites_num.swap(0, Ordering::Relaxed),
-                i64
-            ),
         );
     }
 
@@ -7041,18 +7028,8 @@ impl AccountsDb {
         &self,
         slot: Slot,
         ignore: Option<Pubkey>,
-        mut skipped_rewrites: HashMap<Pubkey, AccountHash>,
     ) -> AccountsDeltaHash {
         let (mut hashes, scan_us, mut accumulate) = self.get_pubkey_hash_for_slot(slot);
-
-        hashes.iter().for_each(|(k, _h)| {
-            skipped_rewrites.remove(k);
-        });
-
-        let num_skipped_rewrites = skipped_rewrites.len();
-        hashes.extend(skipped_rewrites);
-
-        info!("skipped rewrite hashes {} {}", slot, num_skipped_rewrites);
 
         if let Some(ignore) = ignore {
             hashes.retain(|k| k.0 != ignore);
@@ -7072,9 +7049,6 @@ impl AccountsDb {
             .delta_hash_accumulate_time_total_us
             .fetch_add(accumulate.as_us(), Ordering::Relaxed);
         self.stats.delta_hash_num.fetch_add(1, Ordering::Relaxed);
-        self.stats
-            .skipped_rewrites_num
-            .fetch_add(num_skipped_rewrites, Ordering::Relaxed);
 
         accounts_delta_hash
     }
@@ -8734,7 +8708,7 @@ impl AccountsDb {
 
     /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
     pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
-        self.calculate_accounts_delta_hash_internal(slot, None, HashMap::default())
+        self.calculate_accounts_delta_hash_internal(slot, None)
     }
 
     pub fn load_without_fixed_root(
