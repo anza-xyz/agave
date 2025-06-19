@@ -120,9 +120,6 @@ use {
     solana_signer::Signer,
     solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_time_utils::timestamp,
-    solana_tpu_client::tpu_client::{
-        DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
-    },
     solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
@@ -499,30 +496,29 @@ pub struct ValidatorTpuConfig {
     pub vote_quic_server_config: QuicServerParams,
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 impl ValidatorTpuConfig {
     /// A convenient function to build a ValidatorTpuConfig for testing with good
     /// default.
     pub fn new_for_tests(tpu_enable_udp: bool) -> Self {
         let tpu_quic_server_config = QuicServerParams {
             max_connections_per_ipaddr_per_min: 32,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         };
 
         let tpu_fwd_quic_server_config = QuicServerParams {
             max_connections_per_ipaddr_per_min: 32,
             max_unstaked_connections: 0,
-            coalesce_channel_size: 100_000, // smaller channel size for faster test
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         };
 
         // vote and tpu_fwd share the same characteristics -- disallow non-staked connections:
         let vote_quic_server_config = tpu_fwd_quic_server_config.clone();
 
         ValidatorTpuConfig {
-            use_quic: DEFAULT_TPU_USE_QUIC,
-            vote_use_quic: DEFAULT_VOTE_USE_QUIC,
-            tpu_connection_pool_size: DEFAULT_TPU_CONNECTION_POOL_SIZE,
+            use_quic: solana_tpu_client::tpu_client::DEFAULT_TPU_USE_QUIC,
+            vote_use_quic: solana_tpu_client::tpu_client::DEFAULT_VOTE_USE_QUIC,
+            tpu_connection_pool_size: solana_tpu_client::tpu_client::DEFAULT_TPU_CONNECTION_POOL_SIZE,
             tpu_enable_udp,
             tpu_quic_server_config,
             tpu_fwd_quic_server_config,

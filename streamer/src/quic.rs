@@ -1,8 +1,5 @@
 use {
-    crate::{
-        nonblocking::quic::{ALPN_TPU_PROTOCOL_ID, DEFAULT_WAIT_FOR_CHUNK_TIMEOUT},
-        streamer::StakedNodes,
-    },
+    crate::{nonblocking::quic::ALPN_TPU_PROTOCOL_ID, streamer::StakedNodes},
     crossbeam_channel::Sender,
     pem::Pem,
     quinn::{
@@ -69,7 +66,7 @@ pub struct SpawnServerResult {
 }
 
 /// Controls the the channel size for the PacketBatch coalesce
-pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
+pub const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
 
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
@@ -617,32 +614,23 @@ pub struct QuicServerParams {
     pub num_threads: NonZeroUsize,
 }
 
-impl Default for QuicServerParams {
-    fn default() -> Self {
+#[cfg(feature = "dev-context-only-utils")]
+impl QuicServerParams {
+    pub const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
+
+    pub fn default_for_tests() -> Self {
         QuicServerParams {
             max_connections_per_peer: 1,
             max_staked_connections: DEFAULT_MAX_STAKED_CONNECTIONS,
             max_unstaked_connections: DEFAULT_MAX_UNSTAKED_CONNECTIONS,
             max_streams_per_ms: DEFAULT_MAX_STREAMS_PER_MS,
             max_connections_per_ipaddr_per_min: DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
-            wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+            wait_for_chunk_timeout: crate::nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: DEFAULT_TPU_COALESCE,
-            coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
-            num_threads: NonZeroUsize::new(num_cpus::get().min(1)).expect("1 is non-zero"),
-        }
-    }
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-impl QuicServerParams {
-    pub const DEFAULT_NUM_SERVER_THREADS_FOR_TEST: NonZeroUsize = NonZeroUsize::new(8).unwrap();
-
-    pub fn default_for_tests() -> Self {
-        // Shrink the channel size to avoid a massive allocation for tests
-        Self {
+            // Shrink the channel size from DEFAULT_MAX_COALESCE_CHANNEL_SIZE
+            // to avoid a massive allocation for tests
             coalesce_channel_size: 100_000,
             num_threads: Self::DEFAULT_NUM_SERVER_THREADS_FOR_TEST,
-            ..Self::default()
         }
     }
 }
