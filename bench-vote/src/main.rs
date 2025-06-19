@@ -172,7 +172,7 @@ fn main() -> Result<()> {
     let max_connections_per_peer: usize = value_t!(matches, "max-connections-per-peer", usize)
         .unwrap_or(DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER);
     let connection_pool_size: usize =
-        value_t!(matches, "connection-pool-size", usize).unwrap_or(1024);
+        value_t!(matches, "connection-pool-size", usize).unwrap_or(256);
 
     let use_connection_cache = matches.is_present("use-connection-cache");
     let server_only = matches.is_present("server-only");
