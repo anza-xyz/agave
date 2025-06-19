@@ -1757,9 +1757,9 @@ enum SnapshotFileKind {
 
 /// Determines `SnapshotFileKind` for `filename` if any
 fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
-    static VERSION_FILE_REGEX: std::sync::LazyLock<Regex> =
+    static VERSION_FILE_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^version$").unwrap());
-    static BANK_FIELDS_FILE_REGEX: std::sync::LazyLock<Regex> =
+    static BANK_FIELDS_FILE_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^[0-9]+(\.pre)?$").unwrap());
 
     if VERSION_FILE_REGEX.is_match(filename) {
