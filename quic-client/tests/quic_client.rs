@@ -80,13 +80,7 @@ mod tests {
             sender,
             exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -166,14 +160,7 @@ mod tests {
             sender,
             exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                wait_for_chunk_timeout: Duration::from_secs(1),
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -231,13 +218,7 @@ mod tests {
             sender,
             request_recv_exit.clone(),
             staked_nodes.clone(),
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 
@@ -261,13 +242,7 @@ mod tests {
             sender2,
             response_recv_exit.clone(),
             staked_nodes,
-            QuicServerParams {
-                max_connections_per_peer: 1,
-                max_staked_connections: 10,
-                max_unstaked_connections: 10,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
-            },
+            QuicServerParams::default_for_tests(),
         )
         .unwrap();
 

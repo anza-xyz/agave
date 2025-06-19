@@ -190,6 +190,7 @@ pub fn spawn_server_multi(
         wait_for_chunk_timeout,
         coalesce,
         coalesce_channel_size,
+        num_threads: _,
     } = quic_server_params;
     let concurrent_connections = max_staked_connections + max_unstaked_connections;
     let max_concurrent_connections = concurrent_connections + concurrent_connections / 4;
@@ -1562,7 +1563,7 @@ pub mod test {
                 quic::compute_max_allowed_uni_streams,
                 testing_utilities::{
                     check_multiple_streams, get_client_config, make_client_endpoint,
-                    setup_quic_server, SpawnTestServerResult, TestServerConfig,
+                    setup_quic_server, SpawnTestServerResult,
                 },
             },
             quic::DEFAULT_TPU_COALESCE,
@@ -1686,7 +1687,7 @@ pub mod test {
             receiver: _,
             server_address: _,
             stats: _,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
         exit.store(true, Ordering::Relaxed);
         join_handle.await.unwrap();
     }
@@ -1700,7 +1701,7 @@ pub mod test {
             receiver,
             server_address,
             stats: _,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
         check_timeout(receiver, server_address).await;
         exit.store(true, Ordering::Relaxed);
@@ -1767,7 +1768,7 @@ pub mod test {
             receiver: _,
             server_address,
             stats,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
         let conn1 = make_client_endpoint(&server_address, None).await;
         assert_eq!(stats.total_streams.load(Ordering::Relaxed), 0);
@@ -1802,7 +1803,7 @@ pub mod test {
             receiver: _,
             server_address,
             stats: _,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
         check_block_multiple_connections(server_address).await;
         exit.store(true, Ordering::Relaxed);
         join_handle.await.unwrap();
@@ -1820,9 +1821,9 @@ pub mod test {
             stats,
         } = setup_quic_server(
             None,
-            TestServerConfig {
+            QuicServerParams {
                 max_connections_per_peer: 2,
-                ..Default::default()
+                ..QuicServerParams::default_for_tests()
             },
         );
 
@@ -1893,7 +1894,7 @@ pub mod test {
             receiver,
             server_address,
             stats: _,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
         join_handle.await.unwrap();
@@ -1915,7 +1916,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(Some(staked_nodes), TestServerConfig::default());
+        } = setup_quic_server(Some(staked_nodes), QuicServerParams::default_for_tests());
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
         join_handle.await.unwrap();
@@ -1947,7 +1948,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(Some(staked_nodes), TestServerConfig::default());
+        } = setup_quic_server(Some(staked_nodes), QuicServerParams::default_for_tests());
         check_multiple_writes(receiver, server_address, Some(&client_keypair)).await;
         exit.store(true, Ordering::Relaxed);
         join_handle.await.unwrap();
@@ -1971,7 +1972,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
         check_multiple_writes(receiver, server_address, None).await;
         exit.store(true, Ordering::Relaxed);
         join_handle.await.unwrap();
@@ -2009,8 +2010,7 @@ pub mod test {
             staked_nodes,
             QuicServerParams {
                 max_unstaked_connections: 0, // Do not allow any connection from unstaked clients/nodes
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
+                ..QuicServerParams::default_for_tests()
             },
         )
         .unwrap();
@@ -2043,8 +2043,7 @@ pub mod test {
             staked_nodes,
             QuicServerParams {
                 max_connections_per_peer: 2,
-                coalesce_channel_size: 100_000, // smaller channel size for faster test
-                ..QuicServerParams::default()
+                ..QuicServerParams::default_for_tests()
             },
         )
         .unwrap();
@@ -2396,7 +2395,7 @@ pub mod test {
             receiver,
             server_address,
             stats,
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 
@@ -2455,7 +2454,7 @@ pub mod test {
             stats,
             exit,
             ..
-        } = setup_quic_server(None, TestServerConfig::default());
+        } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
         let client_connection = make_client_endpoint(&server_address, None).await;
 

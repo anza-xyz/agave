@@ -8110,6 +8110,7 @@ dependencies = [
  "libc",
  "log",
  "nix",
+ "num_cpus",
  "pem",
  "percentage",
  "quinn",
