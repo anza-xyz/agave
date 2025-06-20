@@ -158,6 +158,7 @@ impl FeatureSet {
                 .is_active(&disable_zk_elgamal_proof_program::id()),
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
+            raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
         }
     }
 }
@@ -1116,6 +1117,10 @@ pub mod reenable_zk_elgamal_proof_program {
     solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
 }
 
+pub mod raise_cpi_nesting_limit_to_8 {
+    solana_pubkey::declare_id!("6TkHkRmP7JZy1fdM6fg5uXn76wChQBWGokHBJzrLB3mj");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1355,6 +1360,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (alpenglow::id(), "Enable Alpenglow"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
+        (raise_cpi_nesting_limit_to_8::id(), "SIMD-0296: Raise CPI nesting limit from 4 to 8"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

@@ -60,7 +60,7 @@ fn process_instruction(
                 accounts[INVOKED_ARGUMENT_INDEX].owner,
                 accounts[INVOKED_PROGRAM_INDEX].key
             );
-            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].lamports(), 10);
+            assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].lamports(), 20);
             assert_eq!(accounts[INVOKED_ARGUMENT_INDEX].data_len(), 10);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_signer);
             assert!(accounts[INVOKED_ARGUMENT_INDEX].is_writable);
