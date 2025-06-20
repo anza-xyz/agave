@@ -7,6 +7,7 @@ use {
 pub struct RpcBootstrapConfig {
     pub no_genesis_fetch: bool,
     pub no_snapshot_fetch: bool,
+    pub check_vote_account: Option<String>,
 }
 
 impl FromClapArgMatches for RpcBootstrapConfig {
@@ -15,9 +16,14 @@ impl FromClapArgMatches for RpcBootstrapConfig {
 
         let no_snapshot_fetch = matches.is_present("no_snapshot_fetch");
 
+        let check_vote_account = matches
+            .value_of("check_vote_account")
+            .map(|url| url.to_string());
+
         Ok(Self {
             no_genesis_fetch,
             no_snapshot_fetch,
+            check_vote_account,
         })
     }
 }
