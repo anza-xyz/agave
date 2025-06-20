@@ -22,13 +22,14 @@ use {
     },
     solana_keypair::Keypair,
     solana_ledger::use_snapshot_archives_at_startup,
+    solana_pubkey::Pubkey,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::{net::SocketAddr, str::FromStr},
+    std::{collections::HashSet, net::SocketAddr, str::FromStr},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
@@ -41,6 +42,7 @@ pub struct RunArgs {
     pub identity_keypair: Keypair,
     pub logfile: String,
     pub entrypoints: Vec<SocketAddr>,
+    pub known_validators: Option<HashSet<Pubkey>>,
     pub rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig,
 }
 
@@ -69,10 +71,18 @@ impl FromClapArgMatches for RunArgs {
         }
         let entrypoints = parsed_entrypoints.into_iter().collect();
 
+        let known_validators = validators_set(
+            &identity_keypair.pubkey(),
+            matches,
+            "known_validators",
+            "known validator",
+        )?;
+
         Ok(RunArgs {
             identity_keypair,
             logfile,
             entrypoints,
+            known_validators,
             rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::from_clap_arg_match(
                 matches,
             )?,
@@ -1729,6 +1739,32 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     )
 }
 
+fn validators_set(
+    identity_pubkey: &Pubkey,
+    matches: &ArgMatches<'_>,
+    matches_name: &str,
+    arg_name: &str,
+) -> Result<Option<HashSet<Pubkey>>> {
+    if matches.is_present(matches_name) {
+        let validators_set: Option<HashSet<Pubkey>> = values_t!(matches, matches_name, Pubkey)
+            .ok()
+            .map(|validators| validators.into_iter().collect());
+        if let Some(validators_set) = &validators_set {
+            if validators_set.contains(identity_pubkey) {
+                return Err(crate::commands::Error::Dynamic(
+                    Box::<dyn std::error::Error>::from(format!(
+                        "the validator's identity pubkey cannot be a {arg_name}: {}",
+                        identity_pubkey
+                    )),
+                ));
+            }
+        }
+        Ok(validators_set)
+    } else {
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -1741,11 +1777,13 @@ mod tests {
             let identity_keypair = Keypair::new();
             let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
             let entrypoints = vec![];
+            let known_validators = None;
 
             RunArgs {
                 identity_keypair,
                 logfile,
                 entrypoints,
+                known_validators,
                 rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::default(),
             }
         }
@@ -1757,6 +1795,7 @@ mod tests {
                 identity_keypair: self.identity_keypair.insecure_clone(),
                 logfile: self.logfile.clone(),
                 entrypoints: self.entrypoints.clone(),
+                known_validators: self.known_validators.clone(),
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
             }
         }
@@ -2027,6 +2066,126 @@ mod tests {
                     "https://api.mainnet-beta.solana.com",
                 ],
                 expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_known_validators() {
+        // long arg + single known validator
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--known-validator", &known_validators_pubkey.to_string()],
+                expected_args,
+            );
+        }
+
+        // alias + single known validator
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--trusted-validator", &known_validators_pubkey.to_string()],
+                expected_args,
+            );
+        }
+
+        // long arg + multiple known validators
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey_1 = Pubkey::new_unique();
+            let known_validators_pubkey_2 = Pubkey::new_unique();
+            let known_validators_pubkey_3 = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([
+                known_validators_pubkey_1,
+                known_validators_pubkey_2,
+                known_validators_pubkey_3,
+            ]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--known-validator",
+                    &known_validators_pubkey_1.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_2.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_3.to_string(),
+                ],
+                expected_args,
+            );
+        }
+
+        // long arg + duplicate known validators
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey_1 = Pubkey::new_unique();
+            let known_validators_pubkey_2 = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([
+                known_validators_pubkey_1,
+                known_validators_pubkey_2,
+            ]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--known-validator",
+                    &known_validators_pubkey_1.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_2.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_1.to_string(),
+                ],
+                expected_args,
+            );
+        }
+
+        // use identity pubkey as known validator
+        {
+            let default_args = DefaultArgs::default();
+            let default_run_args = RunArgs::default();
+
+            // generate a keypair
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let file = tmp_dir.path().join("id.json");
+            solana_keypair::write_keypair_file(&default_run_args.identity_keypair, &file).unwrap();
+
+            let matches = add_args(App::new("run_command"), &default_args).get_matches_from(vec![
+                "run_command",
+                "--identity",
+                file.to_str().unwrap(),
+                "--known-validator",
+                &default_run_args.identity_keypair.pubkey().to_string(),
+            ]);
+            let result = RunArgs::from_clap_arg_match(&matches);
+            assert!(result.is_err());
+            let error = result.unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "the validator's identity pubkey cannot be a known validator: {}",
+                    default_run_args.identity_keypair.pubkey()
+                )
             );
         }
     }

@@ -268,12 +268,8 @@ pub fn execute(
         None
     };
 
-    let known_validators = validators_set(
-        &identity_keypair.pubkey(),
-        matches,
-        "known_validators",
-        "--known-validator",
-    )?;
+    let known_validators = run_args.known_validators;
+
     let repair_validators = validators_set(
         &identity_keypair.pubkey(),
         matches,
