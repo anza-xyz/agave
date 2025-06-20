@@ -135,7 +135,7 @@ fn collect_accounts_for_failed_tx<'a>(
     transaction_ref: Option<&'a SanitizedTransaction>,
     rollback_accounts: &'a RollbackAccounts,
 ) {
-    for (address, account) in &rollback_accounts.accounts {
+    for (address, account) in rollback_accounts {
         collected_accounts.push((address, account));
         if let Some(collected_account_transactions) = collected_account_transactions {
             collected_account_transactions
@@ -164,7 +164,6 @@ mod tests {
         solana_signer::{signers::Signers, Signer},
         solana_svm::{
             account_loader::{FeesOnlyTransaction, LoadedTransaction},
-            rollback_accounts::RollbackAccountsKind,
             transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         },
         solana_system_interface::{instruction as system_instruction, program as system_program},
@@ -316,9 +315,8 @@ mod tests {
             accounts: transaction_accounts,
             program_indices: vec![],
             fee_details: FeeDetails::default(),
-            rollback_accounts: RollbackAccounts {
-                kind: RollbackAccountsKind::FeePayerOnly,
-                accounts: vec![(from_address, from_account_pre.clone())],
+            rollback_accounts: RollbackAccounts::FeePayerOnly {
+                fee_payer: (from_address, from_account_pre.clone()),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
@@ -408,12 +406,9 @@ mod tests {
             accounts: transaction_accounts,
             program_indices: vec![],
             fee_details: FeeDetails::default(),
-            rollback_accounts: RollbackAccounts {
-                kind: RollbackAccountsKind::SeparateNonceAndFeePayer,
-                accounts: vec![
-                    (nonce_address, nonce_account_pre.clone()),
-                    (from_address, from_account_pre.clone()),
-                ],
+            rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce: (nonce_address, nonce_account_pre.clone()),
+                fee_payer: (from_address, from_account_pre.clone()),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
@@ -517,9 +512,8 @@ mod tests {
             accounts: transaction_accounts,
             program_indices: vec![],
             fee_details: FeeDetails::default(),
-            rollback_accounts: RollbackAccounts {
-                kind: RollbackAccountsKind::SameNonceAndFeePayer,
-                accounts: vec![(nonce_address, nonce_account_pre.clone())],
+            rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
+                nonce: (nonce_address, nonce_account_pre.clone()),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
@@ -584,9 +578,8 @@ mod tests {
             FeesOnlyTransaction {
                 load_error: TransactionError::InvalidProgramForExecution,
                 fee_details: FeeDetails::default(),
-                rollback_accounts: RollbackAccounts {
-                    kind: RollbackAccountsKind::FeePayerOnly,
-                    accounts: vec![(from_address, from_account_pre.clone())],
+                rollback_accounts: RollbackAccounts::FeePayerOnly {
+                    fee_payer: (from_address, from_account_pre.clone()),
                 },
             },
         )))];

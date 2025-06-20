@@ -9,25 +9,55 @@ use {
 /// Captured account state used to rollback account state for nonce and fee
 /// payer accounts after a failed executed transaction.
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub struct RollbackAccounts {
-    pub kind: RollbackAccountsKind,
-    pub accounts: Vec<TransactionAccount>,
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum RollbackAccountsKind {
-    FeePayerOnly,
-    SameNonceAndFeePayer,
-    SeparateNonceAndFeePayer,
+pub enum RollbackAccounts {
+    FeePayerOnly {
+        fee_payer: TransactionAccount,
+    },
+    SameNonceAndFeePayer {
+        nonce: TransactionAccount,
+    },
+    SeparateNonceAndFeePayer {
+        nonce: TransactionAccount,
+        fee_payer: TransactionAccount,
+    },
 }
 
 #[cfg(feature = "dev-context-only-utils")]
 impl Default for RollbackAccounts {
     fn default() -> Self {
-        Self {
-            kind: RollbackAccountsKind::FeePayerOnly,
-            accounts: vec![(Pubkey::default(), AccountSharedData::default())],
+        Self::FeePayerOnly {
+            fee_payer: TransactionAccount::default(),
         }
+    }
+}
+
+/// Rollback accounts iterator.
+/// This struct is created by the `RollbackAccounts::iter`.
+pub struct RollbackAccountsIter<'a> {
+    fee_payer: Option<&'a TransactionAccount>,
+    nonce: Option<&'a TransactionAccount>,
+}
+
+impl<'a> Iterator for RollbackAccountsIter<'a> {
+    type Item = &'a TransactionAccount;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(fee_payer) = self.fee_payer.take() {
+            return Some(fee_payer);
+        }
+        if let Some(nonce) = self.nonce.take() {
+            return Some(nonce);
+        }
+        None
+    }
+}
+
+impl<'a> IntoIterator for &'a RollbackAccounts {
+    type Item = &'a TransactionAccount;
+    type IntoIter = RollbackAccountsIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -46,17 +76,13 @@ impl RollbackAccounts {
                 // so we capture both the data change for the nonce and the lamports/rent epoch change for the fee payer
                 fee_payer_account.set_data_from_slice(nonce.account().data());
 
-                RollbackAccounts {
-                    kind: RollbackAccountsKind::SameNonceAndFeePayer,
-                    accounts: vec![(fee_payer_address, fee_payer_account)],
+                RollbackAccounts::SameNonceAndFeePayer {
+                    nonce: (fee_payer_address, fee_payer_account),
                 }
             } else {
-                RollbackAccounts {
-                    kind: RollbackAccountsKind::SeparateNonceAndFeePayer,
-                    accounts: vec![
-                        (nonce.address, nonce.account),
-                        (fee_payer_address, fee_payer_account),
-                    ],
+                RollbackAccounts::SeparateNonceAndFeePayer {
+                    nonce: (nonce.address, nonce.account),
+                    fee_payer: (fee_payer_address, fee_payer_account),
                 }
             }
         } else {
@@ -67,23 +93,43 @@ impl RollbackAccounts {
             // alter this behavior such that rent epoch updates are handled the
             // same for both nonce and non-nonce failed transactions.
             fee_payer_account.set_rent_epoch(fee_payer_loaded_rent_epoch);
-            RollbackAccounts {
-                kind: RollbackAccountsKind::FeePayerOnly,
-                accounts: vec![(fee_payer_address, fee_payer_account)],
+            RollbackAccounts::FeePayerOnly {
+                fee_payer: (fee_payer_address, fee_payer_account),
             }
         }
     }
 
     /// Number of accounts tracked for rollback
     pub fn count(&self) -> usize {
-        self.accounts.len()
+        match self {
+            Self::FeePayerOnly { .. } | Self::SameNonceAndFeePayer { .. } => 1,
+            Self::SeparateNonceAndFeePayer { .. } => 2,
+        }
+    }
+
+    /// Iterator over accounts tracked for rollback.
+    pub fn iter(&self) -> RollbackAccountsIter<'_> {
+        match self {
+            Self::FeePayerOnly { fee_payer } => RollbackAccountsIter {
+                fee_payer: Some(fee_payer),
+                nonce: None,
+            },
+            Self::SameNonceAndFeePayer { nonce } => RollbackAccountsIter {
+                fee_payer: None,
+                nonce: Some(nonce),
+            },
+            Self::SeparateNonceAndFeePayer { nonce, fee_payer } => RollbackAccountsIter {
+                fee_payer: Some(fee_payer),
+                nonce: Some(nonce),
+            },
+        }
     }
 
     /// Size of accounts tracked for rollback, used when calculating the actual
     /// cost of transaction processing in the cost model.
     pub fn data_size(&self) -> usize {
         let mut total_size: usize = 0;
-        for (_, account) in &self.accounts {
+        for (_, account) in self.iter() {
             total_size = total_size.saturating_add(account.data().len());
         }
         total_size
@@ -123,12 +169,13 @@ mod tests {
             fee_payer_rent_epoch,
         );
 
-        let expected_rollback_accounts = RollbackAccounts {
-            kind: RollbackAccountsKind::FeePayerOnly,
-            accounts: vec![(fee_payer_address, fee_payer_account)],
-        };
-
-        assert_eq!(expected_rollback_accounts, rollback_accounts);
+        let expected_fee_payer = (fee_payer_address, fee_payer_account);
+        match rollback_accounts {
+            RollbackAccounts::FeePayerOnly { fee_payer } => {
+                assert_eq!(expected_fee_payer, fee_payer);
+            }
+            _ => panic!("Expected FeePayerOnly variant"),
+        }
     }
 
     #[test]
@@ -161,9 +208,8 @@ mod tests {
             u64::MAX, // ignored
         );
 
-        let expected_rollback_accounts = RollbackAccounts {
-            kind: RollbackAccountsKind::SameNonceAndFeePayer,
-            accounts: vec![(nonce_address, nonce_account)],
+        let expected_rollback_accounts = RollbackAccounts::SameNonceAndFeePayer {
+            nonce: (nonce_address, nonce_account),
         };
 
         assert_eq!(expected_rollback_accounts, rollback_accounts);
@@ -202,14 +248,14 @@ mod tests {
             u64::MAX, // ignored
         );
 
-        let expected_rollback_accounts = RollbackAccounts {
-            kind: RollbackAccountsKind::SeparateNonceAndFeePayer,
-            accounts: vec![
-                (nonce_address, nonce_account),
-                (fee_payer_address, fee_payer_account),
-            ],
-        };
-
-        assert_eq!(expected_rollback_accounts, rollback_accounts);
+        let expected_nonce = (nonce_address, nonce_account);
+        let expected_fee_payer = (fee_payer_address, fee_payer_account);
+        match rollback_accounts {
+            RollbackAccounts::SeparateNonceAndFeePayer { nonce, fee_payer } => {
+                assert_eq!(expected_nonce, nonce);
+                assert_eq!(expected_fee_payer, fee_payer);
+            }
+            _ => panic!("Expected SeparateNonceAndFeePayer variant"),
+        }
     }
 }

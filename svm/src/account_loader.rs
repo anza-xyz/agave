@@ -274,7 +274,7 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
     }
 
     pub(crate) fn update_accounts_for_failed_tx(&mut self, rollback_accounts: &RollbackAccounts) {
-        for (account_address, account) in &rollback_accounts.accounts {
+        for (account_address, account) in rollback_accounts {
             self.loaded_accounts
                 .insert(*account_address, account.clone());
         }
@@ -842,10 +842,7 @@ fn construct_instructions_account(message: &impl SVMMessage) -> AccountSharedDat
 mod tests {
     use {
         super::*,
-        crate::{
-            rollback_accounts::RollbackAccountsKind,
-            transaction_account_state_info::TransactionAccountStateInfo,
-        },
+        crate::transaction_account_state_info::TransactionAccountStateInfo,
         agave_reserved_account_keys::ReservedAccountKeys,
         rand0_7::prelude::*,
         solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
@@ -2827,9 +2824,8 @@ mod tests {
 
         // drop the account and ensure all deliver the updated state
         fee_payer_account.set_lamports(0);
-        account_loader.update_accounts_for_failed_tx(&RollbackAccounts {
-            kind: RollbackAccountsKind::FeePayerOnly,
-            accounts: vec![(fee_payer, fee_payer_account)],
+        account_loader.update_accounts_for_failed_tx(&RollbackAccounts::FeePayerOnly {
+            fee_payer: (fee_payer, fee_payer_account),
         });
 
         assert_eq!(

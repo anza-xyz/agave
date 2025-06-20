@@ -174,8 +174,7 @@ impl SvmTestEnvironment<'_> {
                     }
                 }
                 Ok(ProcessedTransaction::FeesOnly(fees_only_transaction)) => {
-                    for (pubkey, account_data) in &fees_only_transaction.rollback_accounts.accounts
-                    {
+                    for (pubkey, account_data) in &fees_only_transaction.rollback_accounts {
                         update_or_dealloc_account(
                             &mut final_accounts_actual,
                             *pubkey,
