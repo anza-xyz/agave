@@ -38,7 +38,7 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{Node, NodeConfig},
+        node::{Node, NodeConfig},
         contact_info::ContactInfo,
     },
     solana_hash::Hash,

@@ -692,7 +692,7 @@ mod tests {
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
-        solana_gossip::cluster_info::Node,
+        solana_gossip::node::Node,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{

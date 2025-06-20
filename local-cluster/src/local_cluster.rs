@@ -19,7 +19,7 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_genesis_config::{ClusterType, GenesisConfig},
     solana_gossip::{
-        cluster_info::Node,
+        node::Node,
         contact_info::{ContactInfo, Protocol},
         gossip_service::{discover, discover_validators},
     },
