@@ -16,12 +16,7 @@ rustdoc-args = ["--cfg=docsrs"]
 
 [features]
 bincode = ["dep:bincode", "serde", "solana-account/bincode"]
-debug-signature = ["dep:solana-signature"]
-dev-context-only-utils = [
-    "bincode",
-    "debug-signature",
-    "solana-account/dev-context-only-utils",
-]
+dev-context-only-utils = ["bincode", "solana-account/dev-context-only-utils"]
 serde = ["dep:serde", "dep:serde_derive"]
 
 [dependencies]

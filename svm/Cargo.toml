@@ -101,13 +101,23 @@ solana-fee-calculator = { workspace = true }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
+<<<<<<< HEAD
 solana-pubkey = { workspace = true }
+=======
+solana-precompile-error = { workspace = true }
+solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-pubkey = { workspace = true, features = ["rand"] }
+>>>>>>> bd8ccc6a2 (Remove debug-signature feature from transaction-context (#6647))
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
+<<<<<<< HEAD
 solana-signature = { workspace = true }
+=======
+solana-signature = { workspace = true, features = ["rand"] }
+>>>>>>> bd8ccc6a2 (Remove debug-signature feature from transaction-context (#6647))
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils"] }

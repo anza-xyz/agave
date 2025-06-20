@@ -2,12 +2,6 @@
 #![deny(clippy::indexing_slicing)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
-#[cfg(all(
-    not(target_os = "solana"),
-    feature = "debug-signature",
-    debug_assertions
-))]
-use solana_signature::Signature;
 #[cfg(not(target_os = "solana"))]
 use {solana_account::WritableAccount, solana_rent::Rent, std::mem::MaybeUninit};
 use {
@@ -158,13 +152,6 @@ pub struct TransactionContext {
     remove_accounts_executable_flag_checks: bool,
     #[cfg(not(target_os = "solana"))]
     rent: Rent,
-    /// Useful for debugging to filter by or to look it up on the explorer
-    #[cfg(all(
-        not(target_os = "solana"),
-        feature = "debug-signature",
-        debug_assertions
-    ))]
-    signature: Signature,
 }
 
 impl TransactionContext {
@@ -192,12 +179,6 @@ impl TransactionContext {
             accounts_resize_delta: RefCell::new(0),
             remove_accounts_executable_flag_checks: true,
             rent,
-            #[cfg(all(
-                not(target_os = "solana"),
-                feature = "debug-signature",
-                debug_assertions
-            ))]
-            signature: Signature::default(),
         }
     }
 
@@ -221,26 +202,6 @@ impl TransactionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn accounts(&self) -> &Rc<TransactionAccounts> {
         &self.accounts
-    }
-
-    /// Stores the signature of the current transaction
-    #[cfg(all(
-        not(target_os = "solana"),
-        feature = "debug-signature",
-        debug_assertions
-    ))]
-    pub fn set_signature(&mut self, signature: &Signature) {
-        self.signature = *signature;
-    }
-
-    /// Returns the signature of the current transaction
-    #[cfg(all(
-        not(target_os = "solana"),
-        feature = "debug-signature",
-        debug_assertions
-    ))]
-    pub fn get_signature(&self) -> &Signature {
-        &self.signature
     }
 
     /// Returns the total number of accounts loaded in this Transaction
