@@ -489,6 +489,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-verified-packet-receiver"
+version = "3.0.0"
+dependencies = [
+ "assert_matches",
+ "solana-perf",
+ "solana-streamer",
+]
+
+[[package]]
 name = "agave-watchtower"
 version = "3.0.0"
 dependencies = [
@@ -7782,6 +7791,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "agave-transaction-view",
+ "agave-verified-packet-receiver",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",

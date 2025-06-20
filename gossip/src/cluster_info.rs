@@ -2329,6 +2329,7 @@ pub struct Sockets {
     pub quic_vote_client: UdpSocket,
     /// Client-side socket for RPC/SendTransactionService.
     pub rpc_sts_client: UdpSocket,
+    pub vortexor_receivers: Option<Vec<UdpSocket>>,
 }
 
 pub struct NodeConfig {
@@ -2337,6 +2338,8 @@ pub struct NodeConfig {
     pub bind_ip_addr: IpAddr,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
+    pub vortexor_receiver_addr: Option<SocketAddr>,
+
     /// The number of TVU receive sockets to create
     pub num_tvu_receive_sockets: NonZeroUsize,
     /// The number of TVU retransmit sockets to create
@@ -2498,6 +2501,7 @@ impl Node {
                 tpu_transaction_forwarding_client,
                 quic_vote_client,
                 rpc_sts_client,
+                vortexor_receivers: None,
             },
         }
     }
@@ -2654,6 +2658,7 @@ impl Node {
                 quic_vote_client,
                 tpu_transaction_forwarding_client,
                 rpc_sts_client,
+                vortexor_receivers: None,
             },
         }
     }
@@ -2668,6 +2673,7 @@ impl Node {
             num_tvu_receive_sockets,
             num_tvu_retransmit_sockets,
             num_quic_endpoints,
+            vortexor_receiver_addr,
         } = config;
 
         let (gossip_port, (gossip, ip_echo)) =
@@ -2789,6 +2795,23 @@ impl Node {
         info.set_serve_repair(QUIC, (addr, serve_repair_quic_port))
             .unwrap();
 
+        let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
+            multi_bind_in_range_with_config(
+                vortexor_receiver_addr.ip(),
+                (
+                    vortexor_receiver_addr.port(),
+                    vortexor_receiver_addr.port() + 1,
+                ),
+                socket_config_reuseport,
+                32,
+            )
+            .unwrap_or_else(|_| {
+                panic!("Could not bind to the set vortexor_receiver_addr {vortexor_receiver_addr}")
+            })
+            .1
+        });
+
+        info!("vortexor_receivers is {vortexor_receivers:?}");
         trace!("new ContactInfo: {:?}", info);
         let sockets = Sockets {
             gossip,
@@ -2813,6 +2836,7 @@ impl Node {
             quic_vote_client,
             tpu_transaction_forwarding_client,
             rpc_sts_client,
+            vortexor_receivers,
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node { info, sockets }
@@ -3291,6 +3315,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
+            vortexor_receiver_addr: None,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);
@@ -3314,6 +3339,7 @@ mod tests {
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_tvu_retransmit_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
             num_quic_endpoints: DEFAULT_NUM_QUIC_ENDPOINTS,
+            vortexor_receiver_addr: None,
         };
 
         let node = Node::new_with_external_ip(&solana_pubkey::new_rand(), config);

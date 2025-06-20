@@ -83,7 +83,9 @@ impl PacketBatchSender {
                     for batch in &packet_batches {
                         for packet_batch in batch.iter() {
                             for packet in packet_batch {
-                                packets.push(packet.data(0..).unwrap());
+                                if let Some(data) = packet.data(0..) {
+                                    packets.push(data);
+                                }
                             }
                         }
                     }

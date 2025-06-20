@@ -133,6 +133,7 @@ members = [
     "unified-scheduler-pool",
     "upload-perf",
     "validator",
+    "verified-packet-receiver",
     "version",
     "vortexor",
     "vote",
@@ -185,6 +186,7 @@ agave-precompiles = { path = "precompiles", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.0.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.0.0" }
+agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.0" }
 agave-xdp = { path = "xdp", version = "=3.0.0" }
 ahash = "0.8.11"
 anyhow = "1.0.98"

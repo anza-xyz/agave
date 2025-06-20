@@ -230,6 +230,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-verified-packet-receiver"
+version = "3.0.0"
+dependencies = [
+ "solana-perf",
+ "solana-streamer",
+]
+
+[[package]]
 name = "agave-xdp"
 version = "3.0.0"
 dependencies = [
@@ -6035,6 +6043,7 @@ dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
  "agave-transaction-view",
+ "agave-verified-packet-receiver",
  "ahash 0.8.11",
  "anyhow",
  "arrayvec",

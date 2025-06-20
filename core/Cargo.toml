@@ -44,6 +44,7 @@ frozen-abi = [
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
+agave-verified-packet-receiver = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
