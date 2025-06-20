@@ -27,7 +27,6 @@ use {
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         nonce_info::NonceInfo,
-        rollback_accounts::RollbackAccounts,
         transaction_execution_result::TransactionExecutionDetails,
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
         transaction_processor::{
@@ -175,38 +174,12 @@ impl SvmTestEnvironment<'_> {
                     }
                 }
                 Ok(ProcessedTransaction::FeesOnly(fees_only_transaction)) => {
-                    let fee_payer = sanitized_transaction.fee_payer();
-
-                    match fees_only_transaction.rollback_accounts.clone() {
-                        RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-                            update_or_dealloc_account(
-                                &mut final_accounts_actual,
-                                *fee_payer,
-                                fee_payer_account,
-                            );
-                        }
-                        RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                            update_or_dealloc_account(
-                                &mut final_accounts_actual,
-                                *nonce.address(),
-                                nonce.account().clone(),
-                            );
-                        }
-                        RollbackAccounts::SeparateNonceAndFeePayer {
-                            nonce,
-                            fee_payer_account,
-                        } => {
-                            update_or_dealloc_account(
-                                &mut final_accounts_actual,
-                                *fee_payer,
-                                fee_payer_account,
-                            );
-                            update_or_dealloc_account(
-                                &mut final_accounts_actual,
-                                *nonce.address(),
-                                nonce.account().clone(),
-                            );
-                        }
+                    for (pubkey, account_data) in &fees_only_transaction.rollback_accounts {
+                        update_or_dealloc_account(
+                            &mut final_accounts_actual,
+                            *pubkey,
+                            account_data.clone(),
+                        );
                     }
                 }
                 Err(_) => {}
