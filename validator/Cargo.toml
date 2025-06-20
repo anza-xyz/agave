@@ -21,6 +21,7 @@ console = { workspace = true }
 core_affinity = { workspace = true }
 crossbeam-channel = { workspace = true }
 fd-lock = { workspace = true }
+indexmap = { workspace = true }
 indicatif = { workspace = true }
 itertools = { workspace = true }
 jsonrpc-core = { workspace = true }
@@ -95,6 +96,7 @@ signal-hook = { workspace = true }
 [dev-dependencies]
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
+pretty_assertions = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-program-option = { workspace = true }
 solana-program-pack = { workspace = true }
