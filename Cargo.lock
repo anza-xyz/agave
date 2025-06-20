@@ -10489,6 +10489,7 @@ dependencies = [
  "solana-cli-config",
  "solana-client-traits",
  "solana-clock",
+ "solana-commitment-config",
  "solana-fee-calculator",
  "solana-genesis-config",
  "solana-instruction",
