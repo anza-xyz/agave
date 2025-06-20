@@ -6148,12 +6148,20 @@ fn test_hash_storage_info() {
         let hash3 = hasher.finish();
         assert_ne!(hash2, hash3); // moddate and written size changed
                                   // can't assert hash here - it is a function of mod date
+
         assert!(load);
         let mut hasher = DefaultHasher::new();
         let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
         let hash4 = hasher.finish();
         assert_eq!(hash4, hash3); // same
                                   // can't assert hash here - it is a function of mod date
+
+        assert!(load);
+        let mut hasher = DefaultHasher::new();
+        storage.mark_accounts_obsolete(vec![(0, 136)].into_iter(), slot);
+        let load = AccountsDb::hash_storage_info(&mut hasher, &storage, slot);
+        let hash5 = hasher.finish();
+        assert_ne!(hash5, hash4); // Obsolete accounts changed
         assert!(load);
     }
 }

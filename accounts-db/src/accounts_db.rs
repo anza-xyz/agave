@@ -6356,6 +6356,9 @@ impl AccountsDb {
     ) -> bool {
         // hash info about this storage
         storage.written_bytes().hash(hasher);
+
+        // Obsolete accounts change the hash as they may cause accounts to no longer be included in the hash
+        storage.obsolete_accounts.read().unwrap().len().hash(hasher);
         slot.hash(hasher);
         let storage_file = storage.accounts.path();
         storage_file.hash(hasher);
