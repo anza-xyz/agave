@@ -7114,7 +7114,9 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
+ "solana-clock",
  "solana-hash",
+ "solana-keypair",
  "solana-message",
  "solana-metrics",
  "solana-packet",
@@ -7123,7 +7125,13 @@ dependencies = [
  "solana-sdk-ids",
  "solana-short-vec",
  "solana-signature",
+ "solana-signer",
+ "solana-system-interface",
+ "solana-system-transaction",
  "solana-time-utils",
+ "solana-transaction",
+ "solana-vote",
+ "solana-vote-program",
 ]
 
 [[package]]
