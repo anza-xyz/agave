@@ -2189,4 +2189,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_only_known_rpc() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                    only_known_rpc: true,
+                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    // --known-validator is required
+                    "--known-validator",
+                    &known_validators_pubkey.to_string(),
+                    "--only-known-rpc",
+                ],
+                expected_args,
+            );
+        }
+
+        // alias
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                    only_known_rpc: true,
+                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    // --known-validator is required
+                    "--known-validator",
+                    &known_validators_pubkey.to_string(),
+                    "--no-untrusted-rpc",
+                ],
+                expected_args,
+            );
+        }
+    }
 }
