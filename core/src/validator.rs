@@ -1503,6 +1503,7 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
+                alpenglow: node.sockets.alpenglow,
             },
             blockstore.clone(),
             ledger_signal_receiver,

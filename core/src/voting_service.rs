@@ -1,6 +1,7 @@
 use {
     crate::{
         consensus::tower_storage::{SavedTowerVersions, TowerStorage},
+        mock_alpenglow_consensus::MockAlpenglowConsensus,
         next_leader::upcoming_leader_tpu_vote_sockets,
     },
     bincode::serialize,
@@ -8,13 +9,13 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
     solana_connection_cache::client_connection::ClientConnection,
-    solana_gossip::cluster_info::ClusterInfo,
+    solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
-        net::SocketAddr,
+        net::{SocketAddr, UdpSocket},
         sync::{Arc, RwLock},
         thread::{self, Builder, JoinHandle},
     },
@@ -85,21 +86,48 @@ impl VotingService {
         poh_recorder: Arc<RwLock<PohRecorder>>,
         tower_storage: Arc<dyn TowerStorage>,
         connection_cache: Arc<ConnectionCache>,
+        alpenglow_socket: Option<UdpSocket>,
+        epoch_specs: EpochSpecs,
     ) -> Self {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
-            .spawn(move || {
-                for vote_op in vote_receiver.iter() {
-                    Self::handle_vote(
-                        &cluster_info,
-                        &poh_recorder,
-                        tower_storage.as_ref(),
-                        vote_op,
-                        connection_cache.clone(),
-                    );
+            .spawn({
+                let cluster_info = cluster_info.clone();
+                let mut mock_alpenglow = alpenglow_socket
+                    .map(|s| MockAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
+                move || {
+                    for vote_op in vote_receiver.iter() {
+                        // Figure out if we are casting a vote for a new slot, and what slot it is for
+                        let slot = match vote_op {
+                            VoteOp::PushVote {
+                                tx: _,
+                                ref tower_slots,
+                                ..
+                            } => tower_slots.iter().copied().last(),
+                            _ => None,
+                        };
+                        // perform all the normal vote handling routines
+                        Self::handle_vote(
+                            &cluster_info,
+                            &poh_recorder,
+                            tower_storage.as_ref(),
+                            vote_op,
+                            connection_cache.clone(),
+                        );
+                        // trigger mock alpenglow vote if we have just cast an actual vote
+                        if let Some(slot) = slot {
+                            if let Some(ag) = mock_alpenglow.as_mut() {
+                                ag.signal_new_slot(slot);
+                            }
+                        }
+                    }
+                    if let Some(ag) = mock_alpenglow {
+                        let _ = ag.join();
+                    }
                 }
             })
             .unwrap();
+
         Self { thread_hdl }
     }
 
