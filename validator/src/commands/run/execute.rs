@@ -177,7 +177,7 @@ pub fn execute(
         max_genesis_archive_unpacked_size: run_args
             .rpc_bootstrap_config
             .max_genesis_archive_unpacked_size,
-        incremental_snapshot_fetch: !matches.is_present("no_incremental_snapshots"),
+        incremental_snapshot_fetch: !run_args.rpc_bootstrap_config.no_incremental_snapshots,
     };
 
     let private_rpc = matches.is_present("private_rpc");
@@ -894,7 +894,7 @@ pub fn execute(
             (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
         } else {
             match (
-                !matches.is_present("no_incremental_snapshots"),
+                !run_args.rpc_bootstrap_config.no_incremental_snapshots,
                 value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
             ) {
                 (true, incremental_snapshot_interval_slots) => {
