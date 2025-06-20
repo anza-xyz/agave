@@ -19,8 +19,9 @@ use {
     solana_clock::{Slot, DEFAULT_MS_PER_SLOT, HOLD_TRANSACTIONS_SLOT_OFFSET},
     solana_genesis_config::GenesisConfig,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::ContactInfoQuery,
+        node::Node,
     },
     solana_keypair::Keypair,
     solana_ledger::{
