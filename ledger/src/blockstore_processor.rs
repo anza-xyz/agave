@@ -1112,7 +1112,7 @@ pub fn process_blockstore_from_root(
 /// Verify that a segment of entries has the correct number of ticks and hashes
 fn verify_ticks(
     bank: &Bank,
-    entries: &[Entry],
+    mut entries: &[Entry],
     slot_full: bool,
     tick_hash_count: &mut u64,
 ) -> std::result::Result<(), BlockError> {
@@ -1139,6 +1139,29 @@ fn verify_ticks(
         if !slot_full {
             warn!("Slot: {} was not marked full", bank.slot());
             return Err(BlockError::InvalidLastTick);
+        }
+    }
+
+    if let Some(first_alpenglow_slot) = bank
+        .feature_set
+        .activated_slot(&agave_feature_set::alpenglow::id())
+    {
+        if bank.parent_slot() >= first_alpenglow_slot {
+            // If fully in an alpenglow epoch, no tick verification is needed
+            return Ok(());
+        }
+
+        if bank.slot() >= first_alpenglow_slot && next_bank_tick_height == max_bank_tick_height {
+            if entries.is_empty() {
+                // This shouldn't happen, but good to double check
+                error!("Processing empty entries in verify_ticks()");
+                return Ok(());
+            }
+            // last entry must be a tick, as verified by the `has_trailing_entry`
+            // check above. Because in Alpenglow the last tick does not have any
+            // hashing guarantees, we pass everything but that last tick to the
+            // entry verification.
+            entries = &entries[..entries.len() - 1];
         }
     }
 
@@ -1846,6 +1869,7 @@ fn process_next_slots(
                     .unwrap(),
                 *next_slot,
             );
+            set_alpenglow_ticks(&next_bank);
             trace!(
                 "New bank for slot {}, parent slot is {}",
                 next_slot,
@@ -1858,6 +1882,60 @@ fn process_next_slots(
     // Reverse sort by slot, so the next slot to be processed can be popped
     pending_slots.sort_by(|a, b| b.1.slot().cmp(&a.1.slot()));
     Ok(())
+}
+
+/// Set alpenglow bank tick height.
+///
+/// For alpenglow banks this tick height is `max_tick_height` - 1, for a bank on the epoch boundary
+/// of feature activation, we need ticks_per_slot for each slot between the parent and epoch boundary
+/// and one extra tick for the alpenglow bank
+pub fn set_alpenglow_ticks(bank: &Bank) {
+    let Some(first_alpenglow_slot) = bank
+        .feature_set
+        .activated_slot(&agave_feature_set::alpenglow::id())
+    else {
+        return;
+    };
+
+    let Some(alpenglow_ticks) = calculate_alpenglow_ticks(
+        bank.slot(),
+        first_alpenglow_slot,
+        bank.parent_slot(),
+        bank.ticks_per_slot(),
+    ) else {
+        return;
+    };
+
+    info!(
+        "Alpenglow: Setting tick height for slot {} to {}",
+        bank.slot(),
+        bank.max_tick_height() - alpenglow_ticks
+    );
+    bank.set_tick_height(bank.max_tick_height() - alpenglow_ticks);
+}
+
+fn calculate_alpenglow_ticks(
+    slot: Slot,
+    first_alpenglow_slot: Slot,
+    parent_slot: Slot,
+    ticks_per_slot: u64,
+) -> Option<u64> {
+    // Slots before alpenglow shouldn't have alpenglow ticks
+    if slot < first_alpenglow_slot {
+        return None;
+    }
+
+    let alpenglow_ticks = if parent_slot < first_alpenglow_slot && slot >= first_alpenglow_slot {
+        // 1. All slots between the parent and the first alpenglow slot need to
+        // have `ticks_per_slot` ticks
+        // 2. One extra tick for the actual alpenglow slot
+        // 3. There are no ticks for any skipped alpenglow slots
+        (first_alpenglow_slot - parent_slot - 1) * ticks_per_slot + 1
+    } else {
+        1
+    };
+
+    Some(alpenglow_ticks)
 }
 
 /// Starting with the root slot corresponding to `start_slot_meta`, iteratively
@@ -5435,5 +5513,61 @@ pub mod tests {
         );
         // Adding another None will noop (even though the block is already full)
         assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+    }
+
+    #[test]
+    fn test_calculate_alpenglow_ticks() {
+        let first_alpenglow_slot = 10;
+        let ticks_per_slot = 2;
+
+        // Slots before alpenglow don't have alpenglow ticks
+        let slot = 9;
+        let parent_slot = 8;
+        assert!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .is_none()
+        );
+
+        // First alpenglow slot should only have 1 tick
+        let slot = first_alpenglow_slot;
+        let parent_slot = first_alpenglow_slot - 1;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            1
+        );
+
+        // First alpenglow slot with skipped non-alpenglow slots
+        // need to have `ticks_per_slot` ticks per skipped slot and
+        // then one additional tick for the first alpenglow slot
+        let slot = first_alpenglow_slot;
+        let num_skipped_slots = 3;
+        let parent_slot = first_alpenglow_slot - num_skipped_slots - 1;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            num_skipped_slots * ticks_per_slot + 1
+        );
+
+        // Skipped alpenglow slots don't need any additional ticks
+        let slot = first_alpenglow_slot + 2;
+        let parent_slot = first_alpenglow_slot;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            1
+        );
+
+        // Skipped alpenglow slots along skipped non-alpenglow slots
+        // need to have `ticks_per_slot` ticks per skipped non-alpenglow
+        // slot only and then one additional tick for the alpenglow slot
+        let slot = first_alpenglow_slot + 2;
+        let num_skipped_non_alpenglow_slots = 4;
+        let parent_slot = first_alpenglow_slot - num_skipped_non_alpenglow_slots - 1;
+        assert_eq!(
+            calculate_alpenglow_ticks(slot, first_alpenglow_slot, parent_slot, ticks_per_slot)
+                .unwrap(),
+            num_skipped_non_alpenglow_slots * ticks_per_slot + 1
+        );
     }
 }
