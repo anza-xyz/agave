@@ -1105,7 +1105,6 @@ pub fn execute(
         solana_net_utils::find_available_port_in_range(bind_address, (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
-    let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
 
     let public_tpu_addr = matches
         .value_of("public_tpu_addr")
@@ -1141,7 +1140,8 @@ pub fn execute(
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
     let node_config = NodeConfig {
-        gossip_addr,
+        advertised_ip,
+        gossip_port,
         port_range: dynamic_port_range,
         bind_ip_addr: bind_address,
         public_tpu_addr,
