@@ -977,4 +977,41 @@ mod tests {
             "Expected an error when reuseport is not set to true"
         );
     }
+
+    #[test]
+    fn test_verify_udp_multiple_ips_reachable() {
+        solana_logger::setup();
+        let config = SocketConfig::default();
+        let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+
+        let server_ports = sockets::localhost_port_range_for_tests();
+        let (_srv_udp_port, (srv_udp_sock, srv_tcp_listener)) =
+            bind_common_in_range_with_config(ip_a, server_ports, config).unwrap();
+
+        let ip_echo_server_addr = srv_udp_sock.local_addr().unwrap();
+        let _runtime = ip_echo_server(
+            srv_tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            /*shred_version=*/ Some(42),
+        );
+
+        let mut udp_sockets = Vec::new();
+        for _ in 0..MAX_PORT_VERIFY_THREADS * 2 {
+            let (_p1, (sock_a, _tl_a)) =
+                bind_common_in_range_with_config(ip_a, (3000, 4000), config).unwrap();
+            let (_p2, (sock_b, _tl_b)) =
+                bind_common_in_range_with_config(ip_b, (4001, 5000), config).unwrap();
+
+            udp_sockets.push(sock_a);
+            udp_sockets.push(sock_b);
+        }
+
+        let socket_refs: Vec<&UdpSocket> = udp_sockets.iter().collect();
+
+        assert!(
+            verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs),
+            "all UDP ports on both 127.0.0.1 and 127.0.0.2 should be reachable"
+        );
+    }
 }
