@@ -3,7 +3,7 @@ use {
         bytes::{advance_offset_for_array, read_byte},
         result::{Result, TransactionViewError},
     },
-    solana_packet::PACKET_DATA_SIZE,
+    solana_perf::packet::QUIC_MAX_STREAM_SIZE,
     solana_pubkey::Pubkey,
     solana_signature::Signature,
 };
@@ -15,8 +15,9 @@ use {
 // In our u16 encoding scheme, 12 would be encoded as a single byte.
 // Rather than using the u16 decoding, we can simply read the byte and
 // verify that the MSB is not set.
-const MAX_SIGNATURES_PER_PACKET: u8 =
-    (PACKET_DATA_SIZE / (core::mem::size_of::<Signature>() + core::mem::size_of::<Pubkey>())) as u8;
+const MAX_SIGNATURES_PER_PACKET: u8 = (QUIC_MAX_STREAM_SIZE
+    / (core::mem::size_of::<Signature>() + core::mem::size_of::<Pubkey>()))
+    as u8;
 
 /// Metadata for accessing transaction-level signatures in a transaction view.
 #[derive(Debug)]
@@ -78,9 +79,9 @@ mod tests {
         let bytes = bincode::serialize(&ShortVec(signatures)).unwrap();
         let mut offset = 0;
         let frame = SignatureFrame::try_new(&bytes, &mut offset).unwrap();
-        assert_eq!(frame.num_signatures, 12);
+        assert_eq!(frame.num_signatures, 42);
         assert_eq!(frame.offset, 1);
-        assert_eq!(offset, 1 + 12 * core::mem::size_of::<Signature>());
+        assert_eq!(offset, 1 + 42 * core::mem::size_of::<Signature>());
     }
 
     #[test]

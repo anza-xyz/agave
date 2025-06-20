@@ -23,6 +23,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, ping_pong::Pong},
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::blockstore::Blockstore,
+    solana_packet::PACKET_DATA_SIZE,
     solana_perf::{
         packet::{deserialize_from_with_limit, PacketBatch, PacketFlags, PacketRef},
         recycler::Recycler,
@@ -387,7 +388,7 @@ impl AncestorHashesService {
             return None;
         };
         let mut cursor = Cursor::new(packet_data);
-        let Ok(response) = deserialize_from_with_limit(&mut cursor) else {
+        let Ok(response) = deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE) else {
             stats.invalid_packets += 1;
             return None;
         };
@@ -395,7 +396,7 @@ impl AncestorHashesService {
         match response {
             AncestorHashesResponse::Hashes(ref hashes) => {
                 // deserialize trailing nonce
-                let Ok(nonce) = deserialize_from_with_limit(&mut cursor) else {
+                let Ok(nonce) = deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE) else {
                     stats.invalid_packets += 1;
                     return None;
                 };

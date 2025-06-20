@@ -27,7 +27,7 @@ solana-builtins-default-costs = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true, features = ["borsh"] }
 solana-instruction = { workspace = true }
-solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-svm-transaction = { workspace = true }
