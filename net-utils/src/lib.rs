@@ -40,6 +40,10 @@ pub const MINIMUM_VALIDATOR_PORT_RANGE_WIDTH: u16 = 17; // VALIDATOR_PORT_RANGE 
 pub(crate) const HEADER_LENGTH: usize = 4;
 pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
 
+/// True on platforms that support advanced socket configuration
+pub(crate) const PLATFORM_SUPPORTS_SOCKET_CONFIGS: bool =
+    cfg!(not(any(windows, target_os = "ios")));
+
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
 /// address.
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
@@ -228,13 +232,16 @@ pub fn is_host_port(string: String) -> Result<(), String> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SocketConfig {
     reuseport: bool,
+    reuseport_set_by_user: bool, // this is set if user is manually setting reuseport flag
     recv_buffer_size: Option<usize>,
     send_buffer_size: Option<usize>,
 }
 
 impl SocketConfig {
+    #[deprecated(since = "2.3.1", note = "SO_REUSEPORT is now managed automatically")]
     pub fn reuseport(mut self, reuseport: bool) -> Self {
         self.reuseport = reuseport;
+        self.reuseport_set_by_user = true;
         self
     }
 
@@ -262,46 +269,61 @@ impl SocketConfig {
 }
 
 #[cfg(any(windows, target_os = "ios"))]
-fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    Ok(sock)
+fn set_reuse_port<T>(_socket: &T) -> io::Result<()> {
+    Ok(())
 }
 
+/// Sets SO_REUSEPORT on platforms that support it.
 #[cfg(not(any(windows, target_os = "ios")))]
-fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
+fn set_reuse_port<T>(socket: &T) -> io::Result<()>
+where
+    T: std::os::fd::AsFd,
+{
     use nix::sys::socket::{setsockopt, sockopt::ReusePort};
+    setsockopt(socket, ReusePort, &true).map_err(io::Error::from)
+}
+
+fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
     let SocketConfig {
         reuseport,
+        reuseport_set_by_user: _,
         recv_buffer_size,
         send_buffer_size,
     } = config;
-
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+    if PLATFORM_SUPPORTS_SOCKET_CONFIGS {
+        // Set buffer sizes
+        if let Some(recv_buffer_size) = recv_buffer_size {
+            sock.set_recv_buffer_size(recv_buffer_size)?;
+        }
+        if let Some(send_buffer_size) = send_buffer_size {
+            sock.set_send_buffer_size(send_buffer_size)?;
+        }
 
-    // Set buffer sizes
-    if let Some(recv_buffer_size) = recv_buffer_size {
-        sock.set_recv_buffer_size(recv_buffer_size)?;
-    }
-
-    if let Some(send_buffer_size) = send_buffer_size {
-        sock.set_send_buffer_size(send_buffer_size)?;
-    }
-
-    if reuseport {
-        setsockopt(&sock, ReusePort, &true).ok();
+        if reuseport {
+            set_reuse_port(&sock)?;
+        }
     }
 
     Ok(sock)
 }
 
-// Find a port in the given range with a socket config that is available for both TCP and UDP
+/// Find a port in the given range with a socket config that is available for both TCP and UDP
 pub fn bind_common_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
+    let orig_reuseport = config.reuseport;
+    if !config.reuseport_set_by_user {
+        config.reuseport = false; // to prevent us from accidentally binding to occupied ports
+    }
     for port in range.0..range.1 {
         if let Ok((sock, listener)) = bind_common_with_config(ip_addr, port, config) {
+            if orig_reuseport & !config.reuseport {
+                set_reuse_port(&sock)?;
+                set_reuse_port(&listener)?;
+            }
             return Result::Ok((sock.local_addr().unwrap().port(), (sock, listener)));
         }
     }
@@ -319,16 +341,23 @@ pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpS
 pub fn bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
-    let sock = udp_socket_with_config(config)?;
+    let orig_reuseport = config.reuseport;
+    if !config.reuseport_set_by_user {
+        config.reuseport = false;
+    }
+    let socket = udp_socket_with_config(config)?;
 
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
 
-        if sock.bind(&SockAddr::from(addr)).is_ok() {
-            let sock: UdpSocket = sock.into();
-            return Result::Ok((sock.local_addr().unwrap().port(), sock));
+        if socket.bind(&SockAddr::from(addr)).is_ok() {
+            let udp_socket: UdpSocket = socket.into();
+            if orig_reuseport & !config.reuseport {
+                set_reuse_port(&udp_socket)?;
+            }
+            return Result::Ok((udp_socket.local_addr().unwrap().port(), udp_socket));
         }
     }
 
@@ -356,54 +385,30 @@ pub fn multi_bind_in_range_with_config(
     config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
-    if !config.reuseport {
+    if config.reuseport_set_by_user && !config.reuseport {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "SocketConfig.reuseport must be true for multi_bind_in_range_with_config",
+            "SocketConfig.reuseport must be true for multiple binds to the same port",
         ));
     }
-    if cfg!(windows) && num != 1 {
+    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket in windows ({} requested)",
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({} requested)",
             num
         );
         num = 1;
     }
-    let mut sockets = Vec::with_capacity(num);
-
-    const NUM_TRIES: usize = 100;
-    let mut port = 0;
-    let mut error = None;
-    for _ in 0..NUM_TRIES {
-        port = {
-            let (port, _) = bind_in_range(ip_addr, range)?;
-            port
-        }; // drop the probe, port should be available... briefly.
-
-        for _ in 0..num {
-            let sock = bind_to_with_config(ip_addr, port, config);
-            if let Ok(sock) = sock {
-                sockets.push(sock);
-            } else {
-                error = Some(sock);
-                break;
-            }
-        }
-        if sockets.len() == num {
-            break;
-        } else {
-            sockets.clear();
-        }
-    }
-    if sockets.len() != num {
-        error.unwrap()?;
-    }
+    let (port, socket) = bind_in_range_with_config(ip_addr, range, config)?;
+    let sockets = bind_more_with_config(socket, num, config)?;
     Ok((port, sockets))
 }
 
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
-    let config = SocketConfig::default().reuseport(reuseport);
+    let config = SocketConfig {
+        reuseport,
+        ..Default::default()
+    };
     bind_to_with_config(ip_addr, port, config)
 }
 
@@ -413,7 +418,10 @@ pub async fn bind_to_async(
     port: u16,
     reuseport: bool,
 ) -> io::Result<TokioUdpSocket> {
-    let config = SocketConfig::default().reuseport(reuseport);
+    let config = SocketConfig {
+        reuseport,
+        ..Default::default()
+    };
     let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
     TokioUdpSocket::from_std(socket)
 }
@@ -514,20 +522,38 @@ pub fn bind_two_in_range_with_offset_and_config(
     ip_addr: IpAddr,
     range: PortRange,
     offset: u16,
-    sock1_config: SocketConfig,
-    sock2_config: SocketConfig,
+    mut sock1_config: SocketConfig,
+    mut sock2_config: SocketConfig,
 ) -> io::Result<((u16, UdpSocket), (u16, UdpSocket))> {
     if range.1.saturating_sub(range.0) < offset {
         return Err(io::Error::other(
             "range too small to find two ports with the correct offset".to_string(),
         ));
     }
+    // store original flags
+    let orig_reuseport1 = sock1_config.reuseport;
+    let orig_reuseport2 = sock2_config.reuseport;
+
+    // clear flags to be able to find actually free ports
+    if !sock1_config.reuseport_set_by_user {
+        sock1_config.reuseport = false;
+    }
+    if !sock2_config.reuseport_set_by_user {
+        sock2_config.reuseport = false;
+    }
+
     for port in range.0..range.1 {
         if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
             if range.1.saturating_sub(port) >= offset {
                 if let Ok(second_bind) =
                     bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config)
                 {
+                    if orig_reuseport1 & !sock1_config.reuseport {
+                        set_reuse_port(&first_bind)?;
+                    }
+                    if orig_reuseport2 & !sock2_config.reuseport {
+                        set_reuse_port(&second_bind)?;
+                    }
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
@@ -591,20 +617,42 @@ pub fn find_available_ports_in_range<const N: usize>(
 pub fn bind_more_with_config(
     socket: UdpSocket,
     num: usize,
-    config: SocketConfig,
+    mut config: SocketConfig,
 ) -> io::Result<Vec<UdpSocket>> {
-    let addr = socket.local_addr().unwrap();
-    let ip = addr.ip();
-    let port = addr.port();
-    std::iter::once(Ok(socket))
-        .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
-        .collect()
+    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
+        if num > 1 {
+            warn!(
+                "bind_more_with_config() only supports 1 socket on this platform ({} requested)",
+                num
+            );
+        }
+        Ok(vec![socket])
+    } else {
+        if config.reuseport_set_by_user {
+            if !config.reuseport {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SocketConfig.reuseport must be true for multiple bind to the same port",
+                ));
+            }
+        } else {
+            set_reuse_port(&socket)?;
+            config.reuseport = true;
+        }
+        let addr = socket.local_addr().unwrap();
+        let ip = addr.ip();
+        let port = addr.port();
+        std::iter::once(Ok(socket))
+            .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use {
         super::*,
+        crate::sockets::localhost_port_range_for_tests,
         ip_echo_server::IpEchoServerResponse,
         itertools::Itertools,
         std::{net::Ipv4Addr, time::Duration},
@@ -718,14 +766,14 @@ mod tests {
         let s = bind_in_range(ip_addr, (pr_s, pr_e)).unwrap();
         assert_eq!(s.0, pr_s, "bind_in_range should use first available port");
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let config = SocketConfig::default().reuseport(true);
+        let config = SocketConfig::default();
         let x = bind_to_with_config(ip_addr, pr_s + 1, config).unwrap();
-        let y = bind_to_with_config(ip_addr, pr_s + 1, config).unwrap();
+        let y = bind_more_with_config(x, 2, config).unwrap();
         assert_eq!(
-            x.local_addr().unwrap().port(),
-            y.local_addr().unwrap().port()
+            y[0].local_addr().unwrap().port(),
+            y[1].local_addr().unwrap().port()
         );
-        bind_to(ip_addr, pr_s, false).unwrap_err();
+        bind_to_with_config(ip_addr, pr_s, SocketConfig::default()).unwrap_err();
         bind_in_range(ip_addr, (pr_s, pr_s + 2)).unwrap_err();
 
         let (port, v) =
@@ -752,6 +800,17 @@ mod tests {
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         bind_in_range(ip_addr, (2000, 2000)).unwrap_err();
         bind_in_range(ip_addr, (2000, 1999)).unwrap_err();
+    }
+
+    #[test]
+    fn test_bind_on_top() {
+        let config = SocketConfig::default();
+        let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let port_range = sockets::localhost_port_range_for_tests();
+        let (_p, s) = bind_in_range_with_config(localhost, port_range, config).unwrap();
+        let _socks = bind_more_with_config(s, 8, config).unwrap();
+
+        let _socks2 = multi_bind_in_range_with_config(localhost, port_range, config, 8).unwrap();
     }
 
     #[test]
@@ -968,13 +1027,46 @@ mod tests {
     #[test]
     fn test_multi_bind_in_range_with_config_reuseport_disabled() {
         let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let config = SocketConfig::default(); //reuseport is false by default
+        #[allow(deprecated)] // check that legacy behavior is preserved
+        let config = SocketConfig::default().reuseport(false);
 
         let result = multi_bind_in_range_with_config(ip_addr, (2010, 2110), config, 2);
 
         assert!(
             result.is_err(),
-            "Expected an error when reuseport is not set to true"
+            "Expected an error when reuseport is explicitly set to false"
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)] // check that legacy behavior is preserved
+    fn test_legacy_bind_behavior() {
+        let ip_addr: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let port_range = localhost_port_range_for_tests();
+        let config_reuseport = SocketConfig::default().reuseport(true);
+        let config_default = SocketConfig::default().reuseport(false);
+        let (p1, _s1) = bind_in_range_with_config(ip_addr, port_range, config_reuseport).unwrap();
+        let (p2, _s2) = bind_in_range_with_config(ip_addr, port_range, config_reuseport).unwrap();
+        assert_eq!(p1, p2, "Both sockets should bind to the same port");
+
+        let ((p3, s3), (p4, s4)) = bind_two_in_range_with_offset_and_config(
+            ip_addr,
+            port_range,
+            2,
+            config_default,
+            config_reuseport,
+        )
+        .unwrap();
+        assert_ne!(p3, p1);
+        assert_ne!(p4, p1);
+        assert!(p4 - p3 == 2);
+        assert!(
+            bind_more_with_config(s3, 2, config_reuseport).is_err(),
+            "bind_more should fail since original socket was made without so_reuseport"
+        );
+        assert!(
+            bind_more_with_config(s4, 2, config_reuseport).is_ok(),
+            "bind_more should succeed since original socket was made with so_reuseport"
         );
     }
 }
