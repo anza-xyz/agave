@@ -120,7 +120,10 @@ impl Flate2 {
             num,
             compressed: Arc::new(compressed),
         };
-        let _ = rv.inflate()?;
+        let recovered = rv.inflate()?;
+        if Arc::unwrap_or_clone(recovered.slots).into_boxed_slice() != bits {
+            return Err(Error::DecompressError);
+        }
         Ok(rv)
     }
     pub fn inflate(&self) -> Result<Uncompressed> {
