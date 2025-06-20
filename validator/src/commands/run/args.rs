@@ -33,10 +33,13 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+pub mod rpc_bootstrap_config;
+
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
     pub identity_keypair: Keypair,
     pub logfile: String,
+    pub rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -55,6 +58,9 @@ impl FromClapArgMatches for RunArgs {
         Ok(RunArgs {
             identity_keypair,
             logfile,
+            rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::from_clap_arg_match(
+                matches,
+            )?,
         })
     }
 }
@@ -1720,6 +1726,7 @@ mod tests {
             RunArgs {
                 identity_keypair,
                 logfile,
+                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::default(),
             }
         }
     }
@@ -1729,6 +1736,7 @@ mod tests {
             RunArgs {
                 identity_keypair: self.identity_keypair.insecure_clone(),
                 logfile: self.logfile.clone(),
+                rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
             }
         }
     }
@@ -1838,6 +1846,26 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
                 vec!["--log", "custom_log.log"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_genesis_fetch() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                    no_genesis_fetch: true,
+                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--no-genesis-fetch"],
                 expected_args,
             );
         }
