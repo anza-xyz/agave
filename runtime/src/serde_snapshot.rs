@@ -5,7 +5,6 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::{EpochStakes, VersionedEpochStakes},
         runtime_config::RuntimeConfig,
-        serde_snapshot::storage::SerializableAccountStorageEntry,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stakes::{serde_stakes_to_delegation_format, Stakes, StakesEnum},
     },
@@ -63,7 +62,7 @@ pub(crate) use {
     solana_accounts_db::accounts_hash::{
         SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
     },
-    storage::SerializedAccountsFileId,
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -300,6 +299,13 @@ pub struct SnapshotBankFields {
 }
 
 impl SnapshotBankFields {
+    pub fn new(
+        full: BankFieldsToDeserialize,
+        incremental: Option<BankFieldsToDeserialize>,
+    ) -> Self {
+        Self { full, incremental }
+    }
+
     /// Collapse the SnapshotBankFields into a single (the latest) BankFieldsToDeserialize.
     pub fn collapse_into(self) -> BankFieldsToDeserialize {
         self.incremental.unwrap_or(self.full)
@@ -315,11 +321,21 @@ pub struct SnapshotAccountsDbFields<T> {
 }
 
 impl<T> SnapshotAccountsDbFields<T> {
+    pub fn new(
+        full_snapshot_accounts_db_fields: AccountsDbFields<T>,
+        incremental_snapshot_accounts_db_fields: Option<AccountsDbFields<T>>,
+    ) -> Self {
+        Self {
+            full_snapshot_accounts_db_fields,
+            incremental_snapshot_accounts_db_fields,
+        }
+    }
+
     /// Collapse the SnapshotAccountsDbFields into a single AccountsDbFields.  If there is no
     /// incremental snapshot, this returns the AccountsDbFields from the full snapshot.
     /// Otherwise, use the AccountsDbFields from the incremental snapshot, and a combination
     /// of the storages from both the full and incremental snapshots.
-    fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
+    pub fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
         match self.incremental_snapshot_accounts_db_fields {
             None => Ok(self.full_snapshot_accounts_db_fields),
             Some(AccountsDbFields(
@@ -513,6 +529,7 @@ pub(crate) fn fields_from_stream<R: Read>(
     deserialize_bank_fields(snapshot_stream)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub(crate) fn fields_from_streams(
     snapshot_streams: &mut SnapshotStreams<impl Read>,
 ) -> std::result::Result<
@@ -550,6 +567,7 @@ pub struct BankFromStreamsInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn bank_from_streams<R>(
     snapshot_streams: &mut SnapshotStreams<R>,
     account_paths: &[PathBuf],
@@ -836,12 +854,12 @@ impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccount
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]
-struct ReconstructedBankInfo {
-    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+pub(crate) struct ReconstructedBankInfo {
+    pub(crate) duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reconstruct_bank_from_fields<E>(
+pub(crate) fn reconstruct_bank_from_fields<E>(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     genesis_config: &GenesisConfig,

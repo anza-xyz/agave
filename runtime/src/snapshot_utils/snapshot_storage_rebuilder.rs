@@ -1,10 +1,11 @@
 //! Provides interfaces for rebuilding snapshot storages
 
 use {
-    super::{snapshot_version_from_file, SnapshotError, SnapshotFrom, SnapshotVersion},
+    super::{SnapshotError, SnapshotFrom},
     crate::serde_snapshot::{
-        self, reconstruct_single_storage, remap_and_reconstruct_single_storage,
-        snapshot_storage_lengths_from_fields, SerializedAccountsFileId,
+        reconstruct_single_storage, remap_and_reconstruct_single_storage,
+        snapshot_storage_lengths_from_fields, AccountsDbFields, SerializableAccountStorageEntry,
+        SerializedAccountsFileId,
     },
     crossbeam_channel::{select, unbounded, Receiver, Sender},
     dashmap::DashMap,
@@ -13,7 +14,6 @@ use {
         iter::{IntoParallelIterator, ParallelIterator},
         ThreadPool, ThreadPoolBuilder,
     },
-    regex::Regex,
     solana_accounts_db::{
         account_storage::AccountStorageMap,
         accounts_db::{AccountsFileId, AtomicAccountsFileId},
@@ -23,8 +23,6 @@ use {
     solana_nohash_hasher::BuildNoHashHasher,
     std::{
         collections::HashMap,
-        fs::File,
-        io::{BufReader, Error as IoError},
         path::PathBuf,
         str::FromStr as _,
         sync::{
@@ -34,14 +32,6 @@ use {
         time::Instant,
     },
 };
-
-/// Convenient wrapper for snapshot version and rebuilt storages
-pub(crate) struct RebuiltSnapshotStorage {
-    /// Snapshot version
-    pub snapshot_version: SnapshotVersion,
-    /// Rebuilt storages
-    pub storage: AccountStorageMap,
-}
 
 /// Stores state for rebuilding snapshot storages
 #[derive(Debug)]
@@ -71,22 +61,15 @@ pub(crate) struct SnapshotStorageRebuilder {
 impl SnapshotStorageRebuilder {
     /// Synchronously spawns threads to rebuild snapshot storages
     pub(crate) fn rebuild_storage(
+        accounts_db_fields: &AccountsDbFields<SerializableAccountStorageEntry>,
+        append_vec_files: Vec<PathBuf>,
         file_receiver: Receiver<PathBuf>,
         num_threads: usize,
         next_append_vec_id: Arc<AtomicAccountsFileId>,
         snapshot_from: SnapshotFrom,
         storage_access: StorageAccess,
-    ) -> Result<RebuiltSnapshotStorage, SnapshotError> {
-        let (snapshot_version_path, snapshot_file_path, append_vec_files) =
-            Self::get_version_and_snapshot_files(&file_receiver);
-        let snapshot_version_str = snapshot_version_from_file(snapshot_version_path)?;
-        let snapshot_version = snapshot_version_str.parse().map_err(|err| {
-            IoError::other(format!(
-                "unsupported snapshot version '{snapshot_version_str}': {err}",
-            ))
-        })?;
-        let snapshot_storage_lengths =
-            Self::process_snapshot_file(snapshot_version, snapshot_file_path)?;
+    ) -> Result<AccountStorageMap, SnapshotError> {
+        let snapshot_storage_lengths = snapshot_storage_lengths_from_fields(accounts_db_fields);
 
         let account_storage_map = Self::spawn_rebuilder_threads(
             file_receiver,
@@ -98,10 +81,7 @@ impl SnapshotStorageRebuilder {
             storage_access,
         )?;
 
-        Ok(RebuiltSnapshotStorage {
-            snapshot_version,
-            storage: account_storage_map,
-        })
+        Ok(account_storage_map)
     }
 
     /// Create the SnapshotStorageRebuilder for storing state during rebuilding
@@ -135,68 +115,6 @@ impl SnapshotStorageRebuilder {
             num_collisions: AtomicUsize::new(0),
             snapshot_from,
             storage_access,
-        }
-    }
-
-    /// Waits for snapshot file
-    /// Due to parallel unpacking, we may receive some append_vec files before the snapshot file
-    /// This function will push append_vec files into a buffer until we receive the snapshot file
-    fn get_version_and_snapshot_files(
-        file_receiver: &Receiver<PathBuf>,
-    ) -> (PathBuf, PathBuf, Vec<PathBuf>) {
-        let mut append_vec_files = Vec::with_capacity(1024);
-        let mut snapshot_version_path = None;
-        let mut snapshot_file_path = None;
-
-        loop {
-            if let Ok(path) = file_receiver.recv() {
-                let filename = path.file_name().unwrap().to_str().unwrap();
-                match get_snapshot_file_kind(filename) {
-                    Some(SnapshotFileKind::Version) => {
-                        snapshot_version_path = Some(path);
-
-                        // break if we have both the snapshot file and the version file
-                        if snapshot_file_path.is_some() {
-                            break;
-                        }
-                    }
-                    Some(SnapshotFileKind::BankFields) => {
-                        snapshot_file_path = Some(path);
-
-                        // break if we have both the snapshot file and the version file
-                        if snapshot_version_path.is_some() {
-                            break;
-                        }
-                    }
-                    Some(SnapshotFileKind::Storage) => {
-                        append_vec_files.push(path);
-                    }
-                    None => {} // do nothing for other kinds of files
-                }
-            } else {
-                panic!("did not receive snapshot file from unpacking threads");
-            }
-        }
-        let snapshot_version_path = snapshot_version_path.unwrap();
-        let snapshot_file_path = snapshot_file_path.unwrap();
-
-        (snapshot_version_path, snapshot_file_path, append_vec_files)
-    }
-
-    /// Process the snapshot file to get the size of each snapshot storage file
-    fn process_snapshot_file(
-        snapshot_version: SnapshotVersion,
-        snapshot_file_path: PathBuf,
-    ) -> Result<HashMap<Slot, HashMap<usize, usize>>, bincode::Error> {
-        let snapshot_file = File::open(snapshot_file_path).unwrap();
-        let mut snapshot_stream = BufReader::new(snapshot_file);
-        match snapshot_version {
-            SnapshotVersion::V1_2_0 => {
-                let (_bank_fields, accounts_fields) =
-                    serde_snapshot::fields_from_stream(&mut snapshot_stream)?;
-
-                Ok(snapshot_storage_lengths_from_fields(&accounts_fields))
-            }
         }
     }
 
@@ -398,32 +316,6 @@ impl SnapshotStorageRebuilder {
     }
 }
 
-/// Used to determine if a filename is structured like a version file, bank file, or storage file
-#[derive(PartialEq, Debug)]
-enum SnapshotFileKind {
-    Version,
-    BankFields,
-    Storage,
-}
-
-/// Determines `SnapshotFileKind` for `filename` if any
-fn get_snapshot_file_kind(filename: &str) -> Option<SnapshotFileKind> {
-    static VERSION_FILE_REGEX: std::sync::LazyLock<Regex> =
-        std::sync::LazyLock::new(|| Regex::new(r"^version$").unwrap());
-    static BANK_FIELDS_FILE_REGEX: std::sync::LazyLock<Regex> =
-        std::sync::LazyLock::new(|| Regex::new(r"^[0-9]+(\.pre)?$").unwrap());
-
-    if VERSION_FILE_REGEX.is_match(filename) {
-        Some(SnapshotFileKind::Version)
-    } else if BANK_FIELDS_FILE_REGEX.is_match(filename) {
-        Some(SnapshotFileKind::BankFields)
-    } else if get_slot_and_append_vec_id(filename).is_ok() {
-        Some(SnapshotFileKind::Storage)
-    } else {
-        None
-    }
-}
-
 /// Get the slot and append vec id from the filename
 pub(crate) fn get_slot_and_append_vec_id(filename: &str) -> Result<(Slot, usize), SnapshotError> {
     let mut parts = filename.splitn(2, '.');
@@ -436,27 +328,7 @@ pub(crate) fn get_slot_and_append_vec_id(filename: &str) -> Result<(Slot, usize)
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*, crate::snapshot_utils::SNAPSHOT_VERSION_FILENAME,
-        solana_accounts_db::accounts_file::AccountsFile,
-    };
-
-    #[test]
-    fn test_get_snapshot_file_kind() {
-        assert_eq!(None, get_snapshot_file_kind("file.txt"));
-        assert_eq!(
-            Some(SnapshotFileKind::Version),
-            get_snapshot_file_kind(SNAPSHOT_VERSION_FILENAME)
-        );
-        assert_eq!(
-            Some(SnapshotFileKind::BankFields),
-            get_snapshot_file_kind("1234")
-        );
-        assert_eq!(
-            Some(SnapshotFileKind::Storage),
-            get_snapshot_file_kind("1000.999")
-        );
-    }
+    use {super::*, solana_accounts_db::accounts_file::AccountsFile};
 
     #[test]
     fn test_get_slot_and_append_vec_id() {
