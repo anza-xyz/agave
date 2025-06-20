@@ -488,7 +488,6 @@ pub fn execute(
         )
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
-        test_skip_rewrites_but_include_in_bank_hash: false,
         storage_access,
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: !matches
