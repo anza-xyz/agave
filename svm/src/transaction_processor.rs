@@ -860,8 +860,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .feature_set
                 .remove_accounts_executable_flag_checks,
         );
-        #[cfg(debug_assertions)]
-        transaction_context.set_signature(tx.signature());
 
         let pre_account_state_info =
             TransactionAccountStateInfo::new(&transaction_context, tx, rent_collector);
