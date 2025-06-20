@@ -147,20 +147,6 @@ const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
 /// candidates for shrinking.
 const SHRINK_INSERT_ANCIENT_THRESHOLD: usize = 10;
 
-#[derive(Debug)]
-enum StoreTo<'a> {
-    /// write to cache
-    Cache,
-    /// write to storage
-    Storage(&'a Arc<AccountStorageEntry>),
-}
-
-impl StoreTo<'_> {
-    fn is_cached(&self) -> bool {
-        matches!(self, StoreTo::Cache)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanAccountStorageData {
     /// callback for accounts in storage will not include `data`
@@ -6026,18 +6012,10 @@ impl AccountsDb {
         account_infos
     }
 
-    fn store_accounts_to<'a: 'c, 'b, 'c>(
-        &self,
-        accounts: &'c impl StorableAccounts<'b>,
-        store_to: &StoreTo,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-    ) -> Vec<AccountInfo> {
+    fn flush_read_cache<'a>(&self, accounts: &impl StorableAccounts<'a>) {
         let mut calc_stored_meta_time = Measure::start("calc_stored_meta");
         let slot = accounts.target_slot();
-        if self
-            .read_only_accounts_cache
-            .can_slot_be_in_cache(accounts.target_slot())
-        {
+        if self.read_only_accounts_cache.can_slot_be_in_cache(slot) {
             (0..accounts.len()).for_each(|index| {
                 // based on the patterns of how a validator writes accounts, it is almost always the case that there is no read only cache entry
                 // for this pubkey and slot. So, we can give that hint to the `remove` for performance.
@@ -6049,11 +6027,6 @@ impl AccountsDb {
         self.stats
             .calc_stored_meta
             .fetch_add(calc_stored_meta_time.as_us(), Ordering::Relaxed);
-
-        match store_to {
-            StoreTo::Cache => self.write_accounts_to_cache(slot, accounts, transactions),
-            StoreTo::Storage(storage) => self.write_accounts_to_storage(slot, storage, accounts),
-        }
     }
 
     fn report_store_stats(&self) {
@@ -7663,71 +7636,65 @@ impl AccountsDb {
         }
     }
 
+    /// Stores accounts in the write cache and updates the index.
+    /// This should only be used for accounts that are unrooted (unfrozen)
     fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) {
-        // We are storing accounts unfrozen accounts which
-        // will always be stored in the cache
-        let store_to = StoreTo::Cache;
-        // If the store is stored to the cache, reclaims are not needed
-        // Default behavior for cache stores is to ignore reclaims
-        let reclaim = StoreReclaims::Default;
+        let slot = accounts.target_slot();
 
-        self.store_accounts_custom(
-            accounts,
-            &store_to,
-            transactions,
-            reclaim,
+        // Store the accounts in the write cache
+        let mut store_accounts_time = Measure::start("store_accounts");
+        let infos = self.write_accounts_to_cache(slot, &accounts, transactions);
+        store_accounts_time.stop();
+        self.stats
+            .store_accounts
+            .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
+
+        // Update the index
+        let mut update_index_time = Measure::start("update_index");
+
+        self.update_index(
+            infos,
+            &accounts,
+            UpsertReclaim::PreviousSlotEntryWasCached,
             update_index_thread_selection,
             &self.thread_pool,
         );
+
+        update_index_time.stop();
+        self.stats
+            .store_update_index
+            .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
+        self.stats
+            .store_num_accounts
+            .fetch_add(accounts.len() as u64, Ordering::Relaxed);
     }
 
+    /// Stores accounts in the storage and updates the index.
+    /// This should only be used on accounts that are rooted (frozen)
     pub fn store_accounts_frozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         storage: &Arc<AccountStorageEntry>,
     ) -> StoreAccountsTiming {
-        self.store_accounts_custom(
-            accounts,
-            &StoreTo::Storage(storage),
-            None,
-            StoreReclaims::Ignore,
-            UpdateIndexThreadSelection::PoolWithThreshold,
-            &self.thread_pool_clean,
-        )
-    }
-
-    fn store_accounts_custom<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        store_to: &StoreTo,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        reclaim: StoreReclaims,
-        update_index_thread_selection: UpdateIndexThreadSelection,
-        thread_pool: &ThreadPool,
-    ) -> StoreAccountsTiming {
-        self.stats
-            .store_num_accounts
-            .fetch_add(accounts.len() as u64, Ordering::Relaxed);
+        let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
-        let infos = self.store_accounts_to(&accounts, store_to, transactions);
+        // Flush the read cache if neccessary. This will occur during shrink or clean
+        self.flush_read_cache(&accounts);
+
+        // Write the accounts to storage
+        let infos = self.write_accounts_to_storage(slot, storage, &accounts);
         store_accounts_time.stop();
         self.stats
             .store_accounts
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
         let mut update_index_time = Measure::start("update_index");
 
-        let reclaim = if matches!(reclaim, StoreReclaims::Ignore) {
-            UpsertReclaim::IgnoreReclaims
-        } else if store_to.is_cached() {
-            UpsertReclaim::PreviousSlotEntryWasCached
-        } else {
-            UpsertReclaim::PopulateReclaims
-        };
+        let reclaim = UpsertReclaim::IgnoreReclaims;
 
         // if we are squashing a single slot, then we can expect a single dead slot
         let expected_single_dead_slot =
@@ -7740,9 +7707,9 @@ impl AccountsDb {
         let mut reclaims = self.update_index(
             infos,
             &accounts,
-            reclaim,
-            update_index_thread_selection,
-            thread_pool,
+            UpsertReclaim::IgnoreReclaims,
+            UpdateIndexThreadSelection::PoolWithThreshold,
+            &self.thread_pool_clean,
         );
 
         // For each updated account, `reclaims` should only have at most one
@@ -7752,14 +7719,13 @@ impl AccountsDb {
         // entries
         reclaims.retain(|(_, r)| !r.is_cached());
 
-        if store_to.is_cached() {
-            assert!(reclaims.is_empty());
-        }
-
         update_index_time.stop();
         self.stats
             .store_update_index
             .fetch_add(update_index_time.as_us(), Ordering::Relaxed);
+        self.stats
+            .store_num_accounts
+            .fetch_add(accounts.len() as u64, Ordering::Relaxed);
 
         // A store for a single slot should:
         // 1) Only make "reclaims" for the same slot
