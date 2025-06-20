@@ -201,7 +201,7 @@ fn main() -> Result<()> {
             let quic_server_params = QuicServerParams {
                 max_connections_per_ipaddr_per_min: 1024,
                 max_connections_per_peer: 1024,
-                ..Default::default()
+                ..QuicServerParams::default_for_tests()
             };
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
