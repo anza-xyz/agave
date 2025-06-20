@@ -1,6 +1,6 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::ArgMatches,
+    clap::{value_t, ArgMatches},
 };
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -9,6 +9,7 @@ pub struct RpcBootstrapConfig {
     pub no_snapshot_fetch: bool,
     pub check_vote_account: Option<String>,
     pub only_known_rpc: bool,
+    pub max_genesis_archive_unpacked_size: u64,
 }
 
 impl FromClapArgMatches for RpcBootstrapConfig {
@@ -23,11 +24,19 @@ impl FromClapArgMatches for RpcBootstrapConfig {
 
         let only_known_rpc = matches.is_present("only_known_rpc");
 
+        let max_genesis_archive_unpacked_size =
+            value_t!(matches, "max_genesis_archive_unpacked_size", u64).map_err(|err| {
+                Box::<dyn std::error::Error>::from(format!(
+                    "failed to parse max_genesis_archive_unpacked_size: {err}"
+                ))
+            })?;
+
         Ok(Self {
             no_genesis_fetch,
             no_snapshot_fetch,
             check_vote_account,
             only_known_rpc,
+            max_genesis_archive_unpacked_size,
         })
     }
 }

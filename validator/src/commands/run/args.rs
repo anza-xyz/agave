@@ -2242,4 +2242,28 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_max_genesis_archive_unpacked_size() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let max_genesis_archive_unpacked_size = 1000000000;
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                    max_genesis_archive_unpacked_size,
+                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--max-genesis-archive-unpacked-size",
+                    &max_genesis_archive_unpacked_size.to_string(),
+                ],
+                expected_args,
+            );
+        }
+    }
 }
