@@ -3,7 +3,8 @@ use {
         cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
         commands::{FromClapArgMatches, Result},
     },
-    clap::{App, Arg, ArgMatches},
+    clap::{values_t, App, Arg, ArgMatches},
+    indexmap::IndexSet,
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -27,7 +28,7 @@ use {
     },
     solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::str::FromStr,
+    std::{net::SocketAddr, str::FromStr},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
@@ -39,6 +40,7 @@ pub mod rpc_bootstrap_config;
 pub struct RunArgs {
     pub identity_keypair: Keypair,
     pub logfile: String,
+    pub entrypoints: Vec<SocketAddr>,
     pub rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig,
 }
 
@@ -55,9 +57,22 @@ impl FromClapArgMatches for RunArgs {
             .map(|s| s.into())
             .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
 
+        let entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
+        let mut parsed_entrypoints = IndexSet::new();
+        for entrypoint in entrypoints {
+            let parsed = solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
+                Box::<dyn std::error::Error>::from(format!(
+                    "failed to parse entrypoint address: {err}"
+                ))
+            })?;
+            parsed_entrypoints.insert(parsed);
+        }
+        let entrypoints = parsed_entrypoints.into_iter().collect();
+
         Ok(RunArgs {
             identity_keypair,
             logfile,
+            entrypoints,
             rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::from_clap_arg_match(
                 matches,
             )?,
@@ -1716,16 +1731,21 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        std::net::{IpAddr, Ipv4Addr},
+    };
 
     impl Default for RunArgs {
         fn default() -> Self {
             let identity_keypair = Keypair::new();
             let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
+            let entrypoints = vec![];
 
             RunArgs {
                 identity_keypair,
                 logfile,
+                entrypoints,
                 rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::default(),
             }
         }
@@ -1736,6 +1756,7 @@ mod tests {
             RunArgs {
                 identity_keypair: self.identity_keypair.insecure_clone(),
                 logfile: self.logfile.clone(),
+                entrypoints: self.entrypoints.clone(),
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
             }
         }
@@ -1886,6 +1907,95 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
                 vec!["--no-snapshot-fetch"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_entrypoints() {
+        // short arg + single entrypoint
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000,
+                )],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["-n", "127.0.0.1:8000"],
+                expected_args,
+            );
+        }
+
+        // long arg + single entrypoint
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000,
+                )],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--entrypoint", "127.0.0.1:8000"],
+                expected_args,
+            );
+        }
+
+        // long arg + multiple entrypoints
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8001),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8002),
+                ],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec![
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                    "--entrypoint",
+                    "127.0.0.1:8001",
+                    "--entrypoint",
+                    "127.0.0.1:8002",
+                ],
+                expected_args,
+            );
+        }
+
+        // long arg + duplicate entrypoints
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8001),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8002),
+                ],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec![
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                    "--entrypoint",
+                    "127.0.0.1:8001",
+                    "--entrypoint",
+                    "127.0.0.1:8002",
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                ],
                 expected_args,
             );
         }

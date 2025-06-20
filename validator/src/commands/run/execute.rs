@@ -345,16 +345,7 @@ pub fn execute(
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
-    let entrypoint_addrs = values_t!(matches, "entrypoint", String)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entrypoint| {
-            solana_net_utils::parse_host_port(&entrypoint)
-                .map_err(|err| format!("failed to parse entrypoint address: {err}"))
-        })
-        .collect::<Result<HashSet<_>, _>>()?
-        .into_iter()
-        .collect::<Vec<_>>();
+    let entrypoint_addrs = run_args.entrypoints;
     for addr in &entrypoint_addrs {
         if !socket_addr_space.check(addr) {
             Err(format!("invalid entrypoint address: {addr}"))?;
