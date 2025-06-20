@@ -53,6 +53,10 @@ impl<T, E: RingOp<T>> Ring<T, E> {
         self.ring.submitter().register_buffers(iovecs)
     }
 
+    pub unsafe fn register_files(&self, fds: &[i32]) -> io::Result<()> {
+        self.ring.submitter().register_files(fds)
+    }
+
     /// Pushes an operation to the submission queue.
     ///
     /// Once completed, [RingOp::complete] will be called with the result.
@@ -135,10 +139,7 @@ impl<T, E: RingOp<T>> Ring<T, E> {
     pub fn process_completions(&mut self) -> io::Result<()> {
         let mut completion = self.ring.completion();
         let mut new_entries = smallvec![];
-        loop {
-            let Some(cqe) = completion.next() else {
-                break;
-            };
+        while let Some(cqe) = completion.next() {
             let completed_key = cqe.user_data() as usize;
             let entry = self.entries.get_mut(completed_key).unwrap();
             let result = entry.result(cqe.result());

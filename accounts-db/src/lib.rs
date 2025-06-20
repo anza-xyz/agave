@@ -59,6 +59,14 @@ pub use {
     },
 };
 
+pub fn io_uring_supported() -> bool {
+    #[cfg(target_os = "linux")]
+    if agave_io_uring::io_uring_supported() {
+        return true;
+    }
+    false
+}
+
 #[macro_use]
 extern crate solana_metrics;
 #[macro_use]
