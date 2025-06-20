@@ -27,15 +27,13 @@ async fn panic_test() {
         &[instruction],
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.working_bank().last_blockhash(),
     );
     assert_eq!(
         context
-            .banks_client
-            .process_transaction(transaction)
-            .await
-            .unwrap_err()
-            .unwrap(),
+            .working_bank()
+            .process_transaction(&transaction)
+            .unwrap_err(),
         TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
     );
 }
