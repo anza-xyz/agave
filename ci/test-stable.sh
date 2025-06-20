@@ -99,6 +99,14 @@ test-stable-sbf)
   _ make -C programs/sbf clean-all
   _ cargo_build_sbf_sanity "v3"
 
+  # SBPFv4 (ABIv2) tests
+  _ make -C programs/sbf clean-all
+
+  pushd programs/sbf
+  _ "$cargo_build_sbf" --manifest-path rust/abiv2/Cargo.toml --arch v4
+  _ cargo test --features=abi_v2 --test abi_v2
+  popd
+
   exit 0
   ;;
 test-docs)
