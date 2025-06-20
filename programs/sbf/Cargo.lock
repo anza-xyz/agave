@@ -8774,11 +8774,6 @@ dependencies = [
  "solana-instructions-sysvar",
  "solana-pubkey",
  "solana-rent",
-<<<<<<< HEAD
- "solana-signature",
-=======
- "solana-sdk-ids",
->>>>>>> bd8ccc6a2 (Remove debug-signature feature from transaction-context (#6647))
 ]
 
 [[package]]
