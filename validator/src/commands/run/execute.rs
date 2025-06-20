@@ -170,7 +170,7 @@ pub fn execute(
     let init_complete_file = matches.value_of("init_complete_file");
 
     let rpc_bootstrap_config = bootstrap::RpcBootstrapConfig {
-        no_genesis_fetch: matches.is_present("no_genesis_fetch"),
+        no_genesis_fetch: run_args.rpc_bootstrap_config.no_genesis_fetch,
         no_snapshot_fetch: matches.is_present("no_snapshot_fetch"),
         check_vote_account: matches
             .value_of("check_vote_account")
