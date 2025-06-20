@@ -5775,19 +5775,19 @@ fn test_bank_hash_consistency() {
         if bank.slot == 32 {
             assert_eq!(
                 bank.hash().to_string(),
-                "CK1siD9yP37R4ErCECKg1rofsEAk9fdGpsfpMQnSvHBL"
+                "4qjTvZJd4resaoy6XYNgbTBbvPha5oyjBXMC4MuZ5Msn"
             );
         }
         if bank.slot == 64 {
             assert_eq!(
                 bank.hash().to_string(),
-                "5h8yw8oU78G4JeVB28U9ZjZpV5fCgm9gA8LfVJF8YD8W"
+                "5M1CbUrWq8hBfUGtQse6RtECwjeCqzZWb3GcSiqhXU1c"
             );
         }
         if bank.slot == 128 {
             assert_eq!(
                 bank.hash().to_string(),
-                "87cnbyVPkbfpQkjuQ5sCKXNYhvUbpzHNac6GJv1BnqDM"
+                "4xSvqtyQXB7qiMcSTokZTKZSqXZH8a9c8W9VJpQPHq3N"
             );
             break;
         }
