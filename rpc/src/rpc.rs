@@ -3924,7 +3924,7 @@ pub mod rpc_full {
                     return Err(RpcCustomError::SendTransactionPreflightFailure {
                         message: format!("Transaction simulation failed: {err}"),
                         result: RpcSimulateTransactionResult {
-                            err: Some(err),
+                            err: Some(err.into()),
                             logs: Some(logs),
                             accounts: None,
                             units_consumed: Some(units_consumed),
@@ -4073,7 +4073,7 @@ pub mod rpc_full {
             Ok(new_response(
                 bank,
                 RpcSimulateTransactionResult {
-                    err: result.err(),
+                    err: result.err().map(Into::into),
                     logs: Some(logs),
                     accounts,
                     units_consumed: Some(units_consumed),
@@ -7276,17 +7276,17 @@ pub mod tests {
                     let meta = meta.unwrap();
                     assert_eq!(
                         meta.err,
-                        Some(TransactionError::InstructionError(
-                            0,
-                            InstructionError::Custom(1)
-                        ))
+                        Some(
+                            TransactionError::InstructionError(0, InstructionError::Custom(1))
+                                .into()
+                        )
                     );
                     assert_eq!(
                         meta.status,
-                        Err(TransactionError::InstructionError(
-                            0,
-                            InstructionError::Custom(1)
-                        ))
+                        Err(
+                            TransactionError::InstructionError(0, InstructionError::Custom(1))
+                                .into()
+                        ),
                     );
                 } else {
                     assert_eq!(meta, None);
@@ -7322,17 +7322,17 @@ pub mod tests {
                     let meta = meta.unwrap();
                     assert_eq!(
                         meta.err,
-                        Some(TransactionError::InstructionError(
-                            0,
-                            InstructionError::Custom(1)
-                        ))
+                        Some(
+                            TransactionError::InstructionError(0, InstructionError::Custom(1))
+                                .into()
+                        )
                     );
                     assert_eq!(
                         meta.status,
-                        Err(TransactionError::InstructionError(
-                            0,
-                            InstructionError::Custom(1)
-                        ))
+                        Err(
+                            TransactionError::InstructionError(0, InstructionError::Custom(1))
+                                .into()
+                        ),
                     );
                 } else {
                     assert_eq!(meta, None);
@@ -8533,7 +8533,7 @@ pub mod tests {
                 },
             ]);
         }
-        assert_eq!(result["result"]["value"]["data"], expected_value);
+        assert_eq!(result["result"]["value"]["data"], expected_value,);
 
         // Test Mint
         let req = format!(
