@@ -606,9 +606,6 @@ struct GenerateIndexTimings {
     pub index_time: u64,
     pub scan_time: u64,
     pub insertion_time_us: u64,
-    pub min_bin_size_in_mem: usize,
-    pub max_bin_size_in_mem: usize,
-    pub total_items_in_mem: usize,
     pub storage_size_storages_us: u64,
     pub index_flush_us: u64,
     pub rent_paying: AtomicUsize,
@@ -645,8 +642,6 @@ impl GenerateIndexTimings {
             ("total_us", self.index_time, i64),
             ("scan_stores_us", self.scan_time, i64),
             ("insertion_time_us", self.insertion_time_us, i64),
-            ("min_bin_size_in_mem", self.min_bin_size_in_mem, i64),
-            ("max_bin_size_in_mem", self.max_bin_size_in_mem, i64),
             (
                 "storage_size_storages_us",
                 self.storage_size_storages_us,
@@ -668,7 +663,6 @@ impl GenerateIndexTimings {
                 self.total_including_duplicates,
                 i64
             ),
-            ("total_items_in_mem", self.total_items_in_mem, i64),
             (
                 "accounts_data_len_dedup_time_us",
                 self.accounts_data_len_dedup_time_us,
@@ -8163,9 +8157,6 @@ impl AccountsDb {
             let mut index_flush_us = 0;
             let total_duplicate_slot_keys = AtomicU64::default();
             let mut populate_duplicate_keys_us = 0;
-            let mut total_items_in_mem = 0;
-            let mut min_bin_size_in_mem = 0;
-            let mut max_bin_size_in_mem = 0;
             let total_num_unique_duplicate_keys = AtomicU64::default();
 
             // outer vec is accounts index bin (determined by pubkey value)
@@ -8204,19 +8195,6 @@ impl AccountsDb {
                         });
                 })
                 .1;
-
-                (total_items_in_mem, min_bin_size_in_mem, max_bin_size_in_mem) = self
-                    .accounts_index
-                    .account_maps
-                    .iter()
-                    .map(|map_bin| map_bin.len_for_stats())
-                    .fold((0, usize::MAX, usize::MIN), |acc, len| {
-                        (
-                            acc.0 + len,
-                            std::cmp::min(acc.1, len),
-                            std::cmp::max(acc.2, len),
-                        )
-                    });
             }
             let unique_pubkeys_by_bin = unique_pubkeys_by_bin.into_inner().unwrap();
 
@@ -8225,9 +8203,6 @@ impl AccountsDb {
                 scan_time,
                 index_time: index_time.as_us(),
                 insertion_time_us: insertion_time_us.load(Ordering::Relaxed),
-                min_bin_size_in_mem,
-                max_bin_size_in_mem,
-                total_items_in_mem,
                 rent_paying,
                 amount_to_top_off_rent,
                 total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
