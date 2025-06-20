@@ -1,3 +1,5 @@
+#[allow(deprecated)]
+use solana_gossip::cluster_info::NodeConfig;
 use {
     crate::{
         admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
@@ -37,10 +39,7 @@ use {
             ValidatorStartProgress, ValidatorTpuConfig,
         },
     },
-    solana_gossip::{
-        cluster_info::{Node, NodeConfig},
-        contact_info::ContactInfo,
-    },
+    solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
@@ -1140,6 +1139,7 @@ pub fn execute(
         value_t_or_exit!(matches, "tpu_max_connections_per_ipaddr_per_minute", u64);
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
+    #[allow(deprecated)]
     let node_config = NodeConfig {
         gossip_addr,
         port_range: dynamic_port_range,

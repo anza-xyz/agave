@@ -2331,6 +2331,7 @@ pub struct Sockets {
     pub rpc_sts_client: UdpSocket,
 }
 
+#[deprecated(since = "2.3.0", note = "NodeConfig will be refactored in 3.0")]
 pub struct NodeConfig {
     pub gossip_addr: SocketAddr,
     pub port_range: PortRange,
@@ -2658,7 +2659,9 @@ impl Node {
         }
     }
 
+    #[allow(deprecated)]
     pub fn new_with_external_ip(pubkey: &Pubkey, config: NodeConfig) -> Node {
+        #[allow(deprecated)]
         let NodeConfig {
             gossip_addr,
             port_range,
@@ -3282,6 +3285,7 @@ mod tests {
     fn new_with_external_ip_test_random() {
         let ip = Ipv4Addr::LOCALHOST;
         let port_range = localhost_port_range_for_tests();
+        #[allow(deprecated)]
         let config = NodeConfig {
             gossip_addr: socketaddr!(ip, 0),
             port_range,
@@ -3305,6 +3309,7 @@ mod tests {
         let port_range = localhost_port_range_for_tests();
         let ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port = port_range.0;
+        #[allow(deprecated)]
         let config = NodeConfig {
             gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port),
             port_range,
