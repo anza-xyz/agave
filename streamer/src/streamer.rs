@@ -3,6 +3,10 @@
 
 use {
     crate::{
+        atomic_udp_socket::{
+            AtomicSocketProvider, AtomicUdpSocket, CurrentSocket, FixedSocketProvider,
+            SocketProvider,
+        },
         packet::{
             self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
         },
@@ -146,8 +150,8 @@ impl StreamerReceiveStats {
 
 pub type Result<T> = std::result::Result<T, StreamerError>;
 
-fn recv_loop(
-    socket: &UdpSocket,
+fn recv_loop<P: SocketProvider>(
+    provider: &mut P,
     exit: &AtomicBool,
     packet_batch_sender: &impl ChannelSend<PacketBatch>,
     recycler: &PacketBatchRecycler,
@@ -157,7 +161,22 @@ fn recv_loop(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
+    let mut has_set_timeout = false;
     loop {
+        let socket = match provider.current_socket() {
+            CurrentSocket::Changed(sock) => {
+                sock.set_read_timeout(Some(Duration::from_secs(1)))?;
+                has_set_timeout = true;
+                sock
+            }
+            CurrentSocket::Same(sock) => {
+                if !has_set_timeout {
+                    sock.set_read_timeout(Some(Duration::from_secs(1)))?;
+                    has_set_timeout = true;
+                }
+                sock
+            }
+        };
         let mut packet_batch = if use_pinned_memory {
             PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
@@ -230,8 +249,41 @@ pub fn receiver(
     Builder::new()
         .name(thread_name)
         .spawn(move || {
+            let mut provider = FixedSocketProvider::new(socket);
             let _ = recv_loop(
-                &socket,
+                &mut provider,
+                &exit,
+                &packet_batch_sender,
+                &recycler,
+                &stats,
+                coalesce,
+                use_pinned_memory,
+                in_vote_only_mode,
+                is_staked_service,
+            );
+        })
+        .unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn receiver_atomic(
+    thread_name: String,
+    socket: Arc<AtomicUdpSocket>,
+    exit: Arc<AtomicBool>,
+    packet_batch_sender: impl ChannelSend<PacketBatch>,
+    recycler: PacketBatchRecycler,
+    stats: Arc<StreamerReceiveStats>,
+    coalesce: Option<Duration>,
+    use_pinned_memory: bool,
+    in_vote_only_mode: Option<Arc<AtomicBool>>,
+    is_staked_service: bool,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(thread_name)
+        .spawn(move || {
+            let mut provider = AtomicSocketProvider::new(socket);
+            let _ = recv_loop(
+                &mut provider,
                 &exit,
                 &packet_batch_sender,
                 &recycler,
@@ -460,6 +512,27 @@ pub fn recv_packet_batches(
     Ok((packet_batches, num_packets, recv_duration))
 }
 
+pub fn responder_atomic(
+    name: &'static str,
+    sock: Arc<AtomicUdpSocket>,
+    r: PacketBatchReceiver,
+    socket_addr_space: SocketAddrSpace,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) -> JoinHandle<()> {
+    Builder::new()
+        .name(format!("solRspndr{name}"))
+        .spawn(move || {
+            responder_loop(
+                AtomicSocketProvider::new(sock),
+                name,
+                r,
+                socket_addr_space,
+                stats_reporter_sender,
+            );
+        })
+        .unwrap()
+}
+
 pub fn responder(
     name: &'static str,
     sock: Arc<UdpSocket>,
@@ -470,41 +543,58 @@ pub fn responder(
     Builder::new()
         .name(format!("solRspndr{name}"))
         .spawn(move || {
-            let mut errors = 0;
-            let mut last_error = None;
-            let mut last_print = 0;
-            let mut stats = None;
-
-            if stats_reporter_sender.is_some() {
-                stats = Some(StreamerSendStats::default());
-            }
-
-            loop {
-                if let Err(e) = recv_send(&sock, &r, &socket_addr_space, &mut stats) {
-                    match e {
-                        StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
-                        StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
-                        _ => {
-                            errors += 1;
-                            last_error = Some(e);
-                        }
-                    }
-                }
-                let now = timestamp();
-                if now - last_print > 1000 && errors != 0 {
-                    datapoint_info!(name, ("errors", errors, i64),);
-                    info!("{} last-error: {:?} count: {}", name, last_error, errors);
-                    last_print = now;
-                    errors = 0;
-                }
-                if let Some(ref stats_reporter_sender) = stats_reporter_sender {
-                    if let Some(ref mut stats) = stats {
-                        stats.maybe_submit(name, stats_reporter_sender);
-                    }
-                }
-            }
+            responder_loop(
+                FixedSocketProvider::new(sock),
+                name,
+                r,
+                socket_addr_space,
+                stats_reporter_sender,
+            );
         })
         .unwrap()
+}
+
+fn responder_loop<P: SocketProvider>(
+    mut provider: P,
+    name: &'static str,
+    r: PacketBatchReceiver,
+    socket_addr_space: SocketAddrSpace,
+    stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
+) {
+    let mut errors = 0;
+    let mut last_error = None;
+    let mut last_print = 0;
+    let mut stats = None;
+
+    if stats_reporter_sender.is_some() {
+        stats = Some(StreamerSendStats::default());
+    }
+
+    loop {
+        let sock = provider.current_socket_ref();
+        if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
+            match e {
+                StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
+                StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
+                _ => {
+                    errors += 1;
+                    last_error = Some(e);
+                }
+            }
+        }
+        let now = timestamp();
+        if now - last_print > 1000 && errors != 0 {
+            datapoint_info!(name, ("errors", errors, i64),);
+            info!("{} last-error: {:?} count: {}", name, last_error, errors);
+            last_print = now;
+            errors = 0;
+        }
+        if let Some(ref stats_reporter_sender) = stats_reporter_sender {
+            if let Some(ref mut stats) = stats {
+                stats.maybe_submit(name, stats_reporter_sender);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

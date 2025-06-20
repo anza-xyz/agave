@@ -18,6 +18,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
+        atomic_udp_socket::{AtomicUdpSocket, SocketKind},
         evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
@@ -25,7 +26,7 @@ use {
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{
         collections::HashSet,
-        net::{SocketAddr, TcpListener, UdpSocket},
+        net::{SocketAddr, TcpListener},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -45,7 +46,7 @@ impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
-        gossip_socket: UdpSocket,
+        gossip_socket: SocketKind,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -53,7 +54,10 @@ impl GossipService {
     ) -> Self {
         let (request_sender, request_receiver) =
             EvictingSender::new_bounded(GOSSIP_CHANNEL_CAPACITY);
-        let gossip_socket = Arc::new(gossip_socket);
+        let gossip_socket = match gossip_socket {
+            SocketKind::Static(socket) => Arc::new(AtomicUdpSocket::new(socket)),
+            SocketKind::Rebindable(socket) => socket,
+        };
         trace!(
             "GossipService: id: {}, listening on: {:?}",
             &cluster_info.id(),
@@ -61,7 +65,7 @@ impl GossipService {
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
-        let t_receiver = streamer::receiver(
+        let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
             gossip_socket.clone(),
             exit.clone(),
@@ -96,9 +100,9 @@ impl GossipService {
             gossip_validators,
             exit.clone(),
         );
-        let t_responder = streamer::responder(
+        let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_socket,
+            gossip_socket.clone(),
             response_receiver,
             socket_addr_space,
             stats_reporter_sender,
@@ -375,7 +379,7 @@ pub fn make_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        SocketKind::Static(gossip_socket),
         None,
         should_check_duplicate_instance,
         None,
@@ -410,7 +414,7 @@ mod tests {
         let d = GossipService::new(
             &c,
             None,
-            tn.sockets.gossip,
+            SocketKind::Static(tn.sockets.gossip),
             None,
             true, // should_check_duplicate_instance
             None,
