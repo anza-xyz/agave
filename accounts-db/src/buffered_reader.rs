@@ -12,7 +12,7 @@ use {
     crate::{append_vec::ValidSlice, file_io::read_more_buffer},
     std::{
         fs::File,
-        io::{BufRead, BufReader, Result as IoResult},
+        io::{self, BufRead, BufReader},
         mem::MaybeUninit,
         ops::Range,
         path::Path,
@@ -128,7 +128,7 @@ where
     T: Backing,
 {
     /// read to make sure we have the minimum amount of data
-    pub fn read(&mut self) -> IoResult<BufferedReaderStatus> {
+    pub fn read(&mut self) -> io::Result<BufferedReaderStatus> {
         let must_read = self
             .read_requirements
             .unwrap_or(self.default_min_read_requirement);
@@ -191,7 +191,7 @@ impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
 pub fn large_file_buf_reader(
     path: impl AsRef<Path>,
     buf_size: usize,
-) -> IoResult<Box<dyn BufRead>> {
+) -> io::Result<Box<dyn BufRead>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::sequential_file_reader::SequentialFileReader;
