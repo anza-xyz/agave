@@ -76,6 +76,7 @@ use {
         utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
+    ahash::AHashSet,
     crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     dashmap::{DashMap, DashSet},
     log::*,
@@ -3285,7 +3286,7 @@ impl AccountsDb {
     /// return sum of account size for all alive accounts
     fn load_accounts_index_for_shrink<'a, T: ShrinkCollectRefs<'a>>(
         &self,
-        accounts: &'a [AccountFromStorage],
+        accounts: &[&'a AccountFromStorage],
         stats: &ShrinkStats,
         slot_to_shrink: Slot,
     ) -> LoadAccountsIndexForShrink<'a, T> {
@@ -3301,10 +3302,11 @@ impl AccountsDb {
         let mut index_scan_returned_none_count = 0;
         let mut all_are_zero_lamports = true;
         let latest_full_snapshot_slot = self.latest_full_snapshot_slot();
+
         self.accounts_index.scan(
             accounts.iter().map(|account| account.pubkey()),
             |pubkey, slots_refs, _entry| {
-                let stored_account = &accounts[index];
+                let stored_account = accounts[index];
                 let mut do_populate_accounts_for_shrink = |ref_count, slot_list| {
                     if stored_account.is_zero_lamport()
                         && ref_count == 1
@@ -3479,6 +3481,31 @@ impl AccountsDb {
         let alive_accounts_collect = Mutex::new(T::with_capacity(len, slot));
         let pubkeys_to_unref_collect = Mutex::new(Vec::with_capacity(len));
         let zero_lamport_single_ref_pubkeys_collect = Mutex::new(Vec::with_capacity(len));
+        let mut obsolete_accounts_filtered = 0;
+
+        // Get a set of all obsolete offsets
+        // Slot is not needed, as all obsolete accounts can be considered
+        // dead for shrink. Zero lamport accounts are not marked obsolete
+        let obsolete_offsets: AHashSet<_> = store
+            .get_obsolete_accounts(None)
+            .iter()
+            .map(|(offset, _)| *offset)
+            .collect();
+
+        // Filter all the accounts that are marked obsolete
+        let filtered_accounts = stored_accounts
+            .iter()
+            .filter(|account| {
+                if obsolete_offsets.contains(&account.index_info.offset()) {
+                    // If the account is obsolete, it is dead
+                    obsolete_accounts_filtered += 1;
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect::<Vec<&'b AccountFromStorage>>();
+
         stats
             .accounts_loaded
             .fetch_add(len as u64, Ordering::Relaxed);
@@ -3487,15 +3514,15 @@ impl AccountsDb {
             .fetch_add(*num_duplicated_accounts as u64, Ordering::Relaxed);
         let all_are_zero_lamports_collect = Mutex::new(true);
         self.thread_pool_clean.install(|| {
-            stored_accounts
+            filtered_accounts
                 .par_chunks(SHRINK_COLLECT_CHUNK_SIZE)
-                .for_each(|stored_accounts| {
+                .for_each(|filtered_accounts| {
                     let LoadAccountsIndexForShrink {
                         alive_accounts,
                         mut pubkeys_to_unref,
                         all_are_zero_lamports,
                         mut zero_lamport_single_ref_pubkeys,
-                    } = self.load_accounts_index_for_shrink(stored_accounts, stats, slot);
+                    } = self.load_accounts_index_for_shrink(filtered_accounts, stats, slot);
 
                     // collect
                     alive_accounts_collect
@@ -3523,6 +3550,11 @@ impl AccountsDb {
             .unwrap();
 
         index_read_elapsed.stop();
+
+        stats
+            .obsolete_accounts_filtered
+            .fetch_add(obsolete_accounts_filtered as u64, Ordering::Relaxed);
+
         stats
             .index_read_elapsed
             .fetch_add(index_read_elapsed.as_us(), Ordering::Relaxed);
