@@ -639,6 +639,22 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
+            Arg::with_name("inflation_fixed")
+                .long("inflation-fixed")
+                .value_name("RATE")
+                .validator(|value| {
+                    value
+                        .parse::<f64>()
+			.and(Ok(()))
+                        .map_err(|err| format!("error parsing '{value}': {err}"))
+                })
+                .takes_value(true)
+                .help(
+                    "Override default inflation with fixed rate. If the ledger already exists then \
+                     this parameter is silently ignored",
+                ),
+        )
+        .arg(
             Arg::with_name("gossip_port")
                 .long("gossip-port")
                 .value_name("PORT")

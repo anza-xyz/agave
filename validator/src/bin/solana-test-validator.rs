@@ -17,6 +17,7 @@ use {
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::run_local_faucet_with_port,
+    solana_inflation::Inflation,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
     solana_native_token::sol_to_lamports,
@@ -158,6 +159,7 @@ fn main() {
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
+    let inflation_fixed = value_t!(matches, "inflation_fixed", f64).ok();
     let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
         warn!("--gossip-host is deprecated. Use --bind-address instead.");
         solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
@@ -380,6 +382,7 @@ fn main() {
             ("mint_address", "--mint"),
             ("ticks_per_slot", "--ticks-per-slot"),
             ("slots_per_epoch", "--slots-per-epoch"),
+            ("inflation_fixed", "--inflation-fixed"),
             ("faucet_sol", "--faucet-sol"),
             ("deactivate_feature", "--deactivate-feature"),
         ] {
@@ -567,6 +570,10 @@ fn main() {
         ));
 
         genesis.rent = Rent::with_slots_per_epoch(slots_per_epoch);
+    }
+
+    if let Some(inflation_fixed) = inflation_fixed {
+        genesis.inflation(Inflation::new_fixed(inflation_fixed));
     }
 
     genesis.gossip_host(advertised_ip);
