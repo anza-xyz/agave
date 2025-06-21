@@ -182,8 +182,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
 mod tests {
     use {
         crate::{packet::PACKET_DATA_SIZE, recvmmsg::*},
-        solana_net_utils::{
-            bind_in_range_with_config, sockets::localhost_port_range_for_tests, SocketConfig,
+        solana_net_utils::sockets::{
+            bind_in_range_with_config, localhost_port_range_for_tests,
+            SocketConfiguration as SocketConfig,
         },
         std::{
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
