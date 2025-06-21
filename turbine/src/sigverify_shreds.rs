@@ -552,25 +552,23 @@ mod tests {
 
         let entries = create_ticks(1, 1, Hash::new_unique());
         let shredder = Shredder::new(1, 0, 1, 0).unwrap();
-        let (shreds_data, _shreds_code) = shredder.entries_to_shreds(
+        let (shreds_data, _shreds_code) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries,
             true,
             Some(Hash::new_unique()),
             0,
             0,
-            true,
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
-        let (shreds_data_wrong, _shreds_code_wrong) = shredder.entries_to_shreds(
+        let (shreds_data_wrong, _shreds_code_wrong) = shredder.entries_to_merkle_shreds_for_tests(
             &wrong_keypair,
             &entries,
             true,
             Some(Hash::new_unique()),
             0,
             0,
-            true,
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );

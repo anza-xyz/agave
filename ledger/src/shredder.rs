@@ -107,8 +107,36 @@ impl Shredder {
         .unwrap()
     }
 
+    pub fn entries_to_merkle_shreds_for_tests(
+        &self,
+        keypair: &Keypair,
+        entries: &[Entry],
+        is_last_in_slot: bool,
+        chained_merkle_root: Option<Hash>,
+        next_shred_index: u32,
+        next_code_index: u32,
+        reed_solomon_cache: &ReedSolomonCache,
+        stats: &mut ProcessShredsStats,
+    ) -> (
+        Vec<Shred>, // data shreds
+        Vec<Shred>, // coding shreds
+    ) {
+        self.make_merkle_shreds_from_entries(
+            keypair,
+            entries,
+            is_last_in_slot,
+            chained_merkle_root,
+            next_shred_index,
+            next_code_index,
+            reed_solomon_cache,
+            stats,
+        )
+        .partition(Shred::is_data)
+    }
+
     // For legacy tests and benchmarks.
     #[allow(clippy::too_many_arguments)]
+    #[deprecated(since = "2.3.1", note = "Allows creation of non-merkle shreds")]
     pub fn entries_to_shreds(
         &self,
         keypair: &Keypair,
@@ -597,7 +625,7 @@ mod tests {
         let num_expected_data_shreds = DATA_SHREDS_PER_FEC_BLOCK;
         let num_expected_coding_shreds = CODING_SHREDS_PER_FEC_BLOCK;
         let start_index = 0;
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
@@ -605,7 +633,6 @@ mod tests {
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             start_index, // next_shred_index
             start_index, // next_code_index
-            true,        // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -691,15 +718,14 @@ mod tests {
             })
             .collect();
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            369,  // next_shred_index
-            776,  // next_code_index
-            true, // merkle_variant
+            369, // next_shred_index
+            776, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -728,15 +754,14 @@ mod tests {
             })
             .collect();
 
-        let (data_shreds, _) = shredder.entries_to_shreds(
+        let (data_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -770,15 +795,14 @@ mod tests {
             })
             .collect();
 
-        let (data_shreds, _) = shredder.entries_to_shreds(
+        let (data_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -818,15 +842,14 @@ mod tests {
             })
             .collect();
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -880,6 +903,7 @@ mod tests {
 
         let reed_solomon_cache = ReedSolomonCache::default();
         let serialized_entries = bincode::serialize(&entries).unwrap();
+        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
@@ -1024,6 +1048,7 @@ mod tests {
         // Test5: Try recovery/reassembly with non zero index full slot with 3 missing data shreds
         // and 2 missing coding shreds. Hint: should work
         let serialized_entries = bincode::serialize(&entries).unwrap();
+        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
@@ -1124,6 +1149,7 @@ mod tests {
         .unwrap();
         let next_shred_index = rng.gen_range(1..1024);
         let reed_solomon_cache = ReedSolomonCache::default();
+        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &[entry],
@@ -1190,15 +1216,14 @@ mod tests {
             })
             .collect();
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
             // chained_merkle_root
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -1229,7 +1254,7 @@ mod tests {
             .collect();
 
         let start_index = 0x12;
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last_in_slot,
@@ -1237,7 +1262,6 @@ mod tests {
             chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
             start_index, // next_shred_index
             start_index, // next_code_index
-            true,        // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
