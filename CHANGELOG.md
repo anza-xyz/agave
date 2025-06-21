@@ -13,7 +13,7 @@ Release channels have their own copy of this changelog:
 * [stable - v2.1](https://github.com/anza-xyz/agave/blob/v2.1/CHANGELOG.md)
 
 <a name="edge-channel"></a>
-## 2.3.0 - Unreleased
+## 2.3.0
 
 ### Validator
 
