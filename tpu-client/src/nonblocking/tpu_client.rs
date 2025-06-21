@@ -978,7 +978,7 @@ async fn maybe_fetch_cache_info(
         leader_tpu_cache.slot_info()
     };
     let maybe_epoch_info =
-        if estimated_current_slot >= last_epoch_info_slot.saturating_sub(slots_in_epoch) {
+        if estimated_current_slot.saturating_sub(last_epoch_info_slot) >= slots_in_epoch {
             Some(rpc_client.get_epoch_info().await)
         } else {
             None
