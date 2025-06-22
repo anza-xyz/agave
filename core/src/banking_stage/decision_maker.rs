@@ -1,9 +1,9 @@
 use {
-    solana_poh::poh_recorder::{BankStart, PohRecorder},
     solana_clock::{
         DEFAULT_TICKS_PER_SLOT, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET,
         HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
+    solana_poh::poh_recorder::{BankStart, PohRecorder},
     solana_pubkey::Pubkey,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
@@ -154,10 +154,10 @@ mod tests {
     use {
         super::*,
         core::panic,
+        solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::{blockstore::Blockstore, genesis_utils::create_genesis_config},
         solana_poh::poh_recorder::create_test_recorder,
         solana_runtime::bank::Bank,
-        solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         std::{
             env::temp_dir,
             sync::{atomic::Ordering, Arc},

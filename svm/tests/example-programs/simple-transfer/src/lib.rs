@@ -1,19 +1,18 @@
 use {
-    solana_account_info::{AccountInfo, next_account_info},
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_program::program::invoke,
     solana_program_entrypoint::entrypoint,
     solana_program_error::ProgramResult,
     solana_pubkey::Pubkey,
-    solana_program::program::invoke,
     solana_system_interface::instruction as system_instruction,
 };
 
 entrypoint!(process_instruction);
 
-
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],
-    data: &[u8]
+    data: &[u8],
 ) -> ProgramResult {
     let amount = u64::from_be_bytes(data[0..8].try_into().unwrap());
     let accounts_iter = &mut accounts.iter();

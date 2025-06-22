@@ -1,10 +1,13 @@
 use {
     super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
-    solana_poh::poh_recorder::BankStart,
     solana_clock::Slot,
+    solana_poh::poh_recorder::BankStart,
     solana_time_utils::AtomicInterval,
-    std::{num::Saturating, time::{Duration, Instant}},
+    std::{
+        num::Saturating,
+        time::{Duration, Instant},
+    },
 };
 
 #[derive(Default)]
@@ -124,9 +127,8 @@ impl SchedulerCountMetricsInner {
             num_dropped_on_receive: Saturating(num_dropped_on_receive),
             num_dropped_on_sanitization: Saturating(num_dropped_on_sanitization),
             num_dropped_on_validate_locks: Saturating(num_dropped_on_validate_locks),
-            num_dropped_on_receive_transaction_checks: Saturating(
-                num_dropped_on_receive_transaction_checks,
-            ),
+            num_dropped_on_receive_transaction_checks:
+                Saturating(num_dropped_on_receive_transaction_checks),
             num_dropped_on_clear: Saturating(num_dropped_on_clear),
             num_dropped_on_age_and_status: Saturating(num_dropped_on_age_and_status),
             num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
