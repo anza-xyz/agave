@@ -5744,50 +5744,59 @@ fn test_fuzz_instructions() {
     info!("results: {:?}", results);
 }
 
+// DEVELOPERS: This test is intended to ensure that the bank hash remains
+// consistent across all changes, including feature set changes. If you add a
+// new feature that affects the bank hash, you should update this test to use a
+// test matrix that tests the bank hash calculation with and without your
+// added feature.
 #[test]
 fn test_bank_hash_consistency() {
-    solana_logger::setup();
-
     let account = AccountSharedData::new(1_000_000_000_000, 0, &system_program::id());
-    assert_eq!(account.rent_epoch(), 0);
     let mut genesis_config = GenesisConfig::new(&[(Pubkey::from([42; 32]), account)], &[]);
+    // Override the creation time to ensure bank hash consistency
     genesis_config.creation_time = 0;
     genesis_config.cluster_type = ClusterType::MainnetBeta;
-    genesis_config.rent.burn_percent = 100;
-    activate_feature(
-        &mut genesis_config,
-        agave_feature_set::set_exempt_rent_epoch_max::id(),
-    );
 
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    // Check a few slots, cross an epoch boundary
-    assert_eq!(bank.get_slots_in_epoch(0), 32);
+    // Set the feature set to all enabled so that we detect any inconsistencies
+    // in the hash computation that may arise from feature set changes
+    let feature_set = FeatureSet::all_enabled();
+
+    let mut bank = Arc::new(Bank::new_with_paths(
+        &genesis_config,
+        Arc::new(RuntimeConfig::default()),
+        vec![],
+        None,
+        None,
+        false,
+        Some(BankTestConfig::default().accounts_db_config),
+        None,
+        Some(Pubkey::from([42; 32])),
+        Arc::default(),
+        None,
+        Some(feature_set),
+    ));
     loop {
-        goto_end_of_slot(bank.clone());
-
+        goto_end_of_slot(Arc::clone(&bank));
         if bank.slot == 0 {
+            assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "CTg8Vq5RjXhfp332YC9DHQjAfFueLPimszv9i6xBFgPW",
+                "AyXhbqmPsC46x7MHAuW89pQcNZVrUZnAND6ABWJ24svx",
             );
         }
 
         if bank.slot == 32 {
+            assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "4qjTvZJd4resaoy6XYNgbTBbvPha5oyjBXMC4MuZ5Msn"
-            );
-        }
-        if bank.slot == 64 {
-            assert_eq!(
-                bank.hash().to_string(),
-                "5M1CbUrWq8hBfUGtQse6RtECwjeCqzZWb3GcSiqhXU1c"
+                "ApbSYzbXgNBobjzp8ytimvVsMBUxtuJR9nFieePdpwj3"
             );
         }
         if bank.slot == 128 {
+            assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "4xSvqtyQXB7qiMcSTokZTKZSqXZH8a9c8W9VJpQPHq3N"
+                "FxaFn1Dj7fetY1SXWWi6DyEYidoiDLZexe3hM1tNvkwJ"
             );
             break;
         }
