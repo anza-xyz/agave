@@ -1081,7 +1081,8 @@ pub fn execute(
 
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
-    } else if !bind_addresses.primary().is_unspecified() && !bind_addresses.primary().is_loopback() {
+    } else if !bind_addresses.primary().is_unspecified() && !bind_addresses.primary().is_loopback()
+    {
         bind_addresses.primary()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
@@ -1095,14 +1096,17 @@ pub fn execute(
                     "Contacting {} to determine the validator's public IP address",
                     entrypoint_addr
                 );
-                solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_addresses.primary())
-                    .map_or_else(
-                        |err| {
-                            warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                            None
-                        },
-                        Some,
-                    )
+                solana_net_utils::get_public_ip_addr_with_binding(
+                    entrypoint_addr,
+                    bind_addresses.primary(),
+                )
+                .map_or_else(
+                    |err| {
+                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                        None
+                    },
+                    Some,
+                )
             })
             .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
     } else {

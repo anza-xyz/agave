@@ -2352,7 +2352,7 @@ pub struct NodeConfig {
 #[derive(Debug, Clone)]
 pub struct BindIpAddrs {
     primary: IpAddr,
-    secondary: Vec<IpAddr>,
+    others: Vec<IpAddr>,
 }
 
 impl BindIpAddrs {
@@ -2363,16 +2363,16 @@ impl BindIpAddrs {
             );
         }
         let primary = addrs[0];
-        let secondary = addrs[1..].to_vec();
-        Ok(Self { primary, secondary })
+        let others = addrs[1..].to_vec();
+        Ok(Self { primary, others })
     }
 
     pub fn primary(&self) -> IpAddr {
         self.primary
     }
 
-    pub fn secondary(&self) -> &[IpAddr] {
-        &self.secondary
+    pub fn all(&self) -> impl Iterator<Item = &IpAddr> {
+        std::iter::once(&self.primary).chain(self.others.iter())
     }
 }
 
