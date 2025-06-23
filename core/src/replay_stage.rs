@@ -4362,7 +4362,7 @@ pub(crate) mod tests {
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_entry::entry::{self, Entry},
         solana_genesis_config as genesis_config,
-        solana_gossip::{cluster_info::Node, crds::Cursor},
+        solana_gossip::{node::Node, crds::Cursor},
         solana_hash::Hash,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,

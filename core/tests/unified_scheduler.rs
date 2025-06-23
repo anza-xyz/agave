@@ -19,7 +19,7 @@ use {
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     solana_entry::entry::Entry,
-    solana_gossip::cluster_info::{ClusterInfo, Node},
+    solana_gossip::{cluster_info::ClusterInfo, node::Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{

@@ -25,8 +25,9 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
         contact_info::Protocol,
+        node::Node,
         socketaddr,
     },
     solana_instruction::{AccountMeta, Instruction},
