@@ -1579,7 +1579,6 @@ pub mod test {
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::bind_to_localhost,
-        solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::collections::HashMap,
         tokio::time::sleep,
@@ -1620,7 +1619,7 @@ pub mod test {
             // Send enough data to create more than 1 chunks.
             // The first will try to open the connection (which should fail).
             // The following chunks will enable the detection of connection failure.
-            let data = vec![1u8; PACKET_DATA_SIZE * 2];
+            let data = vec![1u8; QUIC_MAX_STREAM_SIZE * 2];
             s2.write_all(&data)
                 .await
                 .expect_err("shouldn't be able to open 2 connections");
@@ -1640,7 +1639,7 @@ pub mod test {
         let conn1 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
 
         // Send a full size packet with single byte writes.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets = 1;
         let mut s1 = conn1.open_uni().await.unwrap();
         for _ in 0..num_bytes {
@@ -1677,7 +1676,7 @@ pub mod test {
 
         // Send a full size packet with single byte writes.
         if let Ok(mut s1) = conn1.open_uni().await {
-            for _ in 0..PACKET_DATA_SIZE {
+            for _ in 0..QUIC_MAX_STREAM_SIZE {
                 // Ignoring any errors here. s1.finish() will test the error condition
                 s1.write_all(&[0u8]).await.unwrap_or_default();
             }
@@ -2467,7 +2466,7 @@ pub mod test {
 
         let mut send_stream = client_connection.open_uni().await.unwrap();
         send_stream
-            .write_all(&[42; PACKET_DATA_SIZE + 1])
+            .write_all(&[42; QUIC_MAX_STREAM_SIZE + 1])
             .await
             .unwrap();
         match client_connection.closed().await {
