@@ -690,8 +690,6 @@ impl HotStorageReader {
                         lamports,
                         offset: AccountInfo::reduced_offset_to_offset(i),
                         data_len: data_len as u64,
-                        executable: meta.flags().executable(),
-                        rent_epoch: meta.final_rent_epoch(account_block),
                     }
                 },
                 stored_size_aligned: stored_size(data_len),

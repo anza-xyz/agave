@@ -577,10 +577,7 @@ pub struct IndexGenerationInfo {
 struct SlotIndexGenerationInfo {
     insert_time_us: u64,
     num_accounts: u64,
-    num_accounts_rent_paying: usize,
     accounts_data_len: u64,
-    amount_to_top_off_rent: u64,
-    rent_paying_accounts_by_partition: Vec<Pubkey>,
     zero_lamport_pubkeys: Vec<Pubkey>,
     all_accounts_are_zero_lamports: bool,
     /// Number of accounts in this slot that didn't already exist in the index
@@ -614,8 +611,6 @@ struct GenerateIndexTimings {
     pub insertion_time_us: u64,
     pub storage_size_storages_us: u64,
     pub index_flush_us: u64,
-    pub rent_paying: AtomicUsize,
-    pub amount_to_top_off_rent: AtomicU64,
     pub total_including_duplicates: u64,
     pub accounts_data_len_dedup_time_us: u64,
     pub total_duplicate_slot_keys: u64,
@@ -654,16 +649,6 @@ impl GenerateIndexTimings {
                 i64
             ),
             ("index_flush_us", self.index_flush_us, i64),
-            (
-                "total_rent_paying",
-                self.rent_paying.load(Ordering::Relaxed),
-                i64
-            ),
-            (
-                "amount_to_top_off_rent",
-                self.amount_to_top_off_rent.load(Ordering::Relaxed),
-                i64
-            ),
             (
                 "total_items_including_duplicates",
                 self.total_including_duplicates,
@@ -7850,35 +7835,11 @@ impl AccountsDb {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
     }
 
-    /// return Some(lamports_to_top_off) if 'account' would collect rent
-    fn stats_for_rent_payers(
-        pubkey: &Pubkey,
-        lamports: u64,
-        account_data_len: usize,
-        account_rent_epoch: Epoch,
-        executable: bool,
-        rent_collector: &RentCollector,
-    ) -> Option<u64> {
-        if lamports == 0 {
-            return None;
-        }
-        (rent_collector.should_collect_rent(pubkey, executable)
-            && !rent_collector
-                .get_rent_due(lamports, account_data_len, account_rent_epoch)
-                .is_exempt())
-        .then(|| {
-            let min_balance = rent_collector.rent.minimum_balance(account_data_len);
-            // return lamports required to top off this account to make it rent exempt
-            min_balance.saturating_sub(lamports)
-        })
-    }
-
     fn generate_index_for_slot(
         &self,
         storage: &AccountStorageEntry,
         slot: Slot,
         store_id: AccountsFileId,
-        rent_collector: &RentCollector,
         storage_info: &StorageSizeAndCountMap,
     ) -> SlotIndexGenerationInfo {
         if storage.accounts.get_account_data_lens(&[0]).is_empty() {
@@ -7886,10 +7847,7 @@ impl AccountsDb {
         }
         let secondary = !self.account_indexes.is_empty();
 
-        let mut rent_paying_accounts_by_partition = Vec::default();
         let mut accounts_data_len = 0;
-        let mut num_accounts_rent_paying = 0;
-        let mut amount_to_top_off_rent = 0;
         let mut stored_size_alive = 0;
         let mut zero_lamport_pubkeys = vec![];
         let mut all_accounts_are_zero_lamports = true;
@@ -7910,20 +7868,6 @@ impl AccountsDb {
 
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
-                if let Some(amount_to_top_off_rent_this_account) = Self::stats_for_rent_payers(
-                    &info.pubkey,
-                    info.lamports,
-                    info.data_len as usize,
-                    info.rent_epoch,
-                    info.executable,
-                    rent_collector,
-                ) {
-                    amount_to_top_off_rent += amount_to_top_off_rent_this_account;
-                    num_accounts_rent_paying += 1;
-                    // remember this rent-paying account pubkey
-                    rent_paying_accounts_by_partition.push(info.pubkey);
-                }
-
                 (
                     info.pubkey,
                     AccountInfo::new(
@@ -7982,10 +7926,7 @@ impl AccountsDb {
         SlotIndexGenerationInfo {
             insert_time_us,
             num_accounts: generate_index_results.count as u64,
-            num_accounts_rent_paying,
             accounts_data_len,
-            amount_to_top_off_rent,
-            rent_paying_accounts_by_partition,
             zero_lamport_pubkeys,
             all_accounts_are_zero_lamports,
             num_did_not_exist: generate_index_results.num_did_not_exist,
@@ -8038,8 +7979,6 @@ impl AccountsDb {
             let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot
             let mut index_time = Measure::start("index");
             let insertion_time_us = AtomicU64::new(0);
-            let rent_paying = AtomicUsize::new(0);
-            let amount_to_top_off_rent = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);
             let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
             let mut all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
@@ -8078,11 +8017,7 @@ impl AccountsDb {
                             let SlotIndexGenerationInfo {
                                 insert_time_us: insert_us,
                                 num_accounts: total_this_slot,
-                                num_accounts_rent_paying: rent_paying_this_slot,
                                 accounts_data_len: accounts_data_len_this_slot,
-                                amount_to_top_off_rent: amount_to_top_off_rent_this_slot,
-                                rent_paying_accounts_by_partition:
-                                    rent_paying_accounts_by_partition_this_slot,
                                 zero_lamport_pubkeys: zero_pubkeys_this_slot,
                                 all_accounts_are_zero_lamports,
                                 num_did_not_exist,
@@ -8092,27 +8027,12 @@ impl AccountsDb {
                                 &storage,
                                 *slot,
                                 store_id,
-                                &rent_collector,
                                 &storage_info,
                             );
 
                             local_num_did_not_exist += num_did_not_exist;
                             local_num_existed_in_mem += num_existed_in_mem;
                             local_num_existed_on_disk += num_existed_on_disk;
-
-                            if rent_paying_this_slot > 0 {
-                                // We don't have any rent paying accounts on mainnet, so this code should never be hit.
-                                rent_paying.fetch_add(rent_paying_this_slot, Ordering::Relaxed);
-                                amount_to_top_off_rent
-                                    .fetch_add(amount_to_top_off_rent_this_slot, Ordering::Relaxed);
-                                let mut rent_paying_accounts_by_partition =
-                                    rent_paying_accounts_by_partition.lock().unwrap();
-                                rent_paying_accounts_by_partition_this_slot
-                                    .iter()
-                                    .for_each(|k| {
-                                        rent_paying_accounts_by_partition.add_account(k);
-                                    });
-                            }
                             total_including_duplicates_sum += total_this_slot;
                             accounts_data_len_sum += accounts_data_len_this_slot;
                             if all_accounts_are_zero_lamports {
@@ -8250,8 +8170,6 @@ impl AccountsDb {
                 scan_time,
                 index_time: index_time.as_us(),
                 insertion_time_us: insertion_time_us.load(Ordering::Relaxed),
-                rent_paying,
-                amount_to_top_off_rent,
                 total_duplicate_slot_keys: total_duplicate_slot_keys.load(Ordering::Relaxed),
                 total_num_unique_duplicate_keys: total_num_unique_duplicate_keys
                     .load(Ordering::Relaxed),
@@ -8332,7 +8250,6 @@ impl AccountsDb {
                                         duplicates_lt_hash,
                                     ) = self.visit_duplicate_pubkeys_during_startup(
                                         pubkeys,
-                                        &rent_collector,
                                         &timings,
                                         should_calculate_duplicates_lt_hash,
                                     );
@@ -8480,7 +8397,6 @@ impl AccountsDb {
     fn visit_duplicate_pubkeys_during_startup(
         &self,
         pubkeys: &[Pubkey],
-        rent_collector: &RentCollector,
         timings: &GenerateIndexTimings,
         should_calculate_duplicates_lt_hash: bool,
     ) -> (u64, u64, Option<Box<DuplicatesLtHash>>) {
@@ -8488,8 +8404,6 @@ impl AccountsDb {
         let mut num_duplicate_accounts = 0_u64;
         let mut duplicates_lt_hash =
             should_calculate_duplicates_lt_hash.then(|| Box::new(DuplicatesLtHash::default()));
-        let mut removed_rent_paying = 0;
-        let mut removed_top_off = 0;
         let mut lt_hash_time = Duration::default();
         self.accounts_index.scan(
             pubkeys.iter(),
@@ -8519,17 +8433,6 @@ impl AccountsDb {
                                     accounts_data_len_from_duplicates += data_len;
                                 }
                                 num_duplicate_accounts += 1;
-                                if let Some(lamports_to_top_off) = Self::stats_for_rent_payers(
-                                    pubkey,
-                                    loaded_account.lamports(),
-                                    data_len,
-                                    loaded_account.rent_epoch(),
-                                    loaded_account.executable(),
-                                    rent_collector,
-                                ) {
-                                    removed_rent_paying += 1;
-                                    removed_top_off += lamports_to_top_off;
-                                }
                                 if let Some(duplicates_lt_hash) = duplicates_lt_hash.as_mut() {
                                     let (_, duration) = meas_dur!({
                                         let account_lt_hash =
@@ -8548,12 +8451,6 @@ impl AccountsDb {
             false,
             ScanFilter::All,
         );
-        timings
-            .rent_paying
-            .fetch_sub(removed_rent_paying, Ordering::Relaxed);
-        timings
-            .amount_to_top_off_rent
-            .fetch_sub(removed_top_off, Ordering::Relaxed);
         timings
             .par_duplicates_lt_hash_us
             .fetch_add(lt_hash_time.as_micros() as u64, Ordering::Relaxed);

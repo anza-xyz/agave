@@ -32,7 +32,6 @@ use {
     memmap2::MmapMut,
     meta::StoredAccountNoData,
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-    solana_clock::Epoch,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
@@ -142,8 +141,6 @@ pub(crate) struct IndexInfoInner {
     pub offset: usize,
     pub pubkey: Pubkey,
     pub lamports: u64,
-    pub rent_epoch: Epoch,
-    pub executable: bool,
     pub data_len: u64,
 }
 
@@ -985,8 +982,6 @@ impl AppendVec {
                     lamports: account.lamports(),
                     offset: account.offset(),
                     data_len: account.data_len(),
-                    executable: account.executable(),
-                    rent_epoch: account.rent_epoch(),
                 },
             });
         });
@@ -2287,8 +2282,6 @@ pub mod tests {
                     assert_eq!(index_info.index_info.offset, *offset);
                     assert_eq!(index_info.index_info.pubkey, *pubkey);
                     assert_eq!(index_info.index_info.lamports, account.lamports());
-                    assert_eq!(index_info.index_info.rent_epoch, account.rent_epoch());
-                    assert_eq!(index_info.index_info.executable, account.executable());
                     assert_eq!(index_info.index_info.data_len, account.data().len() as u64);
 
                     i += 1;
