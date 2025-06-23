@@ -120,7 +120,7 @@ pub trait FilesCreator {
 }
 
 pub fn files_creator<'a>(
-    mut wrote_callback: impl FnMut(PathBuf) + 'a,
+    wrote_callback: impl FnMut(PathBuf) + 'a,
     buf_size: usize,
 ) -> io::Result<Box<dyn FilesCreator + 'a>> {
     #[cfg(target_os = "linux")]
@@ -132,20 +132,24 @@ pub fn files_creator<'a>(
             Ok(creator) => return Ok(Box::new(creator)),
             Err((callback, error)) => {
                 log::warn!("unable to create io_uring files creator: {error}");
-                wrote_callback = callback;
+                return Ok(Box::new(SyncIoFilesCreator::new(callback, buf_size)));
             }
         }
     }
-    Ok(Box::new(SyncIoFilesCreator {
-        wrote_callback: Box::new(wrote_callback),
-    }))
+    Ok(Box::new(SyncIoFilesCreator::new(wrote_callback, buf_size)))
 }
 
 pub struct SyncIoFilesCreator<'a> {
     wrote_callback: Box<dyn FnMut(PathBuf) + 'a>,
 }
 
-impl SyncIoFilesCreator<'_> {
+impl<'a> SyncIoFilesCreator<'a> {
+    fn new(callback: impl FnMut(PathBuf) + 'a, _buf_size: usize) -> Self {
+        Self {
+            wrote_callback: Box::new(callback),
+        }
+    }
+
     fn do_create(
         &mut self,
         path: PathBuf,

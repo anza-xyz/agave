@@ -30,7 +30,7 @@ const DEFAULT_WRITE_SIZE: usize = 1024 * 1024;
 #[allow(dead_code)]
 const DEFAULT_BUFFER_SIZE: usize = 64 * DEFAULT_WRITE_SIZE;
 
-const MAX_OPEN_FILES: usize = 1000;
+const MAX_OPEN_FILES: usize = 1024;
 const MAX_IOWQ_WORKERS: u32 = 4;
 const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
 
@@ -182,7 +182,6 @@ impl<B> IoUringFilesCreator<'_, B> {
 
     fn wait_add_file(&mut self, file: PendingFile) -> io::Result<usize> {
         while self.ring.context().files.len() >= self.ring.context().files.capacity() {
-            log::warn!("too many open files");
             self.ring.process_completions()?;
             self.ring
                 .submit_and_wait(1, CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT)?;
