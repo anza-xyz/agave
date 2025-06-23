@@ -121,7 +121,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFilesCreator<'a, B> {
     }
 }
 
-impl<'a, B> FilesCreator for IoUringFilesCreator<'a, B> {
+impl<B> FilesCreator for IoUringFilesCreator<'_, B> {
     fn schedule_create(
         &mut self,
         path: PathBuf,
@@ -154,7 +154,7 @@ impl<'a, B> FilesCreator for IoUringFilesCreator<'a, B> {
     }
 }
 
-impl<'a, B> IoUringFilesCreator<'a, B> {
+impl<B> IoUringFilesCreator<'_, B> {
     /// Schedule opening file at `path` with `mode` permissons.
     ///
     /// Returns key that can be used for scheduling writes for it.
@@ -490,7 +490,7 @@ enum FileCreatorOp {
     Write(WriteOp),
 }
 
-impl<'a> RingOp<FileCreatorState<'a>> for FileCreatorOp {
+impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
     fn entry(&mut self) -> squeue::Entry {
         match self {
             Self::Open(op) => op.entry(),
@@ -541,13 +541,13 @@ impl PendingFile {
 
     fn zero_terminated_path_bytes(&self, only_filename: bool) -> Vec<u8> {
         let mut path_bytes = Vec::with_capacity(4096);
-        let buf_ptr = path_bytes.as_mut_ptr() as *mut u8;
+        let buf_ptr = path_bytes.as_mut_ptr();
         let bytes = if only_filename {
             self.path.file_name().unwrap_or_default().as_bytes()
         } else {
             self.path.as_os_str().as_bytes()
         };
-        assert!(bytes.len() <= path_bytes.capacity() - 1);
+        assert!(bytes.len() < path_bytes.capacity());
         // Safety:
         // We know that the buffer is large enough to hold the copy and the
         // pointers don't overlap.

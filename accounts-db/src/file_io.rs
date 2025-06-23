@@ -136,16 +136,16 @@ pub fn files_creator<'a>(
             }
         }
     }
-    return Ok(Box::new(SyncIoFilesCreator {
+    Ok(Box::new(SyncIoFilesCreator {
         wrote_callback: Box::new(wrote_callback),
-    }));
+    }))
 }
 
 pub struct SyncIoFilesCreator<'a> {
     wrote_callback: Box<dyn FnMut(PathBuf) + 'a>,
 }
 
-impl<'a> SyncIoFilesCreator<'a> {
+impl SyncIoFilesCreator<'_> {
     fn do_create(
         &mut self,
         path: PathBuf,
@@ -166,7 +166,7 @@ impl<'a> SyncIoFilesCreator<'a> {
     }
 }
 
-impl<'a> FilesCreator for SyncIoFilesCreator<'a> {
+impl FilesCreator for SyncIoFilesCreator<'_> {
     fn schedule_create(
         &mut self,
         path: PathBuf,
