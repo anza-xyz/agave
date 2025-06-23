@@ -7957,6 +7957,7 @@ impl AccountsDb {
                     let mut scan_time_sum = 0;
                     let mut all_accounts_are_zero_lamports_slots_inner = 0;
                     let mut all_zeros_slots_inner = vec![];
+                    let mut zero_pubkeys_for_this_chunk = Vec::new();
                     let mut insert_time_sum = 0;
                     let mut total_including_duplicates_sum = 0;
                     let mut accounts_data_len_sum = 0;
@@ -8003,10 +8004,7 @@ impl AccountsDb {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
                                 all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
                             }
-                            let mut zero_pubkeys = zero_lamport_pubkeys.lock().unwrap();
-                            zero_pubkeys_this_slot.into_iter().for_each(|k| {
-                                zero_pubkeys.insert(k);
-                            });
+                            zero_pubkeys_for_this_chunk.extend(zero_pubkeys_this_slot.into_iter());
 
                             insert_us
                         } else {
@@ -8038,6 +8036,10 @@ impl AccountsDb {
                         };
                         insert_time_sum += insert_us;
                     }
+
+                    let mut zero_pubkeys_lock = zero_lamport_pubkeys.lock().unwrap();
+                    zero_pubkeys_lock.reserve(zero_pubkeys_for_this_chunk.len());
+                    zero_pubkeys_lock.extend(zero_pubkeys_for_this_chunk.into_iter());
 
                     if pass == 0 {
                         // This thread has finished processing its chunk of slots.
