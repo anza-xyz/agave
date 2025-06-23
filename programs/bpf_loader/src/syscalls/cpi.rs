@@ -1184,6 +1184,8 @@ fn update_callee_account(
     // Change the owner at the end so that we are allowed to change the lamports and data before
     if callee_account.get_owner() != caller_account.owner {
         callee_account.set_owner(caller_account.owner.as_ref())?;
+        // caller gave ownership and thus write access away, so caller must be updated
+        must_update_caller = true;
     }
 
     Ok(must_update_caller)
