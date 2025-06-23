@@ -157,9 +157,10 @@ impl<'a> SyncIoFilesCreator<'a> {
         contents: &mut dyn io::Read,
     ) -> io::Result<()> {
         // Open for writing a new fie and applying `mode`
-        let flags = libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC | libc::O_NOFOLLOW;
         let mut file = OpenOptions::new()
-            .custom_flags(flags)
+            .create(true)
+            .write(true)
+            .truncate(true)
             .mode(mode)
             .open(&path)?;
 
