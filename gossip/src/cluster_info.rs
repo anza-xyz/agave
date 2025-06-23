@@ -2337,7 +2337,7 @@ pub struct NodeConfig {
     /// The gossip port advertised to the cluster
     pub gossip_port: u16,
     pub port_range: PortRange,
-    /// The IP addresses the node binds to
+    /// Multihoming: The IP addresses the node can bind to
     pub bind_ip_addrs: BindIpAddrs,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
@@ -2351,7 +2351,11 @@ pub struct NodeConfig {
 
 #[derive(Debug, Clone)]
 pub struct BindIpAddrs {
+    /// Primary IP address this node will bind to on startup
     primary: IpAddr,
+    /// Secondary IP addresses
+    /// This node will bind to these addresses if the primary address is not available.
+    /// For some Solana protocols, this node will also bind to these addresses on startup
     others: Vec<IpAddr>,
 }
 
