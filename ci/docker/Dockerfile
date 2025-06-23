@@ -4,7 +4,6 @@ FROM ${BASE_IMAGE}
 ARG \
   RUST_VERSION= \
   RUST_NIGHTLY_VERSION= \
-  NODE_MAJOR= \
   SCCACHE_VERSION= \
   GRCOV_VERSION=
 
@@ -23,7 +22,6 @@ ENV \
 RUN \
   if [ -z "$RUST_VERSION" ]; then echo "ERROR: The RUST_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$RUST_NIGHTLY_VERSION" ]; then echo "ERROR: The RUST_NIGHTLY_VERSION argument is required!" && exit 1; fi && \
-  if [ -z "$NODE_MAJOR" ]; then echo "ERROR: The NODE_MAJOR argument is required!" && exit 1; fi && \
   if [ -z "$SCCACHE_VERSION" ]; then echo "ERROR: The SCCACHE_VERSION argument is required!" && exit 1; fi && \
   if [ -z "$GRCOV_VERSION" ]; then echo "ERROR: The GRCOV_VERSION argument is required!" && exit 1; fi && \
   apt-get update && \
@@ -42,8 +40,7 @@ RUN \
   lld \
   cmake \
   openssh-client \
-  # docs
-  mscgen \
+  python3 \
   # solana compiling
   libssl-dev \
   libudev-dev \
@@ -83,9 +80,6 @@ RUN \
   # cargo install cargo-hack && \
   cargo install --git https://github.com/anza-xyz/cargo-hack.git --rev 5e59c3ec6c661c02601487c0d4b2a2649fe06c9f cargo-hack && \
   cargo install cargo-sort@^2 && \
-  cargo install mdbook && \
-  cargo install mdbook-linkcheck && \
-  cargo install svgbob_cli && \
   cargo install wasm-pack && \
   cargo install rustfilt && \
   rustup show && \
@@ -101,19 +95,11 @@ RUN \
   rm -rf "sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl" && \
   # nextest
   curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "$CARGO_HOME/bin" && \
-  # nodejs
-  sudo mkdir -p /etc/apt/keyrings && \
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_$NODE_MAJOR.x nodistro main" | sudo tee /etc/apt/sources.list.d/nodesource.list && \
-  sudo apt-get update && \
-  sudo apt-get install -y nodejs && \
   # setup path
   mkdir /.cache && \
   chmod -R a+w /.cache && \
   mkdir /.config && \
   chmod -R a+w /.config && \
-  mkdir /.npm && \
-  chmod -R a+w /.npm && \
   # grcov
   curl -LOsS "https://github.com/mozilla/grcov/releases/download/$GRCOV_VERSION/grcov-x86_64-unknown-linux-musl.tar.bz2" && \
   tar -xf grcov-x86_64-unknown-linux-musl.tar.bz2 && \
