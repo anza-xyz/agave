@@ -76,7 +76,7 @@ solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
 solana-pubkey = { version = "=2.4.0", features = ["rand"] }
-solana-quic-definitions = "=2.2.1"
+solana-quic-definitions = "=2.3.1"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
