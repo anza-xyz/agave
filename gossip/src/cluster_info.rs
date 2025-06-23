@@ -2574,7 +2574,6 @@ impl Node {
                 tpu_transaction_forwarding_client,
                 quic_vote_client,
                 rpc_sts_client,
-                vortexor_receivers: None,
                 alpenglow: Some(alpenglow),
             },
         }
@@ -2727,7 +2726,6 @@ impl Node {
                 quic_vote_client,
                 tpu_transaction_forwarding_client,
                 rpc_sts_client,
-                vortexor_receivers: None,
                 alpenglow: Some(alpenglow),
             },
         }
@@ -2862,7 +2860,7 @@ impl Node {
             .unwrap();
         info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
             .unwrap();
-        info.set_alpenglow((addr, alpenglow_port)).unwrap();
+        info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
 
         let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
             multi_bind_in_range_with_config(
@@ -2905,7 +2903,6 @@ impl Node {
             quic_vote_client,
             tpu_transaction_forwarding_client,
             rpc_sts_client,
-            vortexor_receivers,
             alpenglow: Some(alpenglow),
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
