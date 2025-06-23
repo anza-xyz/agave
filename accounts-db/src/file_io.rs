@@ -336,6 +336,7 @@ mod tests {
 
         creator.schedule_create(file_path.clone(), 0o644, &mut Cursor::new(contents))?;
         creator.drain()?;
+        drop(creator);
 
         assert_eq!(read_file_to_string(&file_path), contents);
         assert_eq!(callback_invoked_path, Some(file_path));
@@ -383,6 +384,7 @@ mod tests {
             creator.schedule_create(file_path, 0o600, &mut Cursor::new(data))?;
         }
         creator.drain()?;
+        drop(creator);
 
         assert_eq!(callback_counter, 5);
         Ok(())
