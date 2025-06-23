@@ -268,36 +268,15 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
             );
         } else {
             self.update_accounts_for_failed_tx(
-                message,
                 &executed_transaction.loaded_transaction.rollback_accounts,
             );
         }
     }
 
-    pub(crate) fn update_accounts_for_failed_tx(
-        &mut self,
-        message: &impl SVMMessage,
-        rollback_accounts: &RollbackAccounts,
-    ) {
-        let fee_payer_address = message.fee_payer();
-        match rollback_accounts {
-            RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-                self.loaded_accounts
-                    .insert(*fee_payer_address, fee_payer_account.clone());
-            }
-            RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-                self.loaded_accounts
-                    .insert(*nonce.address(), nonce.account().clone());
-            }
-            RollbackAccounts::SeparateNonceAndFeePayer {
-                nonce,
-                fee_payer_account,
-            } => {
-                self.loaded_accounts
-                    .insert(*nonce.address(), nonce.account().clone());
-                self.loaded_accounts
-                    .insert(*fee_payer_address, fee_payer_account.clone());
-            }
+    pub(crate) fn update_accounts_for_failed_tx(&mut self, rollback_accounts: &RollbackAccounts) {
+        for (account_address, account) in rollback_accounts {
+            self.loaded_accounts
+                .insert(*account_address, account.clone());
         }
     }
 
@@ -2776,14 +2755,6 @@ mod tests {
     #[test]
     fn test_account_loader_wrappers() {
         let fee_payer = Pubkey::new_unique();
-        let message = Message {
-            account_keys: vec![fee_payer],
-            header: MessageHeader::default(),
-            instructions: vec![],
-            recent_blockhash: Hash::default(),
-        };
-        let sanitized_message = new_unchecked_sanitized_message(message);
-
         let mut fee_payer_account = AccountSharedData::default();
         fee_payer_account.set_rent_epoch(u64::MAX);
         fee_payer_account.set_lamports(5000);
@@ -2853,10 +2824,9 @@ mod tests {
 
         // drop the account and ensure all deliver the updated state
         fee_payer_account.set_lamports(0);
-        account_loader.update_accounts_for_failed_tx(
-            &sanitized_message,
-            &RollbackAccounts::FeePayerOnly { fee_payer_account },
-        );
+        account_loader.update_accounts_for_failed_tx(&RollbackAccounts::FeePayerOnly {
+            fee_payer: (fee_payer, fee_payer_account),
+        });
 
         assert_eq!(
             account_loader.load_transaction_account(&fee_payer, false),
