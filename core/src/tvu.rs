@@ -27,7 +27,7 @@ use {
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::{
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,
-        duplicate_shred_listener::DuplicateShredListener, epoch_specs::EpochSpecs,
+        duplicate_shred_listener::DuplicateShredListener,
     },
     solana_keypair::Keypair,
     solana_ledger::{
@@ -101,6 +101,7 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub xdp_sender: Option<XdpSender>,
+    pub(crate) enable_all2all_tests: bool,
 }
 
 impl Default for TvuConfig {
@@ -115,6 +116,7 @@ impl Default for TvuConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             xdp_sender: None,
+            enable_all2all_tests: false,
         }
     }
 }
@@ -181,10 +183,14 @@ impl Tvu {
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
-            alpenglow: alpenglow_socket,
+            alpenglow: mut alpenglow_socket,
         } = sockets;
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
+        // disable all2all if not enabled
+        if !tvu_config.enable_all2all_tests {
+            alpenglow_socket = None;
+        }
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
@@ -353,7 +359,7 @@ impl Tvu {
             tower_storage,
             vote_connection_cache.clone(),
             alpenglow_socket,
-            EpochSpecs::from(bank_forks.clone()),
+            bank_forks.clone(),
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(

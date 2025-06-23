@@ -2643,7 +2643,7 @@ impl Node {
             .unwrap();
         info.set_serve_repair(QUIC, (advertised_ip, serve_repair_quic_port))
             .unwrap();
-        info.set_alpenglow((bind_ip_addr, alpenglow_port)).unwrap();
+        info.set_alpenglow((advertised_ip, alpenglow_port)).unwrap();
 
         let vortexor_receivers = vortexor_receiver_addr.map(|vortexor_receiver_addr| {
             multi_bind_in_range_with_config(
