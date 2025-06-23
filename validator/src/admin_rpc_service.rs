@@ -152,7 +152,8 @@ pub trait AdminRpc {
     type Metadata;
 
     #[rpc(meta, name = "exit")]
-    fn exit(&self, meta: Self::Metadata) -> Result<()>;
+    /// Initiates validator exit and returns the PID
+    fn exit(&self, meta: Self::Metadata) -> Result<u32>;
 
     #[rpc(meta, name = "reloadPlugin")]
     fn reload_plugin(
@@ -256,7 +257,7 @@ pub struct AdminRpcImpl;
 impl AdminRpc for AdminRpcImpl {
     type Metadata = AdminRpcRequestMetadata;
 
-    fn exit(&self, meta: Self::Metadata) -> Result<()> {
+    fn exit(&self, meta: Self::Metadata) -> Result<u32> {
         debug!("exit admin rpc request received");
 
         thread::Builder::new()
@@ -266,7 +267,7 @@ impl AdminRpc for AdminRpcImpl {
                 // receive a confusing error as the validator shuts down before a response is sent back.
                 thread::sleep(Duration::from_millis(100));
 
-                warn!("validator exit requested");
+                info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
                 if !meta.validator_exit_backpressure.is_empty() {
@@ -308,7 +309,7 @@ impl AdminRpc for AdminRpcImpl {
             })
             .unwrap();
 
-        Ok(())
+        Ok(std::process::id())
     }
 
     fn reload_plugin(
@@ -1510,9 +1511,13 @@ mod tests {
             expected_validator_id.pubkey().to_string()
         );
 
-        let contact_info_request =
-            r#"{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}"#.to_string();
-        let exit_response = test_validator.handle_request(&contact_info_request);
+        let expected_parsed_response: Value = serde_json::from_str(&format!(
+            r#"{{"id": 1, "jsonrpc": "2.0", "result": {} }}"#,
+            std::process::id()
+        ))
+        .unwrap();
+        let exit_request = r#"{"jsonrpc":"2.0","id":1,"method":"exit","params":[]}"#.to_string();
+        let exit_response = test_validator.handle_request(&exit_request);
         let actual_parsed_response: Value =
             serde_json::from_str(&exit_response.expect("actual response"))
                 .expect("actual response deserialization");
