@@ -7013,7 +7013,6 @@ dependencies = [
  "solana-tps-client",
  "solana-tpu-client",
  "solana-transaction",
- "solana-transaction-error",
  "solana-transaction-status",
  "solana-version",
  "spl-instruction-padding",
