@@ -140,9 +140,21 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for InMemAccoun
     }
 }
 
+/// An entry was inserted into the index; did it already exist in the index?
+#[derive(Debug)]
 pub enum InsertNewEntryResults {
     DidNotExist,
-    Existed(Option<Slot>),
+    Existed {
+        other_slot: Option<Slot>,
+        location: ExistedLocation,
+    },
+}
+
+/// An entry was inserted into the index that previously existed; where did it previously exist?
+#[derive(Debug)]
+pub enum ExistedLocation {
+    InMem,
+    OnDisk,
 }
 
 #[derive(Default, Debug)]
@@ -777,15 +789,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         duplicates.duplicates_from_in_memory_only.extend(items);
     }
 
+    /// Upsert `new_entry` for `pubkey` into the primary index
+    ///
+    /// Returns info about existing entries for `pubkey`.
+    ///
+    /// This fn is only called at startup. The return information is used by the callers to
+    /// batch-update accounts index stats.
     pub fn insert_new_entry_if_missing_with_lock(
         &self,
         pubkey: Pubkey,
         new_entry: PreAllocatedAccountMapEntry<T>,
     ) -> InsertNewEntryResults {
-        let mut m = Measure::start("entry");
         let mut map = self.map_internal.write().unwrap();
         let entry = map.entry(pubkey);
-        m.stop();
         let mut other_slot = None;
         let (found_in_mem, already_existed) = match entry {
             Entry::Occupied(occupied) => {
@@ -832,7 +848,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             Entry::Vacant(vacant) => {
                 // not in cache, look on disk
                 let disk_entry = self.load_account_entry_from_disk(vacant.key());
-                self.stats().inc_mem_count();
                 if let Some(disk_entry) = disk_entry {
                     let (slot, account_info) = new_entry.into();
                     InMemAccountsIndex::<T, U>::lock_and_update_slot_list(
@@ -854,18 +869,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     let new_entry = new_entry.into_account_map_entry(&self.storage);
                     assert!(new_entry.dirty());
                     vacant.insert(new_entry);
-                    (false, false)
+                    (
+                        false, /* found in mem */
+                        false, /* already existed */
+                    )
                 }
             }
         };
         drop(map);
-        self.update_entry_stats(m, found_in_mem);
-        let stats = self.stats();
+
         if already_existed {
-            Self::update_stat(&stats.updates_in_mem, 1);
-            InsertNewEntryResults::Existed(other_slot)
+            let location = if found_in_mem {
+                ExistedLocation::InMem
+            } else {
+                ExistedLocation::OnDisk
+            };
+            InsertNewEntryResults::Existed {
+                other_slot,
+                location,
+            }
         } else {
-            stats.inc_insert();
             InsertNewEntryResults::DidNotExist
         }
     }

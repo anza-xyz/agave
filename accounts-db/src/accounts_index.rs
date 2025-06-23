@@ -9,13 +9,16 @@ use {
         accounts_partition::RentPayingAccountsByPartition,
         ancestors::Ancestors,
         bucket_map_holder::Age,
+        bucket_map_holder_stats::BucketMapHolderStats,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
-    in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
+    in_mem_accounts_index::{
+        ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
+    },
     iter::{AccountsIndexIterator, AccountsIndexIteratorReturnsItems},
     log::*,
     rand::{thread_rng, Rng},
@@ -81,6 +84,12 @@ pub(crate) struct GenerateIndexResult<T: IndexValue> {
     pub count: usize,
     /// pubkeys which were present multiple times in the insertion request.
     pub duplicates: Option<Vec<(Pubkey, (Slot, T))>>,
+    /// Number of accounts added to the index that didn't already exist in the index
+    pub num_did_not_exist: u64,
+    /// Number of accounts added to the index that already existed, and were in-mem
+    pub num_existed_in_mem: u64,
+    /// Number of accounts added to the index that already existed, and were on-disk
+    pub num_existed_on_disk: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1073,6 +1082,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         });
     }
 
+    pub(crate) fn bucket_map_holder_stats(&self) -> &BucketMapHolderStats {
+        &self.storage.storage.stats
+    }
+
     /// get stats related to startup
     pub(crate) fn get_startup_stats(&self) -> &StartupStats {
         &self.storage.storage.startup_stats
@@ -1434,6 +1447,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
         let insertion_time = AtomicU64::new(0);
 
+        // accumulated stats after inserting pubkeys into the index
+        let mut num_did_not_exist = 0;
+        let mut num_existed_in_mem = 0;
+        let mut num_existed_on_disk = 0;
+
         // offset bin processing in the 'binned' array by a random amount.
         // This results in calls to insert_new_entry_if_missing_with_lock from different threads starting at different bins to avoid
         // lock contention.
@@ -1473,12 +1491,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         match r_account_maps
                             .insert_new_entry_if_missing_with_lock(pubkey, new_entry)
                         {
-                            InsertNewEntryResults::DidNotExist => {}
-                            InsertNewEntryResults::Existed(other_slot) => {
+                            InsertNewEntryResults::DidNotExist => {
+                                num_did_not_exist += 1;
+                            }
+                            InsertNewEntryResults::Existed {
+                                other_slot,
+                                location,
+                            } => {
                                 if let Some(other_slot) = other_slot {
                                     duplicates_from_in_memory.push((other_slot, pubkey));
                                 }
                                 duplicates_from_in_memory.push((slot, pubkey));
+
+                                match location {
+                                    ExistedLocation::InMem => {
+                                        num_existed_in_mem += 1;
+                                    }
+                                    ExistedLocation::OnDisk => {
+                                        num_existed_on_disk += 1;
+                                    }
+                                }
                             }
                         }
                     });
@@ -1496,6 +1528,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             GenerateIndexResult {
                 count,
                 duplicates: (!duplicates.is_empty()).then_some(duplicates),
+                num_did_not_exist,
+                num_existed_in_mem,
+                num_existed_on_disk,
             },
         )
     }
