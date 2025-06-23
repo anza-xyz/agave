@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use {crate::commands::Error, std::io, std::thread, std::time::Duration};
 use {
     crate::{
         admin_rpc_service,
@@ -14,9 +16,17 @@ const DEFAULT_MIN_IDLE_TIME: &str = "10";
 const DEFAULT_MAX_DELINQUENT_STAKE: &str = "5";
 
 #[derive(Debug, PartialEq)]
+pub enum PostExitAction {
+    // Run the agave-validator monitor command indefinitely
+    Monitor,
+    // Block until the exiting validator process has terminated
+    Wait,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct ExitArgs {
     pub force: bool,
-    pub monitor: bool,
+    pub post_exit_action: Option<PostExitAction>,
     pub min_idle_time: usize,
     pub max_delinquent_stake: u8,
     pub skip_new_snapshot_check: bool,
@@ -25,9 +35,17 @@ pub struct ExitArgs {
 
 impl FromClapArgMatches for ExitArgs {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let post_exit_action = if matches.is_present("monitor") {
+            Some(PostExitAction::Monitor)
+        } else if matches.is_present("wait_for_exit") {
+            Some(PostExitAction::Wait)
+        } else {
+            None
+        };
+
         Ok(ExitArgs {
             force: matches.is_present("force"),
-            monitor: matches.is_present("monitor"),
+            post_exit_action,
             min_idle_time: value_t_or_exit!(matches, "min_idle_time", usize),
             max_delinquent_stake: value_t_or_exit!(matches, "max_delinquent_stake", u8),
             skip_new_snapshot_check: matches.is_present("skip_new_snapshot_check"),
@@ -54,6 +72,12 @@ pub fn command<'a>() -> App<'a, 'a> {
                 .long("monitor")
                 .takes_value(false)
                 .help("Monitor the validator after sending the exit request"),
+        )
+        .arg(
+            Arg::with_name("wait_for_exit")
+                .long("wait-for-exit")
+                .conflicts_with("monitor")
+                .help("Wait for the validator to terminate after sending the exit request"),
         )
         .arg(
             Arg::with_name("min_idle_time")
@@ -102,13 +126,72 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     }
 
     let admin_client = admin_rpc_service::connect(ledger_path);
-    admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+    let validator_pid =
+        admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+
     println!("Exit request sent");
 
-    if exit_args.monitor {
-        monitor::execute(matches, ledger_path)?;
+    match exit_args.post_exit_action {
+        None => Ok(()),
+        Some(PostExitAction::Monitor) => monitor::execute(matches, ledger_path),
+        Some(PostExitAction::Wait) => poll_until_pid_terminates(validator_pid),
+    }?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn poll_until_pid_terminates(pid: u32) -> Result<()> {
+    let pid = i32::try_from(pid)?;
+
+    println!("Waiting for agave-validator process {pid} to terminate");
+    loop {
+        // From man kill(2)
+        //
+        // If sig is 0, then no signal is sent, but existence and permission
+        // checks are still performed; this can be used to check for the
+        // existence of a process ID or process group ID that the caller is
+        // permitted to signal.
+        let result = unsafe {
+            libc::kill(pid, /*sig:*/ 0)
+        };
+        if result >= 0 {
+            // Give the process some time to exit before checking again
+            thread::sleep(Duration::from_millis(500));
+        } else {
+            let errno = io::Error::last_os_error()
+                .raw_os_error()
+                .ok_or(Error::Dynamic("unable to read raw os error".into()))?;
+            match errno {
+                libc::ESRCH => {
+                    println!("Done, agave-validator process {pid} has terminated");
+                    break;
+                }
+                libc::EINVAL => {
+                    // An invalid signal was specified, we only pass sig=0 so
+                    // this should not be possible
+                    Err(Error::Dynamic(
+                        format!("unexpected invalid signal error for kill({pid}, 0)").into(),
+                    ))?;
+                }
+                libc::EPERM => {
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))?;
+                }
+                unknown => {
+                    Err(Error::Dynamic(
+                        format!("unexpected errno for kill({pid}, 0): {unknown}").into(),
+                    ))?;
+                }
+            }
+        }
     }
 
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn poll_until_pid_terminates(pid: u32) -> Result<()> {
+    println!("Unable to monitor agave-validator process {pid} on this platform");
     Ok(())
 }
 
@@ -126,7 +209,7 @@ mod tests {
                     .parse()
                     .expect("invalid DEFAULT_MAX_DELINQUENT_STAKE"),
                 force: false,
-                monitor: false,
+                post_exit_action: None,
                 skip_new_snapshot_check: false,
                 skip_health_check: false,
             }
@@ -151,12 +234,21 @@ mod tests {
     }
 
     #[test]
-    fn verify_args_struct_by_command_exit_with_monitor() {
+    fn verify_args_struct_by_command_exit_with_post_exit_action() {
         verify_args_struct_by_command(
             command(),
             vec![COMMAND, "--monitor"],
             ExitArgs {
-                monitor: true,
+                post_exit_action: Some(PostExitAction::Monitor),
+                ..ExitArgs::default()
+            },
+        );
+
+        verify_args_struct_by_command(
+            command(),
+            vec![COMMAND, "--wait-for-exit"],
+            ExitArgs {
+                post_exit_action: Some(PostExitAction::Wait),
                 ..ExitArgs::default()
             },
         );
