@@ -12,6 +12,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
@@ -79,6 +80,16 @@ pub struct VotingService {
     thread_hdl: JoinHandle<()>,
 }
 
+// Returns true if the feature is effective for the shred slot.
+#[must_use]
+pub fn check_feature_activation(root_bank: &Bank) -> bool {
+    let feature = agave_feature_set::disable_all2all_tests::id();
+    match root_bank.feature_set.activated_slot(&feature) {
+        None => false,
+        Some(feature_slot) => root_bank.slot() >= feature_slot,
+    }
+}
+
 impl VotingService {
     pub fn new(
         vote_receiver: Receiver<VoteOp>,
@@ -87,8 +98,9 @@ impl VotingService {
         tower_storage: Arc<dyn TowerStorage>,
         connection_cache: Arc<ConnectionCache>,
         alpenglow_socket: Option<UdpSocket>,
-        epoch_specs: EpochSpecs,
+        bank_forks: Arc<RwLock<BankForks>>,
     ) -> Self {
+        let epoch_specs = EpochSpecs::from(bank_forks.clone());
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
             .spawn({
@@ -117,6 +129,10 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
+                                if check_feature_activation(&bank_forks.read().unwrap().root_bank())
+                                {
+                                    return;
+                                }
                                 ag.signal_new_slot(slot);
                             }
                         }
