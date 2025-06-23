@@ -2576,7 +2576,7 @@ impl Blockstore {
         )
     }
 
-    fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
+    pub fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
         let _lock = self.check_lowest_cleanup_slot(slot)?;
         self.blocktime_cf.get(slot)
     }

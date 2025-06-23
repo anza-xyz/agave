@@ -98,6 +98,7 @@ stream-cancel = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true, features = ["codec", "compat"] }
+chrono = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
