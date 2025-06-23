@@ -5133,7 +5133,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let storage_info = StorageSizeAndCountMap::default();
-    accounts.generate_index_for_slot(&storage, slot0, 0, &RentCollector::default(), &storage_info);
+    accounts.generate_index_for_slot(&storage, slot0, 0, &storage_info);
     assert_eq!(storage_info.len(), 1);
     for entry in storage_info.iter() {
         let expected_stored_size =
@@ -5156,7 +5156,7 @@ define_accounts_db_test!(
         // empty store
         let storage = accounts.create_and_insert_store(0, 1, "test");
         let storage_info = StorageSizeAndCountMap::default();
-        accounts.generate_index_for_slot(&storage, 0, 0, &RentCollector::default(), &storage_info);
+        accounts.generate_index_for_slot(&storage, 0, 0, &storage_info);
         assert!(storage_info.is_empty());
     }
 );
@@ -5192,7 +5192,7 @@ define_accounts_db_test!(
         );
 
         let storage_info = StorageSizeAndCountMap::default();
-        accounts.generate_index_for_slot(&storage, 0, 0, &RentCollector::default(), &storage_info);
+        accounts.generate_index_for_slot(&storage, 0, 0, &storage_info);
         assert_eq!(storage_info.len(), 1);
         for entry in storage_info.iter() {
             let expected_stored_size =
