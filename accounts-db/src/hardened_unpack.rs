@@ -190,7 +190,7 @@ where
 
     info!("unpacked {total_entries} entries total");
 
-    return Ok(());
+    Ok(())
 }
 
 fn unpack_entry<'a, R: Read>(
