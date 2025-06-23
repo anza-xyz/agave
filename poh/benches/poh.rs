@@ -97,9 +97,10 @@ fn bench_poh_recorder_record_transaction_index(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
+    poh_recorder.track_transaction_indexes();
     let h1 = hash(b"hello Agave, hello Anza!");
 
-    poh_recorder.set_bank_with_transaction_index_for_test(bank.clone());
+    poh_recorder.set_bank_for_test(bank.clone());
     poh_recorder.tick();
     let txs: [SanitizedTransaction; 7] = [
         SanitizedTransaction::from_transaction_for_tests(test_tx()),
@@ -145,8 +146,9 @@ fn bench_poh_recorder_set_bank(bencher: &mut Bencher) {
         &PohConfig::default(),
         Arc::new(AtomicBool::default()),
     );
+    poh_recorder.track_transaction_indexes();
     bencher.iter(|| {
-        poh_recorder.set_bank_with_transaction_index_for_test(bank.clone());
+        poh_recorder.set_bank_for_test(bank.clone());
         poh_recorder.tick();
         poh_recorder.clear_bank_for_test();
     });

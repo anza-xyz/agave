@@ -281,7 +281,7 @@ fn test_scheduler_producing_blocks() {
     poh_recorder
         .write()
         .unwrap()
-        .set_bank(tpu_bank.clone_with_scheduler(), false);
+        .set_bank(tpu_bank.clone_with_scheduler());
     tpu_bank.unpause_new_block_production_scheduler();
     let tpu_bank = bank_forks.read().unwrap().working_bank_with_scheduler();
     assert_eq!(tpu_bank.transaction_count(), 0);

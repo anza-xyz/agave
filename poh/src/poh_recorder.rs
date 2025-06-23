@@ -194,6 +194,7 @@ pub struct PohRecorder {
 
     // Allocation to hold PohEntrys recorded into PoHStream.
     entries: Vec<PohEntry>,
+    track_transaction_indexes: bool,
 }
 
 impl PohRecorder {
@@ -279,9 +280,14 @@ impl PohRecorder {
                 last_reported_slot_for_pending_fork: Arc::default(),
                 is_exited,
                 entries: Vec::with_capacity(64),
+                track_transaction_indexes: false,
             },
             working_bank_receiver,
         )
+    }
+
+    pub fn track_transaction_indexes(&mut self) {
+        self.track_transaction_indexes = true;
     }
 
     // synchronize PoH with a bank
@@ -426,7 +432,7 @@ impl PohRecorder {
         }
     }
 
-    pub fn set_bank(&mut self, bank: BankWithScheduler, track_transaction_indexes: bool) {
+    pub fn set_bank(&mut self, bank: BankWithScheduler) {
         assert!(self.working_bank.is_none());
         self.leader_bank_notifier.set_in_progress(&bank);
         let working_bank = WorkingBank {
@@ -434,7 +440,7 @@ impl PohRecorder {
             max_tick_height: bank.max_tick_height(),
             bank,
             start: Arc::new(Instant::now()),
-            transaction_index: track_transaction_indexes.then_some(0),
+            transaction_index: self.track_transaction_indexes.then_some(0),
         };
         trace!("new working bank");
         assert_eq!(working_bank.bank.ticks_per_slot(), self.ticks_per_slot());
@@ -868,12 +874,7 @@ impl PohRecorder {
 
     #[cfg(feature = "dev-context-only-utils")]
     pub fn set_bank_for_test(&mut self, bank: Arc<Bank>) {
-        self.set_bank(BankWithScheduler::new_without_scheduler(bank), false)
-    }
-
-    #[cfg(feature = "dev-context-only-utils")]
-    pub fn set_bank_with_transaction_index_for_test(&mut self, bank: Arc<Bank>) {
-        self.set_bank(BankWithScheduler::new_without_scheduler(bank), true)
+        self.set_bank(BankWithScheduler::new_without_scheduler(bank))
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -912,12 +913,12 @@ fn do_create_test_recorder(
         &poh_config,
         exit.clone(),
     );
+    if track_transaction_indexes {
+        poh_recorder.track_transaction_indexes();
+    }
     let ticks_per_slot = bank.ticks_per_slot();
 
-    poh_recorder.set_bank(
-        BankWithScheduler::new_without_scheduler(bank),
-        track_transaction_indexes,
-    );
+    poh_recorder.set_bank(BankWithScheduler::new_without_scheduler(bank));
 
     let (record_sender, record_receiver) = unbounded();
     let transaction_recorder = TransactionRecorder::new(record_sender, exit.clone());
@@ -1378,8 +1379,9 @@ mod tests {
             &PohConfig::default(),
             Arc::new(AtomicBool::default()),
         );
+        poh_recorder.track_transaction_indexes();
 
-        poh_recorder.set_bank_with_transaction_index_for_test(bank.clone());
+        poh_recorder.set_bank_for_test(bank.clone());
         poh_recorder.tick();
         assert_eq!(
             poh_recorder

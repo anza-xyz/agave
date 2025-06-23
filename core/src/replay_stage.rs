@@ -1172,7 +1172,6 @@ impl ReplayStage {
                         &mut skipped_slots_info,
                         &banking_tracer,
                         has_new_vote_been_rooted,
-                        transaction_status_sender.is_some(),
                     );
 
                     let poh_bank = poh_recorder.read().unwrap().bank();
@@ -2095,7 +2094,6 @@ impl ReplayStage {
         skipped_slots_info: &mut SkippedSlotsInfo,
         banking_tracer: &Arc<BankingTracer>,
         has_new_vote_been_rooted: bool,
-        track_transaction_indexes: bool,
     ) -> bool {
         // all the individual calls to poh_recorder.read() are designed to
         // increase granularity, decrease contention
@@ -2226,12 +2224,7 @@ impl ReplayStage {
             // new()-ing of its child bank
             banking_tracer.hash_event(parent.slot(), &parent.last_blockhash(), &parent.hash());
 
-            update_bank_forks_and_poh_recorder_for_new_tpu_bank(
-                bank_forks,
-                poh_recorder,
-                tpu_bank,
-                track_transaction_indexes,
-            );
+            update_bank_forks_and_poh_recorder_for_new_tpu_bank(bank_forks, poh_recorder, tpu_bank);
             true
         } else {
             error!("{} No next leader found", my_pubkey);
@@ -8667,7 +8660,6 @@ pub(crate) mod tests {
         // A vote has not technically been rooted, but it doesn't matter for
         // this test to use true to avoid skipping the leader slot
         let has_new_vote_been_rooted = true;
-        let track_transaction_indexes = false;
 
         assert!(!ReplayStage::maybe_start_leader(
             my_pubkey,
@@ -8681,7 +8673,6 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
-            track_transaction_indexes,
         ));
     }
 
@@ -9322,7 +9313,6 @@ pub(crate) mod tests {
         // A vote has not technically been rooted, but it doesn't matter for
         // this test to use true to avoid skipping the leader slot
         let has_new_vote_been_rooted = true;
-        let track_transaction_indexes = false;
 
         // We should not attempt to start leader for the dummy_slot
         assert_matches!(
@@ -9341,7 +9331,6 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
-            track_transaction_indexes,
         ));
 
         // Register another slots worth of ticks  with PoH recorder
@@ -9368,7 +9357,6 @@ pub(crate) mod tests {
             &mut SkippedSlotsInfo::default(),
             &banking_tracer,
             has_new_vote_been_rooted,
-            track_transaction_indexes,
         ));
         // Get the new working bank, which is also the new leader bank/slot
         let working_bank = bank_forks.read().unwrap().working_bank();

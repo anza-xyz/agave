@@ -501,7 +501,6 @@ impl SimulatorLoop {
                     &self.bank_forks,
                     &self.poh_recorder,
                     new_bank,
-                    false,
                 );
                 (bank, bank_created) = (
                     self.bank_forks

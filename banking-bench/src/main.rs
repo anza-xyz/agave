@@ -559,7 +559,6 @@ fn main() {
                 &bank_forks,
                 &poh_recorder,
                 new_bank,
-                false,
             );
             bank = bank_forks.read().unwrap().working_bank_with_scheduler();
             assert_matches!(poh_recorder.read().unwrap().bank(), Some(_));

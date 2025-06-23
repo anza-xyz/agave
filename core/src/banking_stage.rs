@@ -674,13 +674,9 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
     poh_recorder: &RwLock<PohRecorder>,
     tpu_bank: Bank,
-    track_transaction_indexes: bool,
 ) {
     let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    poh_recorder
-        .write()
-        .unwrap()
-        .set_bank(tpu_bank, track_transaction_indexes);
+    poh_recorder.write().unwrap().set_bank(tpu_bank);
 }
 
 #[cfg(test)]
