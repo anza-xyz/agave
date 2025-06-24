@@ -669,9 +669,7 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
                 .default_value("127.0.0.1")
-                .multiple(true)
-                .help("Repeatable. IP addresses to bind the validator ports. First is primary, rest are secondary."),
-
+                .help("IP address to bind the validator ports [default: 127.0.0.1]"),
         )
         .arg(
             Arg::with_name("clone_account")

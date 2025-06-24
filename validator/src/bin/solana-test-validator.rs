@@ -17,7 +17,6 @@ use {
     solana_core::consensus::tower_storage::FileTowerStorage,
     solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::run_local_faucet_with_port,
-    solana_gossip::cluster_info::BindIpAddrs,
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
     solana_native_token::sol_to_lamports,
@@ -173,27 +172,20 @@ fn main() {
             exit(1);
         })
     });
-    let bind_addresses = {
-        let parsed = matches
-            .values_of("bind_address")
-            .expect("bind_address should always be present due to default")
-            .map(solana_net_utils::parse_host)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_else(|err| {
-                eprintln!("Failed to parse --bind-address: {err}");
-                exit(1);
-            });
-        BindIpAddrs::new(parsed).unwrap_or_else(|err| {
-            eprintln!("invalid bind addresses: {err}");
-            exit(1);
-        })
-    };
+    let bind_address = solana_net_utils::parse_host(
+        matches
+            .value_of("bind_address")
+            .expect("Bind address has default value"),
+    )
+    .unwrap_or_else(|err| {
+        eprintln!("Failed to parse --bind-address: {err}");
+        exit(1);
+    });
 
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
-    } else if !bind_addresses.primary().is_unspecified() && !bind_addresses.primary().is_loopback()
-    {
-        bind_addresses.primary()
+    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
+        bind_address
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
@@ -587,7 +579,7 @@ fn main() {
         genesis.port_range(dynamic_port_range);
     }
 
-    genesis.bind_ip_addr(bind_addresses.primary());
+    genesis.bind_ip_addr(bind_address);
 
     if matches.is_present("geyser_plugin_config") {
         genesis.geyser_plugin_config_files = Some(

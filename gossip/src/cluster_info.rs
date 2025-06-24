@@ -2351,12 +2351,10 @@ pub struct NodeConfig {
 
 #[derive(Debug, Clone)]
 pub struct BindIpAddrs {
-    /// Primary IP address this node will bind to on startup
-    primary: IpAddr,
-    /// Secondary IP addresses
-    /// This node will bind to these addresses if the primary address is not available.
-    /// For some Solana protocols, this node will also bind to these addresses on startup
-    others: Vec<IpAddr>,
+    /// The IP addresses this node may bind to
+    /// Index 0 is the primary address
+    /// Index 1+ are secondary addresses
+    addrs: Vec<IpAddr>,
 }
 
 impl BindIpAddrs {
@@ -2366,17 +2364,39 @@ impl BindIpAddrs {
                 "BindIpAddrs requires at least one IP address (--bind-address)".to_string(),
             );
         }
-        let primary = addrs[0];
-        let others = addrs[1..].to_vec();
-        Ok(Self { primary, others })
+        if addrs.len() > 1 {
+            for ip in &addrs {
+                if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+                    return Err(format!(
+                        "Invalid configuration: {:?} is not allowed with multiple --bind-address values (loopback, unspecified, or multicast)",
+                        ip
+                    ));
+                }
+            }
+        }
+
+        Ok(Self { addrs })
     }
 
+    #[inline]
     pub fn primary(&self) -> IpAddr {
-        self.primary
+        self.addrs[0]
     }
+}
 
-    pub fn all(&self) -> impl Iterator<Item = &IpAddr> {
-        std::iter::once(&self.primary).chain(self.others.iter())
+// Makes BindIpAddrs behave like &[IpAddr]
+impl Deref for BindIpAddrs {
+    type Target = [IpAddr];
+
+    fn deref(&self) -> &Self::Target {
+        &self.addrs
+    }
+}
+
+// For generic APIs expecting something like AsRef<[IpAddr]>
+impl AsRef<[IpAddr]> for BindIpAddrs {
+    fn as_ref(&self) -> &[IpAddr] {
+        &self.addrs
     }
 }
 
