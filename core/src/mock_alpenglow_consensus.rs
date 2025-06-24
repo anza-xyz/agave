@@ -44,6 +44,7 @@ struct PeerData {
 #[derive(Default, Debug)]
 struct AgStateMachine {
     block_notarized: bool,
+    block_has_notar_cert: bool,
     block_finalized: bool,
     notarize_stake_collected: Stake,
     finalize_stake_collected: Stake,
@@ -237,6 +238,7 @@ impl MockAlpenglowConsensus {
         socket
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
+        let id = cluster_info.id();
         // Set aside enough space to fetch multiple packets from the kernel per syscall
         let mut packets: Vec<Packet> = vec![Packet::default(); 1024];
         loop {
@@ -297,6 +299,7 @@ impl MockAlpenglowConsensus {
                     pk
                 );
                 if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
+                    trace!("Sigverify failed");
                     continue;
                 }
                 let toa = &mut peer_info.relative_toa[votor_msg as u64 as usize];
@@ -304,29 +307,55 @@ impl MockAlpenglowConsensus {
                     *toa = Some(elapsed);
                 } else {
                     // duplicate packet received, ignore it
+                    trace!("Duplicate packet");
                     continue;
                 }
                 match votor_msg {
                     VotorMessageType::Notarize => {
                         state.alpenglow_state.notarize_stake_collected += peer_info.stake;
+                        /*let c = state.alpenglow_state.notarize_stake_collected;
+                        trace!("{id}:{c} + {}", peer_info.stake);
+                        trace!(
+                            "{id}:{} of {}",
+                            state.alpenglow_state.notarize_stake_collected,
+                            stake_60_percent
+                        );*/
                         if !state.alpenglow_state.block_notarized {
+                            trace!(
+                                "{id}:{} of {}",
+                                state.alpenglow_state.notarize_stake_collected,
+                                stake_60_percent
+                            );
                             if state.alpenglow_state.notarize_stake_collected > stake_60_percent {
                                 state.alpenglow_state.block_notarized = true;
+                                trace!(
+                                    "{id} has notarized slot {} by observing 60% of notar votes",
+                                    state.current_slot
+                                );
                                 command_sender
                                     .try_send(Command::SendNotarizeCertificate(state.current_slot));
                             }
                         }
                         if !state.alpenglow_state.block_finalized {
                             if state.alpenglow_state.finalize_stake_collected > stake_80_percent {
+                                state.alpenglow_state.block_has_notar_cert = true;
                                 state.alpenglow_state.block_finalized = true;
+                                trace!(
+                                    "{id} has finalized slot {} by observing 80% of notar votes",
+                                    state.current_slot
+                                );
                                 command_sender
                                     .try_send(Command::SendFinalizeCertificate(state.current_slot));
                             }
                         }
                     }
                     VotorMessageType::NotarizeCertificate => {
-                        if !state.alpenglow_state.block_notarized {
-                            state.alpenglow_state.block_notarized = true;
+                        if !state.alpenglow_state.block_has_notar_cert {
+                            state.alpenglow_state.block_has_notar_cert = true;
+                            trace!(
+                                "{id} has notarized slot {} by observing notar certificate",
+                                state.current_slot
+                            );
                             command_sender.try_send(Command::SendFinalize(state.current_slot));
                         }
                     }
@@ -335,6 +364,10 @@ impl MockAlpenglowConsensus {
                         if !state.alpenglow_state.block_finalized {
                             if state.alpenglow_state.finalize_stake_collected > stake_60_percent {
                                 state.alpenglow_state.block_finalized = true;
+                                trace!(
+                                    "{id} has finalized slot {} by observing finalize votes",
+                                    state.current_slot
+                                );
                                 command_sender
                                     .try_send(Command::SendFinalizeCertificate(state.current_slot));
                             }
@@ -390,11 +423,10 @@ impl MockAlpenglowConsensus {
             for (peer, info) in lockguard.peers.iter() {
                 send_instructions.push((packet_buf.as_slice(), info.address));
                 trace!(
-                    "Sending mock {votor_msg:?} for slot {slot} to {} for {peer}",
+                    "{id}: send {votor_msg:?} for slot {slot} to {} for {peer}",
                     info.address
                 );
             }
-
             // broadcast to everybody at once
             batch_send(&socket, send_instructions);
         }
@@ -425,12 +457,6 @@ impl MockAlpenglowConsensus {
             }
             percent_collected[i] = 100.0 * total_voted_stake[i] as f64 / total_staked as f64;
 
-            trace!(
-                "{:?}: got {} total stake collected out of {}",
-                VotorMessageType::try_from(i as u64).unwrap(), // this unwrap is ok since i is in static range
-                total_voted_stake[i],
-                total_staked
-            );
             info!(
                 "{:?}: got {} % of total stake collected, stake-weighted delay is {}ms",
                 VotorMessageType::try_from(i as u64).unwrap(), // this unwrap is ok since i is in static range
@@ -512,7 +538,6 @@ impl MockAlpenglowConsensus {
             // in case we have missed previous slot, clean up and block reception
             // but do not report stats (as they will be all garbled by now)
             _ => {
-                trace!("Block RX for slot {slot}");
                 let mut lockguard = self.state.lock().unwrap();
                 // block reception of votes
                 lockguard.reset();
