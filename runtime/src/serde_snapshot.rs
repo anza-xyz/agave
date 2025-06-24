@@ -1251,7 +1251,6 @@ where
     let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
-        rent_paying_accounts_by_partition,
         duplicates_lt_hash,
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
@@ -1260,11 +1259,6 @@ where
         is_accounts_lt_hash_enabled,
     );
     info!("Building accounts index... Done in {:?}", start.elapsed());
-    accounts_db
-        .accounts_index
-        .rent_paying_accounts_by_partition
-        .set(rent_paying_accounts_by_partition)
-        .unwrap();
 
     handle.join().unwrap();
     measure_notify.stop();

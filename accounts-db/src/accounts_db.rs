@@ -57,7 +57,6 @@ use {
             UpsertReclaim, ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
         },
         accounts_index_storage::Startup,
-        accounts_partition::RentPayingAccountsByPartition,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
@@ -567,7 +566,6 @@ pub enum ScanStorageResult<R, B> {
 #[derive(Debug, Default)]
 pub struct IndexGenerationInfo {
     pub accounts_data_len: u64,
-    pub rent_paying_accounts_by_partition: RentPayingAccountsByPartition,
     /// The lt hash of the old/duplicate accounts identified during index generation.
     /// Will be used when verifying the accounts lt hash, after rebuilding a Bank.
     pub duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
@@ -7958,8 +7956,6 @@ impl AccountsDb {
         );
         let accounts_data_len = AtomicU64::new(0);
 
-        let rent_paying_accounts_by_partition =
-            Mutex::new(RentPayingAccountsByPartition::new(schedule));
         let zero_lamport_pubkeys = Mutex::new(HashSet::new());
         let mut outer_duplicates_lt_hash = None;
 
@@ -8321,9 +8317,6 @@ impl AccountsDb {
 
         IndexGenerationInfo {
             accounts_data_len: accounts_data_len.load(Ordering::Relaxed),
-            rent_paying_accounts_by_partition: rent_paying_accounts_by_partition
-                .into_inner()
-                .unwrap(),
             duplicates_lt_hash: outer_duplicates_lt_hash,
         }
     }
