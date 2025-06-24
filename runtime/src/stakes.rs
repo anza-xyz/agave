@@ -1,7 +1,5 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
-#[cfg(feature = "dev-context-only-utils")]
-use solana_stake_interface::state::Stake;
 use {
     crate::{stake_account, stake_history::StakeHistory},
     imbl::HashMap as ImblHashMap,
@@ -27,11 +25,18 @@ use {
     },
     thiserror::Error,
 };
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    qualifier_attr::{field_qualifiers, qualifiers},
+    solana_stake_interface::state::Stake,
+};
 
 mod serde_stakes;
-pub(crate) use serde_stakes::{
-    DeserializableStakes, SerdeStakesToStakeFormat, serialize_stake_accounts_to_delegation_format,
-};
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) use serde_stakes::DeserializableStakes;
+pub use serde_stakes::SerdeStakesToStakeFormat;
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
+pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -164,6 +169,16 @@ impl StakesCache {
 /// stake-delegations.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Default, Clone, PartialEq, Debug, Serialize)]
+#[cfg_attr(
+    feature = "dev-context-only-utils",
+    field_qualifiers(
+        vote_accounts(pub),
+        stake_delegations(pub),
+        unused(pub),
+        epoch(pub),
+        stake_history(pub),
+    )
+)]
 pub struct Stakes<T: Clone> {
     /// vote accounts
     vote_accounts: VoteAccounts,
@@ -225,6 +240,7 @@ impl Stakes<StakeAccount> {
     /// full account state for respective stake pubkeys. get_account function
     /// should return the account at the respective slot where stakes where
     /// cached.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn load_from_deserialized_delegations<F>(
         stakes: DeserializableStakes<Delegation>,
         get_account: F,

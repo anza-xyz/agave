@@ -1,3 +1,5 @@
+#[cfg(feature = "dev-context-only-utils")]
+use qualifier_attr::qualifiers;
 use {
     crate::{stake_history::StakeHistory, stakes::SerdeStakesToStakeFormat},
     serde::{
@@ -160,6 +162,7 @@ pub struct NodeVoteAccounts {
 /// Its bincode serializaiton format is identical as `VersionedEpochStakes`, but allows faster
 /// deserialization by ignoring serialized stake delegations entirely.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) enum DeserializableVersionedEpochStakes {
     Current {
         stakes: DeserializableEpochStakes,
@@ -203,6 +206,7 @@ impl From<DeserializableVersionedEpochStakes> for VersionedEpochStakes {
 }
 
 impl VersionedEpochStakes {
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn new(stakes: SerdeStakesToStakeFormat, leader_schedule_epoch: Epoch) -> Self {
         let stakes = EpochStakes::from(stakes);
         let epoch_vote_accounts = stakes.vote_accounts();
@@ -403,6 +407,7 @@ impl From<SerdeStakesToStakeFormat> for EpochStakes {
 ///
 /// Needed because snapshots contain additional fields no longer present in EpochStakes.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 pub(crate) struct DeserializableEpochStakes {
     vote_accounts: VoteAccounts,
     #[serde(deserialize_with = "deserialize_and_ignore_stake_delegations")]

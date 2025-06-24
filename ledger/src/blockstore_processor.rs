@@ -153,6 +153,7 @@ fn get_first_error<T, Tx: SVMTransaction>(
         .unwrap_or(Ok(()))
 }
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 fn create_thread_pool(num_threads: usize) -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)

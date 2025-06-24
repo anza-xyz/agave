@@ -18,7 +18,7 @@ name = "solana_vote"
 
 [features]
 agave-unstable-api = []
-dev-context-only-utils = ["dep:rand", "dep:bincode"]
+dev-context-only-utils = ["dep:qualifier_attr", "dep:rand", "dep:bincode"]
 frozen-abi = [
     "dep:solana-frozen-abi",
     "dep:solana-frozen-abi-macro",
@@ -28,6 +28,7 @@ frozen-abi = [
 [dependencies]
 bincode = { workspace = true, optional = true }
 log = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
 rand = { version = "0.9.4", optional = true }
 serde = { workspace = true, features = ["rc"] }
 solana-account = { workspace = true, features = ["bincode"] }
