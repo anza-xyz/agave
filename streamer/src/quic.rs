@@ -660,7 +660,7 @@ pub fn spawn_server_multi(
     let runtime = rt(format!("{thread_name}Rt"), quic_server_params.num_threads);
     let result = {
         let _guard = runtime.enter();
-        crate::nonblocking::quic::spawn_server_multi(
+        crate::nonblocking::quic::spawn_server_multi_crossbeam(
             metrics_name,
             sockets,
             keypair,

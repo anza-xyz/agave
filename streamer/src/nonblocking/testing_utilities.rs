@@ -28,6 +28,7 @@ use {
     },
     tokio::{task::JoinHandle, time::sleep},
 };
+use crate::nonblocking::quic::spawn_server_multi_crossbeam;
 
 pub fn get_client_config(keypair: &Keypair) -> ClientConfig {
     let (cert, key) = new_dummy_x509_certificate(keypair);
@@ -100,7 +101,7 @@ pub fn setup_quic_server_with_sockets(
         stats,
         thread: handle,
         max_concurrent_connections: _,
-    } = spawn_server_multi(
+    } = spawn_server_multi_crossbeam(
         "quic_streamer_test",
         sockets,
         &keypair,
