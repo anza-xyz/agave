@@ -211,15 +211,17 @@ impl ReadOnlyAccountsCache {
 
     /// remove entry if it exists.
     /// Assume the entry does not exist for performance.
-    pub(crate) fn remove_assume_not_present(&self, pubkey: Pubkey) -> Option<AccountSharedData> {
+    pub(crate) fn remove_assume_not_present(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         // get read lock first to see if the entry exists
-        _ = self.cache.get(&pubkey)?;
-        self.remove(pubkey)
+        self.cache
+            .contains_key(pubkey)
+            .then(|| self.remove(pubkey))
+            .flatten()
     }
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    pub(crate) fn remove(&self, pubkey: Pubkey) -> Option<AccountSharedData> {
-        Self::do_remove(&pubkey, &self.cache, &self.data_size).map(|entry| entry.account)
+    pub(crate) fn remove(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
+        Self::do_remove(pubkey, &self.cache, &self.data_size).map(|entry| entry.account)
     }
 
     /// Removes `key` from the cache, if present, and returns the account entry.
