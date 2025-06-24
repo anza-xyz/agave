@@ -5986,7 +5986,7 @@ fn test_mock_alpenglow_consensus() {
     let _local = LocalCluster::new_with_equal_stakes(
         num_nodes,
         DEFAULT_MINT_LAMPORTS,
-        100 * LAMPORTS_PER_SOL,
+        DEFAULT_NODE_STAKE,
         SocketAddrSpace::Unspecified,
     );
     std::thread::sleep(Duration::from_secs(59));
