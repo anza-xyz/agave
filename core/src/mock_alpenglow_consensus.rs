@@ -11,6 +11,7 @@ use {
         cluster_info::ClusterInfo,
         epoch_specs::{self, EpochSpecs},
     },
+    solana_keypair::Keypair,
     solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
     solana_signature::{Signature, SIGNATURE_BYTES},
@@ -21,7 +22,7 @@ use {
     std::{
         collections::HashMap,
         io::Error,
-        net::{SocketAddrV4, UdpSocket},
+        net::{SocketAddr, SocketAddrV4, UdpSocket},
         sync::{atomic::AtomicBool, Arc, Mutex},
         thread::{self, JoinHandle},
         time::{Duration, Instant},
@@ -34,9 +35,10 @@ const MOCK_VOTE_INTERVAL: Slot = 53;
 // This needs to be > 3 for current logic of metrics collection
 const_assert!(MOCK_VOTE_INTERVAL > 3);
 
-struct Counters {
+struct PeerData {
     stake: Stake,
-    vote_relative_time: Duration,
+    address: SocketAddr,
+    relative_toa: [Option<Duration>; 4],
 }
 
 /// This holds the state for sender and listener threads
@@ -45,7 +47,7 @@ struct Counters {
 /// only ever does anything exactly once per slot for ~1ms
 struct SharedState {
     current_slot_start: Instant,
-    peers: HashMap<Pubkey, Counters>,
+    peers: HashMap<Pubkey, PeerData>,
     should_exit: bool,
     current_slot: Slot,
 }
@@ -56,10 +58,33 @@ pub(crate) struct MockAlpenglowConsensus {
     sender_thread: JoinHandle<()>,
     listener_thread: JoinHandle<()>,
     state: Arc<Mutex<SharedState>>,
-    send_event: Sender<Slot>,
+    command_sender: Sender<Command>,
     epoch_specs: EpochSpecs,
 }
 
+#[derive(Copy, Clone, Debug)]
+#[repr(u64)]
+enum AlpenglowState {
+    Invalid,
+    Notarize,
+    NotarizeCertificate,
+    Finalize,
+    FinalizeCertificate,
+}
+
+impl TryFrom<u64> for AlpenglowState {
+    type Error = ();
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Notarize),
+            2 => Ok(Self::NotarizeCertificate),
+            3 => Ok(Self::Finalize),
+            4 => Ok(Self::FinalizeCertificate),
+            _ => Err(()),
+        }
+    }
+}
 /// Header of the mock vote packet.
 /// Actual frames on the wire are `MOCK_VOTE_PACKET_BYTES` in length
 #[repr(C)]
@@ -68,7 +93,9 @@ struct MockVotePacketHeader {
     signature: [u8; SIGNATURE_BYTES],
     sender: [u8; PUBKEY_BYTES],
     slot_number: Slot,
+    state: u64,
 }
+
 const MOCK_VOTE_HEADER_SIZE: usize = std::mem::size_of::<MockVotePacketHeader>();
 const MOCK_VOTE_PACKET_SIZE: usize = 1200;
 
@@ -82,6 +109,14 @@ impl MockVotePacketHeader {
 }
 const EXIT_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Command {
+    SendNotarize(Slot),
+    SendNotarizeCertificate(Slot),
+    SendFinalize(Slot),
+    SendFinalizeCertificate(Slot),
+}
+
 impl MockAlpenglowConsensus {
     pub(crate) fn new(
         alpenglow_socket: UdpSocket,
@@ -90,7 +125,7 @@ impl MockAlpenglowConsensus {
     ) -> Self {
         //socket.set_nonblocking(true).unwrap();
         let socket = Arc::new(alpenglow_socket);
-        let (vote_command_sender, vote_command_receiver) = bounded(4);
+        let (command_sender, vote_command_receiver) = bounded(4);
         let shared_state = Arc::new(Mutex::new(SharedState {
             should_exit: false,
             current_slot_start: Instant::now(),
@@ -119,7 +154,7 @@ impl MockAlpenglowConsensus {
                 }
             }),
             epoch_specs,
-            send_event: vote_command_sender,
+            command_sender,
         }
     }
 
@@ -176,19 +211,16 @@ impl MockAlpenglowConsensus {
                 if vote_pkt.slot_number != lockguard.current_slot {
                     continue;
                 }
-                let Some(&stake) = epoch_specs.current_epoch_staked_nodes().get(&pk) else {
+                let Ok(state) = AlpenglowState::try_from(vote_pkt.state) else {
+                    continue;
+                };
+                let Some(peer_info) = lockguard.peers.get_mut(&pk) else {
                     continue;
                 };
                 let signature = Signature::from(vote_pkt.signature);
-                trace!("Got vote for slot {} from {}", vote_pkt.slot_number, pk);
+                trace!("RX slot {}: {:?} from {}", vote_pkt.slot_number, state, pk);
                 if signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
-                    lockguard.peers.insert(
-                        pk,
-                        Counters {
-                            stake,
-                            vote_relative_time: elapsed,
-                        },
-                    );
+                    peer_info.relative_toa[state as u64 as usize] = Some(elapsed);
                 }
             }
         }
@@ -201,79 +233,149 @@ impl MockAlpenglowConsensus {
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
-        new_slot: Receiver<Slot>,
+        command: Receiver<Command>,
     ) {
         let mut packet_buf = vec![0u8; MOCK_VOTE_PACKET_SIZE];
         let id = cluster_info.id();
 
         loop {
-            let Ok(slot) = new_slot.recv_timeout(EXIT_CHECK_INTERVAL) else {
+            let Ok(command) = command.recv_timeout(EXIT_CHECK_INTERVAL) else {
                 if state.lock().unwrap().should_exit {
                     return;
                 }
                 continue;
             };
-
-            // prepare the packet to send and sign it
-            {
-                let pkt = MockVotePacketHeader::from_bytes_mut(&mut packet_buf);
-                pkt.slot_number = slot;
-                pkt.sender = *id.as_array();
-                pkt.signature = [0; SIGNATURE_BYTES];
-            }
-            let signature = cluster_info
-                .keypair()
-                .sign_message(&packet_buf[SIGNATURE_BYTES..]);
-            {
-                let pkt = MockVotePacketHeader::from_bytes_mut(&mut packet_buf);
-                pkt.signature = *signature.as_array();
-            }
+            let (slot, ag_state) = match command {
+                Command::SendNotarize(slot) => (slot, AlpenglowState::Notarize),
+                Command::SendNotarizeCertificate(slot) => {
+                    (slot, AlpenglowState::NotarizeCertificate)
+                }
+                Command::SendFinalize(slot) => (slot, AlpenglowState::Finalize),
+                Command::SendFinalizeCertificate(slot) => {
+                    (slot, AlpenglowState::FinalizeCertificate)
+                }
+            };
+            prep_and_sign_packet(
+                &mut packet_buf,
+                slot,
+                &id,
+                ag_state,
+                cluster_info.keypair().as_ref(),
+            );
 
             // prepare addresses to send the packets
-            let mut send_instructions = Vec::with_capacity(2000);
-            for peer in epoch_specs.current_epoch_staked_nodes().keys() {
-                let Some(ag_addr) = cluster_info
-                    .lookup_contact_info(peer, |ci| ci.alpenglow())
-                    .flatten()
-                else {
-                    continue;
-                };
-                send_instructions.push((packet_buf.as_slice(), ag_addr));
-                trace!("Sending mock vote for slot {slot} to {ag_addr} for {peer}");
-            }
+            let send_instructions = match ag_state {
+                AlpenglowState::Notarize => {
+                    let staked_nodes = epoch_specs.current_epoch_staked_nodes();
+                    let mut lockguard = state.lock().unwrap();
+                    let mut send_instructions = Vec::with_capacity(2000);
+                    for (peer, &stake) in staked_nodes.iter() {
+                        let Some(ag_addr) = cluster_info
+                            .lookup_contact_info(peer, |ci| ci.alpenglow())
+                            .flatten()
+                        else {
+                            continue;
+                        };
+                        send_instructions.push((packet_buf.as_slice(), ag_addr));
+                        lockguard.peers.insert(
+                            *peer,
+                            PeerData {
+                                stake: stake,
+                                address: ag_addr,
+                                relative_toa: [None; 4],
+                            },
+                        );
+                        trace!("Sending mock vote for slot {slot} to {ag_addr} for {peer}");
+                    }
+                    send_instructions
+                }
+                _ => {
+                    let mut send_instructions = Vec::with_capacity(2000);
+                    let mut lockguard = state.lock().unwrap();
+
+                    for (peer, info) in lockguard.peers.iter() {
+                        send_instructions.push((packet_buf.as_slice(), info.address));
+                    }
+                    send_instructions
+                }
+            };
 
             // broadcast to everybody at once
             batch_send(&socket, send_instructions);
         }
     }
 
-    fn report_collected_votes(peers: &HashMap<Pubkey, Counters>, total_staked: Stake) {
-        let mut total_voted_stake: Stake = 0;
-        let mut total_voted_nodes: usize = 0;
-        let mut total_delay_ms = 0u128;
+    fn report_collected_votes(peers: &HashMap<Pubkey, PeerData>, total_staked: Stake) {
+        let mut total_voted_stake: [Stake; 4] = [0; 4];
+        let mut total_voted_nodes: [usize; 4] = [0; 4];
+        let mut total_delay_ms = [0u128; 4];
         for (pubkey, counters) in peers.iter() {
-            total_voted_stake += counters.stake;
-            total_voted_nodes += 1;
-            total_delay_ms += (counters.vote_relative_time.as_millis().clamp(0, 400) as u128)
-                * counters.stake as u128;
+            for i in 0..4 {
+                let Some(rel_toa) = counters.relative_toa[i] else {
+                    continue;
+                };
+                total_voted_stake[i] += counters.stake;
+                total_voted_nodes[i] += 1;
+                total_delay_ms[i] +=
+                    (rel_toa.as_millis().clamp(0, 800) as u128) * counters.stake as u128;
+            }
         }
 
-        let stake_weighted_delay = if total_voted_stake > 0 {
-            total_delay_ms as f64 / total_voted_stake as f64
-        } else {
-            0.0
-        };
-        let percent_collected = 100.0 * total_voted_stake as f64 / total_staked as f64;
-        info!(
-            "Got {} % of total stake collected, stake-weighted delay is {}ms",
-            percent_collected, stake_weighted_delay
-        );
+        let mut stake_weighted_delay = [0f64; 4];
+        let mut percent_collected = [0f64; 4];
+
+        for i in 0..4 {
+            if total_voted_stake[i] > 0 {
+                stake_weighted_delay[i] = total_delay_ms[i] as f64 / total_voted_stake[i] as f64;
+            }
+            percent_collected[i] = 100.0 * total_voted_stake[i] as f64 / total_staked as f64;
+
+            info!(
+                "{:?}: got {} % of total stake collected, stake-weighted delay is {}ms",
+                AlpenglowState::try_from(i as u64).unwrap_or(AlpenglowState::Invalid),
+                percent_collected[i],
+                stake_weighted_delay[i]
+            );
+        }
         datapoint_info!(
             "mock_alpenglow",
             ("total_peers", peers.len(), f64),
-            ("packets_collected", total_voted_nodes, f64),
-            ("percent_stake_collected", percent_collected, f64),
-            ("weighted_delay_ms", stake_weighted_delay, f64),
+            ("packets_collected_notarize", total_voted_nodes[0], f64),
+            (
+                "percent_stake_collected_notarize",
+                percent_collected[0],
+                f64
+            ),
+            ("weighted_delay_ms_notarize", stake_weighted_delay[0], f64),
+            ("packets_collected_notarize_cert", total_voted_nodes[1], f64),
+            (
+                "percent_stake_collected_notarize_cert",
+                percent_collected[1],
+                f64
+            ),
+            (
+                "weighted_delay_ms_notarize_cert",
+                stake_weighted_delay[1],
+                f64
+            ),
+            ("packets_collected_finalize", total_voted_nodes[2], f64),
+            (
+                "percent_stake_collected_finalize",
+                percent_collected[2],
+                f64
+            ),
+            ("weighted_delay_ms_finalize", stake_weighted_delay[2], f64),
+            ("packets_collected_finalize_cert", total_voted_nodes[3], f64),
+            (
+                "percent_stake_collected_finalize_cert",
+                percent_collected[3],
+                f64
+            ),
+            (
+                "weighted_delay_ms_finalize_cert",
+                stake_weighted_delay[3],
+                f64
+            ),
         );
     }
 
@@ -291,15 +393,14 @@ impl MockAlpenglowConsensus {
                 lockguard.current_slot = slot + 1;
                 lockguard.current_slot_start = Instant::now();
             }
-            // send votes
+            // send Notarize votes (rest of the consensus happens based on received packets)
             1 => {
-                self.send_event.send(slot);
+                self.command_sender.send(Command::SendNotarize(slot));
             }
             // report metrics
             2 => {
                 let mut lockguard = self.state.lock().unwrap();
-                let total_staked: Stake =
-                    self.epoch_specs.current_epoch_staked_nodes().values().sum();
+                let total_staked: Stake = lockguard.peers.values().map(|v| v.stake).sum();
                 Self::report_collected_votes(&lockguard.peers, total_staked);
                 lockguard.peers.clear();
                 lockguard.current_slot = 0; // block reception of votes
@@ -318,5 +419,27 @@ impl MockAlpenglowConsensus {
         self.state.lock().unwrap().should_exit = true;
         self.sender_thread.join()?;
         self.listener_thread.join()
+    }
+}
+
+fn prep_and_sign_packet(
+    packet_buf: &mut [u8],
+    slot: Slot,
+    id: &Pubkey,
+    state: AlpenglowState,
+    keypair: &Keypair,
+) {
+    // prepare the packet to send and sign it
+    {
+        let pkt = MockVotePacketHeader::from_bytes_mut(packet_buf);
+        pkt.slot_number = slot;
+        pkt.sender = *id.as_array();
+        pkt.signature = [0; SIGNATURE_BYTES];
+        pkt.state = state as u64;
+    }
+    let signature = keypair.sign_message(&packet_buf[SIGNATURE_BYTES..]);
+    {
+        let pkt = MockVotePacketHeader::from_bytes_mut(packet_buf);
+        pkt.signature = *signature.as_array();
     }
 }
