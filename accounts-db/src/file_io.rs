@@ -175,10 +175,10 @@ impl<'a> SyncIoFilesCreator<'a> {
 }
 
 #[cfg(windows)]
-pub(super) fn set_file_readonly(path: &Path, readonly: bool) -> io::Result<()> {
-    let mut perm = fs::metadata(path)?.permissions();
+pub(super) fn set_file_readonly(path: &std::path::Path, readonly: bool) -> io::Result<()> {
+    let mut perm = std::fs::metadata(path)?.permissions();
     perm.set_readonly(readonly);
-    fs::set_permissions(path, perm)
+    std::fs::set_permissions(path, perm)
 }
 
 impl FilesCreator for SyncIoFilesCreator<'_> {
