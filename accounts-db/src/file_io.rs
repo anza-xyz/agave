@@ -167,7 +167,7 @@ impl<'a> SyncIoFilesCreator<'a> {
         file.flush()?;
 
         #[cfg(windows)]
-        set_file_readonly(&path, false)?;
+        set_file_readonly(&path, mode & 0o200 == 0)?;
 
         self.on_written(path);
         Ok(())
