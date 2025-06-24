@@ -505,7 +505,7 @@ impl MockAlpenglowConsensus {
                     let mut lockguard = self.state.lock().unwrap();
                     let total_staked = lockguard.total_staked;
                     let peers = lockguard.reset();
-                    (peers, lockguard.total_staked)
+                    (peers, total_staked)
                 };
                 Self::report_collected_votes(&peers, total_staked);
             }
