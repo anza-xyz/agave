@@ -288,6 +288,14 @@ trait_set! {
 // Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
 
+/// A helper struct for the banking stage integration, primarily used for task creation.
+///
+/// This block-production struct is expected to be shared across the scheduler thread and its
+/// handler threads because all of them needs to handle task creation unlike block verification.
+///
+/// Particularly, usage_queue_loader is desired to be shared across hanlders so that task creation
+/// can be processed in the multi-threaded way. For more details, see
+/// solana_core::banking_stage::unified_scheduler module doc.
 #[derive(Debug)]
 pub struct BankingStageHelper {
     usage_queue_loader: UsageQueueLoaderInner,
@@ -1203,6 +1211,10 @@ mod chained_channel {
 
 /// The primary owner of all [`UsageQueue`]s used for particular [`PooledScheduler`].
 ///
+/// Its `load` method provides `Pubkey`-based multi-thread-friendly `UsageQueue` lookup
+/// with automatic population on initial entry misses, fulfilling the Pubkey-UsageQueue 1-to-1
+/// mapping responsibility as documented by `UsageQueue`.
+///
 /// Currently, the simplest implementation. This grows memory usage in unbounded way. Overgrown
 /// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
@@ -1222,11 +1234,19 @@ impl UsageQueueLoaderInner {
     }
 }
 
+/// Thin wrapper to encapsulate ownership variation of UsageQueueLoaderInner across block
+/// verification and production. This is needed to provide a uniform interface for the overgrown
+/// check.
 #[derive(Debug)]
 enum UsageQueueLoader {
+    // UsageQueueLoader is owned by this wrapper itself; used by block verification.
     OwnedBySelf {
         usage_queue_loader_inner: UsageQueueLoaderInner,
     },
+    // As documented at BankingStageHelper and solana_core::banking_stage::unified_scheduler,
+    // UsageQueueLoaderInner is placed behind BankingStageHelper for block production performance.
+    // Barely expose that to the cleaner thread by holding its Arc here as well; used by block
+    // production.
     SharedWithBankingStage {
         banking_stage_helper: Arc<BankingStageHelper>,
     },
@@ -2121,12 +2141,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 continue;
                             }
                         },
+                        // See solana_core::banking_stage::unified_scheduler module doc as to
+                        // justification of this additional kind of work at the lowest precedence
+                        // of select!
                         recv(handler_context.banking_packet_receiver) -> banking_packet => {
                             let HandlerContext {banking_packet_handler, banking_stage_helper, ..} = &mut handler_context;
                             let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
-                            // See solana_core::banking_stage::unified_scheduler module doc as to
-                            // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
                                 break;
