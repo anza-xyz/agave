@@ -235,12 +235,7 @@ fn unpack_entry<'a, R: Read>(
 
     #[cfg(windows)]
     fn set_perms(dst: &Path, _mode: u32) -> io::Result<()> {
-        let mut perm = fs::metadata(dst)?.permissions();
-        // This is OK for Windows, but clippy doesn't realize we're doing this
-        // only on Windows.
-        #[allow(clippy::permissions_set_readonly_false)]
-        perm.set_readonly(false);
-        fs::set_permissions(dst, perm)
+        super::file_io::set_file_readonly(dst, false)
     }
 }
 

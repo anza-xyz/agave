@@ -3,7 +3,6 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     ops::Range,
-    os::unix::fs::OpenOptionsExt,
     path::PathBuf,
     sync::Arc,
 };
@@ -157,18 +156,29 @@ impl<'a> SyncIoFilesCreator<'a> {
         contents: &mut dyn io::Read,
     ) -> io::Result<()> {
         // Open for writing a new fie and applying `mode`
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(mode)
-            .open(&path)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
 
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
+
+        let mut file = options.open(&path)?;
         io::copy(contents, &mut file)?;
         file.flush()?;
+
+        #[cfg(windows)]
+        set_file_readonly(*path, false)?;
+
         self.on_written(path);
         Ok(())
     }
+}
+
+#[cfg(windows)]
+pub(super) fn set_file_readonly(path: &Path, readonly: bool) -> io::Result<()> {
+    let mut perm = fs::metadata(path)?.permissions();
+    perm.set_readonly(readonly);
+    fs::set_permissions(path, perm)
 }
 
 impl FilesCreator for SyncIoFilesCreator<'_> {
