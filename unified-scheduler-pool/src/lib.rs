@@ -330,7 +330,7 @@ impl BankingStageHelper {
     }
 
     #[cfg(test)]
-    fn change_next_task_id(&self, next_task_id: usize) {
+    fn set_next_task_id(&self, next_task_id: usize) {
         self.next_task_id.store(next_task_id, Relaxed);
     }
 
@@ -801,11 +801,11 @@ where
     }
 
     #[cfg(test)]
-    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize) {
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
         (*self.block_production_scheduler_inner.lock().unwrap())
             .peek_pooled()
             .unwrap()
-            .change_next_task_id_for_block_production(next_task_id);
+            .set_next_task_id_for_block_production(next_task_id);
     }
 
     pub fn default_handler_count() -> usize {
@@ -1264,14 +1264,14 @@ impl UsageQueueLoader {
     }
 
     #[cfg(test)]
-    fn change_banking_stage_next_task_id(&self, next_task_id: usize) {
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
         let Self::SharedWithBankingStage {
             banking_stage_helper,
         } = self
         else {
             panic!()
         };
-        banking_stage_helper.change_next_task_id(next_task_id);
+        banking_stage_helper.set_next_task_id(next_task_id);
     }
 }
 
@@ -2355,7 +2355,7 @@ pub trait SchedulerInner {
     fn discard_buffer(&self);
 
     #[cfg(test)]
-    fn change_next_task_id_for_block_production(&self, next_task_id: usize);
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2507,9 +2507,9 @@ where
     }
 
     #[cfg(test)]
-    fn change_next_task_id_for_block_production(&self, next_task_id: usize) {
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
         self.usage_queue_loader
-            .change_banking_stage_next_task_id(next_task_id);
+            .set_next_task_id_for_block_production(next_task_id);
     }
 }
 
@@ -4095,7 +4095,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn change_next_task_id_for_block_production(&self, _next_task_id: usize) {
+        fn set_next_task_id_for_block_production(&self, _next_task_id: usize) {
             unimplemented!()
         }
     }
@@ -4834,7 +4834,7 @@ mod tests {
         scheduler.unpause_after_taken();
         Box::new(scheduler.into_inner().1).return_to_pool();
 
-        pool.change_block_producing_scheduler_next_task_id(BANKING_STAGE_MAX_TASK_ID + 1);
+        pool.set_next_task_id_for_block_production(BANKING_STAGE_MAX_TASK_ID + 1);
 
         // Re-take a brand-new one only after solScCleaner did its job...
         sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
