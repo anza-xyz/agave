@@ -645,10 +645,17 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .validator(|value| {
                     value
                         .parse::<f64>()
-			.and(Ok(()))
                         .map_err(|err| format!("error parsing '{value}': {err}"))
+                        .and_then(|rate| {
+                            if !(rate >= 0.0) {
+                                Err(format!("value must be >= 0"))
+                            } else {
+                                Ok(())
+                            }
+                        })
                 })
                 .takes_value(true)
+                .allow_hyphen_values(true)
                 .help(
                     "Override default inflation with fixed rate. If the ledger already exists then \
                      this parameter is silently ignored",
