@@ -1483,7 +1483,8 @@ impl Validator {
                 (None, None)
             };
 
-        let enable_all2all_tests = genesis_config.cluster_type == ClusterType::Testnet;
+        let enable_all2all_tests = genesis_config.cluster_type == ClusterType::Testnet
+            || genesis_config.cluster_type == ClusterType::Development;
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
