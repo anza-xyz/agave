@@ -9,7 +9,7 @@ use {
         Deserializer,
     },
     serde_derive::{Deserialize, Serialize},
-    serde_json::{from_slice, Value},
+    serde_json::{from_value, Value},
     solana_account_decoder_client_types::token::UiTokenAmount,
     solana_commitment_config::CommitmentConfig,
     solana_instruction::error::InstructionError,
@@ -298,19 +298,11 @@ impl<'de> DeserializeTrait<'de> for UiTransactionError {
                     .ok_or_else(|| {
                         DeserializeError::custom("Expected the first element to be a u64")
                     })? as u8;
-                let rest_bytes: Vec<u8> = arr
-                    .get(1..)
-                    .ok_or_else(|| {
-                        DeserializeError::invalid_length(
-                            1,
-                            &"Expected there to be at least 2 elements",
-                        )
-                    })?
-                    .iter()
-                    .map(|v| Ok(v.as_u64().unwrap() as u8))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let err: InstructionError =
-                    from_slice(&rest_bytes).map_err(|e| DeserializeError::custom(e.to_string()))?;
+                let instruction_error = arr.get(1).ok_or_else(|| {
+                    DeserializeError::invalid_length(1, &"Expected there to be at least 2 elements")
+                })?;
+                let err: InstructionError = from_value(instruction_error.clone())
+                    .map_err(|e| DeserializeError::custom(e.to_string()))?;
                 return Ok(UiTransactionError(TransactionError::InstructionError(
                     outer_instruction_index,
                     err,
