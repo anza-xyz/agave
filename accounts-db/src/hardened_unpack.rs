@@ -49,7 +49,7 @@ const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
 // The buffer should be relatively large to accomodate for small files (each use up at least
 // one write-capacity sized chunk (1MB)) and write backlog waiting for file open to finish.
-const UNPACK_WRITE_BUF_SIZE: usize = 1024 * 1024 * 1024;
+const UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
     trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
