@@ -18,7 +18,7 @@ use {
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
     solana_keypair::{read_keypair_file, Keypair},
-    solana_net_utils::bind_to,
+    solana_net_utils::sockets::bind_to,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -547,21 +547,23 @@ impl AdminRpc for AdminRpcImpl {
 
         meta.with_post_init(|post_init| {
             if let Some(socket) = &post_init.gossip_socket {
-                let new_socket = bind_to(new_addr.ip(), new_addr.port(), false).map_err(|e| {
+                let new_socket = bind_to(new_addr.ip(), new_addr.port()).map_err(|e| {
                     jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
                 })?;
 
                 // hot-swap new socket
                 socket.swap(new_socket);
+
+                // update gossip socket in cluster info
+                post_init
+                    .cluster_info
+                    .set_gossip_socket(new_addr)
+                    .map_err(|e| {
+                        jsonrpc_core::Error::invalid_params(format!(
+                            "Failed to refresh gossip ContactInfo: {e}"
+                        ))
+                    })?;
             }
-            post_init
-                .cluster_info
-                .set_gossip_socket(new_addr)
-                .map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!(
-                        "Failed to refresh gossip ContactInfo: {e}"
-                    ))
-                })?;
             Ok(())
         })
     }

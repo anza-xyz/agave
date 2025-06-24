@@ -7,7 +7,7 @@ use {
 };
 
 /// Wrapper around UdpSocket that allows for atomic swapping of the socket.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AtomicUdpSocket {
     inner: Arc<ArcSwap<UdpSocket>>,
 }
@@ -87,9 +87,4 @@ impl SocketProvider for AtomicSocketProvider {
             CurrentSocket::Same(&self.current)
         }
     }
-}
-
-pub enum SocketKind {
-    Static(UdpSocket),
-    Rebindable(Arc<AtomicUdpSocket>),
 }

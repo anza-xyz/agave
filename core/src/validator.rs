@@ -118,12 +118,7 @@ use {
     solana_send_transaction_service::send_transaction_service::Config as SendTransactionServiceConfig,
     solana_shred_version::compute_shred_version,
     solana_signer::Signer,
-    solana_streamer::{
-        atomic_udp_socket::{AtomicUdpSocket, SocketKind},
-        quic::QuicServerParams,
-        socket::SocketAddrSpace,
-        streamer::StakedNodes,
-    },
+    solana_streamer::{quic::QuicServerParams, socket::SocketAddrSpace, streamer::StakedNodes},
     solana_time_utils::timestamp,
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
@@ -1319,11 +1314,10 @@ impl Validator {
         let stats_reporter_service =
             StatsReporterService::new(stats_reporter_receiver, exit.clone());
 
-        let atomic_socket = Arc::new(AtomicUdpSocket::new(node.sockets.gossip));
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(bank_forks.clone()),
-            SocketKind::Rebindable(atomic_socket.clone()),
+            node.sockets.gossip.clone(),
             config.gossip_validators.clone(),
             should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
@@ -1683,7 +1677,7 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
-            gossip_socket: Some(atomic_socket.clone()),
+            gossip_socket: Some(node.sockets.gossip.clone()),
         });
 
         Ok(Self {

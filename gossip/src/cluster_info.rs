@@ -73,6 +73,7 @@ use {
     solana_signature::Signature,
     solana_signer::Signer,
     solana_streamer::{
+        atomic_udp_socket::AtomicUdpSocket,
         packet,
         quic::DEFAULT_QUIC_ENDPOINTS,
         socket::SocketAddrSpace,
@@ -2307,7 +2308,7 @@ impl ClusterInfo {
 
 #[derive(Debug)]
 pub struct Sockets {
-    pub gossip: UdpSocket,
+    pub gossip: AtomicUdpSocket,
     pub ip_echo: Option<TcpListener>,
     pub tvu: Vec<UdpSocket>,
     pub tvu_quic: UdpSocket,
@@ -2491,7 +2492,7 @@ impl Node {
         Node {
             info,
             sockets: Sockets {
-                gossip,
+                gossip: AtomicUdpSocket::new(gossip),
                 ip_echo: Some(ip_echo),
                 tvu: vec![tvu],
                 tvu_quic,
@@ -2638,7 +2639,7 @@ impl Node {
         Node {
             info,
             sockets: Sockets {
-                gossip,
+                gossip: AtomicUdpSocket::new(gossip),
                 ip_echo: Some(ip_echo),
                 tvu: vec![tvu],
                 tvu_quic,
@@ -2792,7 +2793,7 @@ impl Node {
 
         trace!("new ContactInfo: {:?}", info);
         let sockets = Sockets {
-            gossip,
+            gossip: AtomicUdpSocket::new(gossip),
             tvu: tvu_sockets,
             tvu_quic,
             tpu: tpu_sockets,
@@ -3271,7 +3272,7 @@ mod tests {
     }
 
     fn check_node_sockets(node: &Node, ip: IpAddr, range: (u16, u16)) {
-        check_socket(&node.sockets.gossip, ip, range);
+        check_socket(&node.sockets.gossip.load(), ip, range);
         check_socket(&node.sockets.repair, ip, range);
         check_socket(&node.sockets.tvu_quic, ip, range);
 

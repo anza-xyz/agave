@@ -79,5 +79,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub repair_socket: Arc<UdpSocket>,
     pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
     pub cluster_slots: Arc<ClusterSlots>,
-    pub gossip_socket: Option<Arc<AtomicUdpSocket>>,
+    pub gossip_socket: Option<AtomicUdpSocket>,
 }

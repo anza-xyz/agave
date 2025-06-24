@@ -17,7 +17,6 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
-        atomic_udp_socket::SocketKind,
         sendmmsg::{multi_target_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -46,7 +45,7 @@ fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSock
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        SocketKind::Static(test_node.sockets.gossip),
+        test_node.sockets.gossip,
         None,
         true, // should_check_duplicate_instance
         None,
@@ -74,7 +73,7 @@ fn test_node_with_bank(
     let gossip_service = GossipService::new(
         &cluster_info,
         Some(bank_forks),
-        SocketKind::Static(test_node.sockets.gossip),
+        test_node.sockets.gossip,
         None,
         true, // should_check_duplicate_instance
         None,
