@@ -49,6 +49,7 @@ use {
             Arc,
         },
         thread::Builder,
+        time::Instant,
     },
     storage::SerializableStorage,
     types::SerdeAccountsLtHash,
@@ -1246,6 +1247,8 @@ where
     // This means, either when the cli arg is set, or when the snapshot has an accounts lt hash.
     let is_accounts_lt_hash_enabled =
         accounts_db.is_experimental_accumulator_hash_enabled() || has_accounts_lt_hash;
+    info!("Building accounts index...");
+    let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
         rent_paying_accounts_by_partition,
@@ -1256,6 +1259,7 @@ where
         genesis_config,
         is_accounts_lt_hash_enabled,
     );
+    info!("Building accounts index... Done in {:?}", start.elapsed());
     accounts_db
         .accounts_index
         .rent_paying_accounts_by_partition
