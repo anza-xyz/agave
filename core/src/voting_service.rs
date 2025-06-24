@@ -84,6 +84,10 @@ pub struct VotingService {
 #[must_use]
 pub fn check_feature_activation(root_bank: &Bank) -> bool {
     let feature = agave_feature_set::disable_all2all_tests::id();
+    // ignore feature gate check when running in unittests (as it would always return true)
+    if cfg!(feature = "dev-context-only-utils") {
+        return false;
+    }
     match root_bank.feature_set.activated_slot(&feature) {
         None => false,
         Some(feature_slot) => root_bank.slot() >= feature_slot,
@@ -129,11 +133,11 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
-                                if check_feature_activation(&bank_forks.read().unwrap().root_bank())
-                                {
-                                    return;
+                                if !check_feature_activation(
+                                    &bank_forks.read().unwrap().root_bank(),
+                                ) {
+                                    ag.signal_new_slot(slot);
                                 }
-                                ag.signal_new_slot(slot);
                             }
                         }
                     }
