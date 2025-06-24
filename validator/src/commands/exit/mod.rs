@@ -190,8 +190,8 @@ fn poll_until_pid_terminates(pid: u32) -> Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn poll_until_pid_terminates(pid: u32) -> Result<()> {
-    println!("Unable to monitor agave-validator process {pid} on this platform");
+fn poll_until_pid_terminates(_pid: u32) -> Result<()> {
+    println!("Unable to wait for agave-validator process termination on this platform");
     Ok(())
 }
 
