@@ -155,9 +155,9 @@ impl<'a> SyncIoFilesCreator<'a> {
         mode: u32,
         contents: &mut dyn io::Read,
     ) -> io::Result<()> {
-        // Open for writing a new fie and applying `mode`
+        // Open for writing (also allows overwrite) and apply `mode`
         let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
+        options.create(true).truncate(true).write(true);
 
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
