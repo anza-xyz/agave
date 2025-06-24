@@ -366,7 +366,7 @@ impl AccountsFile {
             Self::AppendVec(av) => av.calculate_stored_size(data_len),
             Self::TieredStorage(ts) => ts
                 .reader()
-                .expect("Reader must be initalized as stored size is specific to format")
+                .expect("Reader must be initialized as stored size is specific to format")
                 .calculate_stored_size(data_len),
         }
     }
