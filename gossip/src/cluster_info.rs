@@ -2794,7 +2794,7 @@ impl Node {
                     vortexor_receiver_addr.port(),
                     vortexor_receiver_addr.port() + 1,
                 ),
-                socket_config_reuseport,
+                socket_config,
                 32,
             )
             .unwrap_or_else(|_| {
