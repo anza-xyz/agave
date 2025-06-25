@@ -889,7 +889,6 @@ where
         snapshot_accounts_db_fields,
         account_paths,
         storage_and_next_append_vec_id,
-        genesis_config,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -1055,7 +1054,6 @@ fn reconstruct_accountsdb_from_fields<E>(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-    genesis_config: &GenesisConfig,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -1255,7 +1253,6 @@ where
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
         verify_index,
-        genesis_config,
         is_accounts_lt_hash_enabled,
     );
     info!("Building accounts index... Done in {:?}", start.elapsed());
