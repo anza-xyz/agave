@@ -7804,6 +7804,7 @@ dependencies = [
  "bytes",
  "chrono",
  "conditional-mod",
+ "core_affinity",
  "criterion",
  "crossbeam-channel",
  "dashmap",
