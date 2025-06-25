@@ -423,7 +423,7 @@ macro_rules! impl_merkle_shred {
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
-        fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
+        pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
             let offset = self.retransmitter_signature_offset()?;
             let Some(buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));
