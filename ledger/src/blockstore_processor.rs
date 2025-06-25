@@ -2396,7 +2396,11 @@ fn load_frozen_forks(
                 root = new_root_bank.slot();
 
                 leader_schedule_cache.set_root(new_root_bank);
-                new_root_bank.prune_program_cache(root, new_root_bank.epoch());
+                new_root_bank.prune_program_cache(
+                    root,
+                    new_root_bank.epoch(),
+                    &bank_forks.read().unwrap(),
+                );
                 let _ = bank_forks
                     .write()
                     .unwrap()
