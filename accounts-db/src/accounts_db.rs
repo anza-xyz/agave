@@ -7915,13 +7915,6 @@ impl AccountsDb {
             slots.truncate(limit); // get rid of the newer slots and keep just the older
         }
         let max_slot = slots.last().cloned().unwrap_or_default();
-        let schedule = &genesis_config.epoch_schedule;
-        let rent_collector = RentCollector::new(
-            schedule.get_epoch(max_slot),
-            schedule.clone(),
-            genesis_config.slots_per_year(),
-            genesis_config.rent.clone(),
-        );
         let accounts_data_len = AtomicU64::new(0);
 
         let zero_lamport_pubkeys = Mutex::new(HashSet::new());
@@ -8082,8 +8075,6 @@ impl AccountsDb {
                 })
                 .sum();
             index_time.stop();
-
-            info!("rent_collector: {:?}", rent_collector);
 
             let mut index_flush_us = 0;
             let total_duplicate_slot_keys = AtomicU64::default();
