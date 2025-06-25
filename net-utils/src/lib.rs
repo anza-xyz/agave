@@ -315,6 +315,7 @@ pub fn bind_common_in_range(
     ip_addr: IpAddr,
     range: PortRange,
 ) -> io::Result<(u16, (UdpSocket, TcpListener))> {
+    #[allow(deprecated)]
     bind_common_in_range_with_config(ip_addr, range, SocketConfig::default())
 }
 
@@ -366,19 +367,17 @@ pub fn bind_with_any_port_with_config(
     }
 }
 
-<<<<<<< HEAD
 #[deprecated(since = "2.2.0", note = "use `bind_with_any_port_with_config` instead")]
 pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
+    #[allow(deprecated)]
     bind_with_any_port_with_config(ip_addr, SocketConfig::default())
 }
 
-=======
 #[deprecated(
     since = "2.3.2",
     note = "Please use the equivalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
->>>>>>> 0cdebbcff (net-utils: Deprecate explicit reuseport (#6639))
 /// binds num sockets to the same port in a range with config
 pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
@@ -399,7 +398,6 @@ pub fn multi_bind_in_range_with_config(
     Ok((port, sockets))
 }
 
-<<<<<<< HEAD
 // binds many sockets to the same port in a range
 // Note: The `mut` modifier for `num` is unused but kept for compatibility with the public API.
 #[deprecated(
@@ -407,6 +405,7 @@ pub fn multi_bind_in_range_with_config(
     note = "use `multi_bind_in_range_with_config` instead"
 )]
 #[allow(unused_mut)]
+#[allow(deprecated)]
 pub fn multi_bind_in_range(
     ip_addr: IpAddr,
     range: PortRange,
@@ -416,13 +415,11 @@ pub fn multi_bind_in_range(
     multi_bind_in_range_with_config(ip_addr, range, config, num)
 }
 
-=======
 #[deprecated(
     since = "2.3.2",
     note = "Please use the eqiuvalent from solana-net-utils::sockets"
 )]
 #[allow(deprecated)]
->>>>>>> 0cdebbcff (net-utils: Deprecate explicit reuseport (#6639))
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
     let config = SocketConfig {
         reuseport,
