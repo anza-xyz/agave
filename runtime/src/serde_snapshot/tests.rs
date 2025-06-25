@@ -27,7 +27,6 @@ mod serde_snapshot_tests {
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
-        solana_genesis_config::{ClusterType, GenesisConfig},
         solana_hash::Hash,
         solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
