@@ -881,11 +881,12 @@ where
                 direct_mapping,
             )?;
 
-            let caller_account = if instruction_account.is_writable || update_caller {
-                Some(caller_account)
-            } else {
-                None
-            };
+            let caller_account =
+                if instruction_account.is_writable || (direct_mapping && update_caller) {
+                    Some(caller_account)
+                } else {
+                    None
+                };
             accounts.push((instruction_account.index_in_caller, caller_account));
         } else {
             ic_msg!(
