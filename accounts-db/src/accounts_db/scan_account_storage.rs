@@ -380,7 +380,7 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts(|account| {
+        storage.accounts.scan_accounts(|_offset, account| {
             if scanner.filter(account.pubkey()) {
                 scanner.found_account(&LoadedAccount::Stored(account))
             }
@@ -707,7 +707,7 @@ mod tests {
                     let slot = storage.slot();
                     let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                     let mut all_accounts = Vec::default();
-                    storage.accounts.scan_accounts(|acct| {
+                    storage.accounts.scan_accounts(|_offset, acct| {
                         all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
                     });
                     let accounts = all_accounts
@@ -741,7 +741,7 @@ mod tests {
                 let slot = storage.slot() + max_slot;
                 let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                 let mut all_accounts = Vec::default();
-                storage.accounts.scan_accounts(|acct| {
+                storage.accounts.scan_accounts(|_offset, acct| {
                     all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
                 });
                 let accounts = all_accounts

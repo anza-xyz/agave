@@ -2079,7 +2079,7 @@ pub mod tests {
             shrink_in_progress
                 .new_storage()
                 .accounts
-                .scan_accounts(|_| {
+                .scan_accounts(|_, _| {
                     count += 1;
                 });
             assert_eq!(count, 1);
@@ -2240,7 +2240,7 @@ pub mod tests {
                 })
                 .unwrap();
             let mut count = 0;
-            storage.accounts.scan_accounts(|_| {
+            storage.accounts.scan_accounts(|_, _| {
                 count += 1;
             });
             assert_eq!(count, 2);
@@ -3175,14 +3175,11 @@ pub mod tests {
                             );
                             // make sure the single new append vec contains all the same accounts
                             let mut two = Vec::default();
-                            one.first()
-                                .unwrap()
-                                .1
-                                .new_storage()
-                                .accounts
-                                .scan_accounts(|meta| {
+                            one.first().unwrap().1.new_storage().accounts.scan_accounts(
+                                |_offset, meta| {
                                     two.push((*meta.pubkey(), meta.to_account_shared_data()));
-                                });
+                                },
+                            );
 
                             compare_all_accounts(&initial_accounts, &two[..]);
                         }
