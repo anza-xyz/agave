@@ -133,9 +133,10 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
-                                if !check_feature_activation(
-                                    &bank_forks.read().unwrap().root_bank(),
-                                ) {
+                                if check_feature_activation(&bank_forks.read().unwrap().root_bank())
+                                {
+                                    info!("Alpenglow votes disabled by feature gate")
+                                } else {
                                     ag.signal_new_slot(slot);
                                 }
                             }
