@@ -255,4 +255,5 @@ name = "bpf_loader"
 # There is a similar override in `../../Cargo.toml`.  Please keep both comments
 # and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
+solana-transaction-context = { path = "../../transaction-context" }
 solana-zk-sdk = { path = "../../zk-sdk" }
