@@ -450,8 +450,7 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let mut rent_debits = RentDebits::default();
-        rent_debits.insert(&pubkey, 123, 456);
+        let pubkey = Pubkey::new_unique();
 
         let pre_accounts_states = vec![(pubkey, nonce_account.clone())];
         nonce_account.set_lamports(456);
