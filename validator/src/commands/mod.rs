@@ -27,9 +27,6 @@ pub enum Error {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
-
-    #[error(transparent)]
-    TryFromInt(#[from] std::num::TryFromIntError),
 }
 pub type Result<T> = std::result::Result<T, Error>;
 
