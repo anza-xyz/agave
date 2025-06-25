@@ -60,18 +60,17 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
     .unwrap();
 
     let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
-    let (mut data_shreds, _coding_shreds) = shredder.entries_to_shreds(
+    let data_shreds = shredder.make_merkle_shreds_from_entries(
         &leader_keypair,
         &entries,
         true, // is_last_in_slot
         None, // chained_merkle_root
         0,    // next_shred_index
         0,    // next_code_index
-        true, // merkle_variant
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
-    let shreds = vec![data_shreds.pop().unwrap(); NUM_SHREDS];
+    let shreds: Vec<_> = data_shreds.take(NUM_SHREDS).collect();
 
     let mut stakes = HashMap::new();
     const NUM_PEERS: usize = 200;
