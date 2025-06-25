@@ -8004,7 +8004,7 @@ impl AccountsDb {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
                                 all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
                             }
-                            zero_pubkeys_for_this_chunk.extend(zero_pubkeys_this_slot.into_iter());
+                            zero_pubkeys_for_this_chunk.append(&zero_pubkeys_this_slot);
 
                             insert_us
                         } else {
@@ -8037,12 +8037,12 @@ impl AccountsDb {
                         insert_time_sum += insert_us;
                     }
 
-                    let mut zero_pubkeys_lock = zero_lamport_pubkeys.lock().unwrap();
-                    zero_pubkeys_lock.reserve(zero_pubkeys_for_this_chunk.len());
-                    zero_pubkeys_lock.extend(zero_pubkeys_for_this_chunk.into_iter());
-                    drop(zero_pubkeys_lock);
-
                     if pass == 0 {
+                        let mut zero_pubkeys_lock = zero_lamport_pubkeys.lock().unwrap();
+                        zero_pubkeys_lock.reserve(zero_pubkeys_for_this_chunk.len());
+                        zero_pubkeys_lock.extend(zero_pubkeys_for_this_chunk.into_iter());
+                        drop(zero_pubkeys_lock);
+
                         // This thread has finished processing its chunk of slots.
                         // Update the index stats now.
                         let index_stats = self.accounts_index.bucket_map_holder_stats();
