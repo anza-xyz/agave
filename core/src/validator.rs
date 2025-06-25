@@ -161,7 +161,6 @@ const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum BlockVerificationMethod {
-    BlockstoreProcessor,
     #[default]
     UnifiedScheduler,
 }
@@ -976,15 +975,6 @@ impl Validator {
         let banking_tracer_channels = banking_tracer.create_channels(false);
 
         match &config.block_verification_method {
-            BlockVerificationMethod::BlockstoreProcessor => {
-                info!("no scheduler pool is installed for block verification...");
-                if let Some(count) = config.unified_scheduler_handler_threads {
-                    warn!(
-                        "--unified-scheduler-handler-threads={count} is ignored because unified \
-                         scheduler isn't enabled"
-                    );
-                }
-            }
             BlockVerificationMethod::UnifiedScheduler => {
                 let scheduler_pool = DefaultSchedulerPool::new_dyn(
                     config.unified_scheduler_handler_threads,
