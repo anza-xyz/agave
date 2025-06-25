@@ -8040,6 +8040,7 @@ impl AccountsDb {
                     let mut zero_pubkeys_lock = zero_lamport_pubkeys.lock().unwrap();
                     zero_pubkeys_lock.reserve(zero_pubkeys_for_this_chunk.len());
                     zero_pubkeys_lock.extend(zero_pubkeys_for_this_chunk.into_iter());
+                    drop(zero_pubkeys_lock);
 
                     if pass == 0 {
                         // This thread has finished processing its chunk of slots.
