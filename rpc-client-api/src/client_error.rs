@@ -39,7 +39,7 @@ impl ErrorKind {
                         },
                     ),
                 ..
-            }) => Some(tx_err.clone()),
+            }) => Some(tx_err.clone().into()),
             Self::TransactionError(tx_err) => Some(tx_err.clone()),
             _ => None,
         }

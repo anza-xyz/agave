@@ -163,8 +163,8 @@ fn build_simple_ui_transaction_status_meta(
     show_rewards: bool,
 ) -> UiTransactionStatusMeta {
     UiTransactionStatusMeta {
-        err: meta.status.clone().err(),
-        status: meta.status,
+        err: meta.status.clone().map_err(Into::into).err(),
+        status: meta.status.map_err(Into::into),
         fee: meta.fee,
         pre_balances: meta.pre_balances,
         post_balances: meta.post_balances,
@@ -197,8 +197,8 @@ fn parse_ui_transaction_status_meta(
 ) -> UiTransactionStatusMeta {
     let account_keys = AccountKeys::new(static_keys, Some(&meta.loaded_addresses));
     UiTransactionStatusMeta {
-        err: meta.status.clone().err(),
-        status: meta.status,
+        err: meta.status.clone().map_err(Into::into).err(),
+        status: meta.status.map_err(Into::into),
         fee: meta.fee,
         pre_balances: meta.pre_balances,
         post_balances: meta.post_balances,
