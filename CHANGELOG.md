@@ -50,6 +50,7 @@ Release channels have their own copy of this changelog:
 
 #### Deprecations
 * Using `--snapshot-interval-slots 0` to disable generating snapshots is now deprecated.
+* Using `blockstore-processor` for `--block-verification-method` is now deprecated.
 
 ### Platform Tools SDK
 
