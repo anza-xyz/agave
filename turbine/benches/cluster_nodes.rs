@@ -41,20 +41,18 @@ fn get_retransmit_peers_deterministic(
     let parent_slot = if slot > 0 { slot - 1 } else { 0 };
     let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
 
-    let shreds = shredder
-        .make_merkle_shreds_from_entries(
-            &keypair,
-            &[],  // entries
-            true, // is_last_in_slot
-            merkle_root,
-            0, // next_shred_index
-            0, // next_code_index
-            &reed_solomon_cache,
-            &mut stats,
-        )
-        .collect::<Vec<_>>();
+    let shreds = shredder.make_merkle_shreds_from_entries(
+        &keypair,
+        &[],  // entries
+        true, // is_last_in_slot
+        merkle_root,
+        0, // next_shred_index
+        0, // next_code_index
+        &reed_solomon_cache,
+        &mut stats,
+    );
 
-    for shred in shreds.iter() {
+    for shred in shreds {
         let _retransmit_peers = cluster_nodes.get_retransmit_addrs(
             slot_leader,
             &shred.id(),
