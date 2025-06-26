@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
-    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder},
+    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::{
