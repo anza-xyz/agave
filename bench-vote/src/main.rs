@@ -16,7 +16,6 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
-        packet::PacketBatchRecycler,
         quic::{
             spawn_server_multi, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
             DEFAULT_MAX_STAKED_CONNECTIONS,
@@ -231,7 +230,6 @@ fn main() -> Result<()> {
 
         let mut read_channels = Vec::new();
         let mut read_threads = Vec::new();
-        let recycler = PacketBatchRecycler::default();
         let config = SocketConfig::default();
         let (port, read_sockets) = multi_bind_in_range_with_config(
             ip_addr,
@@ -278,10 +276,8 @@ fn main() -> Result<()> {
                     Arc::new(read),
                     exit.clone(),
                     s_reader,
-                    recycler.clone(),
                     stats.clone(),
                     COALESCE_TIME, // coalesce
-                    true,          // use_pinned_memory
                     None,          // in_vote_only_mode
                     false,         // is_staked_service
                 ));

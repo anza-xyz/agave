@@ -12,10 +12,19 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred,
+        shred::{
+            self,
+            layout::{get_shred, get_shred_mut, resign_shred},
+            wire::is_retransmitter_signed_variant,
+        },
         sigverify_shreds::{verify_shreds_gpu, LruCache},
     },
-    solana_perf::{self, deduper::Deduper, packet::PacketBatch, recycler_cache::RecyclerCache},
+    solana_perf::{
+        self,
+        deduper::Deduper,
+        packet::{PacketBatch, PacketRefMut},
+        recycler_cache::RecyclerCache,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
@@ -190,50 +199,16 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| !packet.meta().discard())
             .for_each(|mut packet| {
-                let repair = packet.meta().repair();
-                let Some(shred) = shred::layout::get_shred_mut(&mut packet) else {
-                    packet.meta_mut().set_discard(true);
-                    return;
-                };
-                // Repair packets do not follow turbine tree and
-                // are verified using the trailing nonce.
-                if !repair
-                    && !verify_retransmitter_signature(
-                        shred,
-                        &root_bank,
-                        &working_bank,
-                        cluster_info,
-                        leader_schedule_cache,
-                        cluster_nodes_cache,
-                        stats,
-                    )
-                {
-                    stats
-                        .num_invalid_retransmitter
-                        .fetch_add(1, Ordering::Relaxed);
-                    if shred::layout::get_slot(shred)
-                        .map(|slot| {
-                            check_feature_activation(
-                                &feature_set::verify_retransmitter_signature::id(),
-                                slot,
-                                &root_bank,
-                            )
-                        })
-                        .unwrap_or_default()
-                    {
-                        packet.meta_mut().set_discard(true);
-                        return;
-                    }
-                }
-                // We can ignore Error::InvalidShredVariant because that
-                // basically means that the shred is of a variant which
-                // cannot be signed by the retransmitter node.
-                if !matches!(
-                    shred::layout::resign_shred(shred, keypair),
-                    Ok(()) | Err(shred::Error::InvalidShredVariant)
-                ) {
-                    packet.meta_mut().set_discard(true);
-                }
+                maybe_verify_and_resign_packet(
+                    &mut packet,
+                    &root_bank,
+                    &working_bank,
+                    cluster_info,
+                    leader_schedule_cache,
+                    cluster_nodes_cache,
+                    stats,
+                    keypair,
+                )
             })
     });
     stats.resign_micros += resign_start.elapsed().as_micros() as u64;
@@ -277,6 +252,99 @@ fn run_shred_sigverify<const K: usize>(
     verified_sender.send(shreds.chain(repairs).collect())?;
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
     Ok(())
+}
+
+/// Checks whether the shred in the given `packet` is of resigned variant. If
+/// yes, it calls [`verify_and_resign_shred`].
+fn maybe_verify_and_resign_packet(
+    packet: &mut PacketRefMut,
+    root_bank: &Bank,
+    working_bank: &Bank,
+    cluster_info: &ClusterInfo,
+    leader_schedule_cache: &LeaderScheduleCache,
+    cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+    stats: &ShredSigVerifyStats,
+    keypair: &Keypair,
+) {
+    let repair = packet.meta().repair();
+    let Some(shred) = get_shred(packet.as_ref()) else {
+        packet.meta_mut().set_discard(true);
+        return;
+    };
+    let Ok(is_signed) = is_retransmitter_signed_variant(shred) else {
+        packet.meta_mut().set_discard(true);
+        return;
+    };
+    if is_signed {
+        // Repair packets do not follow turbine tree and
+        // are verified using the trailing nonce.
+        if !repair
+            && !verify_retransmitter_signature(
+                shred,
+                root_bank,
+                working_bank,
+                cluster_info,
+                leader_schedule_cache,
+                cluster_nodes_cache,
+                stats,
+            )
+        {
+            stats
+                .num_invalid_retransmitter
+                .fetch_add(1, Ordering::Relaxed);
+            if shred::layout::get_slot(shred)
+                .map(|slot| {
+                    check_feature_activation(
+                        &feature_set::verify_retransmitter_signature::id(),
+                        slot,
+                        root_bank,
+                    )
+                })
+                .unwrap_or_default()
+            {
+                packet.meta_mut().set_discard(true);
+                return;
+            }
+        }
+
+        resign_packet(packet, keypair);
+    }
+}
+
+/// Verifies the retransmitter signature and resigns the shred's Merkle root as
+/// the retransmitter node in the Turbine broadcast tree.
+fn resign_packet(packet: &mut PacketRefMut, keypair: &Keypair) {
+    match packet {
+        PacketRefMut::Packet(packet) => {
+            let Some(shred) = get_shred_mut(packet.buffer_mut()) else {
+                packet.meta_mut().set_discard(true);
+                return;
+            };
+
+            if resign_shred(shred, keypair).is_err() {
+                packet.meta_mut().set_discard(true);
+            }
+        }
+        // `Bytes` are immutable. Therefore, to resign the shred from
+        // `BytesPacket`, we need to copy the packet's buffer, then modify that
+        // copy and assign it to the packet.
+        // We resign only the last FEC set in the block. For 50mbps coming to
+        // turbine, only around 2mbps are resigned. For now, we accept the
+        // necessity of copying that minority of packets.
+        PacketRefMut::Bytes(packet) => {
+            let mut buffer = packet.buffer().to_vec();
+            let Some(shred) = get_shred_mut(&mut buffer) else {
+                packet.meta_mut().set_discard(true);
+                return;
+            };
+
+            if resign_shred(shred, keypair).is_err() {
+                packet.meta_mut().set_discard(true);
+            }
+
+            packet.set_buffer(buffer);
+        }
+    }
 }
 
 #[must_use]

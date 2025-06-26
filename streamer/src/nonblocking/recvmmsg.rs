@@ -1,11 +1,8 @@
 //! The `recvmmsg` module provides a nonblocking recvmmsg() API implementation
 
 use {
-    crate::{
-        packet::{Meta, Packet},
-        recvmmsg::NUM_RCVMMSGS,
-    },
-    std::{cmp, io},
+    crate::packet::{Meta, Packet},
+    std::io,
     tokio::net::UdpSocket,
 };
 
@@ -16,7 +13,7 @@ pub async fn recv_mmsg(
     packets: &mut [Packet],
 ) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
-    let count = cmp::min(NUM_RCVMMSGS, packets.len());
+    let count = packets.len();
     socket.readable().await?;
     let mut i = 0;
     for p in packets.iter_mut().take(count) {

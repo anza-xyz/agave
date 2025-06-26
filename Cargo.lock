@@ -10680,6 +10680,7 @@ dependencies = [
 name = "solana-streamer"
 version = "3.0.0"
 dependencies = [
+ "arrayvec",
  "assert_matches",
  "async-channel",
  "bytes",

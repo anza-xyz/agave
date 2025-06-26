@@ -9,7 +9,7 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
-    solana_perf::packet::{PacketRef, PacketRefMut},
+    solana_perf::packet::PacketRef,
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     std::ops::Range,
@@ -43,17 +43,8 @@ where
 }
 
 #[inline]
-pub fn get_shred_mut<'a>(packet: &'a mut PacketRefMut) -> Option<&'a mut [u8]> {
-    // This function is used only in turbine for re-signing shreds.
-    match packet {
-        // Currently, turbine uses only `Packet`, which allows mutability.
-        PacketRefMut::Packet(packet) => {
-            let buffer = packet.buffer_mut();
-            buffer.get_mut(..get_shred_size(buffer)?)
-        }
-        // `BytesPacket` is immutable, but not used in turbine.
-        PacketRefMut::Bytes(_) => unreachable!("`BytesPacket` is not used in turbine"),
-    }
+pub fn get_shred_mut(buffer: &mut [u8]) -> Option<&mut [u8]> {
+    buffer.get_mut(..get_shred_size(buffer)?)
 }
 
 #[inline]
@@ -303,7 +294,7 @@ pub fn get_retransmitter_signature(shred: &[u8]) -> Result<Signature, Error> {
     Ok(Signature::from(<[u8; 64]>::try_from(bytes).unwrap()))
 }
 
-pub(crate) fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
+pub fn is_retransmitter_signed_variant(shred: &[u8]) -> Result<bool, Error> {
     match get_shred_variant(shred)? {
         ShredVariant::LegacyCode | ShredVariant::LegacyData => Ok(false),
         ShredVariant::MerkleCode {
@@ -519,24 +510,17 @@ mod tests {
             }
             let nonce = repaired.then(|| rng.gen::<Nonce>());
             write_shred(&mut rng, shred.payload(), nonce, &mut packet);
-            let mut packet = PacketRefMut::Packet(&mut packet);
+            let packet = PacketRef::Packet(&packet);
             assert_eq!(
                 packet.data(..).map(get_shred_size).unwrap().unwrap(),
                 shred.payload().len()
             );
+            let bytes = get_shred(packet).unwrap();
+            assert_eq!(bytes, shred.payload().as_ref());
             assert_eq!(
-                get_shred(packet.as_ref()).unwrap(),
-                shred.payload().as_ref()
-            );
-            assert_eq!(
-                get_shred_mut(&mut packet).unwrap(),
-                shred.payload().as_ref(),
-            );
-            assert_eq!(
-                get_shred_and_repair_nonce(packet.as_ref()).unwrap(),
+                get_shred_and_repair_nonce(packet).unwrap(),
                 (shred.payload().as_ref(), nonce),
             );
-            let bytes = get_shred(packet.as_ref()).unwrap();
             let shred_common_header = shred.common_header();
             assert_eq!(
                 get_common_header_bytes(bytes).unwrap(),
