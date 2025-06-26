@@ -12,7 +12,7 @@ use {
     crate::file_io::{read_into_buffer, read_more_buffer},
     std::{
         fs::File,
-        io::{self, BufRead, BufReader},
+        io::{BufRead, BufReader},
         mem::MaybeUninit,
         ops::Range,
         path::Path,
