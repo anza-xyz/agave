@@ -19,8 +19,6 @@ use {
     test::Bencher,
 };
 
-const NUM_SIMULATED_SHREDS: usize = 4;
-
 fn make_cluster_nodes<R: Rng>(
     rng: &mut R,
     unstaked_ratio: Option<(u32, u32)>,
@@ -35,7 +33,6 @@ fn get_retransmit_peers_deterministic(
     cluster_nodes: &ClusterNodes<RetransmitStage>,
     slot: Slot,
     slot_leader: &Pubkey,
-    num_simulated_shreds: usize,
 ) {
     let keypair = Keypair::new();
     let merkle_root = Some(Hash::default());
@@ -57,7 +54,7 @@ fn get_retransmit_peers_deterministic(
         )
         .collect::<Vec<_>>();
 
-    for shred in shreds.iter().take(num_simulated_shreds) {
+    for shred in shreds.iter() {
         let _retransmit_peers = cluster_nodes.get_retransmit_addrs(
             slot_leader,
             &shred.id(),
@@ -72,9 +69,7 @@ fn get_retransmit_peers_deterministic_wrapper(b: &mut Bencher, unstaked_ratio: O
     let (nodes, cluster_nodes) = make_cluster_nodes(&mut rng, unstaked_ratio);
     let slot_leader = *nodes[1..].choose(&mut rng).unwrap().pubkey();
     let slot = rand::random::<u64>();
-    b.iter(|| {
-        get_retransmit_peers_deterministic(&cluster_nodes, slot, &slot_leader, NUM_SIMULATED_SHREDS)
-    });
+    b.iter(|| get_retransmit_peers_deterministic(&cluster_nodes, slot, &slot_leader));
 }
 
 #[bench]
