@@ -262,5 +262,8 @@ This simplifies the process of diffing between versions of the log.
   * Update the edge, beta, and stable links
   * Create new section: `vx.y+1.0 - Unreleased`
   * Remove `Unreleased` annotation from vx.y.0 section.
-* Create vx.y branch starting at that commit
-* Tag that commit as vx.y.0
+* Create vx.y branch starting at that commit.
+* Commit to `vx.y` updating the changelog:
+  * Remove the `vx.y+1.0 - Unreleased` section
+  * Remove the channel links
+* Tag vx.y.0 on the new branch
