@@ -135,7 +135,10 @@ impl<T, E: RingOp<T>> Ring<T, E> {
     pub fn process_completions(&mut self) -> io::Result<()> {
         let mut completion = self.ring.completion();
         let mut new_entries = smallvec![];
-        while let Some(cqe) = completion.next() {
+        loop {
+            let Some(cqe) = completion.next() else {
+                break;
+            };
             let completed_key = cqe.user_data() as usize;
             let entry = self.entries.get_mut(completed_key).unwrap();
             let result = entry.result(cqe.result());
