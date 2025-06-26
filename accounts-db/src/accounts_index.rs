@@ -1448,7 +1448,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         // stable sort by bin with random offset *and* pubkey such that duplicates are adjacent.
         // Earlier entries are overwritten by later entries
         let bin_calc = self.bin_calculator;
-        items.sort_by(|&(ref pubkey_a, _), &(ref pubkey_b, _)| {
+        items.sort_by(|(pubkey_a, _), (pubkey_b, _)| {
             ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
                 .cmp(&((bin_calc.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
                 .then_with(|| pubkey_a.cmp(pubkey_b))
