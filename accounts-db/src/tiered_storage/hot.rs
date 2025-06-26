@@ -2,13 +2,8 @@
 
 use {
     crate::{
-<<<<<<< HEAD
-        account_info::AccountInfo,
-        account_storage::stored_account_info::StoredAccountInfo,
-=======
         account_info::{AccountInfo, Offset},
-        account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
->>>>>>> b9799676f (Adds `Offset` to callback on scan_accounts() family (#6744))
+        account_storage::stored_account_info::StoredAccountInfo,
         accounts_file::{MatchAccountOwnerError, StoredAccountsInfo},
         append_vec::{IndexInfo, IndexInfoInner},
         tiered_storage::{
@@ -642,35 +637,6 @@ impl HotStorageReader {
     }
 
     /// Iterate over all accounts and call `callback` with each account.
-<<<<<<< HEAD
-=======
-    ///
-    /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
-    /// * StoredAccountInfoWithoutData: the account itself, without account data
-    ///
-    /// Note that account data is not read/passed to the callback.
-    pub fn scan_accounts_without_data(
-        &self,
-        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
-    ) -> TieredStorageResult<()> {
-        for i in 0..self.footer.account_entry_count {
-            self.get_stored_account_without_data_callback(IndexOffset(i), |account| {
-                callback(AccountInfo::reduced_offset_to_offset(i), account)
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Iterate over all accounts and call `callback` with each account.
-    ///
-    /// `callback` parameters:
-    /// * Offset: the offset within the file of this account
-    /// * StoredAccountInfo: the account itself, with account data
-    ///
-    /// Prefer scan_accounts_without_data() when account data is not needed,
-    /// as it can potentially read less and be faster.
->>>>>>> b9799676f (Adds `Offset` to callback on scan_accounts() family (#6744))
     pub fn scan_accounts(
         &self,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),

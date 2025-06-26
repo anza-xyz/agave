@@ -147,14 +147,10 @@ impl TieredStorageReader {
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-<<<<<<< HEAD
-        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
-=======
-        callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
->>>>>>> b9799676f (Adds `Offset` to callback on scan_accounts() family (#6744))
+        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
     ) -> TieredStorageResult<()> {
         // Note, this should be reimplemented to not read account data
-        self.scan_accounts(|stored_account| {
+        self.scan_accounts(|offset, stored_account| {
             let account = StoredAccountInfoWithoutData {
                 pubkey: stored_account.pubkey(),
                 lamports: stored_account.lamports(),
@@ -163,7 +159,7 @@ impl TieredStorageReader {
                 executable: stored_account.executable(),
                 rent_epoch: stored_account.rent_epoch(),
             };
-            callback(account);
+            callback(offset, account);
         })
     }
 
