@@ -3646,12 +3646,12 @@ fn test_cpi_account_ownership_writability() {
         ];
 
         for (account_size, byte_index) in [
-            (0, 0),                                     // first realloc byte
-            (0, MAX_PERMITTED_DATA_INCREASE as u8),     // last realloc byte
-            (2, 0),                                     // first data byte
-            (2, 1),                                     // last data byte
-            (2, 3),                                     // first realloc byte
-            (2, 2 + MAX_PERMITTED_DATA_INCREASE as u8), // last realloc byte
+            (0, 0),                                   // first realloc byte
+            (0, MAX_PERMITTED_DATA_INCREASE - 1),     // last realloc byte
+            (2, 0),                                   // first data byte
+            (2, 1),                                   // last data byte
+            (2, 3),                                   // first realloc byte
+            (2, 2 + MAX_PERMITTED_DATA_INCREASE - 1), // last realloc byte
         ] {
             for instruction_id in [
                 TEST_FORBID_WRITE_AFTER_OWNERSHIP_CHANGE_IN_CALLEE,
@@ -3660,10 +3660,12 @@ fn test_cpi_account_ownership_writability() {
                 bank.register_unique_recent_blockhash_for_test();
                 let account = AccountSharedData::new(42, account_size, &invoke_program_id);
                 bank.store_account(&account_keypair.pubkey(), &account);
+                let mut instruction_data = vec![instruction_id];
+                instruction_data.extend_from_slice(byte_index.to_le_bytes().as_ref());
 
                 let instruction = Instruction::new_with_bytes(
                     invoke_program_id,
-                    &[instruction_id, byte_index, 42, 42],
+                    &instruction_data,
                     account_metas.clone(),
                 );
 
@@ -3771,6 +3773,15 @@ fn test_cpi_account_ownership_writability() {
                 assert_eq!(account.data(), vec![0; 40]);
             }
         }
+
+        // Test that the caller can write to an account which it received from the callee
+        let account = AccountSharedData::new(42, 0, &invoked_program_id);
+        bank.store_account(&account_keypair.pubkey(), &account);
+        let instruction_data = vec![TEST_ALLOW_WRITE_AFTER_OWNERSHIP_CHANGE_TO_CALLER, 1, 42, 42];
+        let instruction =
+            Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas);
+        let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+        result.unwrap();
     }
 }
 

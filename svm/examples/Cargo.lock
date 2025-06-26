@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "agave-banking-stage-ingress-types"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "crossbeam-channel",
  "solana-perf",
@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "agave-feature-set"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "ahash 0.8.11",
  "solana-epoch-schedule",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "agave-geyser-plugin-interface"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "log",
  "solana-clock",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "agave-io-uring"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "io-uring",
  "libc",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "agave-precompiles"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "agave-reserved-account-keys"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "solana-pubkey",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "agave-transaction-view"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-hash",
  "solana-message",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "agave-xdp"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "aya",
  "caps",
@@ -2870,7 +2870,7 @@ dependencies = [
 
 [[package]]
 name = "json-rpc-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "borsh 1.5.7",
  "clap",
@@ -2889,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "json-rpc-server"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
@@ -5203,7 +5203,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "Inflector",
  "base64 0.22.1",
@@ -5244,7 +5244,7 @@ dependencies = [
 
 [[package]]
 name = "solana-account-decoder-client-types"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -5271,7 +5271,7 @@ dependencies = [
 
 [[package]]
 name = "solana-accounts-db"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-io-uring",
  "ahash 0.8.11",
@@ -5360,7 +5360,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "borsh 1.5.7",
  "futures 0.3.31",
@@ -5386,7 +5386,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-interface"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "serde",
  "serde_derive",
@@ -5405,7 +5405,7 @@ dependencies = [
 
 [[package]]
 name = "solana-banks-server"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -5467,7 +5467,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bloom"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bv",
  "fnv",
@@ -5505,7 +5505,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bpf-loader-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "libsecp256k1",
@@ -5550,7 +5550,7 @@ dependencies = [
 
 [[package]]
 name = "solana-bucket-map"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bv",
  "bytemuck",
@@ -5567,7 +5567,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "solana-bpf-loader-program",
@@ -5586,7 +5586,7 @@ dependencies = [
 
 [[package]]
 name = "solana-builtins-default-costs"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.11",
@@ -5603,7 +5603,7 @@ dependencies = [
 
 [[package]]
 name = "solana-clap-utils"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "chrono",
  "clap",
@@ -5630,7 +5630,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-config"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "dirs-next",
  "serde",
@@ -5643,7 +5643,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cli-output"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -5684,7 +5684,7 @@ dependencies = [
 
 [[package]]
 name = "solana-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "bincode",
@@ -5783,7 +5783,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-fee-structure",
  "solana-program-runtime",
@@ -5791,7 +5791,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-instruction"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "log",
@@ -5821,7 +5821,7 @@ dependencies = [
 
 [[package]]
 name = "solana-compute-budget-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-program-runtime",
 ]
@@ -5841,7 +5841,7 @@ dependencies = [
 
 [[package]]
 name = "solana-connection-cache"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "bincode",
@@ -5862,7 +5862,7 @@ dependencies = [
 
 [[package]]
 name = "solana-core"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "agave-feature-set",
@@ -5994,7 +5994,7 @@ dependencies = [
 
 [[package]]
 name = "solana-cost-model"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "ahash 0.8.11",
@@ -6034,7 +6034,7 @@ dependencies = [
 
 [[package]]
 name = "solana-curve25519"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -6087,7 +6087,7 @@ dependencies = [
 
 [[package]]
 name = "solana-entry"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "crossbeam-channel",
@@ -6180,7 +6180,7 @@ dependencies = [
 
 [[package]]
 name = "solana-faucet"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "clap",
@@ -6244,7 +6244,7 @@ dependencies = [
 
 [[package]]
 name = "solana-fee"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "solana-fee-structure",
@@ -6307,7 +6307,7 @@ dependencies = [
 
 [[package]]
 name = "solana-geyser-plugin-manager"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-geyser-plugin-interface",
  "bs58",
@@ -6336,7 +6336,7 @@ dependencies = [
 
 [[package]]
 name = "solana-gossip"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "arrayvec",
@@ -6517,7 +6517,7 @@ dependencies = [
 
 [[package]]
 name = "solana-lattice-hash"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -6527,7 +6527,7 @@ dependencies = [
 
 [[package]]
 name = "solana-ledger"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
@@ -6681,7 +6681,7 @@ dependencies = [
 
 [[package]]
 name = "solana-loader-v4-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "log",
  "qualifier_attr",
@@ -6704,7 +6704,7 @@ dependencies = [
 
 [[package]]
 name = "solana-log-collector"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "log",
 ]
@@ -6724,11 +6724,11 @@ dependencies = [
 
 [[package]]
 name = "solana-measure"
-version = "2.3.1"
+version = "2.3.2"
 
 [[package]]
 name = "solana-merkle-tree"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "fast-math",
  "solana-hash",
@@ -6760,7 +6760,7 @@ dependencies = [
 
 [[package]]
 name = "solana-metrics"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "crossbeam-channel",
  "gethostname",
@@ -6789,7 +6789,7 @@ checksum = "307fb2f78060995979e9b4f68f833623565ed4e55d3725f100454ce78a99a1a3"
 
 [[package]]
 name = "solana-net-utils"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "anyhow",
  "bincode",
@@ -6869,7 +6869,7 @@ dependencies = [
 
 [[package]]
 name = "solana-perf"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "ahash 0.8.11",
  "bincode",
@@ -6899,7 +6899,7 @@ dependencies = [
 
 [[package]]
 name = "solana-poh"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "core_affinity",
  "crossbeam-channel",
@@ -6931,7 +6931,7 @@ dependencies = [
 
 [[package]]
 name = "solana-poseidon"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "ark-bn254",
  "light-poseidon",
@@ -7095,7 +7095,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-runtime"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -7136,7 +7136,7 @@ dependencies = [
 
 [[package]]
 name = "solana-program-test"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "assert_matches",
@@ -7224,7 +7224,7 @@ dependencies = [
 
 [[package]]
 name = "solana-pubsub-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "crossbeam-channel",
  "futures-util",
@@ -7249,7 +7249,7 @@ dependencies = [
 
 [[package]]
 name = "solana-quic-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-lock",
  "async-trait",
@@ -7286,14 +7286,14 @@ dependencies = [
 
 [[package]]
 name = "solana-rayon-threadlimit"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "num_cpus",
 ]
 
 [[package]]
 name = "solana-remote-wallet"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "console",
  "dialoguer",
@@ -7365,7 +7365,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "base64 0.22.1",
@@ -7449,7 +7449,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7487,7 +7487,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-api"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
@@ -7507,7 +7507,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-nonce-utils"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-account",
  "solana-commitment-config",
@@ -7522,7 +7522,7 @@ dependencies = [
 
 [[package]]
 name = "solana-rpc-client-types"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "base64 0.22.1",
  "bs58",
@@ -7546,7 +7546,7 @@ dependencies = [
 
 [[package]]
 name = "solana-runtime"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "agave-precompiles",
@@ -7681,7 +7681,7 @@ dependencies = [
 
 [[package]]
 name = "solana-runtime-transaction"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-transaction-view",
  "log",
@@ -7808,7 +7808,7 @@ dependencies = [
 
 [[package]]
 name = "solana-send-transaction-service"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -7976,7 +7976,7 @@ dependencies = [
 
 [[package]]
 name = "solana-stake-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -8003,7 +8003,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-bigtable"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-reserved-account-keys",
  "backoff",
@@ -8043,7 +8043,7 @@ dependencies = [
 
 [[package]]
 name = "solana-storage-proto"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "bs58",
@@ -8066,7 +8066,7 @@ dependencies = [
 
 [[package]]
 name = "solana-streamer"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-channel",
  "bytes",
@@ -8111,7 +8111,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "ahash 0.8.11",
  "itertools 0.12.1",
@@ -8158,7 +8158,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-callback"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-account",
  "solana-precompile-error",
@@ -8167,7 +8167,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-example-paytube"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "solana-account",
@@ -8203,11 +8203,11 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-feature-set"
-version = "2.3.1"
+version = "2.3.2"
 
 [[package]]
 name = "solana-svm-rent-collector"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-account",
  "solana-clock",
@@ -8221,7 +8221,7 @@ dependencies = [
 
 [[package]]
 name = "solana-svm-transaction"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "solana-hash",
  "solana-message",
@@ -8249,7 +8249,7 @@ dependencies = [
 
 [[package]]
 name = "solana-system-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "log",
@@ -8336,7 +8336,7 @@ dependencies = [
 
 [[package]]
 name = "solana-test-validator"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "base64 0.22.1",
@@ -8383,7 +8383,7 @@ dependencies = [
 
 [[package]]
 name = "solana-thin-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "log",
@@ -8416,7 +8416,7 @@ checksum = "6af261afb0e8c39252a04d026e3ea9c405342b08c871a2ad8aa5448e068c784c"
 
 [[package]]
 name = "solana-timings"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "eager",
  "enum-iterator",
@@ -8425,7 +8425,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tls-utils"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "rustls 0.23.27",
  "solana-keypair",
@@ -8436,7 +8436,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "bincode",
@@ -8468,7 +8468,7 @@ dependencies = [
 
 [[package]]
 name = "solana-tpu-client-next"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "log",
@@ -8518,7 +8518,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-context"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "bincode",
  "serde",
@@ -8545,7 +8545,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-metrics-tracker"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -8559,7 +8559,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-status"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
@@ -8601,7 +8601,7 @@ dependencies = [
 
 [[package]]
 name = "solana-transaction-status-client-types"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -8622,7 +8622,7 @@ dependencies = [
 
 [[package]]
 name = "solana-turbine"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "agave-xdp",
@@ -8673,14 +8673,14 @@ dependencies = [
 
 [[package]]
 name = "solana-type-overrides"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "rand 0.8.5",
 ]
 
 [[package]]
 name = "solana-udp-client"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "async-trait",
  "solana-connection-cache",
@@ -8694,7 +8694,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-logic"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "assert_matches",
  "solana-pubkey",
@@ -8706,7 +8706,7 @@ dependencies = [
 
 [[package]]
 name = "solana-unified-scheduler-pool"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-banking-stage-ingress-types",
  "aquamarine",
@@ -8745,7 +8745,7 @@ checksum = "7bbf6d7a3c0b28dd5335c52c0e9eae49d0ae489a8f324917faf0ded65a812c1d"
 
 [[package]]
 name = "solana-version"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "rand 0.8.5",
@@ -8758,7 +8758,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "itertools 0.12.1",
  "log",
@@ -8808,7 +8808,7 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "bincode",
@@ -8839,7 +8839,7 @@ dependencies = [
 
 [[package]]
 name = "solana-wen-restart"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "anyhow",
  "log",
@@ -8865,7 +8865,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-elgamal-proof-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "bytemuck",
@@ -8880,7 +8880,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-sdk"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",
@@ -8914,7 +8914,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-token-proof-program"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "agave-feature-set",
  "bytemuck",
@@ -8929,7 +8929,7 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-token-sdk"
-version = "2.3.1"
+version = "2.3.2"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",

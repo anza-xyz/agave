@@ -73,7 +73,7 @@ members = [
     "rust/upgraded",
 ]
 [workspace.package]
-version = "2.3.1"
+version = "2.3.2"
 description = "Solana SBF test program written in Rust"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/agave"
@@ -90,9 +90,9 @@ check-cfg = [
 ]
 
 [workspace.dependencies]
-agave-feature-set = { path = "../../feature-set", version = "=2.3.1" }
-agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.1" }
-agave-validator = { path = "../../validator", version = "=2.3.1" }
+agave-feature-set = { path = "../../feature-set", version = "=2.3.2" }
+agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=2.3.2" }
+agave-validator = { path = "../../validator", version = "=2.3.2" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
 blake3 = "1.0.0"
@@ -111,64 +111,64 @@ rand = "0.8"
 serde = "1.0.112"                                                                             # must match the serde_derive version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_derive = "1.0.112"                                                                      # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_json = "1.0.56"
-solana-account-decoder = { path = "../../account-decoder", version = "=2.3.1" }
+solana-account-decoder = { path = "../../account-decoder", version = "=2.3.2" }
 solana-account-info = "=2.2.1"
-solana-accounts-db = { path = "../../accounts-db", version = "=2.3.1" }
+solana-accounts-db = { path = "../../accounts-db", version = "=2.3.2" }
 solana-big-mod-exp = "=2.2.1"
 solana-blake3-hasher = { version = "=2.2.1", features = ["blake3"] }
 solana-bn254 = "=2.2.2"
-solana-bpf-loader-program = { path = "../bpf_loader", version = "=2.3.1" }
-solana-cli-output = { path = "../../cli-output", version = "=2.3.1" }
+solana-bpf-loader-program = { path = "../bpf_loader", version = "=2.3.2" }
+solana-cli-output = { path = "../../cli-output", version = "=2.3.2" }
 solana-clock = { version = "=2.2.2", features = ["serde", "sysvar"] }
-solana-compute-budget = { path = "../../compute-budget", version = "=2.3.1" }
-solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=2.3.1" }
-solana-curve25519 = { path = "../../curves/curve25519", version = "=2.3.1" }
+solana-compute-budget = { path = "../../compute-budget", version = "=2.3.2" }
+solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=2.3.2" }
+solana-curve25519 = { path = "../../curves/curve25519", version = "=2.3.2" }
 solana-decode-error = "=2.2.1"
 solana-define-syscall = "=2.3.0"
-solana-fee = { path = "../../fee", version = "=2.3.1" }
+solana-fee = { path = "../../fee", version = "=2.3.2" }
 solana-hash = { version = "=2.3.0", features = ["bytemuck", "serde", "std"] }
 solana-instruction = "=2.3.0"
 solana-instructions-sysvar = "=2.2.2"
 solana-keccak-hasher = { version = "=2.2.1", features = ["sha3"] }
-solana-ledger = { path = "../../ledger", version = "=2.3.1" }
-solana-log-collector = { path = "../../log-collector", version = "=2.3.1" }
+solana-ledger = { path = "../../ledger", version = "=2.3.2" }
+solana-log-collector = { path = "../../log-collector", version = "=2.3.2" }
 solana-logger = "=2.3.1"
-solana-measure = { path = "../../measure", version = "=2.3.1" }
+solana-measure = { path = "../../measure", version = "=2.3.2" }
 solana-msg = "=2.2.1"
-solana-poseidon = { path = "../../poseidon/", version = "=2.3.1" }
+solana-poseidon = { path = "../../poseidon/", version = "=2.3.2" }
 solana-program = "=2.2.1"
 solana-program-entrypoint = "=2.2.1"
 solana-program-error = "=2.2.1"
 solana-program-memory = "=2.2.1"
-solana-program-runtime = { path = "../../program-runtime", version = "=2.3.1" }
+solana-program-runtime = { path = "../../program-runtime", version = "=2.3.2" }
 solana-pubkey = { version = "=2.4.0", default-features = false }
-solana-runtime = { path = "../../runtime", version = "=2.3.1" }
-solana-runtime-transaction = { path = "../../runtime-transaction", version = "=2.3.1" }
-solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=2.3.1" }
-solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=2.3.1" }
-solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=2.3.1" }
-solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=2.3.1" }
-solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.3.1" }
-solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.3.1" }
-solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.1" }
-solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.1" }
+solana-runtime = { path = "../../runtime", version = "=2.3.2" }
+solana-runtime-transaction = { path = "../../runtime-transaction", version = "=2.3.2" }
+solana-sbf-rust-128bit-dep = { path = "rust/128bit_dep", version = "=2.3.2" }
+solana-sbf-rust-invoke-dep = { path = "rust/invoke_dep", version = "=2.3.2" }
+solana-sbf-rust-invoked-dep = { path = "rust/invoked_dep", version = "=2.3.2" }
+solana-sbf-rust-many-args-dep = { path = "rust/many_args_dep", version = "=2.3.2" }
+solana-sbf-rust-mem-dep = { path = "rust/mem_dep", version = "=2.3.2" }
+solana-sbf-rust-param-passing-dep = { path = "rust/param_passing_dep", version = "=2.3.2" }
+solana-sbf-rust-realloc-dep = { path = "rust/realloc_dep", version = "=2.3.2" }
+solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version = "=2.3.2" }
 solana-sbpf = "=0.11.1"
 solana-sdk-ids = "=2.2.1"
 solana-secp256k1-recover = "=2.2.1"
 solana-sha256-hasher = { version = "=2.2.1", features = ["sha2"] }
 solana-stake-interface = { version = "=1.2.1", features = ["bincode"] }
-solana-svm = { path = "../../svm", version = "=2.3.1" }
-solana-svm-callback = { path = "../../svm-callback", version = "=2.3.1" }
-solana-svm-feature-set = { path = "../../svm-feature-set", version = "=2.3.1" }
-solana-svm-transaction = { path = "../../svm-transaction", version = "=2.3.1" }
+solana-svm = { path = "../../svm", version = "=2.3.2" }
+solana-svm-callback = { path = "../../svm-callback", version = "=2.3.2" }
+solana-svm-feature-set = { path = "../../svm-feature-set", version = "=2.3.2" }
+solana-svm-transaction = { path = "../../svm-transaction", version = "=2.3.2" }
 solana-system-interface = { version = "=1.0", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
-solana-timings = { path = "../../timings", version = "=2.3.1" }
-solana-transaction-context = { path = "../../transaction-context", version = "=2.3.1" }
-solana-transaction-status = { path = "../../transaction-status", version = "=2.3.1" }
-solana-type-overrides = { path = "../../type-overrides", version = "=2.3.1" }
-solana-vote = { path = "../../vote", version = "=2.3.1" }
-solana-vote-program = { path = "../../programs/vote", version = "=2.3.1" }
+solana-timings = { path = "../../timings", version = "=2.3.2" }
+solana-transaction-context = { path = "../../transaction-context", version = "=2.3.2" }
+solana-transaction-status = { path = "../../transaction-status", version = "=2.3.2" }
+solana-type-overrides = { path = "../../type-overrides", version = "=2.3.2" }
+solana-vote = { path = "../../vote", version = "=2.3.2" }
+solana-vote-program = { path = "../../programs/vote", version = "=2.3.2" }
 solana-zk-sdk = "=2.2.1"
 thiserror = "1.0"
 
