@@ -8,6 +8,7 @@ use {
     solana_transaction_status_client_types::{
         ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus, UiConfirmedBlock,
         UiInnerInstructions, UiTransactionError, UiTransactionReturnData,
+        UiTransactionTokenBalance,
     },
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
     thiserror::Error,
@@ -394,7 +395,7 @@ pub struct RpcSignatureConfirmation {
     pub status: Result<()>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSimulateTransactionResult {
     pub err: Option<UiTransactionError>,
@@ -405,6 +406,10 @@ pub struct RpcSimulateTransactionResult {
     pub return_data: Option<UiTransactionReturnData>,
     pub inner_instructions: Option<Vec<UiInnerInstructions>>,
     pub replacement_blockhash: Option<RpcBlockhash>,
+    pub pre_balances: Option<Vec<u64>>,
+    pub post_balances: Option<Vec<u64>>,
+    pub pre_token_balances: Option<Vec<UiTransactionTokenBalance>>,
+    pub post_token_balances: Option<Vec<UiTransactionTokenBalance>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
