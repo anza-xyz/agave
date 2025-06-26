@@ -264,9 +264,3 @@ This simplifies the process of diffing between versions of the log.
   * Remove `Unreleased` annotation from vx.y.0 section.
 * Create vx.y branch starting at that commit
 * Tag that commit as vx.y.0
-
-### When creating a new patch release:
-* Commit to the release branch updating the changelog:
-  * Remove `Unreleased` annotation from `vx.y.z` section
-  * Add a new section at the top for `vx.y.z+1 - Unreleased`
-* Tag that new commit as the new release
