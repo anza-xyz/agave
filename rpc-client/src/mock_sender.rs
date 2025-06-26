@@ -360,6 +360,7 @@ impl RpcSender for MockSender {
                     post_balances: None,
                     pre_token_balances: None,
                     post_token_balances: None,
+                    loaded_addresses: None,
                 }
             })?,
             "getMinimumBalanceForRentExemption" => json![20],

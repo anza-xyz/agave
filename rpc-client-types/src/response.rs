@@ -7,7 +7,7 @@ use {
     solana_transaction_error::TransactionResult as Result,
     solana_transaction_status_client_types::{
         ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus, UiConfirmedBlock,
-        UiInnerInstructions, UiTransactionError, UiTransactionReturnData,
+        UiInnerInstructions, UiLoadedAddresses, UiTransactionError, UiTransactionReturnData,
         UiTransactionTokenBalance,
     },
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
@@ -410,6 +410,7 @@ pub struct RpcSimulateTransactionResult {
     pub post_balances: Option<Vec<u64>>,
     pub pre_token_balances: Option<Vec<UiTransactionTokenBalance>>,
     pub post_token_balances: Option<Vec<UiTransactionTokenBalance>>,
+    pub loaded_addresses: Option<UiLoadedAddresses>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

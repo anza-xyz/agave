@@ -3474,7 +3474,7 @@ pub mod rpc_full {
     use {
         super::*,
         solana_message::{SanitizedVersionedMessage, VersionedMessage},
-        solana_transaction_status::parse_ui_inner_instructions,
+        solana_transaction_status::{parse_ui_inner_instructions, UiLoadedAddresses},
     };
     #[rpc]
     pub trait Full {
@@ -3941,6 +3941,7 @@ pub mod rpc_full {
                             post_balances: None,
                             pre_token_balances: None,
                             post_token_balances: None,
+                            loaded_addresses: None,
                         },
                     }
                     .into());
@@ -3975,6 +3976,7 @@ pub mod rpc_full {
                 min_context_slot,
                 inner_instructions: enable_cpi_recording,
                 transaction_balances: enable_transaction_balance_recording,
+                loaded_addresses,
             } = config.unwrap_or_default();
             let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
@@ -4107,6 +4109,7 @@ pub mod rpc_full {
                     post_token_balances: post_token_balances.map(|balances| {
                         balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
+                    loaded_addresses: loaded_addresses.then(|| UiLoadedAddresses::from(&transaction.get_loaded_addresses()))
                 },
             ))
         }

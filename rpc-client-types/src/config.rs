@@ -46,6 +46,8 @@ pub struct RpcSimulateTransactionConfig {
     pub inner_instructions: bool,
     #[serde(default)]
     pub transaction_balances: bool,
+    #[serde(default)]
+    pub loaded_addresses: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
