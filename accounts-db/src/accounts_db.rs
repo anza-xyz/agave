@@ -7857,7 +7857,6 @@ impl AccountsDb {
                 // withOUT secondary indexes -- scan accounts withOUT account data
                 storage.accounts.scan_index(itemizer);
             }
-            let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
                 (
                     info.pubkey,
@@ -7868,7 +7867,7 @@ impl AccountsDb {
                 )
             });
             self.accounts_index
-                .insert_new_if_missing_into_primary_index(slot, items_len, items)
+                .insert_new_if_missing_into_primary_index(slot, items)
         };
 
         if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
