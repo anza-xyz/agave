@@ -7,7 +7,7 @@ use {
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
-    solana_ledger::shred::{Shred, ShredFlags},
+    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder},
     solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::{
@@ -35,19 +35,28 @@ fn get_retransmit_peers_deterministic(
     slot_leader: &Pubkey,
     num_simulated_shreds: usize,
 ) {
-    let parent_offset = u16::from(slot != 0);
-    for i in 0..num_simulated_shreds {
-        let index = i as u32;
-        let shred = Shred::new_from_data(
-            slot,
-            index,
-            parent_offset,
-            &[],
-            ShredFlags::empty(),
-            0,
-            0,
-            0,
-        );
+    use {solana_hash::Hash, solana_keypair::Keypair};
+    let keypair = Keypair::new();
+    let merkle_root = Some(Hash::new_unique());
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut stats = ProcessShredsStats::default();
+    let parent_slot = if slot > 0 { slot - 1 } else { 0 };
+    let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
+
+    let shreds = shredder
+        .make_merkle_shreds_from_entries(
+            &keypair,
+            &[],  // entries
+            true, // is_last_in_slot
+            merkle_root,
+            0, // next_shred_index
+            0, // next_code_index
+            &reed_solomon_cache,
+            &mut stats,
+        )
+        .collect::<Vec<_>>();
+
+    for shred in shreds.iter().take(num_simulated_shreds) {
         let _retransmit_peers = cluster_nodes.get_retransmit_addrs(
             slot_leader,
             &shred.id(),
