@@ -7983,7 +7983,7 @@ impl AccountsDb {
                                 insert_time_us: insert_us,
                                 num_accounts: total_this_slot,
                                 accounts_data_len: accounts_data_len_this_slot,
-                                zero_lamport_pubkeys: zero_pubkeys_this_slot,
+                                zero_lamport_pubkeys: mut zero_pubkeys_this_slot,
                                 all_accounts_are_zero_lamports,
                                 num_did_not_exist,
                                 num_existed_in_mem,
@@ -8004,7 +8004,7 @@ impl AccountsDb {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
                                 all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
                             }
-                            zero_pubkeys_for_this_chunk.append(&zero_pubkeys_this_slot);
+                            zero_pubkeys_for_this_chunk.append(&mut zero_pubkeys_this_slot);
 
                             insert_us
                         } else {
