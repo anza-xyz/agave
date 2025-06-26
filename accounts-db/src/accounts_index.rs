@@ -1366,7 +1366,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// pubkey exist in the `Vec`.
     /// The input can be partially sorted, only adjacent duplicates are removed.
     /// Returns `Vec` of duplicate pubkeys.
-    fn remove_older_adjacent_duplicate_pubkeys(
+    fn remove_adjacent_older_duplicate_pubkeys(
         items: &mut Vec<(Pubkey, (Slot, T))>,
     ) -> Option<Vec<(Pubkey, (Slot, T))>> {
         if items.len() < 2 {
@@ -1431,8 +1431,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
         let mut count = 0;
 
-        let insertion_time = AtomicU64::new(0);
-
         // accumulated stats after inserting pubkeys into the index
         let mut num_did_not_exist = 0;
         let mut num_existed_in_mem = 0;
@@ -1446,28 +1444,29 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
         // stable sort by bin with random offset *and* pubkey such that duplicates are adjacent.
         // Earlier entries are overwritten by later entries
+        let bin_calc = self.bin_calculator;
         items.sort_by(|&(ref pubkey_a, _), &(ref pubkey_b, _)| {
-            ((self.bin_calculator.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
-                .cmp(&((self.bin_calculator.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
+            ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
+                .cmp(&((bin_calc.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
                 .then_with(|| pubkey_a.cmp(pubkey_b))
         });
         let duplicates =
-            Self::remove_older_adjacent_duplicate_pubkeys(&mut items).unwrap_or_default();
+            Self::remove_adjacent_older_duplicate_pubkeys(&mut items).unwrap_or_default();
 
+        let mut insert_time = Measure::start("insert_into_primary_index");
         while !items.is_empty() {
             let mut start_index = items.len() - 1;
-            let pubkey_bin = self.bin_calculator.bin_from_pubkey(&items[start_index].0);
+            let pubkey_bin = bin_calc.bin_from_pubkey(&items[start_index].0);
             // Find the smallest index with the same pubkey bin
             while start_index > 0 {
                 let next = start_index - 1;
-                if self.bin_calculator.bin_from_pubkey(&items[next].0) != pubkey_bin {
+                if bin_calc.bin_from_pubkey(&items[next].0) != pubkey_bin {
                     break;
                 }
                 start_index = next;
             }
 
             let r_account_maps = &self.account_maps[pubkey_bin];
-            let mut insert_time = Measure::start("insert_into_primary_index");
             // count only considers non-duplicate accounts
             count += items.len() - start_index;
 
@@ -1513,13 +1512,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 r_account_maps
                     .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
             }
-            insert_time.stop();
-            insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
         }
+        insert_time.stop();
 
         (
             dirty_pubkeys,
-            insertion_time.load(Ordering::Relaxed),
+            insert_time.as_us(),
             GenerateIndexResult {
                 count,
                 duplicates: (!duplicates.is_empty()).then_some(duplicates),
@@ -1905,13 +1903,13 @@ pub mod tests {
         let info2 = 55;
         let mut items = vec![];
         let removed =
-            AccountsIndex::<u64, u64>::remove_older_adjacent_duplicate_pubkeys(&mut items);
+            AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(&mut items);
         assert!(items.is_empty());
         assert!(removed.is_none());
         let mut items = vec![(pk1, (slot0, 1u64)), (pk2, (slot0, 2))];
         let expected = items.clone();
         let removed =
-            AccountsIndex::<u64, u64>::remove_older_adjacent_duplicate_pubkeys(&mut items);
+            AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(&mut items);
         assert_eq!(items, expected);
         assert!(removed.is_none());
 
@@ -1939,7 +1937,7 @@ pub mod tests {
                     items.insert(other as usize, other_item);
                 }
                 let result =
-                    AccountsIndex::<u64, u64>::remove_older_adjacent_duplicate_pubkeys(&mut items);
+                    AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(&mut items);
                 assert_eq!(items, expected);
                 if dup != 0 {
                     expected_dups.reverse();
