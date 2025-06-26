@@ -538,7 +538,7 @@ pub mod tests {
         let lamports = 1;
         let owner = Pubkey::default();
         let executable = false;
-        let rent_epoch = 0;
+        let rent_epoch_obsolete = 0;
         let meta = StoredMeta {
             write_version_obsolete: 5,
             pubkey: pk,
@@ -548,7 +548,7 @@ pub mod tests {
             lamports,
             owner,
             executable,
-            rent_epoch,
+            rent_epoch_obsolete,
         };
         let data = Vec::default();
         let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
@@ -614,7 +614,7 @@ pub mod tests {
                                 lamports: account.lamports(),
                                 owner: *account.owner(),
                                 executable: account.executable(),
-                                rent_epoch: account.rent_epoch(),
+                                rent_epoch_obsolete: account.rent_epoch(),
                             },
                         ));
                     }
@@ -750,7 +750,7 @@ pub mod tests {
                         lamports: account.lamports(),
                         owner: *account.owner(),
                         executable: account.executable(),
-                        rent_epoch: account.rent_epoch(),
+                        rent_epoch_obsolete: account.rent_epoch(),
                     },
                 ));
             }
