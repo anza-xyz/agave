@@ -38,7 +38,7 @@ fn get_retransmit_peers_deterministic(
     num_simulated_shreds: usize,
 ) {
     let keypair = Keypair::new();
-    let merkle_root = Some(Hash::new_unique());
+    let merkle_root = Some(Hash::default());
     let reed_solomon_cache = ReedSolomonCache::default();
     let mut stats = ProcessShredsStats::default();
     let parent_slot = if slot > 0 { slot - 1 } else { 0 };
