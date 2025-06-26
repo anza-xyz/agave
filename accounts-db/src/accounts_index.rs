@@ -1454,9 +1454,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let duplicates =
             Self::remove_older_adjacent_duplicate_pubkeys(&mut items).unwrap_or_default();
 
-        while let Some((last_pubkey, _)) = items.last() {
-            let pubkey_bin = self.bin_calculator.bin_from_pubkey(last_pubkey);
+        while !items.is_empty() {
             let mut start_index = items.len() - 1;
+            let pubkey_bin = self.bin_calculator.bin_from_pubkey(&items[start_index].0);
+            // Find the smallest index with the same pubkey bin
             while start_index > 0 {
                 let next = start_index - 1;
                 if self.bin_calculator.bin_from_pubkey(&items[next].0) != pubkey_bin {
