@@ -1367,7 +1367,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     /// The input can be partially sorted, only adjacent duplicates are removed.
     /// Returns `Vec` of duplicate pubkeys.
     fn remove_adjacent_older_duplicate_pubkeys(
-        items: &mut Vec<(Pubkey, (Slot, T))>,
+        slot: Slot,
+        items: &mut Vec<(Pubkey, T)>,
     ) -> Option<Vec<(Pubkey, (Slot, T))>> {
         if items.len() < 2 {
             return None;
@@ -1386,7 +1387,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
             if curr_item.0 == last_key {
                 let mut duplicates_insert = duplicates.unwrap_or_default();
-                duplicates_insert.push(curr_item);
+                duplicates_insert.push((curr_item.0, (slot, curr_item.1)));
                 duplicates = Some(duplicates_insert);
                 curr -= 1;
             } else {
@@ -1425,7 +1426,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 if is_zero_lamport {
                     dirty_pubkeys.push(pubkey)
                 }
-                (pubkey, (slot, account_info))
+                (pubkey, account_info)
             })
             .collect::<Vec<_>>();
 
@@ -1451,7 +1452,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 .then_with(|| pubkey_a.cmp(pubkey_b))
         });
         let duplicates =
-            Self::remove_adjacent_older_duplicate_pubkeys(&mut items).unwrap_or_default();
+            Self::remove_adjacent_older_duplicate_pubkeys(slot, &mut items).unwrap_or_default();
 
         let mut insert_time = Measure::start("insert_into_primary_index");
         while !items.is_empty() {
@@ -1472,12 +1473,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
             let items = items.drain(start_index..);
             if use_disk {
-                r_account_maps.startup_insert_only(items);
+                r_account_maps.startup_insert_only(slot, items);
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
                 let mut duplicates_from_in_memory = vec![];
-                items.for_each(|(pubkey, (slot, account_info))| {
+                items.for_each(|(pubkey, account_info)| {
                     let new_entry = PreAllocatedAccountMapEntry::new(
                         slot,
                         account_info,
