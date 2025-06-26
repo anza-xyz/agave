@@ -1,5 +1,3 @@
-use solana_epoch_schedule::EpochSchedule;
-
 pub use crate::tpu_client::Result;
 use {
     crate::tpu_client::{RecentLeaderSlots, TpuClientConfig, MAX_FANOUT_SLOTS},
@@ -15,7 +13,7 @@ use {
         },
         nonblocking::client_connection::ClientConnection,
     },
-    //solana_epoch_info::EpochInfo,
+    solana_epoch_schedule::EpochSchedule,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
     solana_quic_definitions::QUIC_PORT_OFFSET,
@@ -72,7 +70,6 @@ pub enum TpuSenderError {
 
 struct LeaderTpuCacheUpdateInfo {
     pub(super) maybe_cluster_nodes: Option<ClientResult<Vec<RpcContactInfo>>>,
-    //pub(super) maybe_epoch_info: Option<ClientResult<EpochInfo>>,
     pub(super) maybe_slot_leaders: Option<ClientResult<Vec<Pubkey>>>,
 }
 impl LeaderTpuCacheUpdateInfo {
@@ -218,14 +215,6 @@ impl LeaderTpuCache {
                 }
             }
         }
-
-        //if let Some(Ok(epoch_info)) = cache_update_info.maybe_epoch_info {
-        //    self.slots_in_epoch = epoch_info.slots_in_epoch;
-        //    self.epoch_slot_boundary = epoch_info
-        //        .absolute_slot
-        //        .saturating_sub(epoch_info.slot_index)
-        //        .saturating_add(epoch_info.slots_in_epoch);
-        //}
 
         if let Some(slot_leaders) = cache_update_info.maybe_slot_leaders {
             match slot_leaders {
@@ -735,15 +724,6 @@ impl LeaderTpuService {
         let recent_slots = RecentLeaderSlots::new(start_slot);
         let epoch = epoch_schedule.get_epoch(start_slot);
         let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-        //let EpochInfo {
-        //    epoch,
-        //    absolute_slot,
-        //    slots_in_epoch,
-        //    slot_index,
-        //    ..
-        //} = rpc_client.get_epoch_info().await?;
-
-        //let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
 
         // When a cluster is starting, we observe an invalid slot range failure that goes away after a
         // retry. It seems as if the leader schedule is not available, but it should be. The logic
@@ -991,13 +971,6 @@ async fn maybe_fetch_cache_info(
     };
     let epoch = epoch_schedule.get_epoch(last_slot);
     let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
-    //let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
-
-    //let maybe_epoch_info = if estimated_current_slot > last_slot_in_epoch {
-    //    Some(rpc_client.get_epoch_info().await)
-    //} else {
-    //    None
-    //};
 
     let maybe_slot_leaders = if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS)
     {
