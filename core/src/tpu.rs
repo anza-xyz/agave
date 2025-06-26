@@ -123,7 +123,7 @@ impl Tpu {
         entry_receiver: Receiver<WorkingBankEntry>,
         retransmit_slots_receiver: Receiver<Slot>,
         sockets: TpuSockets,
-        subscriptions: &Option<Arc<RpcSubscriptions>>,
+        subscriptions: Option<&RpcSubscriptions>,
         transaction_status_sender: Option<TransactionStatusSender>,
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,

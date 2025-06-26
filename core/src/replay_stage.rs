@@ -277,7 +277,7 @@ pub struct ReplayStageConfig {
 }
 
 pub struct ReplaySenders {
-    pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
+    pub rpc_subscriptions: Option<&RpcSubscriptions>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
@@ -607,7 +607,7 @@ impl ReplayStage {
         let (lockouts_sender, commitment_service) = AggregateCommitmentService::new(
             exit.clone(),
             block_commitment_cache.clone(),
-            rpc_subscriptions.clone(),
+            rpc_subscriptions.as_deref(),
         );
         let run_replay = move || {
             let verify_recyclers = VerifyRecyclers::default();

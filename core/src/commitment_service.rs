@@ -67,7 +67,7 @@ impl AggregateCommitmentService {
     pub fn new(
         exit: Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        subscriptions: Option<Arc<RpcSubscriptions>>,
+        subscriptions: Option<&RpcSubscriptions>,
     ) -> (Sender<CommitmentAggregationData>, Self) {
         let (sender, receiver): (
             Sender<CommitmentAggregationData>,
@@ -83,12 +83,9 @@ impl AggregateCommitmentService {
                             break;
                         }
 
-                        if let Err(RecvTimeoutError::Disconnected) = Self::run(
-                            &receiver,
-                            &block_commitment_cache,
-                            subscriptions.as_deref(),
-                            &exit,
-                        ) {
+                        if let Err(RecvTimeoutError::Disconnected) =
+                            Self::run(&receiver, &block_commitment_cache, subscriptions, &exit)
+                        {
                             break;
                         }
                     })

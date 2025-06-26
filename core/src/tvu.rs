@@ -133,7 +133,7 @@ impl Tvu {
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
         ledger_signal_receiver: Receiver<bool>,
-        rpc_subscriptions: &Option<Arc<RpcSubscriptions>>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         tower: Tower,
         tower_storage: Arc<dyn TowerStorage>,

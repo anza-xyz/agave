@@ -8,7 +8,10 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
     solana_entry::entry::Entry,
     solana_ledger::blockstore::{Blockstore, CompletedDataSetInfo},
-    solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
+    solana_rpc::{
+        max_slots::MaxSlots,
+        rpc_subscriptions::{self, RpcSubscriptions},
+    },
     solana_signature::Signature,
     std::{
         sync::{
@@ -31,7 +34,7 @@ impl CompletedDataSetsService {
     pub fn new(
         completed_sets_receiver: CompletedDataSetsReceiver,
         blockstore: Arc<Blockstore>,
-        rpc_subscriptions: Arc<RpcSubscriptions>,
+        rpc_subscriptions: &RpcSubscriptions,
         exit: Arc<AtomicBool>,
         max_slots: Arc<MaxSlots>,
     ) -> Self {
