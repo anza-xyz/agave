@@ -1417,6 +1417,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         slot: Slot,
         items: impl ExactSizeIterator<Item = (Pubkey, T)>,
     ) -> (Vec<Pubkey>, u64, GenerateIndexResult<T>) {
+        let mut insert_time = Measure::start("insert_into_primary_index");
+
         let use_disk = self.storage.storage.is_disk_index_enabled();
         let mut dirty_pubkeys = vec![];
         let mut items = items
@@ -1454,7 +1456,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let duplicates =
             Self::remove_adjacent_older_duplicate_pubkeys(slot, &mut items).unwrap_or_default();
 
-        let mut insert_time = Measure::start("insert_into_primary_index");
         while !items.is_empty() {
             let mut start_index = items.len() - 1;
             let pubkey_bin = bin_calc.bin_from_pubkey(&items[start_index].0);
@@ -1904,13 +1905,13 @@ pub mod tests {
         let info2 = 55;
         let mut items = vec![];
         let removed =
-            AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(&mut items);
+            AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(slot0, &mut items);
         assert!(items.is_empty());
         assert!(removed.is_none());
         let mut items = vec![(pk1, (slot0, 1u64)), (pk2, (slot0, 2))];
         let expected = items.clone();
         let removed =
-            AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(&mut items);
+            AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(slot0, &mut items);
         assert_eq!(items, expected);
         assert!(removed.is_none());
 
@@ -2324,11 +2325,8 @@ pub mod tests {
             let items = vec![(key, account_infos[1])];
             index.set_startup(Startup::Startup);
             let expected_len = items.len();
-            let (_, _, result) = index.insert_new_if_missing_into_primary_index(
-                slot1,
-                items.len(),
-                items.into_iter(),
-            );
+            let (_, _, result) =
+                index.insert_new_if_missing_into_primary_index(slot1, items.into_iter());
             assert_eq!(result.count, expected_len);
             index.set_startup(Startup::Normal);
         }
