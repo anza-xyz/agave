@@ -61,7 +61,7 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         ancient_append_vecs::get_ancient_append_vec_capacity,
-        append_vec::{aligned_stored_size, IndexInfoInner, STORE_META_OVERHEAD},
+        append_vec::{aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         epoch_accounts_hash::EpochAccountsHashManager,
@@ -7819,25 +7819,35 @@ impl AccountsDb {
 
         let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
             let mut items_local = Vec::default();
+            // this closure is the shared code when scanning the storage
+            let mut itemizer = |info: IndexInfo| {
+                stored_size_alive += info.stored_size_aligned;
+                if info.index_info.lamports > 0 {
+                    accounts_data_len += info.index_info.data_len;
+                    all_accounts_are_zero_lamports = false;
+                } else {
+                    // zero lamport accounts
+                    zero_lamport_pubkeys.push(info.index_info.pubkey);
+                }
+                items_local.push(info.index_info);
+            };
+
             if secondary {
                 // WITH secondary indexes -- scan accounts WITH account data
                 storage.accounts.scan_accounts(|offset, account| {
                     let data_len = account.data.len() as u64;
-                    stored_size_alive += storage.accounts.calculate_stored_size(data_len as usize);
-                    if account.lamports > 0 {
-                        accounts_data_len += data_len;
-                        all_accounts_are_zero_lamports = false;
-                    } else {
-                        // zero lamport accounts
-                        zero_lamport_pubkeys.push(*account.pubkey);
-                    }
-                    items_local.push(IndexInfoInner {
-                        offset,
-                        pubkey: *account.pubkey,
-                        lamports: account.lamports,
-                        data_len,
-                    });
-
+                    let stored_size_aligned =
+                        storage.accounts.calculate_stored_size(data_len as usize);
+                    let info = IndexInfo {
+                        stored_size_aligned,
+                        index_info: IndexInfoInner {
+                            offset,
+                            pubkey: *account.pubkey,
+                            lamports: account.lamports,
+                            data_len,
+                        },
+                    };
+                    itemizer(info);
                     self.accounts_index.update_secondary_indexes(
                         account.pubkey,
                         &account,
@@ -7846,17 +7856,7 @@ impl AccountsDb {
                 });
             } else {
                 // withOUT secondary indexes -- scan accounts withOUT account data
-                storage.accounts.scan_index(|info| {
-                    stored_size_alive += info.stored_size_aligned;
-                    if info.index_info.lamports > 0 {
-                        accounts_data_len += info.index_info.data_len;
-                        all_accounts_are_zero_lamports = false;
-                    } else {
-                        // zero lamport accounts
-                        zero_lamport_pubkeys.push(info.index_info.pubkey);
-                    }
-                    items_local.push(info.index_info);
-                });
+                storage.accounts.scan_index(itemizer);
             }
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
