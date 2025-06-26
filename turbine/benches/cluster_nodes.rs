@@ -7,6 +7,8 @@ use {
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
@@ -35,7 +37,6 @@ fn get_retransmit_peers_deterministic(
     slot_leader: &Pubkey,
     num_simulated_shreds: usize,
 ) {
-    use {solana_hash::Hash, solana_keypair::Keypair};
     let keypair = Keypair::new();
     let merkle_root = Some(Hash::new_unique());
     let reed_solomon_cache = ReedSolomonCache::default();
