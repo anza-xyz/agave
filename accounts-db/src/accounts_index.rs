@@ -1908,7 +1908,7 @@ pub mod tests {
             AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(slot0, &mut items);
         assert!(items.is_empty());
         assert!(removed.is_none());
-        let mut items = vec![(pk1, (slot0, 1u64)), (pk2, (slot0, 2))];
+        let mut items = vec![(pk1, 1u64), (pk2, 2)];
         let expected = items.clone();
         let removed =
             AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(slot0, &mut items);
@@ -1918,17 +1918,17 @@ pub mod tests {
         for dup in 0..3 {
             for other in 0..dup + 2 {
                 let first_info = 10u64;
-                let mut items = vec![(pk1, (slot0, first_info))];
-                let mut expected_dups = items.clone();
+                let mut items = vec![(pk1, first_info)];
+                let mut expected_dups = vec![(pk1, (slot0, first_info))];
                 for i in 0..dup {
                     let this_dup = (pk1, (slot0, i + 10u64 + 1));
                     if i < dup.saturating_sub(1) {
                         expected_dups.push(this_dup);
                     }
-                    items.push(this_dup);
+                    items.push((this_dup.0, this_dup.1 .1));
                 }
                 let mut expected = vec![*items.last().unwrap()];
-                let other_item = (pk2, (slot0, info2));
+                let other_item = (pk2, info2);
                 if other == dup + 1 {
                     // don't insert
                 } else if other == dup {
@@ -1938,8 +1938,10 @@ pub mod tests {
                     expected.push(other_item);
                     items.insert(other as usize, other_item);
                 }
-                let result =
-                    AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(&mut items);
+                items.sort();
+                let result = AccountsIndex::<u64, u64>::remove_adjacent_older_duplicate_pubkeys(
+                    slot0, &mut items,
+                );
                 assert_eq!(items, expected);
                 if dup != 0 {
                     expected_dups.reverse();
