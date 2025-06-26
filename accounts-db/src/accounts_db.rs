@@ -100,8 +100,7 @@ use {
         collections::{BTreeSet, HashMap, HashSet, VecDeque},
         fs,
         hash::{Hash as StdHash, Hasher as StdHasher},
-        io::Result as IoResult,
-        iter, mem,
+        io, iter, mem,
         num::{NonZeroUsize, Saturating},
         ops::{Range, RangeBounds},
         path::{Path, PathBuf},
@@ -1274,11 +1273,11 @@ impl AccountStorageEntry {
     }
 }
 
-pub fn get_temp_accounts_paths(count: u32) -> IoResult<(Vec<TempDir>, Vec<PathBuf>)> {
-    let temp_dirs: IoResult<Vec<TempDir>> = (0..count).map(|_| TempDir::new()).collect();
+pub fn get_temp_accounts_paths(count: u32) -> io::Result<(Vec<TempDir>, Vec<PathBuf>)> {
+    let temp_dirs: io::Result<Vec<TempDir>> = (0..count).map(|_| TempDir::new()).collect();
     let temp_dirs = temp_dirs?;
 
-    let paths: IoResult<Vec<_>> = temp_dirs
+    let paths: io::Result<Vec<_>> = temp_dirs
         .iter()
         .map(|temp_dir| {
             utils::create_accounts_run_and_snapshot_dirs(temp_dir)

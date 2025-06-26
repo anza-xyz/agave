@@ -7,7 +7,7 @@ use {
     std::{
         collections::{HashMap, VecDeque},
         fs::{self, File},
-        io::{BufReader, Read, Result as IoResult},
+        io::{self, BufReader, Read},
         path::{
             Component::{self, CurDir, Normal},
             Path, PathBuf,
@@ -73,7 +73,7 @@ impl Default for MultiBytes {
 }
 
 impl Read for MultiBytes {
-    fn read(&mut self, mut buf: &mut [u8]) -> IoResult<usize> {
+    fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
         let mut copied_len = 0;
         while let Some(bytes) = self.0.front_mut() {
             let to_copy_len = bytes.len().min(buf.len());
@@ -107,7 +107,7 @@ impl BytesChannelReader {
 }
 
 impl Read for BytesChannelReader {
-    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         while self.current_bytes.is_empty() {
             let Ok(new_bytes) = self.receiver.recv() else {
                 return Ok(0);
@@ -149,7 +149,7 @@ impl<R: Read> ArchiveChunker<R> {
     pub fn decode_and_send_chunks(
         mut self,
         chunk_sender: crossbeam_channel::Sender<MultiBytes>,
-    ) -> IoResult<()> {
+    ) -> io::Result<()> {
         // Bytes for chunk of archive to be sent to workers for unpacking
         let mut current_chunk = MultiBytes::new();
         while self.refill_decoded_buf()? {
@@ -174,7 +174,7 @@ impl<R: Read> ArchiveChunker<R> {
     }
 
     /// Take as many bytes as possible from decoded data until last entry boundary.
-    fn take_complete_archive(&mut self) -> IoResult<Bytes> {
+    fn take_complete_archive(&mut self) -> io::Result<Bytes> {
         let mut archive = Archive::new(self.current_decoded.as_ref());
 
         let mut completed_entry_end = 0;
@@ -224,7 +224,7 @@ impl<R: Read> ArchiveChunker<R> {
     /// Re-fill decoded buffer such that it has minimum bytes to decode TAR header.
     ///
     /// Return `false` on EOF
-    fn refill_decoded_buf(&mut self) -> IoResult<bool> {
+    fn refill_decoded_buf(&mut self) -> io::Result<bool> {
         if self.current_decoded.len() < Self::TAR_BLOCK_SIZE {
             let mut next_buffer = self.get_next_buffer();
             if !self.current_decoded.is_empty() {
@@ -247,7 +247,7 @@ impl<R: Read> ArchiveChunker<R> {
     }
 
     /// Fill `decode_buf` with data from `self.input`.
-    fn decode_bytes(&mut self, mut decode_buf: BytesMut) -> IoResult<Bytes> {
+    fn decode_bytes(&mut self, mut decode_buf: BytesMut) -> io::Result<Bytes> {
         let mut_slice = unsafe {
             std::slice::from_raw_parts_mut(decode_buf.as_mut_ptr(), decode_buf.capacity())
         };
@@ -418,7 +418,7 @@ where
     return Ok(());
 
     #[cfg(unix)]
-    fn set_perms(dst: &Path, mode: u32) -> IoResult<()> {
+    fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let perm = fs::Permissions::from_mode(mode as _);
@@ -426,7 +426,7 @@ where
     }
 
     #[cfg(windows)]
-    fn set_perms(dst: &Path, _mode: u32) -> IoResult<()> {
+    fn set_perms(dst: &Path, _mode: u32) -> io::Result<()> {
         let mut perm = fs::metadata(dst)?.permissions();
         // This is OK for Windows, but clippy doesn't realize we're doing this
         // only on Windows.

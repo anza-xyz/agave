@@ -24,7 +24,7 @@ use {
         snapshot_utils,
     },
     std::{
-        io::Result as IoResult,
+        io,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex,
@@ -217,7 +217,7 @@ impl AccountsHashVerifier {
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
         snapshot_config: &SnapshotConfig,
-    ) -> IoResult<()> {
+    ) -> io::Result<()> {
         let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
             Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config)?;
 
@@ -239,7 +239,7 @@ impl AccountsHashVerifier {
     fn calculate_and_verify_accounts_hash(
         accounts_package: &AccountsPackage,
         snapshot_config: &SnapshotConfig,
-    ) -> IoResult<(
+    ) -> io::Result<(
         MerkleOrLatticeAccountsHash,
         Option<BankIncrementalSnapshotPersistence>,
     )> {

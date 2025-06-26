@@ -38,7 +38,7 @@ use {
         cmp::Ordering,
         collections::{HashMap, HashSet},
         fmt, fs,
-        io::{BufReader, BufWriter, Error as IoError, Read, Result as IoResult, Seek, Write},
+        io::{self, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
         num::{NonZeroU64, NonZeroUsize},
         ops::RangeInclusive,
@@ -587,7 +587,7 @@ pub enum GetSnapshotAccountsHardLinkDirError {
 pub fn clean_orphaned_account_snapshot_dirs(
     bank_snapshots_dir: impl AsRef<Path>,
     account_snapshot_paths: &[PathBuf],
-) -> IoResult<()> {
+) -> io::Result<()> {
     // Create the HashSet of the account snapshot hardlink directories referenced by the snapshot dirs.
     // This is used to clean up any hardlinks that are no longer referenced by the snapshot dirs.
     let mut account_snapshot_dirs_referenced = HashSet::new();
@@ -678,7 +678,7 @@ fn is_bank_snapshot_complete(bank_snapshot_dir: impl AsRef<Path>) -> bool {
 }
 
 /// Marks the bank snapshot as complete
-fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<()> {
     let state_complete_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STATE_COMPLETE_FILENAME);
@@ -695,7 +695,7 @@ fn write_snapshot_state_complete_file(bank_snapshot_dir: impl AsRef<Path>) -> Io
 pub fn write_full_snapshot_slot_file(
     bank_snapshot_dir: impl AsRef<Path>,
     full_snapshot_slot: Slot,
-) -> IoResult<()> {
+) -> io::Result<()> {
     let full_snapshot_slot_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_FULL_SNAPSHOT_SLOT_FILENAME);
@@ -712,7 +712,7 @@ pub fn write_full_snapshot_slot_file(
 }
 
 // Reads the full snapshot slot file from the bank snapshot dir
-pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<Slot> {
+pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<Slot> {
     const SLOT_SIZE: usize = std::mem::size_of::<Slot>();
     let full_snapshot_slot_path = bank_snapshot_dir
         .as_ref()
@@ -735,7 +735,7 @@ pub fn read_full_snapshot_slot_file(bank_snapshot_dir: impl AsRef<Path>) -> IoRe
 }
 
 /// Writes the 'snapshot storages have been flushed' file to the bank snapshot dir
-pub fn write_storages_flushed_file(bank_snapshot_dir: impl AsRef<Path>) -> IoResult<()> {
+pub fn write_storages_flushed_file(bank_snapshot_dir: impl AsRef<Path>) -> io::Result<()> {
     let flushed_storages_path = bank_snapshot_dir
         .as_ref()
         .join(SNAPSHOT_STORAGES_FLUSHED_FILENAME);
@@ -1740,7 +1740,7 @@ fn streaming_unarchive_snapshot(
 fn archive_chunker_from_path(
     archive_path: &Path,
     archive_format: ArchiveFormat,
-) -> IoResult<ArchiveChunker<ArchiveFormatDecompressor<Box<dyn std::io::BufRead>>>> {
+) -> io::Result<ArchiveChunker<ArchiveFormatDecompressor<Box<dyn std::io::BufRead>>>> {
     const INPUT_READER_BUF_SIZE: usize = 128 * 1024 * 1024;
     let buf_reader = solana_accounts_db::large_file_buf_reader(archive_path, INPUT_READER_BUF_SIZE)
         .map_err(|err| {
