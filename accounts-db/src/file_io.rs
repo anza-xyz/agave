@@ -123,7 +123,7 @@ pub fn files_creator<'a>(
     buf_size: usize,
 ) -> io::Result<Box<dyn FilesCreator + 'a>> {
     #[cfg(target_os = "linux")]
-    if crate::io_uring_supported() {
+    if agave_io_uring::io_uring_supported() {
         use crate::io_uring::files_creator::IoUringFilesCreator;
 
         let io_uring_creator = IoUringFilesCreator::with_capacity(buf_size, wrote_callback);
