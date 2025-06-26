@@ -1,3 +1,5 @@
+use solana_epoch_schedule::EpochSchedule;
+
 pub use crate::tpu_client::Result;
 use {
     crate::tpu_client::{RecentLeaderSlots, TpuClientConfig, MAX_FANOUT_SLOTS},
@@ -13,7 +15,7 @@ use {
         },
         nonblocking::client_connection::ClientConnection,
     },
-    solana_epoch_info::EpochInfo,
+    //solana_epoch_info::EpochInfo,
     solana_pubkey::Pubkey,
     solana_pubsub_client::nonblocking::pubsub_client::{PubsubClient, PubsubClientError},
     solana_quic_definitions::QUIC_PORT_OFFSET,
@@ -70,14 +72,12 @@ pub enum TpuSenderError {
 
 struct LeaderTpuCacheUpdateInfo {
     pub(super) maybe_cluster_nodes: Option<ClientResult<Vec<RpcContactInfo>>>,
-    pub(super) maybe_epoch_info: Option<ClientResult<EpochInfo>>,
+    //pub(super) maybe_epoch_info: Option<ClientResult<EpochInfo>>,
     pub(super) maybe_slot_leaders: Option<ClientResult<Vec<Pubkey>>>,
 }
 impl LeaderTpuCacheUpdateInfo {
     pub fn has_some(&self) -> bool {
-        self.maybe_cluster_nodes.is_some()
-            || self.maybe_epoch_info.is_some()
-            || self.maybe_slot_leaders.is_some()
+        self.maybe_cluster_nodes.is_some() || self.maybe_slot_leaders.is_some()
     }
 }
 
@@ -86,15 +86,11 @@ struct LeaderTpuCache {
     first_slot: Slot,
     leaders: Vec<Pubkey>,
     leader_tpu_map: HashMap<Pubkey, SocketAddr>,
-    slots_in_epoch: Slot,
-    epoch_slot_boundary: Slot,
 }
 
 impl LeaderTpuCache {
     pub fn new(
         first_slot: Slot,
-        slots_in_epoch: Slot,
-        epoch_slot_boundary: Slot,
         leaders: Vec<Pubkey>,
         cluster_nodes: Vec<RpcContactInfo>,
         protocol: Protocol,
@@ -105,22 +101,12 @@ impl LeaderTpuCache {
             first_slot,
             leaders,
             leader_tpu_map,
-            slots_in_epoch,
-            epoch_slot_boundary,
         }
     }
 
     // Last slot that has a cached leader pubkey
     pub fn last_slot(&self) -> Slot {
         self.first_slot + self.leaders.len().saturating_sub(1) as u64
-    }
-
-    pub fn slot_info(&self) -> (Slot, Slot, Slot) {
-        (
-            self.last_slot(),
-            self.epoch_slot_boundary,
-            self.slots_in_epoch,
-        )
     }
 
     // Get the TPU sockets for the current leader and upcoming *unique* leaders according to fanout size.
@@ -233,13 +219,13 @@ impl LeaderTpuCache {
             }
         }
 
-        if let Some(Ok(epoch_info)) = cache_update_info.maybe_epoch_info {
-            self.slots_in_epoch = epoch_info.slots_in_epoch;
-            self.epoch_slot_boundary = epoch_info
-                .absolute_slot
-                .saturating_sub(epoch_info.slot_index)
-                .saturating_add(epoch_info.slots_in_epoch);
-        }
+        //if let Some(Ok(epoch_info)) = cache_update_info.maybe_epoch_info {
+        //    self.slots_in_epoch = epoch_info.slots_in_epoch;
+        //    self.epoch_slot_boundary = epoch_info
+        //        .absolute_slot
+        //        .saturating_sub(epoch_info.slot_index)
+        //        .saturating_add(epoch_info.slots_in_epoch);
+        //}
 
         if let Some(slot_leaders) = cache_update_info.maybe_slot_leaders {
             match slot_leaders {
@@ -740,21 +726,24 @@ impl LeaderTpuService {
         protocol: Protocol,
         exit: Arc<AtomicBool>,
     ) -> Result<Self> {
+        let epoch_schedule = rpc_client.get_epoch_schedule().await?;
+
         let start_slot = rpc_client
             .get_slot_with_commitment(CommitmentConfig::processed())
             .await?;
 
         let recent_slots = RecentLeaderSlots::new(start_slot);
-        let EpochInfo {
-            absolute_slot,
-            slots_in_epoch,
-            slot_index,
-            ..
-        } = rpc_client.get_epoch_info().await?;
+        let epoch = epoch_schedule.get_epoch(start_slot);
+        let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+        //let EpochInfo {
+        //    epoch,
+        //    absolute_slot,
+        //    slots_in_epoch,
+        //    slot_index,
+        //    ..
+        //} = rpc_client.get_epoch_info().await?;
 
-        let epoch_boundary_slot = absolute_slot
-            .saturating_sub(slot_index)
-            .saturating_add(slots_in_epoch);
+        //let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
 
         // When a cluster is starting, we observe an invalid slot range failure that goes away after a
         // retry. It seems as if the leader schedule is not available, but it should be. The logic
@@ -814,8 +803,6 @@ impl LeaderTpuService {
         })??;
         let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(
             start_slot,
-            slots_in_epoch,
-            epoch_boundary_slot,
             leaders,
             cluster_nodes,
             protocol,
@@ -834,6 +821,7 @@ impl LeaderTpuService {
                 rpc_client,
                 recent_slots,
                 leader_tpu_cache,
+                epoch_schedule,
                 pubsub_client,
                 exit,
             ))
@@ -876,12 +864,19 @@ impl LeaderTpuService {
         rpc_client: Arc<RpcClient>,
         recent_slots: RecentLeaderSlots,
         leader_tpu_cache: Arc<RwLock<LeaderTpuCache>>,
+        epoch_schedule: EpochSchedule,
         pubsub_client: Option<PubsubClient>,
         exit: Arc<AtomicBool>,
     ) -> Result<()> {
         tokio::try_join!(
             Self::run_slot_watcher(recent_slots.clone(), pubsub_client, exit.clone()),
-            Self::run_cache_refresher(rpc_client, recent_slots, leader_tpu_cache, exit),
+            Self::run_cache_refresher(
+                rpc_client,
+                recent_slots,
+                leader_tpu_cache,
+                epoch_schedule,
+                exit
+            ),
         )?;
 
         Ok(())
@@ -891,6 +886,7 @@ impl LeaderTpuService {
         rpc_client: Arc<RpcClient>,
         recent_slots: RecentLeaderSlots,
         leader_tpu_cache: Arc<RwLock<LeaderTpuCache>>,
+        epoch_schedule: EpochSchedule,
         exit: Arc<AtomicBool>,
     ) -> Result<()> {
         let mut last_cluster_refresh = Instant::now();
@@ -903,6 +899,7 @@ impl LeaderTpuService {
 
             let cache_update_info = maybe_fetch_cache_info(
                 &leader_tpu_cache,
+                &epoch_schedule,
                 last_cluster_refresh,
                 &rpc_client,
                 &recent_slots,
@@ -974,6 +971,7 @@ impl LeaderTpuService {
 
 async fn maybe_fetch_cache_info(
     leader_tpu_cache: &Arc<RwLock<LeaderTpuCache>>,
+    epoch_schedule: &EpochSchedule,
     last_cluster_refresh: Instant,
     rpc_client: &RpcClient,
     recent_slots: &RecentLeaderSlots,
@@ -987,15 +985,19 @@ async fn maybe_fetch_cache_info(
     };
 
     let estimated_current_slot = recent_slots.estimated_current_slot();
-    let (last_slot, epoch_slot_boundary, slots_in_epoch) = {
+    let last_slot = {
         let leader_tpu_cache = leader_tpu_cache.read().unwrap();
-        leader_tpu_cache.slot_info()
+        leader_tpu_cache.last_slot()
     };
-    let maybe_epoch_info = if estimated_current_slot >= epoch_slot_boundary {
-        Some(rpc_client.get_epoch_info().await)
-    } else {
-        None
-    };
+    let epoch = epoch_schedule.get_epoch(last_slot);
+    let slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
+    //let last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
+
+    //let maybe_epoch_info = if estimated_current_slot > last_slot_in_epoch {
+    //    Some(rpc_client.get_epoch_info().await)
+    //} else {
+    //    None
+    //};
 
     let maybe_slot_leaders = if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS)
     {
@@ -1012,7 +1014,6 @@ async fn maybe_fetch_cache_info(
     };
     LeaderTpuCacheUpdateInfo {
         maybe_cluster_nodes,
-        maybe_epoch_info,
         maybe_slot_leaders,
     }
 }
