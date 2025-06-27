@@ -1111,10 +1111,6 @@ pub mod reenable_zk_elgamal_proof_program {
     solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
 }
 
-pub mod disable_all2all_tests {
-    solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
-}
-
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1353,7 +1349,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (alpenglow::id(), "Enable Alpenglow"),
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
-        (disable_all2all_tests::id(), "Disables all2all tests"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

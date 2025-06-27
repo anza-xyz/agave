@@ -29,12 +29,6 @@ use {
     },
 };
 
-/// Cast mock votes on slots that divide by 53 to avoid crashing the network
-const MOCK_VOTE_INTERVAL: Slot = 53;
-
-// This needs to be > 3 for current logic of metrics collection
-const_assert!(MOCK_VOTE_INTERVAL > 3);
-
 struct PeerData {
     stake: Stake,
     address: SocketAddr,
@@ -149,7 +143,7 @@ impl MockAlpenglowConsensus {
         cluster_info: Arc<ClusterInfo>,
         epoch_specs: EpochSpecs,
     ) -> Self {
-        info!("Mock Alpenglow consensus is enabled, will cast mock votes every {MOCK_VOTE_INTERVAL} slots");
+        info!("Mock Alpenglow consensus is enabled");
         let socket = Arc::new(alpenglow_socket);
         let (command_sender, vote_command_receiver) = bounded(4);
         let shared_state = Arc::new(Mutex::new(SharedState {
@@ -298,10 +292,6 @@ impl MockAlpenglowConsensus {
                     votor_msg,
                     pk
                 );
-                if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
-                    trace!("Sigverify failed");
-                    continue;
-                }
                 let toa = &mut peer_info.relative_toa[votor_msg as u64 as usize];
                 if toa.is_none() {
                     *toa = Some(elapsed);
@@ -310,9 +300,10 @@ impl MockAlpenglowConsensus {
                     trace!("Duplicate packet");
                     continue;
                 }
+                // keep borrow checker happy
+                let stake = peer_info.stake;
                 match votor_msg {
                     VotorMessageType::Notarize => {
-                        state.alpenglow_state.notarize_stake_collected += peer_info.stake;
                         /*let c = state.alpenglow_state.notarize_stake_collected;
                         trace!("{id}:{c} + {}", peer_info.stake);
                         trace!(
@@ -320,7 +311,14 @@ impl MockAlpenglowConsensus {
                             state.alpenglow_state.notarize_stake_collected,
                             stake_60_percent
                         );*/
+                        if !state.alpenglow_state.block_finalized {
+                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
+                                trace!("Sigverify failed");
+                                continue;
+                            }
+                        }
                         if !state.alpenglow_state.block_notarized {
+                            state.alpenglow_state.notarize_stake_collected += stake;
                             trace!(
                                 "{id}:{} of {}",
                                 state.alpenglow_state.notarize_stake_collected,
@@ -337,7 +335,7 @@ impl MockAlpenglowConsensus {
                             }
                         }
                         if !state.alpenglow_state.block_finalized {
-                            if state.alpenglow_state.finalize_stake_collected > stake_80_percent {
+                            if state.alpenglow_state.notarize_stake_collected > stake_80_percent {
                                 state.alpenglow_state.block_has_notar_cert = true;
                                 state.alpenglow_state.block_finalized = true;
                                 trace!(
@@ -351,17 +349,27 @@ impl MockAlpenglowConsensus {
                     }
                     VotorMessageType::NotarizeCertificate => {
                         if !state.alpenglow_state.block_has_notar_cert {
+                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
+                                trace!("Sigverify failed");
+                                continue;
+                            }
                             state.alpenglow_state.block_has_notar_cert = true;
                             trace!(
                                 "{id} has notarized slot {} by observing notar certificate",
                                 state.current_slot
                             );
+                            command_sender
+                                .try_send(Command::SendNotarizeCertificate(state.current_slot));
                             command_sender.try_send(Command::SendFinalize(state.current_slot));
                         }
                     }
                     VotorMessageType::Finalize => {
-                        state.alpenglow_state.finalize_stake_collected += peer_info.stake;
                         if !state.alpenglow_state.block_finalized {
+                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
+                                trace!("Sigverify failed");
+                                continue;
+                            }
+                            state.alpenglow_state.finalize_stake_collected += stake;
                             if state.alpenglow_state.finalize_stake_collected > stake_60_percent {
                                 state.alpenglow_state.block_finalized = true;
                                 trace!(
@@ -374,7 +382,15 @@ impl MockAlpenglowConsensus {
                         }
                     }
                     VotorMessageType::FinalizeCertificate => {
-                        //nothing to do here
+                        if !state.alpenglow_state.block_finalized {
+                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
+                                trace!("Sigverify failed");
+                                continue;
+                            }
+                            state.alpenglow_state.block_finalized = true;
+                            command_sender
+                                .try_send(Command::SendFinalizeCertificate(state.current_slot));
+                        }
                     }
                 }
             }
@@ -506,8 +522,10 @@ impl MockAlpenglowConsensus {
         );
     }
 
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot) {
-        let phase = slot % MOCK_VOTE_INTERVAL;
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, interval: Slot) {
+        // constraint interval to be above 3 to keep current logic working
+        let interval = interval.max(3);
+        let phase = slot % interval;
         // this is currently set up to work over a course of 3 slots.
         // it will only work correctly if we do not actually fork within those 3 slots, and
         // are consistently casting votes for all 3.
