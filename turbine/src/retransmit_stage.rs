@@ -584,7 +584,7 @@ impl RetransmitStage {
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         retransmit_receiver: Receiver<Vec<shred::Payload>>,
         max_slots: Arc<MaxSlots>,
-        rpc_subscriptions: Option<&RpcSubscriptions>,
+        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
         xdp_config: Option<XdpConfig>,
     ) -> Self {
