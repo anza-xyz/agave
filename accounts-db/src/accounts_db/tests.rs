@@ -5,7 +5,7 @@ use {
         account_info::StoredSize,
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
-        accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
+        accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
