@@ -80,17 +80,28 @@ pub struct VotingService {
     thread_hdl: JoinHandle<()>,
 }
 
-// Returns true if the feature is effective for the shred slot.
-#[must_use]
-pub fn check_feature_activation(root_bank: &Bank) -> bool {
-    let feature = agave_feature_set::disable_all2all_tests::id();
-    // ignore feature gate check when running in unittests (as it would always return true)
-    if cfg!(feature = "dev-context-only-utils") {
-        return false;
-    }
-    match root_bank.feature_set.activated_slot(&feature) {
-        None => false,
-        Some(feature_slot) => root_bank.slot() >= feature_slot,
+mod control_pubkey {
+    solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
+}
+
+#[derive(Deserialize)]
+struct TestControl {
+    test_interval_slots: u8,
+    _future_use: [u8; 3],
+}
+
+// Returns the current test periodicity
+fn get_test_interval(bank: &Bank) -> Option<Slot> {
+    let data = bank
+        .accounts()
+        .accounts_db
+        .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
+        .0;
+    let x: TestControl = data.deserialize_data().ok()?;
+    if x.test_interval_slots > 0 {
+        Some(x.test_interval_slots as Slot)
+    } else {
+        None
     }
 }
 
@@ -133,12 +144,13 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
-                                if check_feature_activation(&bank_forks.read().unwrap().root_bank())
+                                if let Some(interval) =
+                                    get_test_interval(&bank_forks.read().unwrap().root_bank())
                                 {
-                                    info!("Alpenglow votes disabled by feature gate")
+                                    ag.signal_new_slot(slot, interval);
                                 } else {
-                                    ag.signal_new_slot(slot);
-                                }
+                                    info!("Alpenglow votes disabled by on-chain config")
+                                };
                             }
                         }
                     }
