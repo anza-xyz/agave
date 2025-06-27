@@ -283,7 +283,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                 ReadBufState::Full { .. } => break,
                 ReadBufState::Uninit { .. } => unreachable!("should be initialized"),
                 // Still no data, wait for more completions.
-                ReadBufState::Reading => (),
+                ReadBufState::Reading => _ = self.inner.submit_and_wait(1, None)?,
             }
         }
 
