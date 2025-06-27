@@ -2515,7 +2515,7 @@ impl Node {
         let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
             .expect("tpu_quic bind");
 
-        let ((tpu_forwards_port, tpu_forwards_sockets), (_, tpu_forwards_quic)) =
+        let ((tpu_forwards_port, tpu_forwards_socket), (_, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
                 bind_ip_addr,
                 port_range,
@@ -2524,7 +2524,7 @@ impl Node {
                 socket_config,
             )
             .expect("tpu_forwards primary bind");
-        let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_sockets, 8, socket_config)
+        let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_socket, 8, socket_config)
             .expect("tpu_forwards multi_bind");
         let tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints.get(), socket_config)
