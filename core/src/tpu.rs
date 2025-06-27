@@ -311,7 +311,7 @@ impl Tpu {
             gossip_vote_sender,
             vote_tracker,
             bank_forks.clone(),
-            subscriptions.clone(),
+            subscriptions,
             verified_vote_sender,
             gossip_verified_vote_hash_sender,
             replay_vote_receiver,
