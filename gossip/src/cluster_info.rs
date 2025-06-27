@@ -2429,11 +2429,11 @@ impl Node {
     }
 
     /// create localhost node for tests with provided pubkey
-    /// unlike the public IP version, this will also bind RPC sockets.
+    /// unlike the [new_with_external_ip], this will also bind RPC sockets.
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
         let port_range = localhost_port_range_for_tests();
         let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let gossip_addr = SocketAddr::new(addr, 0);
+        let gossip_addr = SocketAddr::new(addr, port_range.0);
         Self::new_single_bind(pubkey, &gossip_addr, port_range, addr)
     }
 
