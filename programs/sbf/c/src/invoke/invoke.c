@@ -40,6 +40,8 @@ static const uint8_t TEST_CPI_INVALID_LAMPORTS_POINTER = 37;
 static const uint8_t TEST_CPI_INVALID_DATA_POINTER = 38;
 static const uint8_t TEST_WRITE_ACCOUNT = 40;
 static const uint8_t TEST_ACCOUNT_INFO_IN_ACCOUNT = 43;
+static const uint8_t TEST_NESTED_INVOKE_SIMD_0296_OK = 46;
+static const uint8_t TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP = 47;
 
 static const int MINT_INDEX = 0;
 static const int ARGUMENT_INDEX = 1;
@@ -80,7 +82,7 @@ uint64_t do_nested_invokes(uint64_t num_nested_invokes,
   sol_assert(*accounts[ARGUMENT_INDEX].lamports ==
              42 - 5 + (2 * num_nested_invokes));
   sol_assert(*accounts[INVOKED_ARGUMENT_INDEX].lamports ==
-             10 + 5 - (2 * num_nested_invokes));
+             20 + 5 - (2 * num_nested_invokes));
 
   return SUCCESS;
 }
@@ -625,6 +627,14 @@ extern uint64_t entrypoint(const uint8_t *input) {
   }
   case TEST_NESTED_INVOKE_TOO_DEEP: {
     do_nested_invokes(5, accounts, params.ka_num);
+    break;
+  }
+  case TEST_NESTED_INVOKE_SIMD_0296_OK: {
+    do_nested_invokes(8, accounts, params.ka_num);
+    break;
+  }
+  case TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP: {
+    do_nested_invokes(9, accounts, params.ka_num);
     break;
   }
   case TEST_CALL_PRECOMPILE: {
