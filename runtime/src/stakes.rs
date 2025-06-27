@@ -697,7 +697,7 @@ pub(crate) mod tests {
 
         // Vote account uninitialized
         let default_vote_state = VoteState::default();
-        let versioned = VoteStateVersions::new_current(default_vote_state);
+        let versioned = VoteStateVersions::new_v3(default_vote_state);
         vote_state::to(&versioned, &mut vote_account).unwrap();
         stakes_cache.check_and_store(&vote_pubkey, &vote_account, None);
 

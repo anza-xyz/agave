@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn test_try_new_zeroed() {
         let target_vote_state = VoteState::default();
-        let target_vote_state_versions = VoteStateVersions::Current(Box::new(target_vote_state));
+        let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state));
         let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
 
         for i in 0..bytes.len() {
@@ -147,7 +147,7 @@ mod tests {
             lockout: Lockout::default(),
         });
 
-        let target_vote_state_versions = VoteStateVersions::Current(Box::new(target_vote_state));
+        let target_vote_state_versions = VoteStateVersions::V3(Box::new(target_vote_state));
         let mut bytes = bincode::serialize(&target_vote_state_versions).unwrap();
 
         for i in 0..bytes.len() {

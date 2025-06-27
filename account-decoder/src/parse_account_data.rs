@@ -227,7 +227,7 @@ mod test {
 
         let vote_state = VoteState::default();
         let mut vote_account_data: Vec<u8> = vec![0; VoteState::size_of()];
-        let versioned = VoteStateVersions::new_current(vote_state);
+        let versioned = VoteStateVersions::new_v3(vote_state);
         VoteState::serialize(&versioned, &mut vote_account_data).unwrap();
         let parsed = parse_account_data_v3(
             &account_pubkey,

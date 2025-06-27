@@ -157,7 +157,7 @@ impl VoteStateView {
 impl From<VoteState> for VoteStateView {
     fn from(vote_state: VoteState) -> Self {
         let vote_account_data =
-            bincode::serialize(&VoteStateVersions::new_current(vote_state)).unwrap();
+            bincode::serialize(&VoteStateVersions::new_v3(vote_state)).unwrap();
         VoteStateView::try_new(Arc::new(vote_account_data)).unwrap()
     }
 }
@@ -278,7 +278,7 @@ mod tests {
     fn test_vote_state_view_v3() {
         let target_vote_state = new_test_vote_state();
         let target_vote_state_versions =
-            VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+            VoteStateVersions::V3(Box::new(target_vote_state.clone()));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
@@ -288,7 +288,7 @@ mod tests {
     fn test_vote_state_view_v3_default() {
         let target_vote_state = VoteState::default();
         let target_vote_state_versions =
-            VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+            VoteStateVersions::V3(Box::new(target_vote_state.clone()));
         let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
         let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
         assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);
@@ -313,7 +313,7 @@ mod tests {
             }
 
             let target_vote_state_versions =
-                VoteStateVersions::Current(Box::new(target_vote_state.clone()));
+                VoteStateVersions::V3(Box::new(target_vote_state.clone()));
             let vote_state_buf = bincode::serialize(&target_vote_state_versions).unwrap();
             let vote_state_view = VoteStateView::try_new(Arc::new(vote_state_buf)).unwrap();
             assert_eq_vote_state_v3(&vote_state_view, &target_vote_state);

@@ -31,7 +31,7 @@ fn new_rand_vote_account<R: Rng>(
     vote_state.process_next_vote_slot(0, 0, 1);
     let account = AccountSharedData::new_data(
         rng.gen(), // lamports
-        &VoteStateVersions::new_current(vote_state.clone()),
+        &VoteStateVersions::new_v3(vote_state.clone()),
         &solana_sdk_ids::vote::id(), // owner
     )
     .unwrap();
