@@ -7858,19 +7858,26 @@ impl AccountsDb {
         let mut zero_lamport_pubkeys = vec![];
         let mut all_accounts_are_zero_lamports = true;
 
-        let (dirty_pubkeys, insert_time_us, mut generate_index_results) = {
-            let mut items_local = Vec::default();
+        let (insert_time_us, generate_index_results) = {
+            let mut keyed_account_infos = vec![];
             // this closure is the shared code when scanning the storage
             let mut itemizer = |info: IndexInfo| {
                 stored_size_alive += info.stored_size_aligned;
-                if info.index_info.lamports > 0 {
-                    accounts_data_len += info.index_info.data_len;
+                let index_info = &info.index_info;
+                if index_info.lamports > 0 {
+                    accounts_data_len += index_info.data_len;
                     all_accounts_are_zero_lamports = false;
                 } else {
                     // zero lamport accounts
-                    zero_lamport_pubkeys.push(info.index_info.pubkey);
+                    zero_lamport_pubkeys.push(index_info.pubkey);
                 }
-                items_local.push(info.index_info);
+                keyed_account_infos.push((
+                    index_info.pubkey,
+                    AccountInfo::new(
+                        StorageLocation::AppendVec(store_id, index_info.offset), // will never be cached
+                        index_info.is_zero_lamport(),
+                    ),
+                ));
             };
 
             if secondary {
@@ -7916,37 +7923,9 @@ impl AccountsDb {
                     })
             }
             .expect("must scan accounts storage");
-            let items = items_local.into_iter().map(|info| {
-                (
-                    info.pubkey,
-                    AccountInfo::new(
-                        StorageLocation::AppendVec(store_id, info.offset), // will never be cached
-                        info.is_zero_lamport(),
-                    ),
-                )
-            });
             self.accounts_index
-                .insert_new_if_missing_into_primary_index(slot, items)
+                .insert_new_if_missing_into_primary_index(slot, keyed_account_infos)
         };
-
-        if let Some(duplicates_this_slot) = std::mem::take(&mut generate_index_results.duplicates) {
-            // there were duplicate pubkeys in this same slot
-            // Some were not inserted. This means some info like stored data is off.
-            for (pubkey, (_slot, info)) in duplicates_this_slot {
-                storage.accounts.get_stored_account_without_data_callback(
-                    info.offset(),
-                    |duplicate_account| {
-                        assert_eq!(pubkey, *duplicate_account.pubkey());
-                        let data_len = duplicate_account.data_len;
-                        let stored_size_aligned = storage.accounts.calculate_stored_size(data_len);
-                        stored_size_alive = stored_size_alive.saturating_sub(stored_size_aligned);
-                        if !duplicate_account.is_zero_lamport() {
-                            accounts_data_len = accounts_data_len.saturating_sub(data_len as u64);
-                        }
-                    },
-                );
-            }
-        }
 
         {
             // second, collect into the shared DashMap once we've figured out all the info per store_id
@@ -7962,11 +7941,13 @@ impl AccountsDb {
             );
         }
 
-        // dirty_pubkeys will contain a pubkey if an item has multiple rooted entries for
+        // zero_lamport_pubkeys will contain a pubkey if an item has multiple rooted entries for
         // a given pubkey. If there is just a single item, there is no cleaning to
         // be done on that pubkey. Use only those pubkeys with multiple updates.
-        if !dirty_pubkeys.is_empty() {
-            let old = self.uncleaned_pubkeys.insert(slot, dirty_pubkeys);
+        if !zero_lamport_pubkeys.is_empty() {
+            let old = self
+                .uncleaned_pubkeys
+                .insert(slot, zero_lamport_pubkeys.clone());
             assert!(old.is_none());
         }
         SlotIndexGenerationInfo {
