@@ -24,6 +24,8 @@ use {
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
+    solana_gossip::cluster_info::BindIpAddrs,
+    solana_gossip::cluster_info::NodeConfig,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::Protocol,
@@ -53,10 +55,12 @@ use {
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
+    solana_streamer::quic::DEFAULT_QUIC_ENDPOINTS,
     solana_streamer::socket::SocketAddrSpace,
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::Transaction,
     solana_validator_exit::Exit,
+    std::num::NonZero,
     std::{
         collections::{HashMap, HashSet},
         ffi::OsStr,
@@ -1021,18 +1025,29 @@ impl TestValidator {
                 .to_str()
                 .unwrap(),
         )?;
-
-        let mut node = Node::new_single_bind(
-            &validator_identity.pubkey(),
-            &config.node_config.gossip_addr,
-            config.node_config.port_range,
-            config.node_config.bind_ip_addr,
-        );
-        if let Some((rpc, rpc_pubsub)) = config.rpc_ports {
-            let addr = node.info.gossip().unwrap().ip();
-            node.info.set_rpc((addr, rpc)).unwrap();
-            node.info.set_rpc_pubsub((addr, rpc_pubsub)).unwrap();
-        }
+        let node = {
+            let validator_node_config = NodeConfig {
+                bind_ip_addrs: BindIpAddrs::new(vec![config.node_config.bind_ip_addr])?,
+                gossip_port: config.node_config.gossip_addr.port(),
+                port_range: config.node_config.port_range,
+                advertised_ip: config.node_config.bind_ip_addr,
+                public_tpu_addr: None,
+                public_tpu_forwards_addr: None,
+                num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+                num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+                num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
+                    .expect("Number of QUIC endpoints can not be zero"),
+                vortexor_receiver_addr: None,
+            };
+            let mut node =
+                Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
+            if let Some((rpc, rpc_pubsub)) = config.rpc_ports {
+                let addr = node.info.gossip().unwrap().ip();
+                node.info.set_rpc((addr, rpc)).unwrap();
+                node.info.set_rpc_pubsub((addr, rpc_pubsub)).unwrap();
+            }
+            node
+        };
 
         let vote_account_address = validator_vote_account.pubkey();
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());

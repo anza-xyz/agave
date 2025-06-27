@@ -2432,12 +2432,32 @@ impl Node {
     /// unlike the [new_with_external_ip], this will also bind RPC sockets.
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
         let port_range = localhost_port_range_for_tests();
-        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let gossip_addr = SocketAddr::new(addr, port_range.0);
-        Self::new_single_bind(pubkey, &gossip_addr, port_range, addr)
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let config = NodeConfig {
+            bind_ip_addrs: BindIpAddrs {
+                addrs: vec![bind_ip_addr],
+            },
+            gossip_port: port_range.0,
+            port_range,
+            advertised_ip: bind_ip_addr,
+            public_tpu_addr: None,
+            public_tpu_forwards_addr: None,
+            num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+            num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+            num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
+                .expect("Number of QUIC endpoints can not be zero"),
+            vortexor_receiver_addr: None,
+        };
+        let mut node = Self::new_with_external_ip(pubkey, config);
+        let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
+        let rpc_addr = SocketAddr::new(bind_ip_addr, rpc_ports[0]);
+        let rpc_pubsub_addr = SocketAddr::new(bind_ip_addr, rpc_ports[1]);
+        node.info.set_rpc(rpc_addr).unwrap();
+        node.info.set_rpc_pubsub(rpc_pubsub_addr).unwrap();
+        node
     }
 
-    /// new_single_bind will be removed soon
+    #[deprecated(since = "3.0.0", note = "use new_with_external_ip")]
     pub fn new_single_bind(
         pubkey: &Pubkey,
         gossip_addr: &SocketAddr,
