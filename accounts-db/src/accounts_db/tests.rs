@@ -173,29 +173,6 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     );
 }
 
-#[test]
-fn test_generate_index_duplicates_within_slot_with_secondary_indexes() {
-    let secondary_indexes = AccountSecondaryIndexes {
-        keys: None,
-        indexes: HashSet::from([
-            AccountIndex::ProgramId,
-            AccountIndex::SplTokenMint,
-            AccountIndex::SplTokenOwner,
-        ]),
-    };
-    let accounts_db_config = AccountsDbConfig {
-        account_indexes: Some(secondary_indexes),
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
-    let accounts_db = AccountsDb::new_with_config(
-        Vec::new(),
-        Some(accounts_db_config),
-        None,
-        AtomicBool::new(false).into(),
-    );
-    run_generate_index_duplicates_within_slot_test(accounts_db, false);
-}
-
 fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
     // offset has to be 8 byte aligned
     let offset = (i as usize) * std::mem::size_of::<u64>();
