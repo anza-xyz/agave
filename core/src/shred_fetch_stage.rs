@@ -18,7 +18,10 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        streamer::{self, ChannelSend, PacketBatchReceiver, StreamerReceiveStats},
+    },
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{
@@ -41,6 +44,14 @@ pub(crate) struct ShredFetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+/// Ingress limit for the shred fetch channel (in terms of packet _batches_).
+///
+/// The general case sees shred and repair ingress in the hundreds of packet batches per second.
+/// However, in the case of catch-up, we may see upwards of 8k packet batches per second, which would
+/// suggest a roughly 16k packet batch limit for ample headroom. We're setting it to 4x that amount
+/// to future proof for increases of CU limits (e.g., a future 100k CU limit).
+pub(crate) const SHRED_FETCH_CHANNEL_SIZE: usize = 1024 * 64;
+
 #[derive(Clone)]
 struct RepairContext {
     repair_socket: Arc<UdpSocket>,
@@ -53,7 +64,7 @@ impl ShredFetchStage {
     fn modify_packets(
         recvr: PacketBatchReceiver,
         recvr_stats: Option<Arc<StreamerReceiveStats>>,
-        sendr: Sender<PacketBatch>,
+        sendr: EvictingSender<PacketBatch>,
         bank_forks: &RwLock<BankForks>,
         shred_version: u16,
         name: &'static str,
@@ -169,8 +180,13 @@ impl ShredFetchStage {
                     stats.report();
                 }
             }
-            if sendr.send(packet_batch).is_err() {
-                break;
+            if let Err(send_err) = sendr.try_send(packet_batch) {
+                match send_err {
+                    crossbeam_channel::TrySendError::Full(v) => {
+                        stats.overflow_shreds += v.len();
+                    }
+                    _ => unreachable!("EvictingSender holds on to both ends of the channel"),
+                }
             }
         }
     }
@@ -181,7 +197,7 @@ impl ShredFetchStage {
         modifier_thread_name: &'static str,
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: Sender<PacketBatch>,
+        sender: EvictingSender<PacketBatch>,
         recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
@@ -191,7 +207,8 @@ impl ShredFetchStage {
         repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
-        let (packet_sender, packet_receiver) = unbounded();
+        let (packet_sender, packet_receiver) =
+            EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
         let receiver_stats = Arc::new(StreamerReceiveStats::new(receiver_name));
         let streamers = sockets
             .into_iter()
@@ -236,7 +253,7 @@ impl ShredFetchStage {
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
-        sender: Sender<PacketBatch>,
+        sender: EvictingSender<PacketBatch>,
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
