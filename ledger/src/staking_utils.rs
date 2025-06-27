@@ -112,7 +112,7 @@ pub(crate) mod tests {
         let vote_accounts = stakes.into_iter().map(|(stake, vote_state)| {
             let account = AccountSharedData::new_data(
                 rng.gen(), // lamports
-                &VoteStateVersions::new_current(vote_state),
+                &VoteStateVersions::new_v3(vote_state),
                 &solana_vote_program::id(), // owner
             )
             .unwrap();

@@ -625,7 +625,7 @@ fn bench_deactivate_delinquent(c: &mut Criterion) {
     let reference_vote_address = Pubkey::new_unique();
     let reference_vote_account = AccountSharedData::new_data_with_space(
         1,
-        &VoteStateVersions::new_current(vote_state),
+        &VoteStateVersions::new_v3(vote_state),
         VoteState::size_of(),
         &solana_sdk_ids::vote::id(),
     )

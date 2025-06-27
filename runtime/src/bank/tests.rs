@@ -1276,11 +1276,11 @@ where
         if let Some(v) = vote_state.as_mut() {
             vote_state::process_slot_vote_unchecked(v, i as u64)
         }
-        let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
+        let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
         vote_state::to(&versioned, &mut vote_account).unwrap();
         bank0.store_account_and_update_capitalization(&vote_id, &vote_account);
         match versioned {
-            VoteStateVersions::Current(v) => {
+            VoteStateVersions::V3(v) => {
                 vote_state = Some(*v);
             }
             _ => panic!("Has to be of type Current"),
@@ -1427,11 +1427,11 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
         if let Some(v) = vote_state.as_mut() {
             vote_state::process_slot_vote_unchecked(v, i as u64)
         }
-        let versioned = VoteStateVersions::Current(Box::new(vote_state.take().unwrap()));
+        let versioned = VoteStateVersions::V3(Box::new(vote_state.take().unwrap()));
         vote_state::to(&versioned, &mut vote_account).unwrap();
         bank.store_account_and_update_capitalization(&vote_id, &vote_account);
         match versioned {
-            VoteStateVersions::Current(v) => {
+            VoteStateVersions::V3(v) => {
                 vote_state = Some(*v);
             }
             _ => panic!("Has to be of type Current"),

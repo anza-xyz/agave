@@ -4841,7 +4841,7 @@ pub mod tests {
                     vote_state.root_slot = Some(root);
                     let mut vote_account =
                         AccountSharedData::new(1, VoteState::size_of(), &solana_vote_program::id());
-                    let versioned = VoteStateVersions::new_current(vote_state);
+                    let versioned = VoteStateVersions::new_v3(vote_state);
                     VoteState::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),

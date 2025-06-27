@@ -5038,7 +5038,7 @@ pub mod tests {
 
         fn store_vote_account(&self, vote_pubkey: &Pubkey, vote_state: VoteState) {
             let bank = self.working_bank();
-            let versioned = VoteStateVersions::new_current(vote_state);
+            let versioned = VoteStateVersions::new_v3(vote_state);
             let space = VoteState::size_of();
             let balance = bank.get_minimum_balance_for_rent_exemption(space);
             let mut vote_account =

@@ -432,7 +432,7 @@ fn test_stake_account_lifetime() {
     let account = bank.get_account(&vote_pubkey).expect("account not found");
     let vote_state: VoteState = StateMut::<VoteStateVersions>::state(&account)
         .expect("couldn't unpack account data")
-        .convert_to_current();
+        .convert_to_v3();
 
     // 1 less vote, as the first vote should have cleared the lockout
     assert_eq!(vote_state.votes.len(), 31);

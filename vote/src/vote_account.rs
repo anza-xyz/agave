@@ -117,7 +117,7 @@ impl VoteAccount {
         let vote_state = VoteState::new(&vote_init, &clock);
         let account = AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_current(vote_state.clone()),
+            &VoteStateVersions::new_v3(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap();
@@ -477,7 +477,7 @@ mod tests {
         let vote_state = VoteState::new(&vote_init, &clock);
         AccountSharedData::new_data(
             rng.gen(), // lamports
-            &VoteStateVersions::new_current(vote_state.clone()),
+            &VoteStateVersions::new_v3(vote_state.clone()),
             &solana_sdk_ids::vote::id(), // owner
         )
         .unwrap()

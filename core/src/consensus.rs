@@ -186,7 +186,7 @@ pub enum TowerVersions {
 }
 
 impl TowerVersions {
-    pub fn new_current(tower: Tower) -> Self {
+    pub fn new_v3(tower: Tower) -> Self {
         Self::Current(tower)
     }
 
@@ -1822,7 +1822,7 @@ pub mod test {
                     process_slot_vote_unchecked(&mut vote_state, *slot);
                 }
                 VoteState::serialize(
-                    &VoteStateVersions::new_current(vote_state),
+                    &VoteStateVersions::new_v3(vote_state),
                     account.data_as_mut_slice(),
                 )
                 .expect("serialize state");

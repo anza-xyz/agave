@@ -1109,7 +1109,7 @@ impl ProgramTestContext {
         for _ in 0..number_of_credits {
             vote_state.increment_credits(epoch, 1);
         }
-        let versioned = VoteStateVersions::new_current(vote_state);
+        let versioned = VoteStateVersions::new_v3(vote_state);
         vote_state::to(&versioned, &mut vote_account).unwrap();
         bank.store_account(vote_account_address, &vote_account);
     }
