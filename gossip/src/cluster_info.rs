@@ -2520,7 +2520,7 @@ impl Node {
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tvu_quic bind");
 
-        let ((tpu_port, tpu_sockets), (_tpu_port_quic, tpu_quic)) =
+        let ((tpu_port, tpu_socket), (_tpu_port_quic, tpu_quic)) =
             bind_two_in_range_with_offset_and_config(
                 bind_ip_addr,
                 port_range,
@@ -2528,9 +2528,9 @@ impl Node {
                 socket_config,
                 socket_config,
             )
-            .expect("tou_socket primary bind");
+            .expect("tpu_socket primary bind");
         let tpu_sockets =
-            bind_more_with_config(tpu_sockets, 32, socket_config).expect("tpu_sockets multi_bind");
+            bind_more_with_config(tpu_socket, 32, socket_config).expect("tpu_sockets multi_bind");
 
         let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
             .expect("tpu_quic bind");
