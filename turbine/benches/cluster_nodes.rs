@@ -29,6 +29,7 @@ fn make_cluster_nodes<R: Rng>(
     (nodes, cluster_nodes)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn get_retransmit_peers_deterministic(
     cluster_nodes: &ClusterNodes<RetransmitStage>,
     slot: Slot,
