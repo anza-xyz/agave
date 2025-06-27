@@ -186,16 +186,11 @@ impl Tvu {
             alpenglow: mut alpenglow_socket,
         } = sockets;
 
-<<<<<<< HEAD
-        let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
-=======
-        // disable all2all if not enabled
+        // disable all2all if not enabled for a given cluster type
         if !tvu_config.enable_all2all_tests {
             alpenglow_socket = None;
         }
-
-        let (fetch_sender, fetch_receiver) = unbounded();
->>>>>>> 658395 (add feature gate)
+        let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
