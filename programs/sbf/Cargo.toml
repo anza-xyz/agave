@@ -168,7 +168,7 @@ solana-transaction-status = { path = "../../transaction-status", version = "=3.0
 solana-type-overrides = { path = "../../type-overrides", version = "=3.0.0" }
 solana-vote = { path = "../../vote", version = "=3.0.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=3.0.0" }
-solana-zk-sdk = "=2.2.1"
+solana-zk-sdk = { path = "../../zk-sdk", version = "=3.0.0" }
 thiserror = "1.0"
 
 [features]
