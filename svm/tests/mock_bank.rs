@@ -353,7 +353,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: true,
+        enable_stack_frame_gaps: false,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: true,
@@ -363,7 +363,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
-        aligned_memory_mapping: true,
+        aligned_memory_mapping: false,
     };
 
     // These functions are system calls the compile contract calls during execution, so they
