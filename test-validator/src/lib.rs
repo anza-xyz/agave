@@ -27,7 +27,6 @@ use {
     solana_gossip::{
         cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
         contact_info::Protocol,
-        socketaddr,
     },
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
@@ -38,7 +37,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::sol_to_lamports,
-    solana_net_utils::PortRange,
+    solana_net_utils::{find_available_ports_in_range, PortRange},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -102,7 +101,7 @@ impl Default for TestValidatorNodeConfig {
         #[cfg(debug_assertions)]
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
-            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port_range.0),
+            gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
             port_range,
             bind_ip_addr,
         }
@@ -1022,11 +1021,12 @@ impl TestValidator {
                 .unwrap(),
         )?;
         let node = {
+            let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: BindIpAddrs::new(vec![config.node_config.bind_ip_addr])?,
+                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
-                advertised_ip: config.node_config.bind_ip_addr,
+                advertised_ip: bind_ip_addr,
                 public_tpu_addr: None,
                 public_tpu_forwards_addr: None,
                 num_tvu_receive_sockets: NonZero::new(1).unwrap(),
@@ -1037,11 +1037,16 @@ impl TestValidator {
             };
             let mut node =
                 Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
-            if let Some((rpc, rpc_pubsub)) = config.rpc_ports {
-                let addr = node.info.gossip().unwrap().ip();
-                node.info.set_rpc((addr, rpc)).unwrap();
-                node.info.set_rpc_pubsub((addr, rpc_pubsub)).unwrap();
-            }
+            let (rpc, rpc_pubsub) = config.rpc_ports.unwrap_or_else(|| {
+                let rpc_ports: [u16; 2] =
+                    find_available_ports_in_range(bind_ip_addr, config.node_config.port_range)
+                        .unwrap();
+                (rpc_ports[0], rpc_ports[1])
+            });
+            node.info.set_rpc((bind_ip_addr, rpc)).unwrap();
+            node.info
+                .set_rpc_pubsub((bind_ip_addr, rpc_pubsub))
+                .unwrap();
             node
         };
 
