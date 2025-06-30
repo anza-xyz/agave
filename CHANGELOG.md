@@ -23,6 +23,7 @@ and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backw
 
 #### Deprecations
 * Using `--snapshot-interval-slots 0` to disable generating snapshots is now deprecated.
+* Using `blockstore-processor` for `--block-verification-method` is now deprecated.
 
 ### Platform Tools SDK
 
