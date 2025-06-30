@@ -1209,6 +1209,10 @@ impl Bank {
         )
     }
 
+    fn get_rent_collector_from(rent_collector: &RentCollector, epoch: Epoch) -> RentCollector {
+        rent_collector.clone_with_epoch(epoch)
+    }
+
     fn _new_from_parent(
         parent: Arc<Bank>,
         collector_id: &Pubkey,
@@ -1280,7 +1284,7 @@ impl Bank {
             genesis_creation_time: parent.genesis_creation_time,
             slots_per_year: parent.slots_per_year,
             epoch_schedule,
-            rent_collector: parent.rent_collector.clone(),
+            rent_collector: Self::get_rent_collector_from(&parent.rent_collector, epoch),
             max_tick_height: slot
                 .checked_add(1)
                 .expect("max tick height addition overflowed")
@@ -1767,7 +1771,8 @@ impl Bank {
             collector_id: fields.collector_id,
             collector_fees: AtomicU64::new(fields.collector_fees),
             fee_rate_governor: fields.fee_rate_governor,
-            rent_collector: fields.rent_collector,
+            // clone()-ing is needed to consider a gated behavior in rent_collector
+            rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
             stakes_cache: StakesCache::new(stakes),
@@ -2636,7 +2641,7 @@ impl Bank {
         self.inflation = Arc::new(RwLock::new(genesis_config.inflation));
 
         self.rent_collector = RentCollector::new(
-            0, // default, unused
+            self.epoch,
             self.epoch_schedule().clone(),
             self.slots_per_year,
             genesis_config.rent.clone(),
