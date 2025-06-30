@@ -87,13 +87,14 @@ struct LeaderTpuCache {
     leaders: Vec<Pubkey>,
     leader_tpu_map: HashMap<Pubkey, SocketAddr>,
     slots_in_epoch: Slot,
-    last_epoch_info_slot: Slot,
+    epoch_slot_boundary: Slot,
 }
 
 impl LeaderTpuCache {
     pub fn new(
         first_slot: Slot,
         slots_in_epoch: Slot,
+        epoch_slot_boundary: Slot,
         leaders: Vec<Pubkey>,
         cluster_nodes: Vec<RpcContactInfo>,
         protocol: Protocol,
@@ -105,7 +106,7 @@ impl LeaderTpuCache {
             leaders,
             leader_tpu_map,
             slots_in_epoch,
-            last_epoch_info_slot: first_slot,
+            epoch_slot_boundary,
         }
     }
 
@@ -117,7 +118,7 @@ impl LeaderTpuCache {
     pub fn slot_info(&self) -> (Slot, Slot, Slot) {
         (
             self.last_slot(),
-            self.last_epoch_info_slot,
+            self.epoch_slot_boundary,
             self.slots_in_epoch,
         )
     }
@@ -234,7 +235,10 @@ impl LeaderTpuCache {
 
         if let Some(Ok(epoch_info)) = cache_update_info.maybe_epoch_info {
             self.slots_in_epoch = epoch_info.slots_in_epoch;
-            self.last_epoch_info_slot = estimated_current_slot;
+            self.epoch_slot_boundary = epoch_info
+                .absolute_slot
+                .saturating_sub(epoch_info.slot_index)
+                .saturating_add(epoch_info.slots_in_epoch);
         }
 
         if let Some(slot_leaders) = cache_update_info.maybe_slot_leaders {
@@ -741,7 +745,16 @@ impl LeaderTpuService {
             .await?;
 
         let recent_slots = RecentLeaderSlots::new(start_slot);
-        let slots_in_epoch = rpc_client.get_epoch_info().await?.slots_in_epoch;
+        let EpochInfo {
+            absolute_slot,
+            slots_in_epoch,
+            slot_index,
+            ..
+        } = rpc_client.get_epoch_info().await?;
+
+        let epoch_boundary_slot = absolute_slot
+            .saturating_sub(slot_index)
+            .saturating_add(slots_in_epoch);
 
         // When a cluster is starting, we observe an invalid slot range failure that goes away after a
         // retry. It seems as if the leader schedule is not available, but it should be. The logic
@@ -802,6 +815,7 @@ impl LeaderTpuService {
         let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(
             start_slot,
             slots_in_epoch,
+            epoch_boundary_slot,
             leaders,
             cluster_nodes,
             protocol,
@@ -973,16 +987,15 @@ async fn maybe_fetch_cache_info(
     };
 
     let estimated_current_slot = recent_slots.estimated_current_slot();
-    let (last_slot, last_epoch_info_slot, slots_in_epoch) = {
+    let (last_slot, epoch_slot_boundary, slots_in_epoch) = {
         let leader_tpu_cache = leader_tpu_cache.read().unwrap();
         leader_tpu_cache.slot_info()
     };
-    let maybe_epoch_info =
-        if estimated_current_slot >= last_epoch_info_slot.saturating_sub(slots_in_epoch) {
-            Some(rpc_client.get_epoch_info().await)
-        } else {
-            None
-        };
+    let maybe_epoch_info = if estimated_current_slot >= epoch_slot_boundary {
+        Some(rpc_client.get_epoch_info().await)
+    } else {
+        None
+    };
 
     let maybe_slot_leaders = if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS)
     {
