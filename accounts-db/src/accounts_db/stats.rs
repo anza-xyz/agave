@@ -348,6 +348,7 @@ pub struct ShrinkStats {
     pub alive_accounts: AtomicU64,
     pub index_scan_returned_none: AtomicU64,
     pub index_scan_returned_some: AtomicU64,
+    pub obsolete_accounts_filtered: AtomicU64,
     pub accounts_loaded: AtomicU64,
     pub initial_candidates_count: AtomicU64,
     pub purged_zero_lamports: AtomicU64,
@@ -381,6 +382,11 @@ impl ShrinkStats {
                 (
                     "num_slots_shrunk",
                     self.num_slots_shrunk.swap(0, Ordering::Relaxed),
+                    i64
+                ),
+                (
+                    "obsolete_accounts_filtered",
+                    self.obsolete_accounts_filtered.swap(0, Ordering::Relaxed),
                     i64
                 ),
                 (

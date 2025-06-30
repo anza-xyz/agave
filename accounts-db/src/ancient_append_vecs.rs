@@ -773,7 +773,7 @@ impl AccountsDb {
         // Without eager unref, we will collect X at `multi-ref` after shrink.
         // Packing multi-ref is less efficient than `one_ref``. But it might be ok - in next round of clean, hopefully, it can turn this from multi-ref into one-ref.
         let mut accounts_to_combine = accounts_per_storage
-            .iter()
+            .iter_mut()
             .map(|(info, unique_accounts)| {
                 self.shrink_collect::<ShrinkCollectAliveSeparatedByRefs<'_>>(
                     &info.storage,

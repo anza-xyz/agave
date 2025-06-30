@@ -6453,14 +6453,15 @@ fn test_shrink_collect_simple() {
                             });
 
                             let storage = db.get_storage_for_slot(slot5).unwrap();
-                            let unique_accounts = db.get_unique_accounts_from_storage_for_shrink(
-                                &storage,
-                                &ShrinkStats::default(),
-                            );
+                            let mut unique_accounts = db
+                                .get_unique_accounts_from_storage_for_shrink(
+                                    &storage,
+                                    &ShrinkStats::default(),
+                                );
 
                             let shrink_collect = db.shrink_collect::<AliveAccounts<'_>>(
                                 &storage,
-                                &unique_accounts,
+                                &mut unique_accounts,
                                 &ShrinkStats::default(),
                             );
                             let expect_single_opposite_alive_account =
@@ -6561,6 +6562,110 @@ fn test_shrink_collect_simple() {
             }
         }
     }
+}
+
+#[test]
+fn test_shrink_collect_with_obsolete_accounts() {
+    solana_logger::setup();
+    let account_count = 100;
+    let pubkeys: Vec<_> = iter::repeat_with(Pubkey::new_unique)
+        .take(account_count)
+        .collect();
+
+    let db = AccountsDb::new_single_for_tests();
+    let slot = 5;
+
+    let mut account = AccountSharedData::new(
+        100, // lamports
+        128, // space
+        AccountSharedData::default().owner(),
+    );
+
+    let mut regular_pubkeys = Vec::new();
+    let mut obsolete_pubkeys = Vec::new();
+    let mut zero_lamport_pubkeys = Vec::new();
+    let mut unref_pubkeys = Vec::new();
+
+    for (i, pubkey) in pubkeys.iter().enumerate() {
+        if i % 3 == 0 {
+            // Mark third account as zero lamport
+            // These will be removed during shrink
+            account.set_lamports(0);
+            zero_lamport_pubkeys.push(*pubkey);
+        } else {
+            // Regular accounts that should be kept
+            account.set_lamports(200);
+            regular_pubkeys.push(*pubkey);
+        }
+        db.store_for_tests(slot, &[(pubkey, &account)]);
+    }
+
+    // Flush the cache
+    db.add_root_and_flush_write_cache(slot);
+
+    let storage = db.get_and_assert_single_storage(slot);
+
+    for (i, pubkey) in pubkeys.iter().enumerate() {
+        // Mark Some accounts obsolete. These will include zero lamport and non zero lamport accounts
+        if i % 5 == 0 {
+            // Lookup the pubkey in the database and find the AccountInfo
+            db.accounts_index
+                .get_with_and_then(pubkey, None, None, false, |account_info| {
+                    db.remove_dead_accounts(
+                        [account_info].iter(),
+                        None,
+                        MarkAccountsObsolete::Yes(slot),
+                    );
+                });
+
+            obsolete_pubkeys.push(*pubkey);
+        } else if i % 4 == 0 {
+            // Purge accounts via clean and ensure that they will be unreffed.
+            db.accounts_index.purge_exact(
+                pubkey,
+                &([slot].into_iter().collect::<HashSet<_>>()),
+                &mut Vec::default(),
+            );
+            unref_pubkeys.push(*pubkey);
+        }
+    }
+
+    let mut unique_accounts =
+        db.get_unique_accounts_from_storage_for_shrink(&storage, &ShrinkStats::default());
+
+    let shrink_collect = db.shrink_collect::<AliveAccounts<'_>>(
+        &storage,
+        &mut unique_accounts,
+        &ShrinkStats::default(),
+    );
+
+    assert_eq!(shrink_collect.slot, slot);
+
+    // Ensure that the keys to unref does not include the obsolete accounts and only includes the unreferenced accounts
+    assert_eq!(
+        shrink_collect
+            .pubkeys_to_unref
+            .into_iter()
+            .collect::<HashSet<_>>(),
+        unref_pubkeys.iter().clone().collect::<HashSet<_>>()
+    );
+
+    // Ensure that the obsolete accounts and accounts to unref are not in the alive list
+    assert_eq!(
+        shrink_collect
+            .alive_accounts
+            .accounts
+            .into_iter()
+            .map(|account| *account.pubkey())
+            .sorted()
+            .collect::<Vec<Pubkey>>(),
+        regular_pubkeys
+            .into_iter()
+            .filter(|account| !unref_pubkeys.contains(account))
+            .filter(|account| !obsolete_pubkeys.contains(account))
+            .sorted()
+            .collect::<Vec<Pubkey>>()
+    );
 }
 
 pub(crate) const CAN_RANDOMLY_SHRINK_FALSE: bool = false;
