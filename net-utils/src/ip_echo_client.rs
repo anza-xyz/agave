@@ -213,7 +213,7 @@ pub(crate) async fn verify_all_reachable_tcp(
                 ok = false;
             }
         }
-        let _ = thread_handle.await.expect("Thread should exit cleanly");
+        thread_handle.await.expect("Thread should exit cleanly");
     }
 
     ok
