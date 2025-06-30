@@ -55,6 +55,7 @@ use {
         },
         contact_info::ContactInfo,
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
+        egress_socket_select,
         gossip_service::GossipService,
     },
     solana_hard_forks::HardForks,
@@ -1682,6 +1683,9 @@ impl Validator {
             outstanding_repair_requests,
             cluster_slots,
             gossip_socket: Some(node.sockets.gossip.clone()),
+            retransmit_socket_selector: Some(Arc::new(|idx| {
+                egress_socket_select::select_interface(idx)
+            })),
         });
 
         Ok(Self {
