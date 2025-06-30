@@ -767,15 +767,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// Queue up these insertions for when the flush thread is dealing with this bin.
     /// This is very fast and requires no lookups or disk access.
-    pub fn startup_insert_only(&self, items: impl Iterator<Item = (Pubkey, (Slot, T))>) {
+    pub fn startup_insert_only(
+        &self,
+        slot: Slot,
+        items: impl ExactSizeIterator<Item = (Pubkey, T)>,
+    ) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_some());
 
         let mut insert = self.startup_info.insert.lock().unwrap();
         let m = Measure::start("copy");
-        items
-            .into_iter()
-            .for_each(|(k, (slot, v))| insert.push((k, (slot, v.into()))));
+        insert.extend(items.map(|(k, v)| (k, (slot, v.into()))));
         self.startup_stats
             .copy_data_us
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
