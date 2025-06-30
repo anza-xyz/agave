@@ -226,6 +226,8 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// necessary if checking many ports.
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
+///
+#[allow(tail_expr_drop_order)]
 pub(crate) async fn verify_all_reachable_udp(
     ip_echo_server_addr: SocketAddr,
     sockets: &[&UdpSocket],
@@ -313,14 +315,8 @@ pub(crate) async fn verify_all_reachable_udp(
                         socket.set_read_timeout(original_read_timeout).unwrap();
                     });
                 }
-
-                loop {
-                    let r = checkers.join_next().await;
-                    if let Some(r) = r {
-                        r.expect("Threads should exit cleanly");
-                    } else {
-                        break;
-                    }
+                while let Some(r) = checkers.join_next().await {
+                    r.expect("Threads should exit cleanly");
                 }
                 // Might have lost a UDP packet, check that all ports were reached
                 let reachable_ports = Arc::into_inner(reachable_ports)
