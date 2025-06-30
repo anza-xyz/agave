@@ -1696,10 +1696,9 @@ impl ClusterInfo {
             .shuffle(&mut rng)
             .filter_map(|k| {
                 let (addr, values) = &mut pull_responses[k];
-                let addr = *addr;
                 let num_values = values.len();
                 let response = Protocol::PullResponse(self_id, std::mem::take(values));
-                let packet = make_gossip_packet(addr, &response, &self.stats)?;
+                let packet = make_gossip_packet(*addr, &response, &self.stats)?;
                 Some((packet, num_values))
             })
             .take_while(|(packet, _)| {
