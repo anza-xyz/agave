@@ -367,31 +367,38 @@ pub(crate) unsafe fn mmap_ring<T>(
     ring_type: u64,
 ) -> Result<RingMmap<T>, io::Error> {
     let map_size = (offsets.desc as usize).saturating_add(size);
-    let map_addr = mmap(
-        ptr::null_mut(),
-        map_size,
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_SHARED | libc::MAP_POPULATE,
-        fd,
-        ring_type as i64,
-    );
+    // Safety: just a libc wrapper. We pass a valid size and file descriptor.
+    let map_addr = unsafe {
+        mmap(
+            ptr::null_mut(),
+            map_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED | libc::MAP_POPULATE,
+            fd,
+            ring_type as i64,
+        )
+    };
     if map_addr == libc::MAP_FAILED {
         return Err(io::Error::last_os_error());
     }
-    let producer = map_addr.add(offsets.producer as usize) as *mut AtomicU32;
-    let consumer = map_addr.add(offsets.consumer as usize) as *mut AtomicU32;
-    let desc = map_addr.add(offsets.desc as usize) as *mut T;
-    let flags = map_addr.add(offsets.flags as usize) as *mut AtomicU32;
-    // V1
-    // let flags = map_addr.add(offsets.consumer as usize + mem::size_of::<u32>()) as *mut AtomicU32;
-    Ok(RingMmap {
-        mmap: map_addr as *const u8,
-        mmap_len: map_size,
-        producer,
-        consumer,
-        desc,
-        flags,
-    })
+    // Safety: manual pointer arithmetic. We are sure that the given offsets
+    // don't exceed the bounds.
+    unsafe {
+        let producer = map_addr.add(offsets.producer as usize) as *mut AtomicU32;
+        let consumer = map_addr.add(offsets.consumer as usize) as *mut AtomicU32;
+        let desc = map_addr.add(offsets.desc as usize) as *mut T;
+        let flags = map_addr.add(offsets.flags as usize) as *mut AtomicU32;
+        // V1
+        // let flags = map_addr.add(offsets.consumer as usize + mem::size_of::<u32>()) as *mut AtomicU32;
+        Ok(RingMmap {
+            mmap: map_addr as *const u8,
+            mmap_len: map_size,
+            producer,
+            consumer,
+            desc,
+            flags,
+        })
+    }
 }
 
 #[cfg(test)]
