@@ -5356,27 +5356,8 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "pin-project-lite",
- "quinn-proto 0.11.12 (registry+https://github.com/rust-lang/crates.io-index)",
- "quinn-udp 0.5.5",
- "rustc-hash 2.0.0",
- "rustls 0.23.28",
- "socket2",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
- "web-time",
-]
-
-[[package]]
-name = "quinn"
-version = "0.11.8"
-source = "git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742#42cf27d0f6b999fe732856f0c696936e85f8e742"
-dependencies = [
- "bytes",
- "cfg_aliases",
- "pin-project-lite",
- "quinn-proto 0.11.12 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
- "quinn-udp 0.5.12",
+ "quinn-proto",
+ "quinn-udp",
  "rustc-hash 2.0.0",
  "rustls 0.23.28",
  "socket2",
@@ -5391,26 +5372,6 @@ name = "quinn-proto"
 version = "0.11.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49df843a9161c85bb8aae55f101bc0bac8bcafd637a620d9122fd7e0b2f7422e"
-dependencies = [
- "bytes",
- "getrandom 0.3.3",
- "lru-slab",
- "rand 0.9.0",
- "ring",
- "rustc-hash 2.0.0",
- "rustls 0.23.28",
- "rustls-pki-types",
- "slab",
- "thiserror 2.0.12",
- "tinyvec",
- "tracing",
- "web-time",
-]
-
-[[package]]
-name = "quinn-proto"
-version = "0.11.12"
-source = "git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742#42cf27d0f6b999fe732856f0c696936e85f8e742"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -5440,19 +5401,6 @@ dependencies = [
  "socket2",
  "tracing",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "quinn-udp"
-version = "0.5.12"
-source = "git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742#42cf27d0f6b999fe732856f0c696936e85f8e742"
-dependencies = [
- "cfg_aliases",
- "libc",
- "once_cell",
- "socket2",
- "tracing",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5820,7 +5768,7 @@ dependencies = [
  "log",
  "percent-encoding 2.3.1",
  "pin-project-lite",
- "quinn 0.11.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "quinn",
  "rustls 0.23.28",
  "rustls-pki-types",
  "serde",
@@ -7574,7 +7522,7 @@ dependencies = [
  "indexmap 2.9.0",
  "indicatif",
  "log",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
  "rayon",
  "solana-account",
  "solana-client-traits",
@@ -7861,7 +7809,7 @@ dependencies = [
  "num_enum",
  "prio-graph",
  "qualifier_attr",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
@@ -9710,8 +9658,8 @@ dependencies = [
  "futures 0.3.31",
  "itertools 0.12.1",
  "log",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
- "quinn-proto 0.11.12 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
+ "quinn-proto",
  "rustls 0.23.28",
  "solana-connection-cache",
  "solana-keypair",
@@ -10735,8 +10683,8 @@ dependencies = [
  "num_cpus",
  "pem",
  "percentage",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
- "quinn-proto 0.11.12 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
+ "quinn-proto",
  "rand 0.8.5",
  "rustls 0.23.28",
  "smallvec",
@@ -11232,7 +11180,7 @@ dependencies = [
  "futures 0.3.31",
  "log",
  "lru",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
  "rustls 0.23.28",
  "solana-cli-config",
  "solana-clock",
@@ -11453,7 +11401,7 @@ dependencies = [
  "lazy-lru",
  "log",
  "lru",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
@@ -11621,8 +11569,8 @@ dependencies = [
  "nix",
  "pem",
  "percentage",
- "quinn 0.11.8 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
- "quinn-proto 0.11.12 (git+https://github.com/lijunwangs/quinn.git?rev=42cf27d0f6b999fe732856f0c696936e85f8e742)",
+ "quinn",
+ "quinn-proto",
  "rand 0.8.5",
  "rustls 0.23.28",
  "signal-hook",
