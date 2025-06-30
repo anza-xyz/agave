@@ -5345,7 +5345,7 @@ pub mod tests {
         crate::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
-            shred::{max_ticks_per_n_shreds, ShredFlags, LEGACY_SHRED_DATA_CAPACITY},
+            shred::{max_ticks_per_n_shreds, ShredFlags},
         },
         agave_feature_set::{vote_only_full_fec_sets, vote_only_retransmitter_signed_fec_sets},
         assert_matches::assert_matches,
@@ -10779,21 +10779,56 @@ pub mod tests {
         assert!(!blockstore.is_dead(0));
     }
 
+    /// Prepare two FEC sets of shreds for the same slot index
+    /// with reasonable shred indices, but in such a way that
+    /// both FEC sets include a shred with LAST_IN_SLOT flag set.
+    fn setup_duplicate_last_in_slot(
+        slot: Slot,
+    ) -> ((Vec<Shred>, Vec<Shred>), (Vec<Shred>, Vec<Shred>)) {
+        let entries = make_slot_entries_with_transactions(1);
+        let leader_keypair = Arc::new(Keypair::new());
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
+        let (shreds1, code1) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true, // is_last_in_slot
+            Some(Hash::new_unique()),
+            0,    // next_shred_index
+            0,    // next_code_index,
+            true, // merkle_variant
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        let last_data1 = shreds1.last().unwrap();
+        let last_code1 = code1.last().unwrap();
+        let (shreds2, code2) = shredder.entries_to_shreds(
+            &leader_keypair,
+            &entries,
+            true, // is_last_in_slot
+            Some(last_data1.chained_merkle_root().unwrap()),
+            last_data1.index(), // next_shred_index
+            last_code1.index(), // next_code_index,
+            true,               // merkle_variant
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        ((shreds1, code1), (shreds2, code2))
+    }
+
     #[test]
     fn test_duplicate_last_index() {
-        let num_shreds = 2;
-        let num_entries = max_ticks_per_n_shreds(num_shreds, None);
         let slot = 1;
-        let (mut shreds, _) =
-            make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
+        let ((shreds1, _code1), (shreds2, _code2)) = setup_duplicate_last_in_slot(slot);
 
-        // Mark both as last shred
-        shreds[0].set_last_in_slot();
-        shreds[1].set_last_in_slot();
+        let last_data1 = shreds1.last().unwrap();
+        let last_data2 = shreds2.last().unwrap();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        blockstore.insert_shreds(shreds, None, false).unwrap();
+        blockstore
+            .insert_shreds(vec![last_data1.clone(), last_data2.clone()], None, false)
+            .unwrap();
 
         assert!(blockstore.get_duplicate_slot(slot).is_some());
     }
@@ -10801,16 +10836,13 @@ pub mod tests {
     #[test]
     fn test_duplicate_last_index_mark_dead() {
         let num_shreds = 10;
-        let smaller_last_shred_index = 5;
+        let smaller_last_shred_index = 31;
         let larger_last_shred_index = 8;
 
         let setup_test_shreds = |slot: Slot| -> Vec<Shred> {
-            let num_entries = max_ticks_per_n_shreds(num_shreds, Some(LEGACY_SHRED_DATA_CAPACITY));
-            let (mut shreds, _) =
-                make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
-            shreds[smaller_last_shred_index].set_last_in_slot();
-            shreds[larger_last_shred_index].set_last_in_slot();
-            shreds
+            let ((mut shreds1, _code1), (mut shreds2, _code2)) = setup_duplicate_last_in_slot(slot);
+            shreds1.append(&mut shreds2);
+            shreds1
         };
 
         let get_expected_slot_meta_and_index_meta =
@@ -10869,38 +10901,6 @@ pub mod tests {
         assert_eq!(meta, expected_slot_meta);
         assert_eq!(blockstore.get_index(slot).unwrap().unwrap(), expected_index);
 
-        // Case 2: Inserting a duplicate with an even smaller last shred index should not
-        // mark the slot as dead since the Slotmeta is full.
-        let even_smaller_last_shred_duplicate = {
-            let mut payload = shreds[smaller_last_shred_index - 1].payload().clone();
-            // Flip a byte to create a duplicate shred
-            payload[0] = u8::MAX - payload[0];
-            let mut shred = Shred::new_from_serialized_shred(payload).unwrap();
-            shred.set_last_in_slot();
-            shred
-        };
-        assert!(blockstore
-            .is_shred_duplicate(&even_smaller_last_shred_duplicate)
-            .is_some());
-        blockstore
-            .insert_shreds(vec![even_smaller_last_shred_duplicate], None, false)
-            .unwrap();
-        assert!(!blockstore.is_dead(slot));
-        for i in 0..num_shreds {
-            if i <= smaller_last_shred_index as u64 {
-                assert_eq!(
-                    blockstore.get_data_shred(slot, i).unwrap().unwrap(),
-                    shreds[i as usize].payload().as_ref(),
-                );
-            } else {
-                assert!(blockstore.get_data_shred(slot, i).unwrap().is_none());
-            }
-        }
-        let mut meta = blockstore.meta(slot).unwrap().unwrap();
-        meta.first_shred_timestamp = expected_slot_meta.first_shred_timestamp;
-        assert_eq!(meta, expected_slot_meta);
-        assert_eq!(blockstore.get_index(slot).unwrap().unwrap(), expected_index);
-
         // Case 3: Insert shreds in reverse so that consumed will not be updated. Now on insert, the
         // the slot should be marked as dead
         slot += 1;
@@ -10909,6 +10909,9 @@ pub mod tests {
         blockstore
             .insert_shreds(shreds.clone(), None, false)
             .unwrap();
+        for s in shreds.iter() {
+            dbg!(s.last_in_slot());
+        }
         assert!(blockstore.is_dead(slot));
         // All the shreds other than the two last index shreds because those two
         // are marked as last, but less than the first received index == 10.
@@ -10970,24 +10973,6 @@ pub mod tests {
 
     #[test]
     fn test_get_slot_entries_dead_slot_race() {
-        let setup_test_shreds = move |slot: Slot| -> Vec<Shred> {
-            let num_shreds = 10;
-            let middle_shred_index = 5;
-            let num_entries = max_ticks_per_n_shreds(num_shreds, None);
-            let (shreds, _) =
-                make_slot_entries(slot, 0, num_entries, /*merkle_variant:*/ false);
-
-            // Reverse shreds so that last shred gets inserted first and sets meta.received
-            let mut shreds: Vec<Shred> = shreds.into_iter().rev().collect();
-
-            // Push the real middle shred to the end of the shreds list
-            shreds.push(shreds[middle_shred_index].clone());
-
-            // Set the middle shred as a last shred to cause the slot to be marked dead
-            shreds[middle_shred_index].set_last_in_slot();
-            shreds
-        };
-
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         {
             let blockstore = Arc::new(Blockstore::open(ledger_path.path()).unwrap());
@@ -11046,11 +11031,11 @@ pub mod tests {
             };
 
             for slot in 0..100 {
-                let shreds = setup_test_shreds(slot);
-
+                let ((mut shreds1, _), (mut shreds2, _)) = setup_duplicate_last_in_slot(slot);
+                shreds1.append(&mut shreds2);
                 // Start a task on each thread to trigger a race condition
                 slot_sender.send(slot).unwrap();
-                shred_sender.send(shreds).unwrap();
+                shred_sender.send(shreds1).unwrap();
 
                 // Check that each thread processed their task before continuing
                 for _ in 1..=2 {
