@@ -250,7 +250,7 @@ fn main() -> Result<()> {
                 max_connections_per_peer,
                 max_staked_connections: max_connections,
                 max_unstaked_connections: 0,
-                ..Default::default()
+                ..QuicServerParams::default_for_tests()
             };
             let (s_reader, r_reader) = unbounded();
             read_channels.push(r_reader);
