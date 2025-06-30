@@ -3355,18 +3355,20 @@ impl AccountsDb {
     ) -> GetUniqueAccountsResult {
         let capacity = store.capacity();
         let mut stored_accounts = Vec::with_capacity(store.count());
-        store.accounts.scan_index(|info| {
-            // file_id is unused and can be anything. We will always be loading whatever storage is in the slot.
-            let file_id = 0;
-            stored_accounts.push(AccountFromStorage {
-                index_info: AccountInfo::new(
-                    StorageLocation::AppendVec(file_id, info.index_info.offset),
-                    info.is_zero_lamport(),
-                ),
-                pubkey: info.index_info.pubkey,
-                data_len: info.index_info.data_len,
+        store
+            .accounts
+            .scan_accounts_without_data(|offset, account| {
+                // file_id is unused and can be anything. We will always be loading whatever storage is in the slot.
+                let file_id = 0;
+                stored_accounts.push(AccountFromStorage {
+                    index_info: AccountInfo::new(
+                        StorageLocation::AppendVec(file_id, offset),
+                        account.is_zero_lamport(),
+                    ),
+                    pubkey: *account.pubkey(),
+                    data_len: account.data_len as u64,
+                });
             });
-        });
 
         // sort by pubkey to keep account index lookups close
         let num_duplicated_accounts = Self::sort_and_remove_dups(&mut stored_accounts);
