@@ -3880,33 +3880,40 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
     // Flushing cache should only create one storage entry
     let storage0 = accounts_db.get_and_assert_single_storage(slot);
 
-    storage0.accounts.scan_index(|account| {
-        let before_size = storage0.alive_bytes();
-        let account_info = accounts_db
-            .accounts_index
-            .get_cloned(&account.index_info.pubkey)
-            .unwrap()
-            .slot_list
-            .read()
-            .unwrap()
-            // Should only be one entry per key, since every key was only stored to slot 0
-            [0];
-        assert_eq!(account_info.0, slot);
-        let reclaims = [account_info];
-        num_obsolete_accounts += reclaims.len();
-        accounts_db.remove_dead_accounts(reclaims.iter(), None, MarkAccountsObsolete::Yes(slot));
-        let after_size = storage0.alive_bytes();
-        if storage0.count() == 0 {
-            // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
-            assert_eq!(after_size, 0);
-        } else {
-            assert_eq!(before_size, after_size + account.stored_size_aligned);
-            assert_eq!(
-                storage0.get_obsolete_accounts(None).len(),
-                num_obsolete_accounts
+    storage0
+        .accounts
+        .scan_accounts_without_data(|_offset, account| {
+            let before_size = storage0.alive_bytes();
+            let account_info = accounts_db
+                .accounts_index
+                .get_cloned(account.pubkey())
+                .unwrap()
+                .slot_list
+                .read()
+                .unwrap()
+                // Should only be one entry per key, since every key was only stored to slot 0
+                [0];
+            assert_eq!(account_info.0, slot);
+            let reclaims = [account_info];
+            num_obsolete_accounts += reclaims.len();
+            accounts_db.remove_dead_accounts(
+                reclaims.iter(),
+                None,
+                MarkAccountsObsolete::Yes(slot),
             );
-        }
-    });
+            let after_size = storage0.alive_bytes();
+            if storage0.count() == 0 {
+                // when `remove_dead_accounts` reaches 0 accounts, all bytes are marked as dead
+                assert_eq!(after_size, 0);
+            } else {
+                let stored_size_aligned = storage0.accounts.calculate_stored_size(account.data_len);
+                assert_eq!(before_size, after_size + stored_size_aligned);
+                assert_eq!(
+                    storage0.get_obsolete_accounts(None).len(),
+                    num_obsolete_accounts
+                );
+            }
+        });
 });
 
 // Test alive_bytes_exclude_zero_lamport_single_ref_accounts calculation
