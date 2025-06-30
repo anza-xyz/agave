@@ -125,16 +125,29 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
         )?;
     }
 
-    let admin_client = admin_rpc_service::connect(ledger_path);
-    let validator_pid =
-        admin_rpc_service::runtime().block_on(async move { admin_client.await?.exit().await })?;
+    // Grab the pid from the process before initiating exit as the running
+    // validator will be unable to respond after exit has returned.
+    //
+    // Additionally, delay checking the result until it will actually be used.
+    // In an upgrade scenario, it is possible that a binary that calls pid()
+    // will be iniating exit against a process that doesn't support pid().
+    // Since PostExitAction::Wait case is opt-in (via --wait-for-exit), the
+    // result is checked ONLY in that case to provide a friendlier upgrade
+    // path for user who are NOT using --wait-for-exit
+    let validator_pid_result = admin_rpc_service::runtime().block_on(async move {
+        let admin_client = admin_rpc_service::connect(ledger_path).await?;
+        let validator_pid_result = admin_client.pid().await;
+        admin_client.exit().await?;
+
+        validator_pid_result
+    });
 
     println!("Exit request sent");
 
     match exit_args.post_exit_action {
         None => Ok(()),
         Some(PostExitAction::Monitor) => monitor::execute(matches, ledger_path),
-        Some(PostExitAction::Wait) => poll_until_pid_terminates(validator_pid),
+        Some(PostExitAction::Wait) => poll_until_pid_terminates(validator_pid_result?),
     }?;
 
     Ok(())
