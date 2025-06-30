@@ -141,7 +141,7 @@ use {
         account_loader::{update_rent_exempt_status_for_account, LoadedTransaction},
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
-        transaction_balances::BalanceCollector,
+        transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -336,6 +336,10 @@ pub struct TransactionSimulationResult {
     pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
+    pub pre_balances: Option<Vec<u64>>,
+    pub post_balances: Option<Vec<u64>>,
+    pub pre_token_balances: Option<Vec<SvmTokenInfo>>,
+    pub post_token_balances: Option<Vec<SvmTokenInfo>>,
 }
 
 #[derive(Clone, Debug)]
@@ -3261,10 +3265,15 @@ impl Bank {
         &self,
         transaction: &impl TransactionWithMeta,
         enable_cpi_recording: bool,
+        enable_transaction_balance_recording: bool,
     ) -> TransactionSimulationResult {
         assert!(self.is_frozen(), "simulation bank must be frozen");
 
-        self.simulate_transaction_unchecked(transaction, enable_cpi_recording)
+        self.simulate_transaction_unchecked(
+            transaction,
+            enable_cpi_recording,
+            enable_transaction_balance_recording,
+        )
     }
 
     /// Run transactions against a bank without committing the results; does not check if the bank
@@ -3273,6 +3282,7 @@ impl Bank {
         &self,
         transaction: &impl TransactionWithMeta,
         enable_cpi_recording: bool,
+        enable_transaction_balance_recording: bool,
     ) -> TransactionSimulationResult {
         let account_keys = transaction.account_keys();
         let number_of_accounts = account_keys.len();
@@ -3282,6 +3292,7 @@ impl Bank {
 
         let LoadAndExecuteTransactionsOutput {
             mut processing_results,
+            balance_collector,
             ..
         } = self.load_and_execute_transactions(
             &batch,
@@ -3300,7 +3311,7 @@ impl Bank {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
-                    enable_transaction_balance_recording: false,
+                    enable_transaction_balance_recording,
                 },
             },
         );
@@ -3352,6 +3363,22 @@ impl Bank {
         };
         let logs = logs.unwrap_or_default();
 
+        let (pre_balances, post_balances, pre_token_balances, post_token_balances) =
+            match balance_collector {
+                Some(balance_collector) => {
+                    let (mut native_pre, mut native_post, mut token_pre, mut token_post) =
+                        balance_collector.into_vecs();
+
+                    (
+                        native_pre.pop(),
+                        native_post.pop(),
+                        token_pre.pop(),
+                        token_post.pop(),
+                    )
+                }
+                None => (None, None, None, None),
+            };
+
         TransactionSimulationResult {
             result,
             logs,
@@ -3360,6 +3387,10 @@ impl Bank {
             loaded_accounts_data_size,
             return_data,
             inner_instructions,
+            pre_balances,
+            post_balances,
+            pre_token_balances,
+            post_token_balances,
         }
     }
 

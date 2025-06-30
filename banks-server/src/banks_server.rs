@@ -191,7 +191,11 @@ fn simulate_transaction(
         loaded_accounts_data_size,
         return_data,
         inner_instructions,
-    } = bank.simulate_transaction_unchecked(&sanitized_transaction, true);
+        pre_balances: _,
+        post_balances: _,
+        pre_token_balances: _,
+        post_token_balances: _,
+    } = bank.simulate_transaction_unchecked(&sanitized_transaction, true, false);
 
     let simulation_details = TransactionSimulationDetails {
         logs,
