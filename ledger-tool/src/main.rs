@@ -3118,7 +3118,6 @@ fn main() {
 
                         assert_capitalization(&bank);
                         println!("Inflation: {:?}", bank.inflation());
-                        println!("RentCollector: {:?}", bank.rent_collector());
                         println!("Capitalization: {}", Sol(bank.capitalization()));
                     }
                 }

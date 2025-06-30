@@ -2105,8 +2105,6 @@ fn test_hash_stored_account() {
 
 pub static EPOCH_SCHEDULE: std::sync::LazyLock<EpochSchedule> =
     std::sync::LazyLock::new(EpochSchedule::default);
-pub static RENT_COLLECTOR: std::sync::LazyLock<RentCollector> =
-    std::sync::LazyLock::new(RentCollector::default);
 
 impl CalcAccountsHashConfig<'_> {
     pub(crate) fn default() -> Self {
@@ -2114,7 +2112,7 @@ impl CalcAccountsHashConfig<'_> {
             use_bg_thread_pool: false,
             ancestors: None,
             epoch_schedule: &EPOCH_SCHEDULE,
-            rent_collector: &RENT_COLLECTOR,
+            epoch: 0,
             store_detailed_debug_info_on_failure: false,
         }
     }
@@ -2131,17 +2129,14 @@ fn test_verify_accounts_hash() {
     let account = AccountSharedData::new(1, some_data_len, &key);
     let ancestors = vec![(some_slot, 0)].into_iter().collect();
     let epoch_schedule = EpochSchedule::default();
-    let rent_collector = RentCollector::default();
+    let epoch = Epoch::default();
 
     db.store_for_tests(some_slot, &[(&key, &account)]);
     db.add_root_and_flush_write_cache(some_slot);
     let (_, capitalization) = db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
 
-    let config = VerifyAccountsHashAndLamportsConfig::new_for_test(
-        &ancestors,
-        &epoch_schedule,
-        &rent_collector,
-    );
+    let config =
+        VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
 
     assert_matches!(
         db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config.clone()),
@@ -2181,12 +2176,9 @@ fn test_verify_bank_capitalization() {
         let account = AccountSharedData::new(1, some_data_len, &key);
         let ancestors = vec![(some_slot, 0)].into_iter().collect();
         let epoch_schedule = EpochSchedule::default();
-        let rent_collector = RentCollector::default();
-        let config = VerifyAccountsHashAndLamportsConfig::new_for_test(
-            &ancestors,
-            &epoch_schedule,
-            &rent_collector,
-        );
+        let epoch = Epoch::default();
+        let config =
+            VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
 
         db.store_for_tests(some_slot, &[(&key, &account)]);
         if pass == 0 {
@@ -2235,12 +2227,9 @@ fn test_verify_accounts_hash_no_account() {
     db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
 
     let epoch_schedule = EpochSchedule::default();
-    let rent_collector = RentCollector::default();
-    let config = VerifyAccountsHashAndLamportsConfig::new_for_test(
-        &ancestors,
-        &epoch_schedule,
-        &rent_collector,
-    );
+    let epoch = Epoch::default();
+    let config =
+        VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
 
     assert_matches!(
         db.verify_accounts_hash_and_lamports_for_tests(some_slot, 0, config),
@@ -2267,12 +2256,9 @@ fn test_verify_accounts_hash_bad_account_hash() {
     db.add_root_and_flush_write_cache(some_slot);
 
     let epoch_schedule = EpochSchedule::default();
-    let rent_collector = RentCollector::default();
-    let config = VerifyAccountsHashAndLamportsConfig::new_for_test(
-        &ancestors,
-        &epoch_schedule,
-        &rent_collector,
-    );
+    let epoch = Epoch::default();
+    let config =
+        VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
 
     assert_matches!(
         db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config),

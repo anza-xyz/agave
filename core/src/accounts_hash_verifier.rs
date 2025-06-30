@@ -335,11 +335,14 @@ impl AccountsHashVerifier {
         };
         timings.calc_storage_size_quartiles(&accounts_package.snapshot_storages);
 
+        let epoch = accounts_package
+            .epoch_schedule
+            .get_epoch(accounts_package.slot);
         let calculate_accounts_hash_config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
             ancestors: None,
             epoch_schedule: &accounts_package.epoch_schedule,
-            rent_collector: &accounts_package.rent_collector,
+            epoch,
             store_detailed_debug_info_on_failure: false,
         };
 
@@ -403,11 +406,14 @@ impl AccountsHashVerifier {
                 });
         let sorted_storages = SortedStorages::new_with_slots(incremental_storages, None, None);
 
+        let epoch = accounts_package
+            .epoch_schedule
+            .get_epoch(accounts_package.slot);
         let calculate_accounts_hash_config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
             ancestors: None,
             epoch_schedule: &accounts_package.epoch_schedule,
-            rent_collector: &accounts_package.rent_collector,
+            epoch,
             store_detailed_debug_info_on_failure: false,
         };
 

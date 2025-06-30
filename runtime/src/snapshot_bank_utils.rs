@@ -2191,7 +2191,7 @@ mod tests {
                     use_bg_thread_pool: false,
                     ancestors: None,
                     epoch_schedule: deserialized_bank.epoch_schedule(),
-                    rent_collector: deserialized_bank.rent_collector(),
+                    epoch: deserialized_bank.epoch(),
                     store_detailed_debug_info_on_failure: false,
                 },
                 &SortedStorages::new(&other_incremental_snapshot_storages),

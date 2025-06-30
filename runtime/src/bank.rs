@@ -5262,7 +5262,7 @@ impl Bank {
         let verify_config = VerifyAccountsHashAndLamportsConfig {
             ancestors: &self.ancestors,
             epoch_schedule: self.epoch_schedule(),
-            rent_collector: self.rent_collector(),
+            epoch: self.epoch(),
             test_hash_calculation: config.test_hash_calculation,
             ignore_mismatch: config.ignore_mismatch,
             store_detailed_debug_info: config.store_hash_raw_data_for_debug,
@@ -5278,7 +5278,6 @@ impl Bank {
             let accounts_ = Arc::clone(&accounts);
             let ancestors = self.ancestors.clone();
             let epoch_schedule = self.epoch_schedule().clone();
-            let rent_collector = self.rent_collector().clone();
             let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
             accounts.accounts_db.verify_accounts_hash_in_bg.start(|| {
                 Builder::new()
@@ -5328,7 +5327,6 @@ impl Bank {
                                         VerifyAccountsHashAndLamportsConfig {
                                             ancestors: &ancestors,
                                             epoch_schedule: &epoch_schedule,
-                                            rent_collector: &rent_collector,
                                             ..verify_config
                                         },
                                     ));
@@ -5533,7 +5531,6 @@ impl Bank {
                 &self.ancestors,
                 None,
                 self.epoch_schedule(),
-                &self.rent_collector,
                 is_startup,
             )
             .1
@@ -5668,7 +5665,6 @@ impl Bank {
                 &self.ancestors,
                 Some(self.capitalization()),
                 self.epoch_schedule(),
-                &self.rent_collector,
                 is_startup,
             );
         if total_lamports != self.capitalization() {
@@ -5692,7 +5688,6 @@ impl Bank {
                     &self.ancestors,
                     Some(self.capitalization()),
                     self.epoch_schedule(),
-                    &self.rent_collector,
                     is_startup,
                 );
 
@@ -5712,7 +5707,7 @@ impl Bank {
             use_bg_thread_pool: true,
             ancestors: None, // does not matter, will not be used
             epoch_schedule: &self.epoch_schedule,
-            rent_collector: &self.rent_collector,
+            epoch: self.epoch,
             store_detailed_debug_info_on_failure: false,
         };
         let storages = self.get_snapshot_storages(Some(base_slot));

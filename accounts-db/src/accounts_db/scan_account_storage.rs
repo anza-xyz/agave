@@ -224,10 +224,7 @@ impl AccountsDb {
                 config.epoch_schedule,
                 snapshot_storages.max_slot_inclusive(),
             );
-        let slots_per_epoch = config
-            .rent_collector
-            .epoch_schedule
-            .get_slots_in_epoch(config.rent_collector.epoch);
+        let slots_per_epoch = config.epoch_schedule.get_slots_in_epoch(config.epoch);
         let one_epoch_old = snapshot_storages
             .range()
             .end

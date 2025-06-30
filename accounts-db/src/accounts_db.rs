@@ -91,7 +91,6 @@ use {
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
     solana_pubkey::Pubkey,
     solana_rayon_threadlimit::get_thread_count,
-    solana_rent_collector::RentCollector,
     solana_transaction::sanitized::SanitizedTransaction,
     std::{
         borrow::Cow,
@@ -185,8 +184,8 @@ pub struct VerifyAccountsHashAndLamportsConfig<'a> {
     pub test_hash_calculation: bool,
     /// epoch_schedule
     pub epoch_schedule: &'a EpochSchedule,
-    /// rent_collector
-    pub rent_collector: &'a RentCollector,
+    /// epoch
+    pub epoch: Epoch,
     /// true to ignore mismatches
     pub ignore_mismatch: bool,
     /// true to dump debug log if mismatch happens
@@ -6256,7 +6255,6 @@ impl AccountsDb {
             ancestors,
             None,
             &EpochSchedule::default(),
-            &RentCollector::default(),
             is_startup,
         )
     }
@@ -6417,9 +6415,9 @@ impl AccountsDb {
         ancestors: &Ancestors,
         expected_capitalization: Option<u64>,
         epoch_schedule: &EpochSchedule,
-        rent_collector: &RentCollector,
         is_startup: bool,
     ) -> (AccountsHash, u64) {
+        let epoch = epoch_schedule.get_epoch(slot);
         let (accounts_hash, total_lamports) = self.calculate_accounts_hash_with_verify_from(
             data_source,
             debug_verify,
@@ -6428,7 +6426,7 @@ impl AccountsDb {
                 use_bg_thread_pool: !is_startup,
                 ancestors: Some(ancestors),
                 epoch_schedule,
-                rent_collector,
+                epoch,
                 store_detailed_debug_info_on_failure: false,
             },
             expected_capitalization,
@@ -6772,7 +6770,7 @@ impl AccountsDb {
             use_bg_thread_pool: config.use_bg_thread_pool,
             ancestors: Some(config.ancestors),
             epoch_schedule: config.epoch_schedule,
-            rent_collector: config.rent_collector,
+            epoch: config.epoch,
             store_detailed_debug_info_on_failure: config.store_detailed_debug_info,
         };
         let hash_mismatch_is_error = !config.ignore_mismatch;
@@ -8788,13 +8786,13 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
     pub fn new_for_test(
         ancestors: &'a Ancestors,
         epoch_schedule: &'a EpochSchedule,
-        rent_collector: &'a RentCollector,
+        epoch: Epoch,
     ) -> Self {
         Self {
             ancestors,
             test_hash_calculation: true,
             epoch_schedule,
-            rent_collector,
+            epoch,
             ignore_mismatch: false,
             store_detailed_debug_info: false,
             use_bg_thread_pool: false,
