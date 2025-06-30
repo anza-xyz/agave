@@ -8033,26 +8033,25 @@ impl AccountsDb {
                             // verify index matches expected and measure the time to get all items
                             assert!(verify);
                             let mut lookup_time = Measure::start("lookup_time");
-                            storage.accounts.scan_index(|account_info| {
-                                let key = &account_info.index_info.pubkey;
-                                let index_entry = self.accounts_index.get_cloned(key).unwrap();
-                                let slot_list = index_entry.slot_list.read().unwrap();
-                                let mut count = 0;
-                                for (slot2, account_info2) in slot_list.iter() {
-                                    if slot2 == slot {
-                                        count += 1;
-                                        let ai = AccountInfo::new(
-                                            StorageLocation::AppendVec(
-                                                store_id,
-                                                account_info.index_info.offset,
-                                            ), // will never be cached
-                                            account_info.is_zero_lamport(),
-                                        );
-                                        assert_eq!(&ai, account_info2);
+                            storage
+                                .accounts
+                                .scan_accounts_without_data(|offset, account| {
+                                    let key = account.pubkey();
+                                    let index_entry = self.accounts_index.get_cloned(key).unwrap();
+                                    let slot_list = index_entry.slot_list.read().unwrap();
+                                    let mut count = 0;
+                                    for (slot2, account_info2) in slot_list.iter() {
+                                        if slot2 == slot {
+                                            count += 1;
+                                            let ai = AccountInfo::new(
+                                                StorageLocation::AppendVec(store_id, offset), // will never be cached
+                                                account.is_zero_lamport(),
+                                            );
+                                            assert_eq!(&ai, account_info2);
+                                        }
                                     }
-                                }
-                                assert_eq!(1, count);
-                            });
+                                    assert_eq!(1, count);
+                                });
                             lookup_time.stop();
                             lookup_time.as_us()
                         };
