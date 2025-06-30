@@ -135,25 +135,11 @@ impl SlotDetails {
         }
 
         let bank_hash_components = if include_bank_hash_components {
-            let accounts_delta_hash = (!bank
-                .feature_set
-                .is_active(&feature_set::remove_accounts_delta_hash::id()))
-            .then(|| {
-                // This bank is frozen; as a result, we know that the state has been
-                // hashed which means the delta hash is Some(). So, .unwrap() is safe
-                bank.rc
-                    .accounts
-                    .accounts_db
-                    .get_accounts_delta_hash(slot)
-                    .unwrap()
-                    .0
-                    .to_string()
-            });
             let accounts = bank.get_accounts_for_bank_hash_details();
 
             Some(BankHashComponents {
                 parent_bank_hash: bank.parent_hash().to_string(),
-                accounts_delta_hash,
+                accounts_delta_hash: None,
                 signature_count: bank.signature_count(),
                 last_blockhash: bank.last_blockhash().to_string(),
                 // The bank is already frozen so this should not have to wait

@@ -2764,28 +2764,12 @@ fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
     assert!(bank2.verify_accounts_hash(None, VerifyAccountsHashConfig::default_for_test(), None,));
 }
 
-#[test_case(false; "accounts lt hash disabled")]
-#[test_case(true; "accounts lt hash enabled")]
-fn test_bank_hash_internal_state_verify(is_accounts_lt_hash_enabled: bool) {
+#[test]
+fn test_bank_hash_internal_state_verify() {
     for pass in 0..4 {
-        let (mut genesis_config, mint_keypair) =
+        let (genesis_config, mint_keypair) =
             create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
-        if !is_accounts_lt_hash_enabled {
-            // Disable the accounts lt hash feature by removing its account from genesis.
-            genesis_config
-                .accounts
-                .remove(&feature_set::accounts_lt_hash::id())
-                .unwrap();
-            genesis_config
-                .accounts
-                .remove(&feature_set::remove_accounts_delta_hash::id())
-                .unwrap();
-        }
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        assert_eq!(
-            bank0.is_accounts_lt_hash_enabled(),
-            is_accounts_lt_hash_enabled,
-        );
 
         let amount = genesis_config.rent.minimum_balance(0);
         let pubkey = solana_pubkey::new_rand();
@@ -2860,18 +2844,6 @@ fn test_bank_hash_internal_state_verify(is_accounts_lt_hash_enabled: bool) {
                 VerifyAccountsHashConfig::default_for_test(),
                 None,
             ));
-
-            if is_accounts_lt_hash_enabled {
-                // Verifying the accounts lt hash is only intended to be called at startup, and
-                // normally in the background.  Since here we're *not* at startup, and doing it
-                // in the foreground, the verification uses the accounts index.  The test just
-                // rooted bank2, and will root bank3 next; but they are on different forks,
-                // which is not valid.  This causes the accounts index to see accounts from
-                // bank2 and bank3, which causes verifying bank3's accounts lt hash to fail.
-                // To workaround this "issue", we cannot root bank2 when the accounts lt hash
-                // is enabled.
-                continue;
-            }
         }
 
         bank3.freeze();
@@ -2912,36 +2884,6 @@ fn test_verify_snapshot_bank() {
     // tamper the bank after freeze!
     bank.increment_signature_count(1);
     assert!(!bank.verify_snapshot_bank(true, false, false, bank.slot(), None, None,));
-}
-
-// Test that two bank forks with the same accounts should not hash to the same value.
-#[test]
-fn test_bank_hash_internal_state_same_account_different_fork() {
-    solana_logger::setup();
-    let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
-    let amount = genesis_config.rent.minimum_balance(0);
-    let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let initial_state = bank0.hash_internal_state();
-    let bank1 = new_bank_from_parent_with_bank_forks(
-        bank_forks.as_ref(),
-        bank0.clone(),
-        &Pubkey::default(),
-        1,
-    );
-    assert_ne!(bank1.hash_internal_state(), initial_state);
-
-    info!("transfer bank1");
-    let pubkey = solana_pubkey::new_rand();
-    bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_ne!(bank1.hash_internal_state(), initial_state);
-
-    info!("transfer bank2");
-    // bank2 should not hash the same as bank1
-    let bank2 =
-        new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &Pubkey::default(), 2);
-    bank2.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_ne!(bank2.hash_internal_state(), initial_state);
-    assert_ne!(bank1.hash_internal_state(), bank2.hash_internal_state());
 }
 
 #[test]
@@ -12702,20 +12644,10 @@ fn test_bank_epoch_stakes() {
 }
 
 /// Ensure rehash() does *not* change the bank hash if accounts are unmodified
-#[test_case(true; "with accounts delta hash")]
-#[test_case(false; "without accounts delta hash")]
-fn test_rehash_accounts_unmodified(has_accounts_delta_hash: bool) {
+#[test]
+fn test_rehash_accounts_unmodified() {
     let ten_sol = 10 * LAMPORTS_PER_SOL;
-    let mut genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
-    if has_accounts_delta_hash {
-        // Keep the accounts delta hash by removing the 'remove_accounts_delta_hash'
-        // feature account from genesis.
-        genesis_config_info
-            .genesis_config
-            .accounts
-            .remove(&feature_set::remove_accounts_delta_hash::id())
-            .unwrap();
-    }
+    let genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
     let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
 
     let lamports = 123_456_789;
@@ -12731,38 +12663,6 @@ fn test_rehash_accounts_unmodified(has_accounts_delta_hash: bool) {
     bank.rehash();
     let post_bank_hash = bank.hash();
     assert_eq!(post_bank_hash, prev_bank_hash);
-}
-
-/// Ensure rehash() *does* change the bank hash if accounts are modified
-#[test]
-#[should_panic(expected = "rehashing is not allowed to change the account state")]
-fn test_rehash_accounts_modified() {
-    let ten_sol = 10 * LAMPORTS_PER_SOL;
-    let mut genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
-    // Keep the accounts delta hash by removing the 'remove_accounts_delta_hash'
-    // feature account from genesis.
-    genesis_config_info
-        .genesis_config
-        .accounts
-        .remove(&feature_set::remove_accounts_delta_hash::id())
-        .unwrap();
-    let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
-
-    let mut account = AccountSharedData::new(ten_sol, 0, &Pubkey::default());
-    let pubkey = Pubkey::new_unique();
-    bank.store_account_and_update_capitalization(&pubkey, &account);
-
-    // freeze the bank to trigger hash calculation
-    bank.freeze();
-
-    // change an account, which will cause rehashing to panic
-    account.checked_add_lamports(ten_sol).unwrap();
-    bank.rc
-        .accounts
-        .store_accounts_cached((bank.slot(), [(&pubkey, &account)].as_slice()));
-
-    // let the show begin
-    bank.rehash();
 }
 
 #[test]

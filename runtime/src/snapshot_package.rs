@@ -4,7 +4,6 @@ use {
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
     },
-    agave_feature_set as feature_set,
     log::*,
     solana_accounts_db::{
         accounts::Accounts,
@@ -77,17 +76,7 @@ impl AccountsPackage {
         let snapshot_info = {
             let accounts_db = &bank.rc.accounts.accounts_db;
             let write_version = accounts_db.write_version.load(Ordering::Acquire);
-            let accounts_delta_hash = if bank
-                .feature_set
-                .is_active(&feature_set::remove_accounts_delta_hash::id())
-            {
-                AccountsDeltaHash(Hash::default())
-            } else {
-                // SAFETY: There *must* be an accounts delta hash for this slot.
-                // Since we only snapshot rooted slots, and we know rooted slots must be frozen,
-                // that guarantees this slot will have an accounts delta hash.
-                accounts_db.get_accounts_delta_hash(slot).unwrap()
-            };
+            let accounts_delta_hash = AccountsDeltaHash(Hash::default());
             let bank_hash_stats = bank.get_bank_hash_stats();
             let bank_fields_to_serialize = bank.get_fields_to_serialize();
             SupplementalSnapshotInfo {
