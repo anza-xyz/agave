@@ -50,7 +50,10 @@ impl QuicLazyInitializedEndpoint {
     pub async fn close(&self) {
         if self.client_endpoint.is_none() {
             if let Some(endpoint) = self.endpoint.get() {
-                info!("Closing QUIC endpoint");
+                info!(
+                    "Closing QUIC endpoint with address: {:?}",
+                    endpoint.local_addr()
+                );
                 endpoint.wait_idle().await;
                 endpoint.close(0u32.into(), b"QuicLazyInitializedEndpoint closed");
             } else {
@@ -250,12 +253,13 @@ impl QuicClient {
         if let Some(conn) = conn_guard.take() {
             info!(
                 "Closing connection to {} connection_id: {:?}",
-                self.addr,
-                conn.connection.stable_id()
+                self.addr, conn.connection
             );
             conn.connection.close(0u32.into(), b"QuicClient dropped");
+            conn.connection.closed().await;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-            // if the endpoint is created exclusively for this client,
+            // If the endpoint is created exclusively for this client,
             // we should close it as well
             self.endpoint.close().await;
         }

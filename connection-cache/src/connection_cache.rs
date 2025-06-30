@@ -59,7 +59,7 @@ pub struct ConnectionCache<
 
 impl<P, M, C> Drop for ConnectionCache<P, M, C> {
     fn drop(&mut self) {
-        info!("Dropping ConnectionCache at {:p}", self.name);
+        info!("Dropping ConnectionCache at {}", self.name);
     }
 }
 

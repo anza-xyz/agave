@@ -16,6 +16,7 @@ use {
             close_quic_connection, QuicClientConnection as BlockingQuicClientConnection,
         },
     },
+    log::debug,
     quic_client::get_runtime,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
     solana_connection_cache::{
@@ -76,7 +77,7 @@ impl ConnectionPool for QuicPool {
 
 impl Drop for QuicPool {
     fn drop(&mut self) {
-        println!(
+        debug!(
             "Dropping QuicPool with {} connections",
             self.connections.len()
         );

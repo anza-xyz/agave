@@ -6,6 +6,7 @@ use {
     bincode::serialize,
     dashmap::DashMap,
     futures_util::future::join_all,
+    log::*,
     solana_hash::Hash,
     solana_message::Message,
     solana_quic_client::{QuicConfig, QuicConnectionManager, QuicPool},
@@ -606,6 +607,8 @@ pub async fn send_and_confirm_transactions_in_parallel_v2<T: Signers + ?Sized>(
             ));
         }
     }
+    info!("Dropping tpu_client...");
+    drop(tpu_client); // Ensure the tpu_client is dropped to close any connections
 
     block_data_task.abort();
     transaction_confirming_task.abort();

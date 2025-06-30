@@ -43,6 +43,7 @@ use {
         io::{Read, Seek, SeekFrom},
         path::{Path, PathBuf},
         str::FromStr,
+        sync::Arc,
     },
     test_case::test_case,
 };
@@ -3119,6 +3120,13 @@ fn test_cli_program_v4() {
         pubkey: None,
         lamports: 10000000,
     };
+    // keep using rpc_client and the runtime
+    config.rpc_client = Some(Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    )));
     process_command(&config).unwrap();
 
     info!("zzzzzz airdrop 1");
@@ -3196,7 +3204,12 @@ fn test_cli_program_v4() {
         path_to_elf: Some(noop_path.to_str().unwrap().to_string()),
         upload_range: None..None,
     });
-    assert!(process_command(&config).is_ok());
+    let result = process_command(&config);
+    info!(
+        "zzzzzzz two-step redeploy with buffer, result: {:?}",
+        result
+    );
+    assert!(result.is_ok());
 
     info!("zzzzzz two-step redeploy with buffer");
 

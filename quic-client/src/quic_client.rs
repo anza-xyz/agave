@@ -199,6 +199,6 @@ impl Drop for QuicClientConnection {
 
 pub(crate) fn close_quic_connection(connection: Arc<QuicClient>) {
     // Close the connection and release resources
-    info!("Closed QUIC connection to {}", connection.server_addr());
+    info!("Closing QUIC connection to {}", connection.server_addr());
     RUNTIME.block_on(connection.close());
 }

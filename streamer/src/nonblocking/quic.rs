@@ -1471,29 +1471,11 @@ impl ConnectionTable {
             connection.as_ref().map(|c| c.stable_id()),
         );
         let connection_entry = self.table.entry(key).or_default();
-        let mut has_connection_capacity = connection_entry
+        let has_connection_capacity = connection_entry
             .len()
             .checked_add(1)
             .map(|c| c <= max_connections_per_peer)
             .unwrap_or(false);
-
-        if !has_connection_capacity {
-            let mut entry = connection_entry.swap_remove(0);
-            if let Some(conn) = entry.connection.take() {
-                debug!(
-                    "Connection table for {:?} is full, dropping older connection {} id {:?}, from the same address: len: {}, max_connections_per_peer: {max_connections_per_peer} at table:",
-                    key,
-                    conn.remote_address(),
-                    conn.stable_id(),
-                    connection_entry.len(),
-                );
-                conn.close(
-                    CONNECTION_CLOSE_CODE_TOO_MANY.into(),
-                    CONNECTION_CLOSE_REASON_TOO_MANY,
-                );
-                has_connection_capacity = true;
-            }
-        }
         if has_connection_capacity {
             let cancel = CancellationToken::new();
             let last_update = Arc::new(AtomicU64::new(last_update));
