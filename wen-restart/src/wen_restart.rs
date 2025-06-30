@@ -18,7 +18,7 @@ use {
     log::*,
     prost::Message,
     solana_clock::{Epoch, Slot},
-    solana_entry::entry::VerifyRecyclers,
+    solana_entry::entry::{Verifier, VerifyRecyclers},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         restart_crds_values::RestartLastVotedForkSlots,
@@ -631,6 +631,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
         .build()
         .expect("new rayon threadpool");
     let recyclers = VerifyRecyclers::default();
+    let verifier = Verifier::new(replay_tx_thread_pool, recyclers.clone());
     let mut timing = ExecuteTimings::default();
     let opts = ProcessOptions::default();
     // Now replay all the missing blocks.
@@ -657,7 +658,7 @@ pub(crate) fn find_bankhash_of_heaviest_fork(
             if let Err(e) = process_single_slot(
                 &blockstore,
                 &bank_with_scheduler,
-                &replay_tx_thread_pool,
+                &verifier,
                 &opts,
                 &recyclers,
                 &mut progress,
@@ -2032,6 +2033,7 @@ mod tests {
             .build()
             .expect("new rayon threadpool");
         let recyclers = VerifyRecyclers::default();
+        let verifier = Verifier::new(replay_tx_thread_pool, recyclers.clone());
         let mut timing = ExecuteTimings::default();
         let opts = ProcessOptions::default();
         let mut progress = ConfirmationProgress::new(old_root_bank.last_blockhash());
@@ -2044,7 +2046,7 @@ mod tests {
         if let Err(e) = process_single_slot(
             &test_state.blockstore,
             &bank_with_scheduler,
-            &replay_tx_thread_pool,
+            &verifier,
             &opts,
             &recyclers,
             &mut progress,

@@ -16,11 +16,15 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_entry"
 
+[features]
+dev-context-only-utils = ["dep:qualifier_attr"]
+
 [dependencies]
 bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 dlopen2 = { workspace = true }
 log = { workspace = true }
+qualifier_attr = { workspace = true, optional = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
@@ -33,6 +37,7 @@ solana-perf = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-signature = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 
@@ -44,7 +49,6 @@ solana-logger = { workspace = true }
 solana-message = { workspace = true }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true }
-solana-signature = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["verify"] }

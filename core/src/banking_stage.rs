@@ -687,7 +687,7 @@ mod tests {
         agave_banking_stage_ingress_types::BankingPacketBatch,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_entry::entry::{self, Entry, EntrySlice},
+        solana_entry::entry::{self, Entry, VerifyEntries as _},
         solana_gossip::cluster_info::Node,
         solana_hash::Hash,
         solana_keypair::Keypair,
