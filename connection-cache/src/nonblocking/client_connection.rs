@@ -9,4 +9,7 @@ pub trait ClientConnection {
     async fn send_data(&self, buffer: &[u8]) -> TransportResult<()>;
 
     async fn send_data_batch(&self, buffers: &[Vec<u8>]) -> TransportResult<()>;
+
+    /// Closes the connection, releasing any resources held by it.
+    async fn close(&self);
 }

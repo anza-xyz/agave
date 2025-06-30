@@ -1206,6 +1206,10 @@ fn send_messages(
     }
 
     if !write_messages.is_empty() {
+        info!(
+            "zzzzzz sending message for command: {:?}, use_quic: {}",
+            config.command, config.use_quic
+        );
         let connection_cache = if config.use_quic {
             ConnectionCache::new_quic("connection_cache_cli_program_v4_quic", 1)
         } else {

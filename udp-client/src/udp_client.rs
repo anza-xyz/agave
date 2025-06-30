@@ -51,4 +51,8 @@ impl ClientConnection for UdpClientConnection {
         self.socket.send_to(buffer, self.addr)?;
         Ok(())
     }
+
+    fn close(&self) {
+        // UDP sockets do not have a close operation
+    }
 }

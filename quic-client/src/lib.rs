@@ -12,7 +12,9 @@ use {
             QuicClient, QuicClientConnection as NonblockingQuicClientConnection,
             QuicLazyInitializedEndpoint,
         },
-        quic_client::QuicClientConnection as BlockingQuicClientConnection,
+        quic_client::{
+            close_quic_connection, QuicClientConnection as BlockingQuicClientConnection,
+        },
     },
     quic_client::get_runtime,
     quinn::{Endpoint, EndpointConfig, TokioRuntime},
@@ -69,6 +71,19 @@ impl ConnectionPool for QuicPool {
             self.endpoint.clone(),
             *addr,
         ))))
+    }
+}
+
+impl Drop for QuicPool {
+    fn drop(&mut self) {
+        println!(
+            "Dropping QuicPool with {} connections",
+            self.connections.len()
+        );
+        for connection in self.connections.drain(..) {
+            // Explicitly drop each connection to ensure resources are released
+            close_quic_connection(connection.0.clone());
+        }
     }
 }
 
