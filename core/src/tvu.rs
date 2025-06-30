@@ -85,6 +85,7 @@ pub struct TvuSockets {
     pub repair: UdpSocket,
     pub retransmit: Vec<UdpSocket>,
     pub ancestor_hashes_requests: UdpSocket,
+    pub alpenglow: Option<UdpSocket>,
 }
 
 pub struct TvuConfig {
@@ -99,6 +100,7 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub retransmit_xdp: Option<XdpConfig>,
+    pub(crate) enable_all2all_tests: bool,
 }
 
 impl Default for TvuConfig {
@@ -113,6 +115,7 @@ impl Default for TvuConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             retransmit_xdp: None,
+            enable_all2all_tests: false,
         }
     }
 }
@@ -179,7 +182,13 @@ impl Tvu {
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
+            alpenglow: mut alpenglow_socket,
         } = sockets;
+
+        // disable all2all if not enabled
+        if !tvu_config.enable_all2all_tests {
+            alpenglow_socket = None;
+        }
 
         let (fetch_sender, fetch_receiver) = unbounded();
 
@@ -349,6 +358,8 @@ impl Tvu {
             poh_recorder.clone(),
             tower_storage,
             vote_connection_cache.clone(),
+            alpenglow_socket,
+            bank_forks.clone(),
         );
 
         let warm_quic_cache_service = create_cache_warmer_if_needed(
@@ -552,6 +563,7 @@ pub mod tests {
                     retransmit: target1.sockets.retransmit_sockets,
                     fetch: target1.sockets.tvu,
                     ancestor_hashes_requests: target1.sockets.ancestor_hashes_requests,
+                    alpenglow: target1.sockets.alpenglow,
                 }
             },
             blockstore,
