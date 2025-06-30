@@ -2420,11 +2420,13 @@ impl AccountsDb {
                         }
                         oldest_dirty_slot = oldest_dirty_slot.min(*slot);
 
-                        store.accounts.scan_index(|index| {
-                            let pubkey = index.index_info.pubkey;
-                            let is_zero_lamport = index.index_info.lamports == 0;
-                            insert_candidate(pubkey, is_zero_lamport);
-                        });
+                        store
+                            .accounts
+                            .scan_accounts_without_data(|_offset, account| {
+                                let pubkey = *account.pubkey();
+                                let is_zero_lamport = account.is_zero_lamport();
+                                insert_candidate(pubkey, is_zero_lamport);
+                            });
                     });
                     oldest_dirty_slot
                 })
