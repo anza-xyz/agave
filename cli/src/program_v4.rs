@@ -1241,7 +1241,7 @@ fn send_messages(
                         .expect("Should return a valid tpu client")
                 });
 
-                let errors = send_and_confirm_transactions_in_parallel_blocking_v2(
+                send_and_confirm_transactions_in_parallel_blocking_v2(
                     rpc_client.clone(),
                     tpu_client,
                     &write_messages,
@@ -1251,8 +1251,7 @@ fn send_messages(
                         with_spinner: true,
                         rpc_send_transaction_config: config.send_transaction_config,
                     },
-                );
-                errors
+                )
             }
         }
         .map_err(|err| format!("Data writes to account failed: {err}"))?
