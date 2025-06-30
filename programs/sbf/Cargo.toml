@@ -140,6 +140,7 @@ solana-sbf-rust-realloc-invoke-dep = { path = "rust/realloc_invoke_dep", version
 solana-sbpf = "=0.10.1"
 solana-sdk = "=2.2.2"
 solana-secp256k1-recover = "=2.2.1"
+<<<<<<< HEAD
 solana-svm = { path = "../../svm", version = "=2.2.19" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=2.2.19" }
 solana-timings = { path = "../../timings", version = "=2.2.19" }
@@ -149,6 +150,23 @@ solana-type-overrides = { path = "../../type-overrides", version = "=2.2.19" }
 solana-vote = { path = "../../vote", version = "=2.2.19" }
 solana-vote-program = { path = "../../programs/vote", version = "=2.2.19" }
 solana-zk-sdk = "=2.2.1"
+=======
+solana-sha256-hasher = { version = "=2.2.1", features = ["sha2"] }
+solana-stake-interface = { version = "=1.2.1", features = ["bincode"] }
+solana-svm = { path = "../../svm", version = "=3.0.0" }
+solana-svm-callback = { path = "../../svm-callback", version = "=3.0.0" }
+solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.0.0" }
+solana-svm-transaction = { path = "../../svm-transaction", version = "=3.0.0" }
+solana-system-interface = { version = "=1.0", features = ["bincode"] }
+solana-sysvar = "=2.2.2"
+solana-timings = { path = "../../timings", version = "=3.0.0" }
+solana-transaction-context = { path = "../../transaction-context", version = "=3.0.0" }
+solana-transaction-status = { path = "../../transaction-status", version = "=3.0.0" }
+solana-type-overrides = { path = "../../type-overrides", version = "=3.0.0" }
+solana-vote = { path = "../../vote", version = "=3.0.0" }
+solana-vote-program = { path = "../../programs/vote", version = "=3.0.0" }
+solana-zk-sdk = { path = "../../zk-sdk", version = "=3.0.0" }
+>>>>>>> 528d98467 (chore: use local solana-zk-sdk (#6767))
 thiserror = "1.0"
 
 [features]
