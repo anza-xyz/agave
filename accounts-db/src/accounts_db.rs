@@ -7855,7 +7855,23 @@ impl AccountsDb {
                 });
             } else {
                 // withOUT secondary indexes -- scan accounts withOUT account data
-                storage.accounts.scan_index(itemizer);
+                storage
+                    .accounts
+                    .scan_accounts_without_data(|offset, account| {
+                        let data_len = account.data_len as u64;
+                        let stored_size_aligned =
+                            storage.accounts.calculate_stored_size(data_len as usize);
+                        let info = IndexInfo {
+                            stored_size_aligned,
+                            index_info: IndexInfoInner {
+                                offset,
+                                pubkey: *account.pubkey,
+                                lamports: account.lamports,
+                                data_len,
+                            },
+                        };
+                        itemizer(info);
+                    });
             }
             let items_len = items_local.len();
             let items = items_local.into_iter().map(|info| {
