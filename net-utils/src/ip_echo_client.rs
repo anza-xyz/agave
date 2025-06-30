@@ -213,7 +213,7 @@ pub(crate) async fn verify_all_reachable_tcp(
                 ok = false;
             }
         }
-        thread_handle.await.expect("Thread should exit cleanly")
+        let _ = thread_handle.await.expect("Thread should exit cleanly");
     }
 
     ok
@@ -314,8 +314,13 @@ pub(crate) async fn verify_all_reachable_udp(
                     });
                 }
 
-                while let Some(r) = checkers.join_next().await {
-                    r.expect("Threads should exit cleanly");
+                loop {
+                    let r = checkers.join_next().await;
+                    if let Some(r) = r {
+                        r.expect("Threads should exit cleanly");
+                    } else {
+                        break;
+                    }
                 }
                 // Might have lost a UDP packet, check that all ports were reached
                 let reachable_ports = Arc::into_inner(reachable_ports)
