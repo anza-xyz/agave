@@ -5,7 +5,6 @@ use {
         account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::{MatchAccountOwnerError, StoredAccountsInfo},
-        append_vec::{IndexInfo, IndexInfoInner},
         tiered_storage::{
             byte_block,
             file::{TieredReadableFile, TieredWritableFile},
@@ -677,35 +676,6 @@ impl HotStorageReader {
             self.get_stored_account_callback(IndexOffset(i), |account| {
                 callback(AccountInfo::reduced_offset_to_offset(i), account)
             })?;
-        }
-        Ok(())
-    }
-
-    /// iterate over all entries to put in index
-    pub(crate) fn scan_index(
-        &self,
-        mut callback: impl FnMut(IndexInfo),
-    ) -> TieredStorageResult<()> {
-        for i in 0..self.footer.account_entry_count {
-            let index_offset = IndexOffset(i);
-            let account_offset = self.get_account_offset(index_offset)?;
-
-            let meta = self.get_account_meta_from_offset(account_offset)?;
-            let pubkey = self.get_account_address(index_offset)?;
-            let lamports = meta.lamports();
-            let account_block = self.get_account_block(account_offset, index_offset)?;
-            let data_len = meta.account_data_size(account_block);
-            callback(IndexInfo {
-                index_info: {
-                    IndexInfoInner {
-                        pubkey: *pubkey,
-                        lamports,
-                        offset: AccountInfo::reduced_offset_to_offset(i),
-                        data_len: data_len as u64,
-                    }
-                },
-                stored_size_aligned: stored_size(data_len),
-            });
         }
         Ok(())
     }

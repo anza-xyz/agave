@@ -6,7 +6,7 @@ use {
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
-        append_vec::{AppendVec, AppendVecError, IndexInfo},
+        append_vec::{AppendVec, AppendVecError},
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
@@ -390,18 +390,6 @@ impl AccountsFile {
                 .reader()
                 .and_then(|reader| reader.get_account_data_lens(sorted_offsets).ok())
                 .unwrap_or_default(),
-        }
-    }
-
-    /// iterate over all entries to put in index
-    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) {
-        match self {
-            Self::AppendVec(av) => av.scan_index(callback),
-            Self::TieredStorage(ts) => {
-                if let Some(reader) = ts.reader() {
-                    _ = reader.scan_index(callback);
-                }
-            }
         }
     }
 

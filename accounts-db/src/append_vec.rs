@@ -972,22 +972,6 @@ impl AppendVec {
         }
     }
 
-    /// Iterate over all accounts and call `callback` with `IndexInfo` for each.
-    /// This fn can help generate an index of the data in this storage.
-    pub(crate) fn scan_index(&self, mut callback: impl FnMut(IndexInfo)) {
-        self.scan_stored_accounts_no_data(|account| {
-            callback(IndexInfo {
-                stored_size_aligned: account.stored_size,
-                index_info: IndexInfoInner {
-                    pubkey: *account.pubkey(),
-                    lamports: account.lamports(),
-                    offset: account.offset(),
-                    data_len: account.data_len(),
-                },
-            });
-        });
-    }
-
     /// Iterate over all accounts and call `callback` with each account.
     ///
     /// `callback` parameters:
