@@ -49,7 +49,7 @@ solana-perf = { path = "../../perf" }
 solana-program-pack = "2.2.1"
 solana-program-runtime = { path = "../../program-runtime" }
 solana-pubkey = "2.3.0"
-solana-rent-collector = "2.2.1"
+solana-rent = "2.2.1"
 solana-rpc-client-api = { path = "../../rpc-client-api" }
 solana-sdk-ids = "2.2.1"
 solana-signature = "2.2.1"

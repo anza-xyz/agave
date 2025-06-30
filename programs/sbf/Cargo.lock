@@ -7924,7 +7924,7 @@ dependencies = [
  "solana-stake-program",
  "solana-svm",
  "solana-svm-callback",
- "solana-svm-rent-collector",
+ "solana-svm-rent-calculator",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-system-program",
@@ -9168,7 +9168,7 @@ dependencies = [
  "solana-slot-hashes",
  "solana-svm-callback",
  "solana-svm-feature-set",
- "solana-svm-rent-collector",
+ "solana-svm-rent-calculator",
  "solana-svm-transaction",
  "solana-system-interface",
  "solana-sysvar-id",
@@ -9194,14 +9194,12 @@ name = "solana-svm-feature-set"
 version = "3.0.0"
 
 [[package]]
-name = "solana-svm-rent-collector"
+name = "solana-svm-rent-calculator"
 version = "3.0.0"
 dependencies = [
  "solana-account",
- "solana-clock",
  "solana-pubkey",
  "solana-rent",
- "solana-rent-collector",
  "solana-sdk-ids",
  "solana-transaction-context",
  "solana-transaction-error",

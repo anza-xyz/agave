@@ -1,7 +1,7 @@
 [package]
-name = "solana-svm-rent-collector"
-description = "Solana SVM Rent Collector"
-documentation = "https://docs.rs/solana-svm-rent-collector"
+name = "solana-svm-rent-calculator"
+description = "Solana SVM Rent Calculator"
+documentation = "https://docs.rs/solana-svm-rent-calculator"
 version = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
@@ -11,13 +11,8 @@ edition = { workspace = true }
 
 [dependencies]
 solana-account = { workspace = true }
-solana-clock = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
-solana-rent-collector = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
-
-[dev-dependencies]
-solana-epoch-schedule = { workspace = true }
