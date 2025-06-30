@@ -1193,12 +1193,13 @@ impl ClusterInfo {
         let self_info = CrdsValue::new(CrdsData::from(contact_info), &self.keypair());
         let max_bloom_filter_bytes = get_max_bloom_filter_bytes(&self_info);
         let mut pings = Vec::new();
+        let keypair = self.keypair();
         let pulls = {
             let _st = ScopedTimer::from(&self.stats.new_pull_requests);
             self.gossip
                 .new_pull_request(
                     thread_pool,
-                    self.keypair().deref(),
+                    &keypair,
                     self.my_shred_version(),
                     now,
                     gossip_validators,
@@ -1694,7 +1695,8 @@ impl ClusterInfo {
         let (total_bytes, sent_crds_values) = WeightedShuffle::new("handle-pull-requests", scores)
             .shuffle(&mut rng)
             .filter_map(|k| {
-                let (&addr, values) = &mut pull_responses[k];
+                let (addr, values) = &mut pull_responses[k];
+                let addr = *addr;
                 let num_values = values.len();
                 let response = Protocol::PullResponse(self_id, std::mem::take(values));
                 let packet = make_gossip_packet(addr, &response, &self.stats)?;
@@ -2198,13 +2200,14 @@ impl ClusterInfo {
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
-                match self.run_socket_consume(
+                let result = self.run_socket_consume(
                     &thread_pool,
                     epoch_specs.as_mut(),
                     &receiver,
                     &sender,
                     &mut packet_buf,
-                ) {
+                );
+                match result {
                     // A recv operation can only fail if the sending end of a
                     // channel is disconnected.
                     Err(GossipError::RecvError(_)) => break,
@@ -2240,7 +2243,7 @@ impl ClusterInfo {
             .name("solGossipListen".to_string())
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {
-                    if let Err(err) = self.run_listen(
+                    let result = self.run_listen(
                         &recycler,
                         epoch_specs.as_mut(),
                         &requests_receiver,
@@ -2248,7 +2251,8 @@ impl ClusterInfo {
                         &thread_pool,
                         should_check_duplicate_instance,
                         &mut packet_buf,
-                    ) {
+                    );
+                    if let Err(err) = result {
                         match err {
                             GossipError::RecvError(_) => break,
                             GossipError::DuplicateNodeInstance => {

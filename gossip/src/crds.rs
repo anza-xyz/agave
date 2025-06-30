@@ -491,15 +491,20 @@ impl Crds {
         // used when purging old values. If the origin does not exist in the
         // table, fallback to exhaustive update on all associated records.
         let origin = CrdsValueLabel::ContactInfo(*pubkey);
-        if let Some(origin) = self.table.get_mut(&origin) {
-            if origin.local_timestamp < now {
-                origin.local_timestamp = now;
+        match self.table.get_mut(&origin) {
+            Some(origin) => {
+                if origin.local_timestamp < now {
+                    origin.local_timestamp = now;
+                }
             }
-        } else if let Some(indices) = self.records.get(pubkey) {
-            for index in indices {
-                let entry = self.table.index_mut(*index);
-                if entry.local_timestamp < now {
-                    entry.local_timestamp = now;
+            None => {
+                if let Some(indices) = self.records.get(pubkey) {
+                    for index in indices {
+                        let entry = self.table.index_mut(*index);
+                        if entry.local_timestamp < now {
+                            entry.local_timestamp = now;
+                        }
+                    }
                 }
             }
         }
