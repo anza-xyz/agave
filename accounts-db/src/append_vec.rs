@@ -2274,8 +2274,8 @@ pub mod tests {
         });
     }
 
-    /// A helper fn to test scan_index
-    fn test_scan_index_helper(
+    /// A helper fn to test scan_stored_accounts_no_data
+    fn test_scan_stored_accounts_no_data_helper(
         storage_access: StorageAccess,
         modify_fn: impl Fn(&PathBuf, usize) -> usize,
     ) {
@@ -2284,19 +2284,19 @@ pub mod tests {
             modify_fn,
             |append_vec, pubkeys, account_offsets, accounts| {
                 let mut i = 0;
-                append_vec.scan_index(|index_info| {
+                append_vec.scan_stored_accounts_no_data(|stored_account| {
                     let pubkey = pubkeys.get(i).unwrap();
                     let account = accounts.get(i).unwrap();
                     let offset = account_offsets.get(i).unwrap();
 
                     assert_eq!(
-                        index_info.stored_size_aligned,
+                        stored_account.stored_size,
                         aligned_stored_size(account.data().len()),
                     );
-                    assert_eq!(index_info.index_info.offset, *offset);
-                    assert_eq!(index_info.index_info.pubkey, *pubkey);
-                    assert_eq!(index_info.index_info.lamports, account.lamports());
-                    assert_eq!(index_info.index_info.data_len, account.data().len() as u64);
+                    assert_eq!(stored_account.offset(), *offset);
+                    assert_eq!(stored_account.pubkey(), pubkey);
+                    assert_eq!(stored_account.lamports(), account.lamports());
+                    assert_eq!(stored_account.data_len(), account.data().len() as u64);
 
                     i += 1;
                 });
@@ -2307,15 +2307,15 @@ pub mod tests {
 
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    fn test_scan_index(storage_access: StorageAccess) {
-        test_scan_index_helper(storage_access, |_, size| size);
+    fn test_scan_stored_accounts_no_data(storage_access: StorageAccess) {
+        test_scan_stored_accounts_no_data_helper(storage_access, |_, size| size);
     }
 
-    /// Test `scan_index` for storage with incomplete account meta data.
+    /// Test `scan_stored_accounts_no_data` for storage with incomplete account meta data.
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    fn test_scan_index_incomplete_data(storage_access: StorageAccess) {
-        test_scan_index_helper(storage_access, |path, size| {
+    fn test_scan_stored_accounts_no_data_incomplete_data(storage_access: StorageAccess) {
+        test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
             // Append 1 byte of data at the end of the storage file to simulate
             // incomplete account's meta data.
             let mut f = OpenOptions::new()
@@ -2328,11 +2328,11 @@ pub mod tests {
         });
     }
 
-    /// Test `scan_index` for storage which is missing the last account data
+    /// Test `scan_stored_accounts_no_data` for storage which is missing the last account data
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
-    fn test_scan_index_missing_account_data(storage_access: StorageAccess) {
-        test_scan_index_helper(storage_access, |path, size| {
+    fn test_scan_stored_accounts_no_data_missing_account_data(storage_access: StorageAccess) {
+        test_scan_stored_accounts_no_data_helper(storage_access, |path, size| {
             let fake_stored_meta = StoredMeta {
                 write_version_obsolete: 0,
                 data_len: 100,
