@@ -13,9 +13,7 @@ use {
     solana_keypair::Keypair,
     solana_packet::PACKET_DATA_SIZE,
     solana_perf::packet::PacketBatch,
-    solana_quic_definitions::{
-        NotifyKeyUpdate, QUIC_MAX_TIMEOUT, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-    },
+    solana_quic_definitions::{NotifyKeyUpdate, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS},
     solana_tls_utils::{new_dummy_x509_certificate, tls_server_config_builder},
     std::{
         net::UdpSocket,
@@ -62,6 +60,9 @@ pub fn default_num_tpu_vote_transaction_receive_threads() -> usize {
     num_cpus::get()
 }
 
+/// Temporary for validating test failures
+pub const QUIC_MAX_TIMEOUT_TEST: Duration = Duration::from_secs(2);
+
 pub struct SpawnServerResult {
     pub endpoints: Vec<Endpoint>,
     pub thread: thread::JoinHandle<()>,
@@ -98,7 +99,7 @@ pub(crate) fn configure_server(
     config.max_concurrent_uni_streams(MAX_CONCURRENT_UNI_STREAMS.into());
     config.stream_receive_window((PACKET_DATA_SIZE as u32).into());
     config.receive_window((PACKET_DATA_SIZE as u32).into());
-    let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
+    let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT_TEST).unwrap();
     config.max_idle_timeout(Some(timeout));
 
     // disable bidi & datagrams

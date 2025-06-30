@@ -22,10 +22,10 @@ use {
         VALIDATOR_PORT_RANGE,
     },
     solana_quic_definitions::{
-        QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS,
+        QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_SEND_FAIRNESS,
     },
     solana_rpc_client_api::client_error::ErrorKind as ClientErrorKind,
-    solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
+    solana_streamer::{nonblocking::quic::ALPN_TPU_PROTOCOL_ID, quic::QUIC_MAX_TIMEOUT_TEST},
     solana_tls_utils::{
         new_dummy_x509_certificate, tls_client_config_builder, QuicClientCertificate,
     },
@@ -105,7 +105,7 @@ impl QuicLazyInitializedEndpoint {
         let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).unwrap()));
         let mut transport_config = TransportConfig::default();
 
-        let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
+        let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT_TEST).unwrap();
         transport_config.max_idle_timeout(Some(timeout));
         transport_config.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
         transport_config.send_fairness(QUIC_SEND_FAIRNESS);

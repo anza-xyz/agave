@@ -583,11 +583,16 @@ async fn test_rate_limiting() {
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
-    // We do not expect to see any errors, as the connection is in the pending state still, when we
-    // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
-    // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
-    // accept both 0 and 1 as valid values for it.
-    assert_eq!(stats, SendTransactionStatsNonAtomic::default());
+    // Accept both 0 and 1 as valid values for it as we may run into connection handshake timeout
+    // error within the TEST_MAX_TIME.
+    assert!(
+        stats
+            == SendTransactionStatsNonAtomic {
+                connection_error_timed_out: 1,
+                ..Default::default()
+            }
+            || stats == SendTransactionStatsNonAtomic::default()
+    );
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
