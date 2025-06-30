@@ -364,6 +364,13 @@ pub fn banking_retrace_path(path: &Path) -> PathBuf {
     path.join("banking_retrace")
 }
 
+enum BlockstoreInsertDecision {
+    Insert,
+    SkipLastIndexConflict(ShredId),
+    SkipLastInSlotConflict(ShredId),
+    SkipInvalidAncestry,
+}
+
 impl Blockstore {
     pub fn ledger_path(&self) -> &PathBuf {
         &self.ledger_path
@@ -1720,17 +1727,16 @@ impl Blockstore {
                     .unwrap();
             }
 
-            if !self.should_insert_data_shred(
+            let decision = self.evaluate_shred_insertion(&shred, slot_meta);
+            self.apply_shred_insertion_decision(
+                decision,
                 &shred,
                 slot_meta,
                 just_inserted_shreds,
-                self.max_root(),
-                leader_schedule,
-                shred_source,
                 duplicate_shreds,
-            ) {
-                return Err(InsertDataShredError::InvalidShred);
-            }
+                shred_source,
+                leader_schedule,
+            )?;
 
             if let Some(merkle_root_meta) = merkle_root_metas.get(&erasure_set) {
                 // A previous shred has been inserted in this batch or in blockstore
@@ -2081,134 +2087,118 @@ impl Blockstore {
             || chained_merkle_root == merkle_root
     }
 
-    fn should_insert_data_shred(
+    fn evaluate_shred_insertion(
         &self,
         shred: &Shred,
         slot_meta: &SlotMeta,
-        just_inserted_shreds: &HashMap<ShredId, Cow<'_, Shred>>,
-        max_root: Slot,
-        leader_schedule: Option<&LeaderScheduleCache>,
-        shred_source: ShredSource,
-        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
-    ) -> bool {
+    ) -> BlockstoreInsertDecision {
         let shred_index = u64::from(shred.index());
         let slot = shred.slot();
+        debug_assert_matches!(shred.sanitize(), Ok(()));
+        // Check that we do not receive shred_index >= than the last_index
+        // for the slot
+        let last_index = slot_meta.last_index;
+        if last_index.map(|ix| shred_index >= ix).unwrap_or_default() {
+            return BlockstoreInsertDecision::SkipLastIndexConflict(ShredId::new(
+                slot,
+                u32::try_from(last_index.unwrap()).unwrap(),
+                ShredType::Data,
+            ));
+        }
+        // Check that we do not receive a shred with "last_index" true, but shred_index
+        // less than our current received
         let last_in_slot = if shred.last_in_slot() {
             debug!("got last in slot");
             true
         } else {
             false
         };
-        debug_assert_matches!(shred.sanitize(), Ok(()));
-        // Check that we do not receive shred_index >= than the last_index
-        // for the slot
-        let last_index = slot_meta.last_index;
-        if last_index.map(|ix| shred_index >= ix).unwrap_or_default() {
-            let leader_pubkey = leader_schedule
-                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
-
-            if !self.has_duplicate_shreds_in_slot(slot) {
-                let shred_id = ShredId::new(
-                    slot,
-                    u32::try_from(last_index.unwrap()).unwrap(),
-                    ShredType::Data,
-                );
-                let Some(ending_shred) = self
-                    .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id)
-                    .map(Cow::into_owned)
-                else {
-                    error!(
-                        "Last index data shred {shred_id:?} indiciated by slot meta {slot_meta:?} \
-                         is missing from blockstore. This should only happen in extreme cases \
-                         where blockstore cleanup has caught up to the root. Skipping data shred \
-                         insertion"
-                    );
-                    return false;
-                };
-
-                if self
-                    .store_duplicate_slot(slot, ending_shred.clone(), shred.payload().clone())
-                    .is_err()
-                {
-                    warn!("store duplicate error");
-                }
-                duplicate_shreds.push(PossibleDuplicateShred::LastIndexConflict(
-                    shred.clone(),
-                    ending_shred,
-                ));
-            }
-
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= \
-                         slot.last_index {last_index:?}, shred_source: {shred_source:?}"
-                    ),
-                    String
-                )
-            );
-            return false;
-        }
-        // Check that we do not receive a shred with "last_index" true, but shred_index
-        // less than our current received
         if last_in_slot && shred_index < slot_meta.received {
-            let leader_pubkey = leader_schedule
-                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
-
-            if !self.has_duplicate_shreds_in_slot(slot) {
-                let shred_id = ShredId::new(
-                    slot,
-                    u32::try_from(slot_meta.received - 1).unwrap(),
-                    ShredType::Data,
-                );
-                let Some(ending_shred) = self
-                    .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id)
-                    .map(Cow::into_owned)
-                else {
-                    error!(
-                        "Last received data shred {shred_id:?} indiciated by slot meta \
-                         {slot_meta:?} is missing from blockstore. This should only happen in \
-                         extreme cases where blockstore cleanup has caught up to the root. \
-                         Skipping data shred insertion"
-                    );
-                    return false;
-                };
-
-                if self
-                    .store_duplicate_slot(slot, ending_shred.clone(), shred.payload().clone())
-                    .is_err()
-                {
-                    warn!("store duplicate error");
-                }
-                duplicate_shreds.push(PossibleDuplicateShred::LastIndexConflict(
-                    shred.clone(),
-                    ending_shred,
-                ));
-            }
-
-            datapoint_error!(
-                "blockstore_error",
-                (
-                    "error",
-                    format!(
-                        "Leader {:?}, slot {}: received shred_index {} < slot.received {}, \
-                         shred_source: {:?}",
-                        leader_pubkey, slot, shred_index, slot_meta.received, shred_source
-                    ),
-                    String
-                )
-            );
-            return false;
+            return BlockstoreInsertDecision::SkipLastInSlotConflict(ShredId::new(
+                slot,
+                u32::try_from(slot_meta.received - 1).unwrap(),
+                ShredType::Data,
+            ));
         }
 
         // TODO Shouldn't this use shred.parent() instead and update
         // slot_meta.parent_slot accordingly?
-        slot_meta
+        if !slot_meta
             .parent_slot
-            .map(|parent_slot| verify_shred_slots(slot, parent_slot, max_root))
+            .map(|parent_slot| verify_shred_slots(slot, parent_slot, self.max_root()))
             .unwrap_or_default()
+        {
+            return BlockstoreInsertDecision::SkipInvalidAncestry;
+        }
+        BlockstoreInsertDecision::Insert
+    }
+
+    /// Applies insertion decision, mutating blockstore if needed.
+    fn apply_shred_insertion_decision(
+        &self,
+        decision: BlockstoreInsertDecision,
+        shred: &Shred,
+        slot_meta: &SlotMeta,
+        just_inserted_shreds: &HashMap<ShredId, Cow<'_, Shred>>,
+        duplicate_shreds: &mut Vec<PossibleDuplicateShred>,
+        shred_source: ShredSource,
+        leader_schedule: Option<&LeaderScheduleCache>,
+    ) -> std::result::Result<(), InsertDataShredError> {
+        let shred_index = u64::from(shred.index());
+        let slot = shred.slot();
+        match decision {
+            BlockstoreInsertDecision::Insert => Ok(()),
+
+            BlockstoreInsertDecision::SkipInvalidAncestry => {
+                Err(InsertDataShredError::InvalidShred)
+            }
+
+            BlockstoreInsertDecision::SkipLastIndexConflict(shred_id)
+            | BlockstoreInsertDecision::SkipLastInSlotConflict(shred_id) => {
+                if !self.has_duplicate_shreds_in_slot(slot) {
+                    if let Some(ending_shred) = self
+                        .get_shred_from_just_inserted_or_db(just_inserted_shreds, shred_id)
+                        .map(Cow::into_owned)
+                    {
+                        if let Err(e) = self.store_duplicate_slot(
+                            slot,
+                            ending_shred.clone(),
+                            shred.payload().clone(),
+                        ) {
+                            warn!("store_duplicate_slot failed: {e}");
+                        }
+
+                        duplicate_shreds.push(PossibleDuplicateShred::LastIndexConflict(
+                            shred.clone(),
+                            ending_shred,
+                        ));
+                    } else {
+                        error!(
+                            "Expected ending data shred {shred_id:?} indiciated by slot meta \
+                            {slot_meta:?} is missing from blockstore. This should only happen in \
+                            extreme cases where blockstore cleanup has caught up to the root. \
+                            Skipping data shred insertion"
+                        );
+                        return Err(InsertDataShredError::InvalidShred);
+                    }
+                }
+                let leader_pubkey = leader_schedule
+                    .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
+                datapoint_error!(
+                    "blockstore_error",
+                    (
+                        "error",
+                        format!(
+                            "Leader {leader_pubkey:?}, Slot {slot}: conflicting shred index {shred_index}, \
+                            shred_source: {shred_source:?}"
+                        ),
+                        String
+                    )
+                );
+
+                Err(InsertDataShredError::InvalidShred)
+            }
+        }
     }
 
     fn insert_data_shred<'a>(
@@ -7115,7 +7105,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_should_insert_data_shred() {
+    fn test_apply_shred_insertion_decision() {
         solana_logger::setup();
         let entries = create_ticks(2000, 1, Hash::new_unique());
         let shredder = Shredder::new(0, 0, 1, 0).unwrap();
@@ -7140,7 +7130,6 @@ pub mod tests {
         );
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
-        let max_root = 0;
 
         // Insert the first 5 shreds, we don't have a "is_last" shred yet
         blockstore
@@ -7166,15 +7155,18 @@ pub mod tests {
 
         let terminator_shred = terminator.last().unwrap().clone();
         assert!(terminator_shred.last_in_slot());
-        assert!(blockstore.should_insert_data_shred(
-            &terminator_shred,
-            &slot_meta,
-            &HashMap::new(),
-            max_root,
-            None,
-            ShredSource::Repaired,
-            &mut Vec::new(),
-        ));
+        let decision = blockstore.evaluate_shred_insertion(&terminator_shred, &slot_meta);
+        assert!(blockstore
+            .apply_shred_insertion_decision(
+                decision,
+                &terminator_shred,
+                &slot_meta,
+                &HashMap::new(),
+                &mut Vec::new(),
+                ShredSource::Repaired,
+                None,
+            )
+            .is_ok());
         let term_last_idx = terminator.last().unwrap().index() as usize;
         // Trying to insert another "is_last" shred with index < the received index should fail
         // so we insert some shreds that are beyond where terminator block is in index space
@@ -7189,16 +7181,17 @@ pub mod tests {
         assert_eq!(slot_meta.received, term_last_idx as u64 + 3);
         let mut duplicate_shreds = vec![];
         // Now we check if terminator is eligible to be inserted
+        let decision = blockstore.evaluate_shred_insertion(&terminator_shred, &slot_meta);
         assert!(
-            !blockstore.should_insert_data_shred(
+            blockstore.apply_shred_insertion_decision(
+                decision,
                 &terminator_shred,
                 &slot_meta,
                 &HashMap::new(),
-                max_root,
-                None,
-                ShredSource::Repaired,
                 &mut duplicate_shreds,
-            ),
+                ShredSource::Repaired,
+                None,
+            ).is_err(),
             "Should not insert shred with 'last' flag set and index less than already existing shreds"
         );
         assert!(blockstore.has_duplicate_shreds_in_slot(0));
@@ -7231,16 +7224,19 @@ pub mod tests {
         duplicate_shreds.clear();
         blockstore.duplicate_slots_cf.delete(0).unwrap();
         assert!(!blockstore.has_duplicate_shreds_in_slot(0));
+        let decision = blockstore.evaluate_shred_insertion(&terminator_shred, &slot_meta);
         assert!(
-            !blockstore.should_insert_data_shred(
-                &past_tail_shreds[5], // 5 is not magic, could be any shred from this set
-                &slot_meta,
-                &HashMap::new(),
-                max_root,
-                None,
-                ShredSource::Repaired,
-                &mut duplicate_shreds,
-            ),
+            blockstore
+                .apply_shred_insertion_decision(
+                    decision,
+                    &past_tail_shreds[5], // 5 is not magic, could be any shred from this set
+                    &slot_meta,
+                    &HashMap::new(),
+                    &mut duplicate_shreds,
+                    ShredSource::Repaired,
+                    None,
+                )
+                .is_err(),
             "Shreds past end of block should fail to insert"
         );
 
