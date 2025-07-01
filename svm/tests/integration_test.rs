@@ -2313,16 +2313,10 @@ fn svm_integration(test_entries: Vec<SvmTestEntry>) {
     }
 }
 
-#[test_case(true; "remove accounts executable flag check")]
-#[test_case(false; "don't remove accounts executable flag check")]
-fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
+#[test]
+fn program_cache_create_account() {
     for loader_id in PROGRAM_OWNERS {
         let mut test_entry = SvmTestEntry::with_loader_v4();
-        if !remove_accounts_executable_flag_checks {
-            test_entry
-                .disabled_features
-                .push(feature_set::remove_accounts_executable_flag_checks::id());
-        }
 
         let fee_payer_keypair = Keypair::new();
         let fee_payer = fee_payer_keypair.pubkey();
@@ -2357,15 +2351,10 @@ fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
             Hash::default(),
         );
 
-        // fails at load-time for executable flag if feature is disabled
-        // if feature is enabled fails at execution
-        let expected_status = if remove_accounts_executable_flag_checks {
-            ExecutionStatus::ExecutedFailed
-        } else {
-            ExecutionStatus::ProcessedFailed
-        };
-
-        test_entry.push_transaction_with_status(invoke_transaction.clone(), expected_status);
+        test_entry.push_transaction_with_status(
+            invoke_transaction.clone(),
+            ExecutionStatus::ExecutedFailed,
+        );
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
         let mut env = SvmTestEnvironment::create(test_entry);
@@ -2379,7 +2368,8 @@ fn program_cache_create_account(remove_accounts_executable_flag_checks: bool) {
             ..SvmTestEntry::default()
         };
 
-        test_entry.push_transaction_with_status(invoke_transaction, expected_status);
+        test_entry
+            .push_transaction_with_status(invoke_transaction, ExecutionStatus::ExecutedFailed);
         test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE);
 
         // test in different entry same slot

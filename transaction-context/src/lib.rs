@@ -200,8 +200,6 @@ pub struct TransactionContext {
     top_level_instruction_index: usize,
     return_data: TransactionReturnData,
     #[cfg(not(target_os = "solana"))]
-    remove_accounts_executable_flag_checks: bool,
-    #[cfg(not(target_os = "solana"))]
     rent: Rent,
 }
 
@@ -227,14 +225,8 @@ impl TransactionContext {
             instruction_trace: vec![InstructionContext::default()],
             top_level_instruction_index: 0,
             return_data: TransactionReturnData::default(),
-            remove_accounts_executable_flag_checks: true,
             rent,
         }
-    }
-
-    #[cfg(not(target_os = "solana"))]
-    pub fn set_remove_accounts_executable_flag_checks(&mut self, enabled: bool) {
-        self.remove_accounts_executable_flag_checks = enabled;
     }
 
     /// Used in mock_process_instruction
@@ -1148,10 +1140,7 @@ impl BorrowedAccount<'_> {
     #[cfg(not(target_os = "solana"))]
     #[inline]
     fn is_executable_internal(&self) -> bool {
-        !self
-            .transaction_context
-            .remove_accounts_executable_flag_checks
-            && self.account.executable()
+        false
     }
 
     /// Configures whether this account is executable (transaction wide)

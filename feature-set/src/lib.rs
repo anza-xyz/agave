@@ -104,8 +104,6 @@ impl FeatureSet {
         SVMFeatureSet {
             move_precompile_verification_to_svm: self
                 .is_active(&move_precompile_verification_to_svm::id()),
-            remove_accounts_executable_flag_checks: self
-                .is_active(&remove_accounts_executable_flag_checks::id()),
             stricter_abi_and_runtime_constraints: self
                 .is_active(&stricter_abi_and_runtime_constraints::id()),
             enable_bpf_loader_set_authority_checked_ix: self
