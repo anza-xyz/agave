@@ -292,20 +292,17 @@ pub fn bind_two_in_range_with_offset_and_config(
         ));
     }
 
-    for port in range.0..range.1 {
+    let max_start_port = range.1.saturating_sub(offset);
+    for port in range.0..=max_start_port {
         let first_bind_result = bind_to_with_config(ip_addr, port, sock1_config);
         if let Ok(first_bind) = first_bind_result {
-            if range.1.saturating_sub(port) >= offset {
-                let second_bind_result =
-                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config);
-                if let Ok(second_bind) = second_bind_result {
-                    return Ok((
-                        (first_bind.local_addr().unwrap().port(), first_bind),
-                        (second_bind.local_addr().unwrap().port(), second_bind),
-                    ));
-                }
-            } else {
-                break;
+            let second_port = port + offset;
+            let second_bind_result = bind_to_with_config(ip_addr, second_port, sock2_config);
+            if let Ok(second_bind) = second_bind_result {
+                return Ok((
+                    (first_bind.local_addr().unwrap().port(), first_bind),
+                    (second_bind.local_addr().unwrap().port(), second_bind),
+                ));
             }
         }
     }
