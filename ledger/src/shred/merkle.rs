@@ -1037,8 +1037,23 @@ pub(super) fn make_shreds_from_data(
 ) -> Result<Vec<Shred>, Error> {
     let now = Instant::now();
     let chained = chained_merkle_root.is_some();
-    let resigned = chained && is_last_in_slot;
     let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
+
+    let data_buffer_per_shred_size_non_resigned = ShredData::capacity(proof_size, chained, false)?;
+    let data_buffer_total_size_non_resigned =
+        DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size_non_resigned;
+    let total_fec_sets = if data.is_empty() {
+        1
+    } else {
+        data.len().div_ceil(data_buffer_total_size_non_resigned)
+    };
+
+    let resigned = if total_fec_sets == 1 {
+        chained && is_last_in_slot
+    } else {
+        false
+    };
+
     let data_buffer_per_shred_size = ShredData::capacity(proof_size, chained, resigned)?;
     let data_buffer_total_size = DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size;
 
@@ -1083,27 +1098,54 @@ pub(super) fn make_shreds_from_data(
 
     // Pre-allocate shreds to avoid reallocations.
     let mut shreds = {
-        let number_of_batches = data.len().div_ceil(data_buffer_total_size);
-        let total_num_shreds = SHREDS_PER_FEC_BLOCK * number_of_batches;
+        let total_num_shreds = SHREDS_PER_FEC_BLOCK * total_fec_sets;
         Vec::<Shred>::with_capacity(total_num_shreds)
     };
+    let mut current_fec_set = 0;
     stats.data_bytes += data.len();
 
     // Split the data into full erasure batches and initialize data and coding
     // shreds for each batch.
     while data.len() >= data_buffer_total_size {
-        let (current_batch_data_chunk, rest) = data.split_at(data_buffer_total_size);
-        debug_assert_eq!(
-            current_batch_data_chunk.len(),
-            DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size
-        );
+        current_fec_set += 1;
+        let is_last_fec_set = current_fec_set == total_fec_sets;
+
+        let batch_resigned = if total_fec_sets > 1 {
+            chained && is_last_in_slot && is_last_fec_set
+        } else {
+            resigned
+        };
+
+        common_header_data.shred_variant = ShredVariant::MerkleData {
+            proof_size,
+            chained,
+            resigned: batch_resigned,
+        };
+        common_header_code.shred_variant = ShredVariant::MerkleCode {
+            proof_size,
+            chained,
+            resigned: batch_resigned,
+        };
+
+        let batch_data_buffer_per_shred_size =
+            ShredData::capacity(proof_size, chained, batch_resigned)?;
+        let batch_data_buffer_total_size =
+            DATA_SHREDS_PER_FEC_BLOCK * batch_data_buffer_per_shred_size;
+
+        let (current_batch_data_chunk, rest) = if batch_resigned {
+            let chunk_size = data.len().min(batch_data_buffer_total_size);
+            data.split_at(chunk_size)
+        } else {
+            data.split_at(data_buffer_total_size)
+        };
+
         common_header_data.fec_set_index = common_header_data.index;
         common_header_code.fec_set_index = common_header_data.fec_set_index;
         shreds.extend(
             make_shreds_data(
                 &mut common_header_data,
                 data_header,
-                current_batch_data_chunk.chunks(data_buffer_per_shred_size),
+                current_batch_data_chunk.chunks(batch_data_buffer_per_shred_size),
             )
             .map(Shred::ShredData),
         );
@@ -1119,23 +1161,37 @@ pub(super) fn make_shreds_from_data(
     //
     // In either case, we want to generate empty data shreds.
     if !data.is_empty() || shreds.is_empty() {
-        stats.padding_bytes += data_buffer_total_size - data.len();
+        current_fec_set += 1;
+        let is_last_fec_set = current_fec_set == total_fec_sets;
+
+        let batch_resigned = if total_fec_sets > 1 {
+            chained && is_last_in_slot && is_last_fec_set
+        } else {
+            resigned
+        };
+
+        let batch_data_buffer_per_shred_size =
+            ShredData::capacity(proof_size, chained, batch_resigned)?;
+        let batch_data_buffer_total_size =
+            DATA_SHREDS_PER_FEC_BLOCK * batch_data_buffer_per_shred_size;
+
+        stats.padding_bytes += batch_data_buffer_total_size - data.len();
         common_header_data.shred_variant = ShredVariant::MerkleData {
             proof_size,
             chained,
-            resigned,
+            resigned: batch_resigned,
         };
         common_header_code.shred_variant = ShredVariant::MerkleCode {
             proof_size,
             chained,
-            resigned,
+            resigned: batch_resigned,
         };
         common_header_data.fec_set_index = common_header_data.index;
         common_header_code.fec_set_index = common_header_data.fec_set_index;
         shreds.extend({
             // Create data chunks out of remaining data + padding.
             let chunks = data
-                .chunks(data_buffer_per_shred_size)
+                .chunks(batch_data_buffer_per_shred_size)
                 .chain(std::iter::repeat(&[][..])) // possible padding
                 .take(DATA_SHREDS_PER_FEC_BLOCK);
             make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
@@ -1702,7 +1758,21 @@ mod test {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let keypair = Keypair::new();
         let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
-        let resigned = chained && is_last_in_slot;
+        let proof_size = PROOF_ENTRIES_FOR_32_32_BATCH;
+        let data_buffer_per_shred_size_non_resigned =
+            ShredData::capacity(proof_size, chained, false).unwrap();
+        let data_buffer_total_size_non_resigned =
+            DATA_SHREDS_PER_FEC_BLOCK * data_buffer_per_shred_size_non_resigned;
+        let total_fec_sets = if data_size == 0 {
+            1
+        } else {
+            data_size.div_ceil(data_buffer_total_size_non_resigned)
+        };
+        let resigned = if total_fec_sets == 1 {
+            chained && is_last_in_slot
+        } else {
+            false
+        };
         let slot = 149_745_689;
         let parent_slot = slot - rng.gen_range(1..65536);
         let shred_version = rng.gen();
@@ -1796,6 +1866,14 @@ mod test {
             assert_eq!(common_header.slot, slot);
             assert_eq!(common_header.version, shred_version);
             let proof_size = shred.proof_size().unwrap();
+
+            let expected_resigned = if total_fec_sets == 1 {
+                resigned
+            } else {
+                let max_fec_set_index = shreds.iter().map(|s| s.fec_set_index()).max().unwrap_or(0);
+                chained && is_last_in_slot && common_header.fec_set_index == max_fec_set_index
+            };
+
             match shred {
                 Shred::ShredCode(shred) => {
                     assert_eq!(common_header.index, next_code_index + num_coding_shreds);
@@ -1804,7 +1882,7 @@ mod test {
                         ShredVariant::MerkleCode {
                             proof_size,
                             chained,
-                            resigned
+                            resigned: expected_resigned
                         }
                     );
                     num_coding_shreds += 1;
@@ -1822,7 +1900,7 @@ mod test {
                         ShredVariant::MerkleData {
                             proof_size,
                             chained,
-                            resigned
+                            resigned: expected_resigned
                         }
                     );
                     assert!(common_header.fec_set_index <= common_header.index);
