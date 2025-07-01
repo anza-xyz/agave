@@ -1,6 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    log::info,
     serial_test::serial,
     solana_account::{Account, AccountSharedData},
     solana_bench_tps::{
@@ -124,6 +125,10 @@ fn test_bench_tps_test_validator(config: Config) {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
+    info!(
+        "zzzzzz started test validator at: {:?}",
+        test_validator.tpu()
+    );
     let rpc_client = Arc::new(RpcClient::new_with_commitment(
         test_validator.rpc_url(),
         CommitmentConfig::processed(),
@@ -140,6 +145,8 @@ fn test_bench_tps_test_validator(config: Config) {
         )
         .expect("Should build Quic Tpu Client."),
     );
+
+    info!("zzzzzz Created TpuClient: {:?}", test_validator.tpu());
 
     let lamports_per_account = 1000;
 
@@ -158,8 +165,11 @@ fn test_bench_tps_test_validator(config: Config) {
     } else {
         None
     };
+    info!("zzzzzz generated key paris at: {:?}", test_validator.tpu());
 
     let _total = do_bench_tps(client, config, keypairs, nonce_keypairs);
+
+    info!("zzzzzz done  do_bench_tps at: {:?}", test_validator.tpu());
 
     #[cfg(not(debug_assertions))]
     assert!(_total > 100);
