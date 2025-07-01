@@ -173,7 +173,7 @@ dependencies = [
  "dirs-next",
  "indicatif",
  "nix",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "scopeguard",
  "semver 1.0.26",
  "serde",
@@ -5757,9 +5757,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.20"
+version = "0.12.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eabf4c97d9130e2bf606614eb937e86edac8292eaa6f422f995d7e8de1eb1813"
+checksum = "4c8cea6b35bcceb099f30173754403d2eba0a5dc18cea3630fccd88251909288"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -5806,7 +5806,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.1.0",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -7280,7 +7280,7 @@ dependencies = [
  "log",
  "predicates",
  "regex",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "semver 1.0.26",
  "serial_test",
  "solana-file-download",
@@ -7382,7 +7382,7 @@ dependencies = [
  "log",
  "num-traits",
  "pretty-hex",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "semver 1.0.26",
  "serde",
  "serde_derive",
@@ -9077,7 +9077,7 @@ dependencies = [
  "gethostname",
  "log",
  "rand 0.8.5",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "serial_test",
  "solana-cluster-type",
  "solana-sha256-hasher",
@@ -9171,7 +9171,7 @@ name = "solana-notifier"
 version = "3.0.0"
 dependencies = [
  "log",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "serde_json",
  "solana-hash",
 ]
@@ -9897,7 +9897,7 @@ dependencies = [
  "jsonrpc-core",
  "jsonrpc-http-server",
  "log",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "reqwest-middleware",
  "semver 1.0.26",
  "serde",
@@ -9935,7 +9935,7 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "reqwest-middleware",
  "serde",
  "serde_derive",
@@ -10012,7 +10012,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "log",
- "reqwest 0.12.20",
+ "reqwest 0.12.21",
  "serde",
  "serde_json",
  "solana-account-decoder",
