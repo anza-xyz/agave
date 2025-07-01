@@ -85,8 +85,8 @@ fn stored_size_checked(data_len: usize) -> Option<usize> {
 
 pub const MAXIMUM_APPEND_VEC_FILE_SIZE: u64 = 16 * 1024 * 1024 * 1024; // 16 GiB
 
-#[derive(Error, Debug)]
 /// An enum for AppendVec related errors.
+#[derive(Error, Debug)]
 pub enum AppendVecError {
     #[error("too small file size {0} for AppendVec")]
     FileSizeTooSmall(usize),
@@ -99,9 +99,6 @@ pub enum AppendVecError {
 
     #[error("offset ({0}) is larger than file size ({1})")]
     OffsetOutOfBounds(usize, usize),
-
-    #[error("file size ({2}) and current length ({1}) do not match for '{0}'")]
-    SizeMismatch(PathBuf, usize, u64),
 }
 
 /// A slice whose contents are known to be valid.
@@ -467,9 +464,26 @@ impl AppendVec {
         {
             Ok(new)
         } else {
-            Err(AccountsFileError::AppendVecError(
-                AppendVecError::SizeMismatch(new.path.clone(), current_len, new.file_size),
-            ))
+            // However, if opening a minimized snapshot, the file sizes can be
+            // larger than current length [^1].  So when the `if` condition fails,
+            // fallback to the old/slow impl that does the full sanitization.
+            // [^1]: https://github.com/anza-xyz/agave/issues/6797
+            info!(
+                "Could not optimistically create new AppendVec, \
+                 falling back to pessimistic impl: \
+                 file size ({}) and current length ({}) do not match for '{}'",
+                new.file_size,
+                current_len,
+                new.path.display(),
+            );
+            let (sanitized, _num_accounts) = new.sanitize_layout_and_length();
+            if sanitized {
+                Ok(new)
+            } else {
+                Err(AccountsFileError::AppendVecError(
+                    AppendVecError::IncorrectLayout(new.path.clone()),
+                ))
+            }
         }
     }
 
