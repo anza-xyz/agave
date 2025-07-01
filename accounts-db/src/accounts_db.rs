@@ -7898,8 +7898,8 @@ impl AccountsDb {
 
             // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
             // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
-            assert!(info.stored_size <= u64_align!(storage.accounts.len()), "
-                Stored size ({}) is larger than the size of the accounts file ({}) for store_id: {}",
+            assert!(info.stored_size <= u64_align!(storage.accounts.len()),
+                "Stored size ({}) is larger than the size of the accounts file ({}) for store_id: {}",
                 info.stored_size, storage.accounts.len(), store_id
             );
         }
