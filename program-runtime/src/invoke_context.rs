@@ -444,15 +444,6 @@ impl<'a> InvokeContext<'a> {
                 })?;
             let borrowed_program_account = instruction_context
                 .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
-            #[allow(deprecated)]
-            if !self
-                .get_feature_set()
-                .remove_accounts_executable_flag_checks
-                && !borrowed_program_account.is_executable()
-            {
-                ic_msg!(self, "Account {} is not executable", callee_program_id);
-                return Err(InstructionError::AccountNotExecutable);
-            }
 
             borrowed_program_account.get_index_in_transaction()
         };
@@ -561,21 +552,14 @@ impl<'a> InvokeContext<'a> {
             let owner_id = borrowed_root_account.get_owner();
             if native_loader::check_id(owner_id) {
                 *borrowed_root_account.get_key()
-            } else if self
-                .get_feature_set()
-                .remove_accounts_executable_flag_checks
+            } else if bpf_loader_deprecated::check_id(owner_id)
+                || bpf_loader::check_id(owner_id)
+                || bpf_loader_upgradeable::check_id(owner_id)
+                || loader_v4::check_id(owner_id)
             {
-                if bpf_loader_deprecated::check_id(owner_id)
-                    || bpf_loader::check_id(owner_id)
-                    || bpf_loader_upgradeable::check_id(owner_id)
-                    || loader_v4::check_id(owner_id)
-                {
-                    *owner_id
-                } else {
-                    return Err(InstructionError::UnsupportedProgramId);
-                }
-            } else {
                 *owner_id
+            } else {
+                return Err(InstructionError::UnsupportedProgramId);
             }
         };
 
