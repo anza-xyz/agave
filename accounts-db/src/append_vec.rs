@@ -100,7 +100,7 @@ pub enum AppendVecError {
     #[error("offset ({0}) is larger than file size ({1})")]
     OffsetOutOfBounds(usize, usize),
 
-    #[error("file size ({1}) and current length ({0}) do not match for '{0}'")]
+    #[error("file size ({2}) and current length ({1}) do not match for '{0}'")]
     SizeMismatch(PathBuf, usize, u64),
 }
 
