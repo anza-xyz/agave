@@ -1,6 +1,10 @@
 //! The `streamer` module defines a set of services for efficiently pulling data from UDP sockets.
 //!
 
+#[cfg(unix)]
+use nix::poll::{PollFd, PollFlags};
+#[cfg(unix)]
+use std::os::fd::AsFd;
 use {
     crate::{
         atomic_udp_socket::{
@@ -16,6 +20,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
+    solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -161,27 +166,26 @@ fn recv_loop<P: SocketProvider>(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
-    let mut has_set_timeout = false;
+    let mut socket = provider.current_socket_ref();
+    #[cfg(unix)]
+    let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+
+    // Non-unix implementation may block indefinitely due to its lack of polling support,
+    // so we set a read timeout to avoid blocking indefinitely.
+    #[cfg(not(unix))]
+    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+
+    #[cfg(unix)]
+    socket.set_nonblocking(true)?;
+
     loop {
-        let socket = match provider.current_socket() {
-            CurrentSocket::Changed(sock) => {
-                sock.set_read_timeout(Some(Duration::from_secs(1)))?;
-                has_set_timeout = true;
-                sock
-            }
-            CurrentSocket::Same(sock) => {
-                if !has_set_timeout {
-                    sock.set_read_timeout(Some(Duration::from_secs(1)))?;
-                    has_set_timeout = true;
-                }
-                sock
-            }
-        };
         let mut packet_batch = if use_pinned_memory {
             PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
             PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
+        packet_batch.resize(PACKETS_PER_BATCH, Packet::default());
+
         loop {
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
@@ -196,7 +200,12 @@ fn recv_loop<P: SocketProvider>(
                 }
             }
 
-            if let Ok(len) = packet::recv_from(&mut packet_batch, socket, coalesce) {
+            #[cfg(unix)]
+            let result = packet::recv_from(&mut packet_batch, &socket, coalesce, &mut poll_fd);
+            #[cfg(not(unix))]
+            let result = packet::recv_from(&mut packet_batch, &socket, coalesce);
+
+            if let Ok(len) = result {
                 if len > 0 {
                     let StreamerReceiveStats {
                         packets_count,
@@ -228,6 +237,21 @@ fn recv_loop<P: SocketProvider>(
                 break;
             }
         }
+
+        if let CurrentSocket::Changed(s) = provider.current_socket() {
+            socket = s;
+            // Non-unix implementation may block indefinitely due to its lack of polling support,
+            // so we set a read timeout to avoid blocking indefinitely.
+            #[cfg(not(unix))]
+            socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+            #[cfg(unix)]
+            socket.set_nonblocking(true)?;
+
+            #[cfg(unix)]
+            {
+                poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+            }
+        }
     }
 }
 
@@ -244,8 +268,6 @@ pub fn receiver(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
-    let res = socket.set_read_timeout(Some(Duration::new(1, 0)));
-    assert!(res.is_ok(), "streamer::receiver set_read_timeout error");
     Builder::new()
         .name(thread_name)
         .spawn(move || {
@@ -555,7 +577,7 @@ pub fn responder(
 }
 
 fn responder_loop<P: SocketProvider>(
-    mut provider: P,
+    provider: P,
     name: &'static str,
     r: PacketBatchReceiver,
     socket_addr_space: SocketAddrSpace,
@@ -572,7 +594,7 @@ fn responder_loop<P: SocketProvider>(
 
     loop {
         let sock = provider.current_socket_ref();
-        if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
+        if let Err(e) = recv_send(&sock, &r, &socket_addr_space, &mut stats) {
             match e {
                 StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
                 StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),

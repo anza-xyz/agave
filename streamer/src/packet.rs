@@ -1,9 +1,8 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
+#[cfg(unix)]
+use nix::poll::{poll, PollFd, PollTimeout};
 use {
-    crate::{
-        recvmmsg::{recv_mmsg, NUM_RCVMMSGS},
-        socket::SocketAddrSpace,
-    },
+    crate::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
     std::{
         io::{ErrorKind, Result},
         net::UdpSocket,
@@ -26,6 +25,7 @@ This is a wrapper around recvmmsg(7) call.
  You may want to call `sock.set_read_timeout(Some(Duration::from_secs(1)));` or similar
  prior to calling this function if you require this to actually time out after 1 second.
 */
+#[cfg(not(unix))]
 pub(crate) fn recv_from(
     batch: &mut PinnedPacketBatch,
     socket: &UdpSocket,
@@ -81,6 +81,57 @@ pub(crate) fn recv_from(
     Ok(i)
 }
 
+/// Receive multiple messages from `sock` into buffer provided in `batch`.
+/// This is a wrapper around recvmmsg(7) call.
+#[cfg(unix)]
+pub(crate) fn recv_from(
+    batch: &mut PinnedPacketBatch,
+    socket: &UdpSocket,
+    // If max_wait is None, reads from the socket until either:
+    //   * 64 packets are read (PACKETS_PER_BATCH == 64), or
+    //   * There are no more data available to read from the socket.
+    max_wait: Option<Duration>,
+    poll_fd: &mut [PollFd],
+) -> Result<usize> {
+    let mut i = 0;
+
+    trace!("receiving on {}", socket.local_addr().unwrap());
+    let deadline = max_wait.map(|dur| Instant::now() + dur);
+
+    loop {
+        let timeout = deadline.map(|d| {
+            let remaining = d.saturating_duration_since(Instant::now());
+            PollTimeout::from(remaining.as_millis() as u16)
+        });
+
+        let n_ready = poll(poll_fd, timeout)?;
+        if n_ready == 0 {
+            break;
+        }
+
+        let n = match recv_mmsg(socket, &mut batch[i..]) {
+            Ok(0) => break,
+            Ok(n) => n,
+            // Edge case / race condition: data became unavailable between poll and recv.
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                let done_waiting = deadline.is_none_or(|d| Instant::now() >= d);
+                if done_waiting {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+            Err(e) => return Err(e),
+        };
+
+        i += n;
+        if i >= PACKETS_PER_BATCH {
+            break;
+        }
+    }
+
+    Ok(i)
+}
 pub fn send_to(
     batch: &PinnedPacketBatch,
     socket: &UdpSocket,
@@ -100,7 +151,7 @@ pub fn send_to(
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
+        super::{recv_from as recv_from_impl, *},
         solana_net_utils::bind_to_localhost,
         std::{io, io::Write, net::SocketAddr},
     };
@@ -115,6 +166,24 @@ mod tests {
         assert_eq!(packet_batch[0].meta().socket_addr(), send_addr);
     }
 
+    fn recv_from(
+        batch: &mut PinnedPacketBatch,
+        socket: &UdpSocket,
+        max_wait: Option<Duration>,
+    ) -> Result<usize> {
+        #[cfg(unix)]
+        {
+            use {nix::poll::PollFlags, std::os::fd::AsFd};
+
+            let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+            recv_from_impl(batch, socket, max_wait, &mut poll_fd)
+        }
+        #[cfg(not(unix))]
+        {
+            recv_from_impl(batch, socket, max_wait)
+        }
+    }
+
     #[test]
     pub fn packet_send_recv() {
         solana_logger::setup();
@@ -123,9 +192,7 @@ mod tests {
         let send_socket = bind_to_localhost().expect("bind");
         let saddr = send_socket.local_addr().unwrap();
 
-        let packet_batch_size = 10;
-        let mut batch = PinnedPacketBatch::with_capacity(packet_batch_size);
-        batch.resize(packet_batch_size, Packet::default());
+        let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
 
         for m in batch.iter_mut() {
             m.meta_mut().set_socket_addr(&addr);
@@ -180,7 +247,6 @@ mod tests {
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost().expect("bind");
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
-        batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size
