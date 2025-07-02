@@ -131,6 +131,8 @@ pub(crate) fn recv_from(
         }
     }
 
+    batch.truncate(i);
+
     Ok(i)
 }
 pub fn send_to(
