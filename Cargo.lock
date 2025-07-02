@@ -167,13 +167,13 @@ dependencies = [
  "bzip2",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
  "indicatif",
  "nix",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "scopeguard",
  "semver 1.0.26",
  "serde",
@@ -408,7 +408,7 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
@@ -2635,7 +2635,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5764,9 +5764,9 @@ dependencies = [
 
 [[package]]
 name = "reqwest"
-version = "0.12.21"
+version = "0.12.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c8cea6b35bcceb099f30173754403d2eba0a5dc18cea3630fccd88251909288"
+checksum = "cbc931937e6ca3a06e3b6c0aa7841849b160a90351d6ab467a8b9b9959767531"
 dependencies = [
  "async-compression",
  "base64 0.22.1",
@@ -5813,7 +5813,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.1.0",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "serde",
  "thiserror 1.0.69",
  "tower-service",
@@ -5941,7 +5941,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6018,7 +6018,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7287,7 +7287,7 @@ dependencies = [
  "log",
  "predicates",
  "regex",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "semver 1.0.26",
  "serial_test",
  "solana-file-download",
@@ -7379,7 +7379,7 @@ dependencies = [
  "bincode",
  "bs58",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "const_format",
  "criterion-stats",
  "crossbeam-channel",
@@ -7389,7 +7389,7 @@ dependencies = [
  "log",
  "num-traits",
  "pretty-hex",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "semver 1.0.26",
  "serde",
  "serde_derive",
@@ -7490,7 +7490,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "ed25519-dalek",
  "humantime",
  "indicatif",
@@ -9084,7 +9084,7 @@ dependencies = [
  "gethostname",
  "log",
  "rand 0.8.5",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "serial_test",
  "solana-cluster-type",
  "solana-sha256-hasher",
@@ -9178,7 +9178,7 @@ name = "solana-notifier"
 version = "3.0.0"
 dependencies = [
  "log",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "serde_json",
  "solana-hash",
 ]
@@ -9721,7 +9721,7 @@ name = "solana-remote-wallet"
 version = "3.0.0"
 dependencies = [
  "assert_matches",
- "console 0.15.11",
+ "console 0.16.0",
  "dialoguer",
  "hidapi",
  "log",
@@ -9904,7 +9904,7 @@ dependencies = [
  "jsonrpc-core",
  "jsonrpc-http-server",
  "log",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "reqwest-middleware",
  "semver 1.0.26",
  "serde",
@@ -9942,7 +9942,7 @@ version = "3.0.0"
 dependencies = [
  "anyhow",
  "jsonrpc-core",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "reqwest-middleware",
  "serde",
  "serde_derive",
@@ -10019,7 +10019,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "log",
- "reqwest 0.12.21",
+ "reqwest 0.12.22",
  "serde",
  "serde_json",
  "solana-account-decoder",
@@ -11091,7 +11091,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "csv",
  "ctrlc",
  "indexmap 2.10.0",
@@ -12604,7 +12604,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12835,17 +12835,19 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.45.1"
+version = "1.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75ef51a33ef1da925cea3e4eb122833cb377c61439ca401b770f54902b806779"
+checksum = "1140bb80481756a8cbe10541f37433b459c5aa1e727b4c020fbfebdc25bf3ec4"
 dependencies = [
  "backtrace",
  "bytes",
+ "io-uring",
  "libc",
  "mio",
  "parking_lot 0.12.3",
  "pin-project-lite",
  "signal-hook-registry",
+ "slab",
  "socket2",
  "tokio-macros",
  "windows-sys 0.52.0",

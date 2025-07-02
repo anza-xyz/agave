@@ -1053,7 +1053,7 @@ mod tests {
         solana_keypair::keypair_from_seed,
         solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     const SIZE_OF_SHRED_INDEX: usize = 4;
@@ -1215,10 +1215,10 @@ mod tests {
         );
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_should_discard_shred(chained: bool, is_last_in_slot: bool) {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
@@ -1868,10 +1868,10 @@ mod tests {
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_is_shred_duplicate(chained: bool, is_last_in_slot: bool) {
         fn fill_retransmitter_signature<R: Rng>(
             rng: &mut R,

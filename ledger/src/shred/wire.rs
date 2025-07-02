@@ -447,7 +447,7 @@ mod tests {
         rand::Rng,
         solana_perf::packet::PacketFlags,
         std::io::{Cursor, Write},
-        test_case::test_case,
+        test_case::test_matrix,
     };
 
     fn make_dummy_signature<R: Rng>(rng: &mut R) -> Signature {
@@ -486,14 +486,11 @@ mod tests {
         packet.meta_mut().size = usize::try_from(cursor.position()).unwrap();
     }
 
-    #[test_case(false, false, false)]
-    #[test_case(false, false, true)]
-    #[test_case(false, true, false)]
-    #[test_case(false, true, true)]
-    #[test_case(true, false, false)]
-    #[test_case(true, false, true)]
-    #[test_case(true, true, false)]
-    #[test_case(true, true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false],
+        [true, false]
+    )]
     fn test_merkle_shred_wire_layout(repaired: bool, chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let slot = 318_230_963 + rng.gen_range(0..318_230_963);

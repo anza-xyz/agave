@@ -6,7 +6,10 @@ os_name="$1"
 
 case "$os_name" in
 "Windows")
-  choco install openssl --version 3.4.1 --install-arguments="'/DIR=C:\OpenSSL'" -y
+  echo "Downloading OpenSSL installer..."
+  curl -L -o "openssl-installer.exe" "https://slproweb.com/download/Win64OpenSSL-3_4_2.exe"
+  echo "Installing OpenSSL..."
+  cmd.exe /c "openssl-installer.exe /verysilent /sp- /suppressmsgboxes /norestart /DIR=C:\OpenSSL"
   export OPENSSL_LIB_DIR="C:\OpenSSL\lib\VC\x64\MT"
   export OPENSSL_INCLUDE_DIR="C:\OpenSSL\include"
   ;;
