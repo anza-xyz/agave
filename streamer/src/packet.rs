@@ -194,6 +194,7 @@ mod tests {
         let saddr = send_socket.local_addr().unwrap();
 
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         for m in batch.iter_mut() {
             m.meta_mut().set_socket_addr(&addr);
@@ -248,6 +249,7 @@ mod tests {
         let addr = recv_socket.local_addr().unwrap();
         let send_socket = bind_to_localhost().expect("bind");
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
+        batch.resize(PACKETS_PER_BATCH, Packet::default());
 
         // Should only get PACKETS_PER_BATCH packets per iteration even
         // if a lot more were sent, and regardless of packet size
