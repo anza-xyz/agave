@@ -707,10 +707,6 @@ where
         ..GenesisConfig::default()
     }));
 
-    // enable lazy rent collection because this test depends on rent-due accounts
-    // not being eagerly-collected for exact rewards calculation
-    bank0.restore_old_behavior_for_fragile_tests();
-
     assert_eq!(
         bank0.capitalization(),
         42 * 1_000_000_000 + genesis_sysvar_and_builtin_program_lamports(),
@@ -853,10 +849,6 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
 
         ..GenesisConfig::default()
     }));
-
-    // enable lazy rent collection because this test depends on rent-due accounts
-    // not being eagerly-collected for exact rewards calculation
-    bank.restore_old_behavior_for_fragile_tests();
 
     assert_eq!(
         bank.capitalization(),
@@ -3264,7 +3256,6 @@ fn test_is_delta_with_no_committables() {
 fn test_bank_get_program_accounts() {
     let (genesis_config, mint_keypair) = create_genesis_config(500);
     let parent = Arc::new(Bank::new_for_tests(&genesis_config));
-    parent.restore_old_behavior_for_fragile_tests();
 
     let genesis_accounts: Vec<_> = parent.get_all_accounts(false).unwrap();
     assert!(
@@ -5300,7 +5291,6 @@ fn get_shrink_account_size() -> usize {
         &genesis_config,
         BankTestConfig::default(),
     ));
-    bank0.restore_old_behavior_for_fragile_tests();
     goto_end_of_slot(bank0.clone());
     bank0.freeze();
     bank0.squash();
@@ -5412,7 +5402,6 @@ fn test_shrink_candidate_slots_cached() {
         &genesis_config,
         BankTestConfig::default(),
     ));
-    bank0.restore_old_behavior_for_fragile_tests();
 
     let pubkey0_size = get_shrink_account_size();
 

@@ -2684,11 +2684,6 @@ fn main() {
                         let next_epoch = base_bank
                             .epoch_schedule()
                             .get_first_slot_in_epoch(warp_epoch);
-                        // disable eager rent collection because this creates many unrelated
-                        // rent collection account updates
-                        base_bank
-                            .lazy_rent_collection
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
 
                         let feature_account_balance = std::cmp::max(
                             genesis_config.rent.minimum_balance(Feature::size_of()),

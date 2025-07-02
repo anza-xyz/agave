@@ -542,7 +542,6 @@ impl PartialEq for Bank {
             // TODO: Confirm if all these fields are intentionally ignored!
             rewards: _,
             cluster_type: _,
-            lazy_rent_collection: _,
             rewards_pool_pubkeys: _,
             transaction_debug_keys: _,
             transaction_log_collector_config: _,
@@ -834,8 +833,6 @@ pub struct Bank {
 
     pub cluster_type: Option<ClusterType>,
 
-    pub lazy_rent_collection: AtomicBool,
-
     // this is temporary field only to remove rewards_pool entirely
     pub rewards_pool_pubkeys: Arc<HashSet<Pubkey>>,
 
@@ -1089,7 +1086,6 @@ impl Bank {
             is_delta: AtomicBool::default(),
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
             cluster_type: Option::<ClusterType>::default(),
-            lazy_rent_collection: AtomicBool::default(),
             rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             transaction_debug_keys: Option::<Arc<HashSet<Pubkey>>>::default(),
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
@@ -1338,7 +1334,6 @@ impl Bank {
             hard_forks: parent.hard_forks.clone(),
             rewards: RwLock::new(vec![]),
             cluster_type: parent.cluster_type,
-            lazy_rent_collection: AtomicBool::new(parent.lazy_rent_collection.load(Relaxed)),
             rewards_pool_pubkeys,
             transaction_debug_keys,
             transaction_log_collector_config,
@@ -1819,7 +1814,6 @@ impl Bank {
             is_delta: AtomicBool::new(fields.is_delta),
             rewards: RwLock::new(vec![]),
             cluster_type: Some(genesis_config.cluster_type),
-            lazy_rent_collection: AtomicBool::default(),
             rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             transaction_debug_keys: debug_keys,
             transaction_log_collector_config: Arc::<RwLock<TransactionLogCollectorConfig>>::default(
@@ -6451,11 +6445,6 @@ impl Bank {
     /// NOTE: This fn is *ONLY FOR TESTS*
     pub fn update_accounts_data_size_delta_off_chain_for_tests(&self, amount: i64) {
         self.update_accounts_data_size_delta_off_chain(amount)
-    }
-
-    #[cfg(test)]
-    fn restore_old_behavior_for_fragile_tests(&self) {
-        self.lazy_rent_collection.store(true, Relaxed);
     }
 
     /// Process multiple transaction in a single batch. This is used for benches and unit tests.
