@@ -1194,7 +1194,6 @@ impl ClusterInfo {
         let self_info = CrdsValue::new(CrdsData::from(contact_info), &keypair);
         let max_bloom_filter_bytes = get_max_bloom_filter_bytes(&self_info);
         let mut pings = Vec::new();
-
         let pulls = {
             let _st = ScopedTimer::from(&self.stats.new_pull_requests);
             self.gossip
