@@ -40,6 +40,10 @@ impl ClientConnection for UdpClientConnection {
         batch_send(&self.socket, &pkts).await?;
         Ok(())
     }
+
+    async fn close(&self) {
+        // No explicit close needed for UdpSocket
+    }
 }
 
 #[cfg(test)]

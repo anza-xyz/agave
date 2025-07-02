@@ -179,4 +179,14 @@ impl ClientConnection for QuicClientConnection {
         RUNTIME.block_on(self.inner.send_data(buffer))?;
         Ok(())
     }
+
+    fn close(&self) {
+        RUNTIME.block_on(self.inner.close());
+    }
+}
+
+pub(crate) fn close_quic_connection(connection: Arc<QuicClient>) {
+    // Close the connection and release resources
+    trace!("Closing QUIC connection to {}", connection.server_addr());
+    RUNTIME.block_on(connection.close());
 }

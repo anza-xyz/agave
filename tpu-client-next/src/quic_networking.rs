@@ -1,15 +1,18 @@
 //! Utility code to handle quic networking.
 
 use {
-    crate::connection_workers_scheduler::BindTarget,
+    crate::{
+        connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
+        connection_workers_scheduler::BindTarget,
+    },
     quinn::{
         crypto::rustls::QuicClientConfig, default_runtime, ClientConfig, Connection, Endpoint,
         EndpointConfig, IdleTimeout, TransportConfig,
     },
-    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS},
+    solana_quic_definitions::{QUIC_KEEP_ALIVE, QUIC_SEND_FAIRNESS},
     solana_streamer::nonblocking::quic::ALPN_TPU_PROTOCOL_ID,
     solana_tls_utils::tls_client_config_builder,
-    std::sync::Arc,
+    std::{sync::Arc, time::Duration},
 };
 
 pub mod error;
@@ -32,7 +35,10 @@ pub(crate) fn create_client_config(client_certificate: &QuicClientCertificate) -
     let transport_config = {
         let mut res = TransportConfig::default();
 
-        let timeout = IdleTimeout::try_from(QUIC_MAX_TIMEOUT).unwrap();
+        let timeout = IdleTimeout::try_from(Duration::from_secs(
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT.as_secs(),
+        ))
+        .unwrap();
         res.max_idle_timeout(Some(timeout));
         res.keep_alive_interval(Some(QUIC_KEEP_ALIVE));
         res.send_fairness(QUIC_SEND_FAIRNESS);

@@ -287,7 +287,8 @@ async fn run_server(
         TotalConnectionRateLimiter::new(TOTAL_CONNECTIONS_PER_SECOND);
 
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
-    debug!("spawn quic server");
+    debug!("spawn quic server at port {:?}", endpoints[0].local_addr());
+    let port = endpoints[0].local_addr().unwrap();
     let mut last_datapoint = Instant::now();
     let unstaked_connection_table: Arc<Mutex<ConnectionTable>> =
         Arc::new(Mutex::new(ConnectionTable::new()));
@@ -404,6 +405,11 @@ async fn run_server(
             let connecting = incoming.accept();
             match connecting {
                 Ok(connecting) => {
+                    debug!(
+                        "Incoming::accept(): accepted connection from {:?} on port: {:?}",
+                        connecting.remote_address(),
+                        port
+                    );
                     tokio::spawn(setup_connection(
                         connecting,
                         client_connection_tracker,
@@ -1453,6 +1459,17 @@ impl ConnectionTable {
         CancellationToken,
         Arc<ConnectionStreamCounter>,
     )> {
+        debug!(
+            "Adding connection for key {:?} port {} table: {:p} peer_type {:?} last_update {} max_connections_per_peer: {} remote: {:?} connection_id: {:?}",
+            key,
+            port,
+            self,
+            peer_type,
+            last_update,
+            max_connections_per_peer,
+            connection.as_ref().map(|c| c.remote_address()),
+            connection.as_ref().map(|c| c.stable_id()),
+        );
         let connection_entry = self.table.entry(key).or_default();
         let has_connection_capacity = connection_entry
             .len()
@@ -1478,6 +1495,12 @@ impl ConnectionTable {
             self.total_size += 1;
             Some((last_update, cancel, stream_counter))
         } else {
+            debug!(
+                "Connection table for {:?} is full, dropping connection: len: {}, max_connections_per_peer: {max_connections_per_peer} at table: {:p}",
+                key,
+                connection_entry.len(),
+                self
+            );
             if let Some(connection) = connection {
                 connection.close(
                     CONNECTION_CLOSE_CODE_TOO_MANY.into(),
@@ -1513,6 +1536,10 @@ impl ConnectionTable {
             }
             let connections_removed = old_size.saturating_sub(new_size);
             self.total_size = self.total_size.saturating_sub(connections_removed);
+            debug!(
+                "Removed {} connections for key {:?} port {} stable_id {} from {:p}",
+                connections_removed, key, port, stable_id, self
+            );
             connections_removed
         } else {
             0

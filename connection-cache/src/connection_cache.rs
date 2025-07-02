@@ -57,6 +57,12 @@ pub struct ConnectionCache<
     sender: Sender<(usize, SocketAddr)>,
 }
 
+impl<P, M, C> Drop for ConnectionCache<P, M, C> {
+    fn drop(&mut self) {
+        info!("Dropping ConnectionCache at {}", self.name);
+    }
+}
+
 impl<P, M, C> ConnectionCache<P, M, C>
 where
     P: ConnectionPool<NewConnectionConfig = C>,
@@ -671,6 +677,9 @@ mod tests {
         fn send_data_batch_async(&self, _buffers: Vec<Vec<u8>>) -> TransportResult<()> {
             unimplemented!()
         }
+        fn close(&self) {
+            // No-op for mock
+        }
     }
 
     #[async_trait]
@@ -683,6 +692,9 @@ mod tests {
         }
         async fn send_data_batch(&self, _buffers: &[Vec<u8>]) -> TransportResult<()> {
             unimplemented!()
+        }
+        async fn close(&self) {
+            // No-op for mock
         }
     }
 
