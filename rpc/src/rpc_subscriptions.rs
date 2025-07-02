@@ -1243,10 +1243,7 @@ pub(crate) mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
-        std::{
-            collections::HashSet,
-            sync::atomic::{AtomicU64, Ordering::Relaxed},
-        },
+        std::{collections::HashSet, sync::atomic::AtomicU64},
     };
 
     struct AccountResult {
