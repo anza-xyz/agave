@@ -30,16 +30,13 @@ pub mod option_serializer;
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum TransactionBinaryEncoding {
-    Base58,
     Base64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum UiTransactionEncoding {
-    Binary, // Legacy. Retained for RPC backwards compatibility
     Base64,
-    Base58,
     Json,
     JsonParsed,
 }
@@ -47,7 +44,6 @@ pub enum UiTransactionEncoding {
 impl UiTransactionEncoding {
     pub fn into_binary_encoding(&self) -> Option<TransactionBinaryEncoding> {
         match self {
-            Self::Binary | Self::Base58 => Some(TransactionBinaryEncoding::Base58),
             Self::Base64 => Some(TransactionBinaryEncoding::Base64),
             _ => None,
         }
@@ -163,7 +159,6 @@ pub enum UiMessage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", untagged)]
 pub enum EncodedTransaction {
-    LegacyBinary(String), // Old way of expressing base-58, retained for RPC backwards compatibility
     Binary(String, TransactionBinaryEncoding),
     Json(UiTransaction),
     Accounts(UiAccountsList),
@@ -173,15 +168,10 @@ impl EncodedTransaction {
     pub fn decode(&self) -> Option<VersionedTransaction> {
         let (blob, encoding) = match self {
             Self::Json(_) | Self::Accounts(_) => return None,
-            Self::LegacyBinary(blob) => (blob, TransactionBinaryEncoding::Base58),
             Self::Binary(blob, encoding) => (blob, *encoding),
         };
 
         let transaction: Option<VersionedTransaction> = match encoding {
-            TransactionBinaryEncoding::Base58 => bs58::decode(blob)
-                .into_vec()
-                .ok()
-                .and_then(|bytes| bincode::deserialize(&bytes).ok()),
             TransactionBinaryEncoding::Base64 => BASE64_STANDARD
                 .decode(blob)
                 .ok()
@@ -758,12 +748,12 @@ mod test {
     fn test_decode_invalid_transaction() {
         // This transaction will not pass sanitization
         let unsanitary_transaction = EncodedTransaction::Binary(
-            "ju9xZWuDBX4pRxX2oZkTjxU5jB4SSTgEGhX8bQ8PURNzyzqKMPPpNvWihx8zUe\
-             FfrbVNoAaEsNKZvGzAnTDy5bhNT9kt6KFCTBixpvrLCzg4M5UdFUQYrn1gdgjX\
-             pLHxcaShD81xBNaFDgnA2nkkdHnKtZt4hVSfKAmw3VRZbjrZ7L2fKZBx21CwsG\
-             hD6onjM2M3qZW5C8J6d1pj41MxKmZgPBSha3MyKkNLkAGFASK"
+            "ASQffZKTaGW1YaJ5haQqVH7ZtK/zVZiYy/W5NaYO1aSqKiMvIGell7XKo5wimQ\
+             wVSMMTEr4lm5O9+DkF5QrvyAkBAAAC70MCfWZjFFXbkIVru6heL6R1kkGN+IIj\
+             av1M/yCDigdy9cB+bX6mz0z3jZRqMKamWbSZZq0y+INBh+LY4YWCOwEAAAAAAA\
+             AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf8ABAAAAAA="
                 .to_string(),
-            TransactionBinaryEncoding::Base58,
+            TransactionBinaryEncoding::Base64,
         );
         assert!(unsanitary_transaction.decode().is_none());
     }
