@@ -1891,7 +1891,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2084,7 +2083,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2198,7 +2196,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
