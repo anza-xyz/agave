@@ -7939,7 +7939,7 @@ dependencies = [
  "borsh 1.5.7",
  "byteorder 1.5.0",
  "elf",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "log",
  "miow",
  "net2",
