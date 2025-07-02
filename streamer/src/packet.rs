@@ -94,41 +94,86 @@ pub(crate) fn recv_from(
     max_wait: Option<Duration>,
     poll_fd: &mut [PollFd],
 ) -> Result<usize> {
-    let mut i = 0;
+    const SOCKET_READ_TIMEOUT: u16 = crate::streamer::SOCKET_READ_TIMEOUT.as_millis() as u16;
 
-    trace!("receiving on {}", socket.local_addr().unwrap());
-    let deadline = max_wait.map(|dur| Instant::now() + dur);
+    fn recv_from_coalesce(
+        batch: &mut PinnedPacketBatch,
+        socket: &UdpSocket,
+        max_wait: Duration,
+        poll_fd: &mut [PollFd],
+    ) -> Result<usize> {
+        let mut i = 0;
+        let deadline = Instant::now() + max_wait;
 
-    loop {
-        let timeout = deadline.map(|d| {
-            let remaining = d.saturating_duration_since(Instant::now());
-            PollTimeout::from(remaining.as_millis() as u16)
-        });
-
-        let n_ready = poll(poll_fd, timeout)?;
-        if n_ready == 0 {
-            break;
+        loop {
+            match recv_mmsg(socket, &mut batch[i..]) {
+                Ok(npkts) => {
+                    i += npkts;
+                    if i >= PACKETS_PER_BATCH {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    let timeout = if i == 0 {
+                        PollTimeout::from(SOCKET_READ_TIMEOUT)
+                    } else {
+                        let remaining = deadline
+                            .saturating_duration_since(Instant::now())
+                            .as_millis() as u16;
+                        if remaining == 0 {
+                            break;
+                        }
+                        PollTimeout::from(remaining)
+                    };
+                    let n_ready = poll(poll_fd, timeout)?;
+                    if n_ready == 0 {
+                        break;
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
 
-        match recv_mmsg(socket, &mut batch[i..]) {
-            Ok(npkts) => {
-                i += npkts;
-                if i >= PACKETS_PER_BATCH {
-                    break;
-                }
-            }
-            // Edge case / race condition: data became unavailable between poll and recv.
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                let done_waiting = deadline.is_none_or(|d| Instant::now() >= d);
-                if done_waiting {
-                    break;
-                } else {
-                    continue;
-                }
-            }
-            Err(e) => return Err(e),
-        };
+        Ok(i)
     }
+
+    fn recv_from_once(
+        batch: &mut PinnedPacketBatch,
+        socket: &UdpSocket,
+        poll_fd: &mut [PollFd],
+    ) -> Result<usize> {
+        let mut i = 0;
+
+        loop {
+            match recv_mmsg(socket, &mut batch[i..]) {
+                Ok(npkts) => {
+                    i += npkts;
+                    if i >= PACKETS_PER_BATCH {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    if i > 0 {
+                        break;
+                    }
+                    let n_ready = poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT))?;
+                    if n_ready == 0 {
+                        break;
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(i)
+    }
+
+    trace!("receiving on {}", socket.local_addr().unwrap());
+
+    let i = match max_wait {
+        Some(max_wait) => recv_from_coalesce(batch, socket, max_wait, poll_fd),
+        None => recv_from_once(batch, socket, poll_fd),
+    }?;
 
     batch.truncate(i);
 

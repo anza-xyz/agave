@@ -72,6 +72,8 @@ where
     }
 }
 
+pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
+
 // Total stake and nodes => stake map
 #[derive(Default)]
 pub struct StakedNodes {
@@ -169,7 +171,8 @@ fn recv_loop<P: SocketProvider>(
     let mut socket = provider.current_socket_ref();
     // Non-unix implementation may block indefinitely due to its lack of polling support,
     // so we set a read timeout to avoid blocking indefinitely.
-    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+    #[cfg(not(unix))]
+    socket.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
 
     #[cfg(unix)]
     let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
@@ -238,7 +241,8 @@ fn recv_loop<P: SocketProvider>(
 
         if let CurrentSocket::Changed(s) = provider.current_socket() {
             socket = s;
-            socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+            #[cfg(not(unix))]
+            socket.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
 
             #[cfg(unix)]
             {
@@ -659,7 +663,7 @@ mod test {
     #[test]
     fn streamer_send_test() {
         let read = bind_to_localhost().expect("bind");
-        read.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
+        read.set_read_timeout(Some(SOCKET_READ_TIMEOUT)).unwrap();
 
         let addr = read.local_addr().unwrap();
         let send = bind_to_localhost().expect("bind");
