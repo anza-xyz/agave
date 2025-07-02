@@ -157,7 +157,7 @@ dependencies = [
  "agave-geyser-plugin-interface",
  "chrono",
  "clap",
- "console 0.15.11",
+ "console 0.16.0",
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
@@ -5816,7 +5816,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
- "console 0.15.11",
+ "console 0.16.0",
  "humantime",
  "indicatif",
  "pretty-hex",
@@ -7531,7 +7531,7 @@ dependencies = [
 name = "solana-remote-wallet"
 version = "3.0.0"
 dependencies = [
- "console 0.15.11",
+ "console 0.16.0",
  "dialoguer",
  "hidapi",
  "log",
