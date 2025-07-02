@@ -4309,6 +4309,7 @@ impl AccountsDb {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn unchecked_scan_accounts<F>(
         &self,
         metric_name: &'static str,
@@ -4328,45 +4329,6 @@ impl AccountsDb {
                     });
             },
             config,
-        );
-    }
-
-    /// Only guaranteed to be safe when called from rent collection
-    pub fn range_scan_accounts<F, R>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        range: R,
-        config: &ScanConfig,
-        mut scan_func: F,
-    ) where
-        F: FnMut(Option<(&Pubkey, AccountSharedData, Slot)>),
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        self.accounts_index.range_scan_accounts(
-            metric_name,
-            ancestors,
-            range,
-            config,
-            |pubkey, (account_info, slot)| {
-                // unlike other scan fns, this is called from Bank::collect_rent_eagerly(),
-                // which is on-consensus processing in the banking/replaying stage.
-                // This requires infallible and consistent account loading.
-                // So, we unwrap Option<LoadedAccount> from get_loaded_account() here.
-                // This is safe because this closure is invoked with the account_info,
-                // while we lock the index entry at AccountsIndex::do_scan_accounts() ultimately,
-                // meaning no other subsystems can invalidate the account_info before making their
-                // changes to the index entry.
-                // For details, see the comment in retry_to_get_account_accessor()
-                if let Some(account_slot) = self
-                    .get_account_accessor(slot, pubkey, &account_info.storage_location())
-                    .get_loaded_account(|loaded_account| {
-                        (pubkey, loaded_account.take_account(), slot)
-                    })
-                {
-                    scan_func(Some(account_slot))
-                }
-            },
         );
     }
 

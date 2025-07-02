@@ -682,6 +682,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
+    #[cfg(test)]
     fn do_unchecked_scan_accounts<F, R>(
         &self,
         metric_name: &'static str,
@@ -917,6 +918,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn unchecked_scan_accounts<F>(
         &self,
         metric_name: &'static str,
@@ -934,24 +936,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             config,
         );
     }
-
-    /// call func with every pubkey and index visible from a given set of ancestors with range
-    /// Only guaranteed to be safe when called from rent collection
-    pub(crate) fn range_scan_accounts<F, R>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        range: R,
-        config: &ScanConfig,
-        func: F,
-    ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        // Only the rent logic should be calling this, which doesn't need the safety checks
-        self.do_unchecked_scan_accounts(metric_name, ancestors, func, Some(range), config);
-    }
-
     /// call func with every pubkey and index visible from a given set of ancestors
     pub(crate) fn index_scan_accounts<F>(
         &self,
@@ -2499,101 +2483,6 @@ pub mod tests {
         index.add_root(root_slot);
 
         (index, pubkeys)
-    }
-
-    fn run_test_range(
-        index: &AccountsIndex<bool, bool>,
-        pubkeys: &[Pubkey],
-        start_bound: Bound<usize>,
-        end_bound: Bound<usize>,
-    ) {
-        // Exclusive `index_start`
-        let (pubkey_start, index_start) = match start_bound {
-            Unbounded => (Unbounded, 0),
-            Included(i) => (Included(pubkeys[i]), i),
-            Excluded(i) => (Excluded(pubkeys[i]), i + 1),
-        };
-
-        // Exclusive `index_end`
-        let (pubkey_end, index_end) = match end_bound {
-            Unbounded => (Unbounded, pubkeys.len()),
-            Included(i) => (Included(pubkeys[i]), i + 1),
-            Excluded(i) => (Excluded(pubkeys[i]), i),
-        };
-        let pubkey_range = (pubkey_start, pubkey_end);
-
-        let ancestors = Ancestors::default();
-        let mut scanned_keys = HashSet::new();
-        index.range_scan_accounts(
-            "",
-            &ancestors,
-            pubkey_range,
-            &ScanConfig::default(),
-            |pubkey, _index| {
-                scanned_keys.insert(*pubkey);
-            },
-        );
-
-        let mut expected_len = 0;
-        for key in &pubkeys[index_start..index_end] {
-            expected_len += 1;
-            assert!(scanned_keys.contains(key));
-        }
-
-        assert_eq!(scanned_keys.len(), expected_len);
-    }
-
-    fn run_test_range_indexes(
-        index: &AccountsIndex<bool, bool>,
-        pubkeys: &[Pubkey],
-        start: Option<usize>,
-        end: Option<usize>,
-    ) {
-        let start_options = start
-            .map(|i| vec![Included(i), Excluded(i)])
-            .unwrap_or_else(|| vec![Unbounded]);
-        let end_options = end
-            .map(|i| vec![Included(i), Excluded(i)])
-            .unwrap_or_else(|| vec![Unbounded]);
-
-        for start in &start_options {
-            for end in &end_options {
-                run_test_range(index, pubkeys, *start, *end);
-            }
-        }
-    }
-
-    #[test]
-    fn test_range_scan_accounts() {
-        let (index, mut pubkeys) = setup_accounts_index_keys(3 * ITER_BATCH_SIZE);
-        pubkeys.sort();
-
-        run_test_range_indexes(&index, &pubkeys, None, None);
-
-        run_test_range_indexes(&index, &pubkeys, Some(ITER_BATCH_SIZE), None);
-
-        run_test_range_indexes(&index, &pubkeys, None, Some(2 * ITER_BATCH_SIZE));
-
-        run_test_range_indexes(
-            &index,
-            &pubkeys,
-            Some(ITER_BATCH_SIZE),
-            Some(2 * ITER_BATCH_SIZE),
-        );
-
-        run_test_range_indexes(
-            &index,
-            &pubkeys,
-            Some(ITER_BATCH_SIZE),
-            Some(2 * ITER_BATCH_SIZE - 1),
-        );
-
-        run_test_range_indexes(
-            &index,
-            &pubkeys,
-            Some(ITER_BATCH_SIZE - 1_usize),
-            Some(2 * ITER_BATCH_SIZE + 1),
-        );
     }
 
     fn run_test_scan_accounts(num_pubkeys: usize) {
