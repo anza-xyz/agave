@@ -167,7 +167,7 @@ dependencies = [
  "bzip2",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "crossbeam-channel",
  "ctrlc",
  "dirs-next",
@@ -408,7 +408,7 @@ dependencies = [
  "assert_cmd",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
@@ -2635,7 +2635,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5941,7 +5941,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6018,7 +6018,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7379,7 +7379,7 @@ dependencies = [
  "bincode",
  "bs58",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "const_format",
  "criterion-stats",
  "crossbeam-channel",
@@ -7490,7 +7490,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "ed25519-dalek",
  "humantime",
  "indicatif",
@@ -9721,7 +9721,7 @@ name = "solana-remote-wallet"
 version = "3.0.0"
 dependencies = [
  "assert_matches",
- "console 0.15.11",
+ "console 0.16.0",
  "dialoguer",
  "hidapi",
  "log",
@@ -11091,7 +11091,7 @@ dependencies = [
  "bincode",
  "chrono",
  "clap 2.33.3",
- "console 0.15.11",
+ "console 0.16.0",
  "csv",
  "ctrlc",
  "indexmap 2.10.0",
@@ -12604,7 +12604,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

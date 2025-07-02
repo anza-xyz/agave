@@ -231,7 +231,7 @@ chrono-humanize = "0.2.3"
 clap = "2.33.1"
 # Remove this dependency when procedural macros will support non-inline modules.
 conditional-mod = "0.1.0"
-console = "0.15.11"
+console = "0.16.0"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.34"
