@@ -33,6 +33,7 @@ solana-feature-gate-interface = { workspace = true }
 solana-fee-calculator = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
+solana-inflation = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }

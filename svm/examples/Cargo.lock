@@ -8395,6 +8395,7 @@ dependencies = [
  "solana-fee-calculator",
  "solana-geyser-plugin-manager",
  "solana-gossip",
+ "solana-inflation",
  "solana-instruction",
  "solana-keypair",
  "solana-ledger",

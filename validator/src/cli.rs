@@ -37,7 +37,7 @@ use {
         DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_QUIC_ENDPOINTS,
     },
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    std::{path::PathBuf, str::FromStr},
+    std::{cmp::Ordering, path::PathBuf, str::FromStr},
 };
 
 pub mod thread_args;
@@ -635,6 +635,26 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .takes_value(true)
                 .help(
                     "Override the number of slots in an epoch. If the ledger already exists then \
+                     this parameter is silently ignored",
+                ),
+        )
+        .arg(
+            Arg::with_name("inflation_fixed")
+                .long("inflation-fixed")
+                .value_name("RATE")
+                .validator(|value| {
+                    value
+                        .parse::<f64>()
+                        .map_err(|err| format!("error parsing '{value}': {err}"))
+                        .and_then(|rate| match rate.partial_cmp(&0.0) {
+			    Some(Ordering::Greater) | Some(Ordering::Equal) => Ok(()),
+			    Some(Ordering::Less) | None => Err(String::from("value must be >= 0")),
+                        })
+                })
+                .takes_value(true)
+                .allow_hyphen_values(true)
+                .help(
+                    "Override default inflation with fixed rate. If the ledger already exists then \
                      this parameter is silently ignored",
                 ),
         )
