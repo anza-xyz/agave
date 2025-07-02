@@ -160,6 +160,17 @@ where
         ValidSlice::new(unsafe { &self.buf.as_slice()[self.buf_valid_bytes.clone()] })
     }
 
+    /// return file offset within `file` corresponding to the start of buffer returned by
+    /// next `fill_buf` call
+    #[inline(always)]
+    pub fn get_next_fill_offset(&'a self) -> usize {
+        if self.buf_valid_bytes.is_empty() {
+            self.file_offset_of_next_read
+        } else {
+            self.file_last_offset + self.buf_valid_bytes.start
+        }
+    }
+
     /// return offset within `file` of start of read at current offset
     #[inline(always)]
     pub fn get_offset_and_data(&'a self) -> (usize, ValidSlice<'a>) {
@@ -183,6 +194,34 @@ impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
             file,
             default_min_read_requirement,
         )
+    }
+}
+
+impl<'a, T: Backing> io::Read for BufferedReader<'a, T> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        if available.is_empty() {
+            return Ok(0);
+        }
+        let bytes_to_read = available.len().min(buf.len());
+        buf[..bytes_to_read].copy_from_slice(&available[..bytes_to_read]);
+        self.consume(bytes_to_read);
+        Ok(bytes_to_read)
+    }
+}
+
+impl<'a, T: Backing> BufRead for BufferedReader<'a, T> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        match self.read()? {
+            BufferedReaderStatus::Eof => Ok(&[]),
+            BufferedReaderStatus::Success => {
+                Ok(unsafe { &self.buf.as_slice()[self.buf_valid_bytes.clone()] })
+            }
+        }
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.advance_offset(amt);
     }
 }
 

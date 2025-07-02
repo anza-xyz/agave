@@ -7,6 +7,8 @@
 mod meta;
 pub mod test_utils;
 
+use std::io::BufRead;
+
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
@@ -1087,7 +1089,7 @@ impl AppendVec {
                             hash,
                         };
                         callback(account);
-                        reader.advance_offset(stored_size);
+                        reader.consume(stored_size);
                     } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
                         reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
                     } else {
@@ -1134,7 +1136,7 @@ impl AppendVec {
                             hash,
                         };
                         callback(account);
-                        reader.advance_offset(stored_size);
+                        reader.consume(stored_size);
                     }
                 }
             }
@@ -1258,8 +1260,13 @@ impl AppendVec {
                     file,
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
                 );
-                while let BufferedReaderStatus::Success = reader.read()? {
-                    let (offset, bytes) = reader.get_offset_and_data();
+                loop {
+                    let offset = reader.get_next_fill_offset();
+                    let bytes = reader.fill_buf()?;
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let bytes = ValidSlice::new(bytes);
                     let (stored_meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let (account_meta, _) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
                     if account_meta.lamports == 0 && stored_meta.pubkey == Pubkey::default() {
@@ -1280,7 +1287,7 @@ impl AppendVec {
                         offset,
                         stored_size,
                     });
-                    reader.advance_offset(stored_size);
+                    reader.consume(stored_size);
                 }
             }
         }
