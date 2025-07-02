@@ -26,7 +26,7 @@ use {
     ed25519_dalek::ed25519::signature::Signer as EdSigner,
     itertools::Itertools,
     rand::Rng,
-    rayon::{ThreadPool, ThreadPoolBuilder},
+    rayon::{iter::IntoParallelIterator, ThreadPool, ThreadPoolBuilder},
     serde::{Deserialize, Serialize},
     solana_account::{
         accounts_equal, create_account_shared_data_with_fields as create_account, from_account,
@@ -43,8 +43,8 @@ use {
     },
     solana_client_traits::SyncClient,
     solana_clock::{
-        BankId, Epoch, Slot, UnixTimestamp, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT,
-        INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
+        BankId, Epoch, Slot, UnixTimestamp, DEFAULT_TICKS_PER_SLOT, INITIAL_RENT_EPOCH,
+        MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
     },
     solana_compute_budget::{
         compute_budget::ComputeBudget, compute_budget_limits::ComputeBudgetLimits,
@@ -79,7 +79,6 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_rent::Rent,
-    solana_rent_collector::RENT_EXEMPT_RENT_EPOCH,
     solana_reward_info::RewardType,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_upgradeable, incinerator, native_loader, secp256k1_program,
@@ -128,7 +127,7 @@ use {
         str::FromStr,
         sync::{
             atomic::{
-                AtomicBool, AtomicU64,
+                AtomicBool, AtomicU64, AtomicUsize,
                 Ordering::{Relaxed, Release},
             },
             Arc,
@@ -559,431 +558,6 @@ fn test_store_account_and_update_capitalization_unchanged() {
     assert_eq!(account, bank.get_account(&pubkey).unwrap());
 }
 
-#[test]
-fn test_rent_eager_across_epoch_without_gap() {
-    let (mut bank, _bank_forks) = create_simple_test_arc_bank(1);
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 32)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 32)]);
-    for _ in 2..32 {
-        bank = Arc::new(new_from_parent(bank));
-    }
-    assert_eq!(bank.rent_collection_partitions(), vec![(30, 31, 32)]);
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 64)]);
-}
-
-#[test]
-fn test_rent_eager_across_epoch_without_gap_mnb() {
-    solana_logger::setup();
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1);
-    genesis_config.cluster_type = ClusterType::MainnetBeta;
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 32)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 32)]);
-    for _ in 2..32 {
-        bank = Arc::new(new_from_parent(bank));
-    }
-    assert_eq!(bank.rent_collection_partitions(), vec![(30, 31, 32)]);
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 64)]);
-}
-
-#[test]
-fn test_rent_eager_across_epoch_with_full_gap() {
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1);
-    activate_all_features(&mut genesis_config);
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 32)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 32)]);
-    for _ in 2..15 {
-        bank = Arc::new(new_from_parent(bank));
-    }
-    assert_eq!(bank.rent_collection_partitions(), vec![(13, 14, 32)]);
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 49));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(14, 31, 32), (0, 0, 64), (0, 17, 64)]
-    );
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(17, 18, 64)]);
-}
-
-#[test]
-fn test_rent_eager_across_epoch_with_half_gap() {
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1);
-    activate_all_features(&mut genesis_config);
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 32)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 32)]);
-    for _ in 2..15 {
-        bank = Arc::new(new_from_parent(bank));
-    }
-    assert_eq!(bank.rent_collection_partitions(), vec![(13, 14, 32)]);
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 32));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(14, 31, 32), (0, 0, 64)]
-    );
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 64)]);
-}
-
-#[test]
-#[allow(clippy::cognitive_complexity)]
-fn test_rent_eager_across_epoch_without_gap_under_multi_epoch_cycle() {
-    let leader_pubkey = solana_pubkey::new_rand();
-    let leader_lamports = 3;
-    let mut genesis_config =
-        create_genesis_config_with_leader(5, &leader_pubkey, leader_lamports).genesis_config;
-    genesis_config.cluster_type = ClusterType::MainnetBeta;
-
-    const SLOTS_PER_EPOCH: u64 = MINIMUM_SLOTS_PER_EPOCH;
-    const LEADER_SCHEDULE_SLOT_OFFSET: u64 = SLOTS_PER_EPOCH * 3 - 3;
-    genesis_config.epoch_schedule =
-        EpochSchedule::custom(SLOTS_PER_EPOCH, LEADER_SCHEDULE_SLOT_OFFSET, false);
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(DEFAULT_SLOTS_PER_EPOCH, 432_000);
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 1));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 432_000)]);
-
-    for _ in 2..32 {
-        bank = Arc::new(new_from_parent(bank));
-    }
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 31));
-    assert_eq!(bank.rent_collection_partitions(), vec![(30, 31, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (1, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(31, 32, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (1, 1));
-    assert_eq!(bank.rent_collection_partitions(), vec![(32, 33, 432_000)]);
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 1000));
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 1001));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (31, 9));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(1000, 1001, 432_000)]
-    );
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 431_998));
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 431_999));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (13499, 31));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(431_998, 431_999, 432_000)]
-    );
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (13500, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (13500, 1));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 432_000)]);
-}
-
-#[test]
-fn test_rent_eager_across_epoch_with_gap_under_multi_epoch_cycle() {
-    let leader_pubkey = solana_pubkey::new_rand();
-    let leader_lamports = 3;
-    let mut genesis_config =
-        create_genesis_config_with_leader(5, &leader_pubkey, leader_lamports).genesis_config;
-    genesis_config.cluster_type = ClusterType::MainnetBeta;
-
-    const SLOTS_PER_EPOCH: u64 = MINIMUM_SLOTS_PER_EPOCH;
-    const LEADER_SCHEDULE_SLOT_OFFSET: u64 = SLOTS_PER_EPOCH * 3 - 3;
-    genesis_config.epoch_schedule =
-        EpochSchedule::custom(SLOTS_PER_EPOCH, LEADER_SCHEDULE_SLOT_OFFSET, false);
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(DEFAULT_SLOTS_PER_EPOCH, 432_000);
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 1));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 432_000)]);
-
-    for _ in 2..19 {
-        bank = Arc::new(new_from_parent(bank));
-    }
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 18));
-    assert_eq!(bank.rent_collection_partitions(), vec![(17, 18, 432_000)]);
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 44));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (1, 12));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(18, 31, 432_000), (31, 31, 432_000), (31, 44, 432_000)]
-    );
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (1, 13));
-    assert_eq!(bank.rent_collection_partitions(), vec![(44, 45, 432_000)]);
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 431_993));
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 432_011));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (13500, 11));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![
-            (431_993, 431_999, 432_000),
-            (0, 0, 432_000),
-            (0, 11, 432_000)
-        ]
-    );
-}
-
-#[test]
-fn test_rent_eager_with_warmup_epochs_under_multi_epoch_cycle() {
-    let leader_pubkey = solana_pubkey::new_rand();
-    let leader_lamports = 3;
-    let mut genesis_config =
-        create_genesis_config_with_leader(5, &leader_pubkey, leader_lamports).genesis_config;
-    genesis_config.cluster_type = ClusterType::MainnetBeta;
-
-    const SLOTS_PER_EPOCH: u64 = MINIMUM_SLOTS_PER_EPOCH * 8;
-    const LEADER_SCHEDULE_SLOT_OFFSET: u64 = SLOTS_PER_EPOCH * 3 - 3;
-    genesis_config.epoch_schedule =
-        EpochSchedule::custom(SLOTS_PER_EPOCH, LEADER_SCHEDULE_SLOT_OFFSET, true);
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(DEFAULT_SLOTS_PER_EPOCH, 432_000);
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.first_normal_epoch(), 3);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 32)]);
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 222));
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 128);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (2, 127));
-    assert_eq!(bank.rent_collection_partitions(), vec![(126, 127, 128)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 256);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (3, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 431_872)]);
-    assert_eq!(431_872 % bank.get_slots_in_epoch(bank.epoch()), 0);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 256);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (3, 1));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 431_872)]);
-
-    bank = Arc::new(Bank::new_from_parent(
-        bank,
-        &Pubkey::default(),
-        431_872 + 223 - 1,
-    ));
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 256);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (1689, 255));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(431_870, 431_871, 431_872)]
-    );
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 256);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (1690, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 431_872)]);
-}
-
-#[test]
-fn test_rent_eager_under_fixed_cycle_for_development() {
-    solana_logger::setup();
-    let leader_pubkey = solana_pubkey::new_rand();
-    let leader_lamports = 3;
-    let mut genesis_config =
-        create_genesis_config_with_leader(5, &leader_pubkey, leader_lamports).genesis_config;
-
-    const SLOTS_PER_EPOCH: u64 = MINIMUM_SLOTS_PER_EPOCH * 8;
-    const LEADER_SCHEDULE_SLOT_OFFSET: u64 = SLOTS_PER_EPOCH * 3 - 3;
-    genesis_config.epoch_schedule =
-        EpochSchedule::custom(SLOTS_PER_EPOCH, LEADER_SCHEDULE_SLOT_OFFSET, true);
-
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 32);
-    assert_eq!(bank.first_normal_epoch(), 3);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (0, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 432_000)]);
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 222));
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 128);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (2, 127));
-    assert_eq!(bank.rent_collection_partitions(), vec![(222, 223, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 256);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (3, 0));
-    assert_eq!(bank.rent_collection_partitions(), vec![(223, 224, 432_000)]);
-
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.get_slots_in_epoch(bank.epoch()), 256);
-    assert_eq!(bank.get_epoch_and_slot_index(bank.slot()), (3, 1));
-    assert_eq!(bank.rent_collection_partitions(), vec![(224, 225, 432_000)]);
-
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), 432_000 - 2));
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![(431_998, 431_999, 432_000)]
-    );
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 0, 432_000)]);
-    bank = Arc::new(new_from_parent(bank));
-    assert_eq!(bank.rent_collection_partitions(), vec![(0, 1, 432_000)]);
-
-    bank = Arc::new(Bank::new_from_parent(
-        bank,
-        &Pubkey::default(),
-        864_000 - 20,
-    ));
-    bank = Arc::new(Bank::new_from_parent(
-        bank,
-        &Pubkey::default(),
-        864_000 + 39,
-    ));
-    assert_eq!(
-        bank.rent_collection_partitions(),
-        vec![
-            (431_980, 431_999, 432_000),
-            (0, 0, 432_000),
-            (0, 39, 432_000)
-        ]
-    );
-}
-
-impl Bank {
-    fn slots_by_pubkey(&self, pubkey: &Pubkey) -> Vec<Slot> {
-        self.rc
-            .accounts
-            .accounts_db
-            .accounts_index
-            .get_and_then(pubkey, |entry| {
-                let slots = entry
-                    .map(|entry| {
-                        entry
-                            .slot_list
-                            .read()
-                            .unwrap()
-                            .iter()
-                            .map(|(slot, _)| *slot)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (false, slots)
-            })
-    }
-}
-
-#[test]
-fn test_rent_eager_collect_rent_in_partition() {
-    solana_logger::setup();
-    let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
-    activate_all_features(&mut genesis_config);
-    genesis_config
-        .accounts
-        .remove(&feature_set::disable_partitioned_rent_collection::id())
-        .unwrap();
-
-    let zero_lamport_pubkey = solana_pubkey::new_rand();
-    let rent_due_pubkey = solana_pubkey::new_rand();
-    let rent_exempt_pubkey = solana_pubkey::new_rand();
-    let mut bank = Arc::new(Bank::new_for_tests(&genesis_config));
-    let genesis_slot = 0;
-
-    let zero_lamports = 0;
-    let little_lamports = 1234;
-    let large_lamports = 123_456_789;
-    // genesis_config.epoch_schedule.slots_per_epoch == 432_000 and is unsuitable for this test
-    let some_slot = MINIMUM_SLOTS_PER_EPOCH; // chosen to cause epoch to be +1
-
-    bank.store_account(
-        &zero_lamport_pubkey,
-        &AccountSharedData::new(zero_lamports, 0, &Pubkey::default()),
-    );
-    bank.store_account(
-        &rent_due_pubkey,
-        &AccountSharedData::new(little_lamports, 0, &Pubkey::default()),
-    );
-    bank.store_account(
-        &rent_exempt_pubkey,
-        &AccountSharedData::new(large_lamports, 0, &Pubkey::default()),
-    );
-
-    assert_eq!(bank.slots_by_pubkey(&rent_due_pubkey), vec![genesis_slot]);
-    assert_eq!(
-        bank.slots_by_pubkey(&rent_exempt_pubkey),
-        vec![genesis_slot]
-    );
-    assert_eq!(
-        bank.slots_by_pubkey(&zero_lamport_pubkey),
-        vec![genesis_slot]
-    );
-
-    let previous_epoch = bank.epoch();
-    bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), some_slot));
-    bank.freeze();
-    let current_epoch = bank.epoch();
-    assert_eq!(previous_epoch + 1, current_epoch);
-
-    // Rent epoch is not updated for rent paying accounts
-    assert_eq!(
-        bank.get_account(&rent_due_pubkey).unwrap().rent_epoch(),
-        previous_epoch
-    );
-    assert_eq!(
-        bank.get_account(&rent_exempt_pubkey).unwrap().rent_epoch(),
-        RENT_EXEMPT_RENT_EPOCH
-    );
-    assert_eq!(bank.slots_by_pubkey(&rent_due_pubkey), vec![genesis_slot]);
-    assert_eq!(
-        bank.slots_by_pubkey(&rent_exempt_pubkey),
-        vec![genesis_slot, some_slot]
-    );
-    assert_eq!(
-        bank.slots_by_pubkey(&zero_lamport_pubkey),
-        vec![genesis_slot]
-    );
-}
-
 pub(in crate::bank) fn new_from_parent_next_epoch(
     parent: Arc<Bank>,
     bank_forks: &RwLock<BankForks>,
@@ -997,127 +571,6 @@ pub(in crate::bank) fn new_from_parent_next_epoch(
     }
 
     new_bank_from_parent_with_bank_forks(bank_forks, parent, &Pubkey::default(), slot)
-}
-
-/// test that only rent exempt accounts without rent epoch set to u64::MAX
-/// are updated to rent exempt status
-#[test]
-fn test_update_rent_exempt_status_for_accounts() {
-    let address1 = Pubkey::new_unique();
-    let address2 = Pubkey::new_unique();
-    let address3 = Pubkey::new_unique();
-
-    let (genesis_bank, bank_forks) = create_simple_test_arc_bank(100000);
-    let first_bank = new_from_parent(genesis_bank.clone());
-    let first_bank = bank_forks
-        .write()
-        .unwrap()
-        .insert(first_bank)
-        .clone_without_scheduler();
-
-    let first_slot = 1;
-    assert_eq!(first_slot, first_bank.slot());
-    let epoch_delta = 4;
-    let later_bank = new_from_parent_next_epoch(first_bank, bank_forks.as_ref(), epoch_delta); // a bank a few epochs in the future
-    let later_slot = later_bank.slot();
-    assert!(later_bank.epoch() == genesis_bank.epoch() + epoch_delta);
-
-    let data_size = 0; // make sure we're rent exempt
-    let lamports = later_bank.get_minimum_balance_for_rent_exemption(data_size); // cannot be 0 or we zero out rent_epoch in rent collection and we need to be rent exempt
-    let mut account1 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
-    let mut account2 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
-    let mut account3 = AccountSharedData::new(lamports, data_size, &Pubkey::default());
-    account1.set_rent_epoch(later_bank.epoch() - 1); // non-zero, but less than later_bank's epoch
-    account2.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH); // already marked as rent exempt
-    account3.set_rent_epoch(0); // stake accounts in genesis have a rent epoch of 0
-
-    // loaded from previous slot, so we skip rent collection on it
-    let _result = later_bank.update_rent_exempt_status_for_accounts(vec![
-        (address1, account1, later_slot - 1),
-        (address2, account2, later_slot - 1),
-        (address3, account3, later_slot - 1),
-    ]);
-
-    let deltas = later_bank
-        .rc
-        .accounts
-        .accounts_db
-        .get_pubkey_hash_for_slot(later_slot)
-        .0;
-
-    // ensure account1 *is* stored because the account *did* change
-    // (its rent epoch must be updated to RENT_EXEMPT_RENT_EPOCH)
-    assert!(deltas.iter().map(|(pubkey, _)| pubkey).contains(&address1));
-
-    // ensure account2 is *not* stored
-    // (because the account did *not* change)
-    assert!(!deltas.iter().map(|(pubkey, _)| pubkey).contains(&address2),);
-
-    // ensure account3 *is* stored because the account *did* change
-    // (same as account1 above)
-    assert!(deltas.iter().map(|(pubkey, _)| pubkey).contains(&address3));
-}
-
-#[test]
-fn test_rent_eager_collect_rent_zero_lamport_deterministic() {
-    solana_logger::setup();
-
-    let (genesis_config, _mint_keypair) = create_genesis_config(1);
-
-    let zero_lamport_pubkey = solana_pubkey::new_rand();
-
-    let genesis_bank1 = Arc::new(Bank::new_for_tests(&genesis_config));
-    let genesis_bank2 = Arc::new(Bank::new_for_tests(&genesis_config));
-    let bank1_with_zero = Arc::new(new_from_parent(genesis_bank1.clone()));
-    let bank1_without_zero = Arc::new(new_from_parent(genesis_bank2));
-
-    let zero_lamports = 0;
-    let data_size = 12345; // use non-zero data size to also test accounts_data_size
-    let account = AccountSharedData::new(zero_lamports, data_size, &Pubkey::default());
-    bank1_with_zero.store_account(&zero_lamport_pubkey, &account);
-    bank1_without_zero.store_account(&zero_lamport_pubkey, &account);
-
-    bank1_without_zero
-        .rc
-        .accounts
-        .accounts_db
-        .accounts_index
-        .add_root(genesis_bank1.slot() + 1);
-    bank1_without_zero
-        .rc
-        .accounts
-        .accounts_db
-        .accounts_index
-        .purge_roots(&zero_lamport_pubkey);
-
-    // genesis_config.epoch_schedule.slots_per_epoch == 432_000 and is unsuitable for this test
-    let some_slot = MINIMUM_SLOTS_PER_EPOCH; // 1 epoch
-    let bank2_with_zero = Arc::new(Bank::new_from_parent(
-        bank1_with_zero.clone(),
-        &Pubkey::default(),
-        some_slot,
-    ));
-    assert_eq!(bank1_with_zero.epoch() + 1, bank2_with_zero.epoch());
-    let bank2_without_zero = Arc::new(Bank::new_from_parent(
-        bank1_without_zero.clone(),
-        &Pubkey::default(),
-        some_slot,
-    ));
-    let hash1_with_zero = bank1_with_zero.hash();
-    let hash1_without_zero = bank1_without_zero.hash();
-    assert_eq!(hash1_with_zero, hash1_without_zero);
-    assert_ne!(hash1_with_zero, Hash::default());
-
-    bank2_with_zero.update_rent_exempt_status_in_partition((0, 0, 1), &RentMetrics::default()); // all
-    bank2_without_zero.update_rent_exempt_status_in_partition((0, 0, 1), &RentMetrics::default()); // all
-
-    bank2_with_zero.freeze();
-    let hash2_with_zero = bank2_with_zero.hash();
-    bank2_without_zero.freeze();
-    let hash2_without_zero = bank2_without_zero.hash();
-
-    assert_eq!(hash2_with_zero, hash2_without_zero);
-    assert_ne!(hash2_with_zero, Hash::default());
 }
 
 #[test]
@@ -11013,48 +10466,6 @@ fn test_accounts_data_size_and_resize_transactions() {
     }
 }
 
-/// Ensure that accounts rent epoch is updated correctly by rent collection
-#[test_case(true; "enable partitioned rent fees collection")]
-#[test_case(false; "disable partitioned rent fees collection")]
-fn test_partitioned_rent_collection(should_run_partitioned_rent_collection: bool) {
-    let GenesisConfigInfo {
-        mut genesis_config, ..
-    } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
-    genesis_config.rent = Rent::default();
-    if should_run_partitioned_rent_collection {
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
-    }
-
-    let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
-    let bank = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
-
-    // make another bank so that any reclaimed accounts from the previous bank do not impact
-    // this test
-    let slot = bank.slot() + bank.slot_count_per_normal_epoch();
-    let bank: Arc<Bank> = Arc::new(Bank::new_from_parent(bank, &Pubkey::default(), slot));
-
-    // Store an account into the bank that is rent-exempt
-    let rent_exempt_balance = genesis_config.rent.minimum_balance(0);
-    let account_pubkey = Pubkey::new_unique();
-    let account = AccountSharedData::new(rent_exempt_balance, 0, &Pubkey::default());
-    bank.store_account(&account_pubkey, &account);
-
-    // Run partitioned rent collection. If enabled, partitioned rent collection
-    // will update the rent epoch for any rent exempt accounts whose rent epoch
-    // is not already set to RENT_EXEMPT_RENT_EPOCH.
-    bank.run_partitioned_rent_exempt_status_updates();
-    let updated_account = bank.get_account(&account_pubkey).unwrap();
-    if should_run_partitioned_rent_collection {
-        assert_eq!(updated_account.rent_epoch(), RENT_EXEMPT_RENT_EPOCH);
-    } else {
-        assert_eq!(updated_account.rent_epoch(), INITIAL_RENT_EPOCH);
-    }
-}
-
 #[test]
 fn test_accounts_data_size_with_default_bank() {
     let bank = Bank::default_for_tests();
@@ -11578,7 +10989,7 @@ fn test_system_instruction_allocate() {
         .is_ok());
 }
 
-fn with_create_zero_lamport<F>(should_run_partitioned_rent_collection: bool, callback: F)
+fn with_create_zero_lamport<F>(callback: F)
 where
     F: Fn(&Bank),
 {
@@ -11598,12 +11009,7 @@ where
     let len2 = 456;
 
     // create initial bank and fund the alice account
-    let (mut genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
-    if should_run_partitioned_rent_collection {
-        genesis_config
-            .accounts
-            .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
-    }
+    let (genesis_config, mint_keypair) = create_genesis_config_no_tx_fee_no_rent(mint_lamports);
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let bank_client = BankClient::new_shared(bank.clone());
     bank_client
@@ -11625,12 +11031,6 @@ where
     // will be the epoch rewards sysvar.
     let slot = bank.slot() + 1;
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
-    if should_run_partitioned_rent_collection {
-        bank.store_account(
-            &Pubkey::new_unique(),
-            &AccountSharedData::new(1, 0, &Pubkey::default()),
-        );
-    }
 
     // create the next bank where we will store a zero-lamport account to be cleaned
     let slot = bank.slot() + 1;
@@ -11672,9 +11072,8 @@ where
     assert!(r.is_ok());
 }
 
-#[test_case(true; "enable partitioned rent collection")]
-#[test_case(false; "disable partitioned rent collection")]
-fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: bool) {
+#[test]
+fn test_create_zero_lamport_with_clean() {
     // DEVELOPER TIP: To debug this test, you may want to add some logging to
     // `AccountsDb::write_accounts_to_storage` to see what accounts are actually
     // in the storage entries
@@ -11687,7 +11086,7 @@ fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: b
         }
     */
 
-    with_create_zero_lamport(should_run_partitioned_rent_collection, |bank| {
+    with_create_zero_lamport(|bank| {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
@@ -11698,10 +11097,9 @@ fn test_create_zero_lamport_with_clean(should_run_partitioned_rent_collection: b
     });
 }
 
-#[test_case(true; "enable partitioned rent collection")]
-#[test_case(false; "disable partitioned rent collection")]
-fn test_create_zero_lamport_without_clean(should_run_partitioned_rent_collection: bool) {
-    with_create_zero_lamport(should_run_partitioned_rent_collection, |_| {
+#[test]
+fn test_create_zero_lamport_without_clean() {
+    with_create_zero_lamport(|_| {
         // just do nothing; this should behave identically with test_create_zero_lamport_with_clean
     });
 }
