@@ -3474,13 +3474,14 @@ fn test_program_fees() {
         )
         .unwrap_or_default(),
     );
-    let expected_normal_fee = solana_fee::calculate_fee(
+    let expected_normal_fee = solana_fee::calculate_fee_details(
         &sanitized_message,
         congestion_multiplier == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         bank.feature_set.as_ref().into(),
-    );
+    )
+    .total_fee();
     bank_client
         .send_and_confirm_message(&[&mint_keypair], message)
         .unwrap();
@@ -3507,13 +3508,14 @@ fn test_program_fees() {
         )
         .unwrap_or_default(),
     );
-    let expected_prioritized_fee = solana_fee::calculate_fee(
+    let expected_prioritized_fee = solana_fee::calculate_fee_details(
         &sanitized_message,
         congestion_multiplier == 0,
         fee_structure.lamports_per_signature,
         fee_budget_limits.prioritization_fee,
         bank.feature_set.as_ref().into(),
-    );
+    )
+    .total_fee();
     assert!(expected_normal_fee < expected_prioritized_fee);
 
     bank_client
