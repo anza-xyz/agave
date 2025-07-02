@@ -638,7 +638,7 @@ mod tests {
             "Max Length String KWpP299aFCBWvWg1MHpSuaoTsud7cv8zMJsh99aAtP8X1s26yrR1".to_string();
         // 300-character string
         let max_long_string = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Ut libero \
-                               quam, volutpat et aliquet eu, varius in mi. Aenean vestibulum ex \
+                               quam, volutpat et aliquet eu, various in mi. Aenean vestibulum ex \
                                in tristique faucibus. Maecenas in imperdiet turpis. Nullam \
                                feugiat aliquet erat. Morbi malesuada turpis sed dui pulvinar \
                                lobortis. Pellentesque a lectus eu leo nullam."
