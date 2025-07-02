@@ -34,6 +34,7 @@ pub(crate) fn recv_from(
     //   * There are no more data available to read from the socket.
     max_wait: Option<Duration>,
 ) -> Result<usize> {
+    use crate::recvmmsg::NUM_RCVMMSGS;
     let mut i = 0;
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
