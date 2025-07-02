@@ -110,9 +110,13 @@ pub(crate) fn recv_from(
             break;
         }
 
-        let n = match recv_mmsg(socket, &mut batch[i..]) {
-            Ok(0) => break,
-            Ok(n) => n,
+        match recv_mmsg(socket, &mut batch[i..]) {
+            Ok(npkts) => {
+                i += npkts;
+                if i >= PACKETS_PER_BATCH {
+                    break;
+                }
+            }
             // Edge case / race condition: data became unavailable between poll and recv.
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
                 let done_waiting = deadline.is_none_or(|d| Instant::now() >= d);
@@ -124,11 +128,6 @@ pub(crate) fn recv_from(
             }
             Err(e) => return Err(e),
         };
-
-        i += n;
-        if i >= PACKETS_PER_BATCH {
-            break;
-        }
     }
 
     batch.truncate(i);
