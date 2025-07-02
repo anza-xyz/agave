@@ -445,9 +445,22 @@ impl From<&ElGamalPubkey> for [u8; ELGAMAL_PUBKEY_LEN] {
 /// Secret key for the ElGamal encryption scheme.
 ///
 /// Instances of ElGamal secret key are zeroized on drop.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone, Debug, Deserialize, Serialize, Zeroize)]
 #[zeroize(drop)]
 pub struct ElGamalSecretKey(Scalar);
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+impl ElGamalSecretKey {
+    /// Decrypts a ciphertext using the ElGamal secret key, interpreting the message as a `u32`.
+    ///
+    /// Returns the decrypted amount as a number, or `null` if decryption fails.
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen(js_name = decryptU32))]
+    pub fn decrypt_u32_wasm(&self, ciphertext: &ElGamalCiphertext) -> Option<f64> {
+        self.decrypt_u32(ciphertext).map(|v| v as f64)
+    }
+}
+
 impl ElGamalSecretKey {
     /// Randomly samples an ElGamal secret key.
     ///

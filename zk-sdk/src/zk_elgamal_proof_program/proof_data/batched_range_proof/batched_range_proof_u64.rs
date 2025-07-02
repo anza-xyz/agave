@@ -21,6 +21,11 @@ use {
     },
     bytemuck_derive::{Pod, Zeroable},
 };
+#[cfg(target_arch = "wasm32")]
+use {
+    bytemuck::bytes_of,
+    wasm_bindgen::{prelude::*, JsValue},
+};
 
 /// The instruction data that is needed for the
 /// `ProofInstruction::VerifyBatchedRangeProofU64` instruction.
@@ -69,6 +74,24 @@ impl BatchedRangeProofU64Data {
 
         Ok(Self { context, proof })
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn new_batched_range_proof_u64(
+    commitments: Vec<PedersenCommitment>,
+    amounts: Vec<u64>,
+    bit_lengths: Vec<usize>,
+    openings: Vec<PedersenOpening>,
+) -> Result<Vec<u8>, JsValue> {
+    let commitment_refs: Vec<&PedersenCommitment> = commitments.iter().collect();
+    let opening_refs: Vec<&PedersenOpening> = openings.iter().collect();
+
+    let proof_data =
+        BatchedRangeProofU64Data::new(commitment_refs, amounts, bit_lengths, opening_refs)
+            .map_err(|e| JsValue::from(e.to_string()))?;
+
+    Ok(bytes_of(&proof_data).to_vec())
 }
 
 impl ZkProofData<BatchedRangeProofContext> for BatchedRangeProofU64Data {
