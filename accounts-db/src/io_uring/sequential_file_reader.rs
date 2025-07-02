@@ -284,7 +284,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                 ReadBufState::Uninit { .. } => unreachable!("should be initialized"),
                 // Still no data, wait for more completions, but submit in case the SQPOLL
                 // thread is asleep and there are queued entries in the submission queue.
-                ReadBufState::Reading => _ = self.inner.submit()?,
+                ReadBufState::Reading => self.inner.submit()?,
             }
         }
 
