@@ -14,7 +14,6 @@ use {
         accounts_db::{
             stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
         },
-        accounts_partition,
         storable_accounts::StorableAccountsBySlot,
     },
     solana_clock::Slot,
@@ -35,7 +34,9 @@ use {
 pub struct SnapshotMinimizer<'a> {
     bank: &'a Bank,
     starting_slot: Slot,
-    ending_slot: Slot,
+    /// Ending slot is not used, but kept for consistency with the function signature
+    /// TODO: Remove this field and CLI argument in the future.
+    _ending_slot: Slot,
     minimized_account_set: DashSet<Pubkey>,
 }
 
@@ -55,7 +56,7 @@ impl<'a> SnapshotMinimizer<'a> {
         let minimizer = SnapshotMinimizer {
             bank,
             starting_slot,
-            ending_slot,
+            _ending_slot: ending_slot,
             minimized_account_set: transaction_account_set,
         };
 
@@ -64,10 +65,6 @@ impl<'a> SnapshotMinimizer<'a> {
         minimizer.add_accounts(Self::get_static_runtime_accounts, "static runtime accounts");
         minimizer.add_accounts(Self::get_reserved_accounts, "reserved accounts");
 
-        minimizer.add_accounts(
-            Self::get_rent_collection_accounts,
-            "rent collection accounts",
-        );
         minimizer.add_accounts(Self::get_vote_accounts, "vote accounts");
         minimizer.add_accounts(Self::get_stake_accounts, "stake accounts");
         minimizer.add_accounts(Self::get_owner_accounts, "owner accounts");
@@ -136,33 +133,6 @@ impl<'a> SnapshotMinimizer<'a> {
         ReservedAccountKeys::all_keys_iter().for_each(|pubkey| {
             self.minimized_account_set.insert(*pubkey);
         })
-    }
-
-    /// Used to get rent collection accounts in `minimize`
-    /// Add all pubkeys we would collect rent from to `minimized_account_set`.
-    /// related to Bank::rent_collection_partitions
-    fn get_rent_collection_accounts(&self) {
-        let partitions = if !self.bank.use_fixed_collection_cycle() {
-            self.bank
-                .variable_cycle_partitions_between_slots(self.starting_slot, self.ending_slot)
-        } else {
-            self.bank
-                .fixed_cycle_partitions_between_slots(self.starting_slot, self.ending_slot)
-        };
-
-        partitions.into_iter().for_each(|partition| {
-            let subrange = accounts_partition::pubkey_range_from_partition(partition);
-            // This may be overkill since we just need the pubkeys and don't need to actually load the accounts.
-            // Leaving it for now as this is only used by ledger-tool. If used in runtime, we will need to instead use
-            // some of the guts of `load_to_collect_rent_eagerly`.
-            self.bank
-                .accounts()
-                .load_to_collect_rent_eagerly(&self.bank.ancestors, subrange)
-                .into_par_iter()
-                .for_each(|(pubkey, ..)| {
-                    self.minimized_account_set.insert(pubkey);
-                })
-        });
     }
 
     /// Used to get vote and node pubkeys in `minimize`
@@ -411,7 +381,7 @@ mod tests {
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
-        solana_genesis_config::{create_genesis_config, GenesisConfig},
+        solana_genesis_config::create_genesis_config,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
         solana_sdk_ids::bpf_loader_upgradeable,
@@ -420,70 +390,6 @@ mod tests {
         std::sync::Arc,
         tempfile::TempDir,
     };
-
-    #[test]
-    fn test_get_rent_collection_accounts() {
-        solana_logger::setup();
-
-        let genesis_config = GenesisConfig::default();
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-        // Slots correspond to subrange: A52Kf8KJNVhs1y61uhkzkSF82TXCLxZekqmFwiFXLnHu..=ChWNbfHUHLvFY3uhXj6kQhJ7a9iZB4ykh34WRGS5w9NE
-        // Initially, there are no existing keys in this range
-        {
-            let minimizer = SnapshotMinimizer {
-                bank: &bank,
-                starting_slot: 100_000,
-                ending_slot: 110_000,
-                minimized_account_set: DashSet::new(),
-            };
-            minimizer.get_rent_collection_accounts();
-            assert!(
-                minimizer.minimized_account_set.is_empty(),
-                "rent collection accounts should be empty: len={}",
-                minimizer.minimized_account_set.len()
-            );
-        }
-
-        // Add a key in the subrange
-        let pubkey: Pubkey = "ChWNbfHUHLvFY3uhXj6kQhJ7a9iZB4ykh34WRGS5w9ND"
-            .parse()
-            .unwrap();
-        bank.store_account(&pubkey, &AccountSharedData::new(1, 0, &Pubkey::default()));
-
-        {
-            let minimizer = SnapshotMinimizer {
-                bank: &bank,
-                starting_slot: 100_000,
-                ending_slot: 110_000,
-                minimized_account_set: DashSet::new(),
-            };
-            minimizer.get_rent_collection_accounts();
-            assert_eq!(
-                1,
-                minimizer.minimized_account_set.len(),
-                "rent collection accounts should have len=1: len={}",
-                minimizer.minimized_account_set.len()
-            );
-            assert!(minimizer.minimized_account_set.contains(&pubkey));
-        }
-
-        // Slots correspond to subrange: ChXFtoKuDvQum4HvtgiqGWrgUYbtP1ZzGFGMnT8FuGaB..=FKzRYCFeCC8e48jP9kSW4xM77quv1BPrdEMktpceXWSa
-        // The previous key is not contained in this range, so is not added
-        {
-            let minimizer = SnapshotMinimizer {
-                bank: &bank,
-                starting_slot: 110_001,
-                ending_slot: 120_000,
-                minimized_account_set: DashSet::new(),
-            };
-            assert!(
-                minimizer.minimized_account_set.is_empty(),
-                "rent collection accounts should be empty: len={}",
-                minimizer.minimized_account_set.len()
-            );
-        }
-    }
 
     #[test]
     fn test_minimization_get_vote_accounts() {
@@ -502,7 +408,7 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
+            _ending_slot: 0,
             minimized_account_set: DashSet::new(),
         };
         minimizer.get_vote_accounts();
@@ -531,7 +437,7 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
+            _ending_slot: 0,
             minimized_account_set: DashSet::new(),
         };
         minimizer.get_stake_accounts();
@@ -571,7 +477,7 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
+            _ending_slot: 0,
             minimized_account_set: owner_accounts,
         };
 
@@ -609,7 +515,7 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: 0,
-            ending_slot: 0,
+            _ending_slot: 0,
             minimized_account_set: programdata_accounts,
         };
         minimizer.get_programdata_accounts();
@@ -667,7 +573,7 @@ mod tests {
         let minimizer = SnapshotMinimizer {
             bank: &bank,
             starting_slot: current_slot,
-            ending_slot: current_slot,
+            _ending_slot: current_slot,
             minimized_account_set,
         };
         minimizer.minimize_accounts_db();

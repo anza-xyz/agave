@@ -66,7 +66,7 @@ use {
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
     rayon::{
-        iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
+        iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPoolBuilder,
     },
     serde::Serialize,
@@ -86,7 +86,6 @@ use {
             IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
         },
         accounts_index::{IndexKey, ScanConfig, ScanResult},
-        accounts_partition::{self, Partition},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
@@ -99,8 +98,8 @@ use {
     },
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_clock::{
-        BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_TICKS_PER_SECOND,
-        INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_TRANSACTION_FORWARDING_DELAY, SECONDS_PER_DAY,
+        BankId, Epoch, Slot, SlotIndex, UnixTimestamp, INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE,
+        MAX_TRANSACTION_FORWARDING_DELAY,
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
@@ -138,7 +137,7 @@ use {
     solana_slot_history::{Check, SlotHistory},
     solana_stake_interface::state::Delegation,
     solana_svm::{
-        account_loader::{update_rent_exempt_status_for_account, LoadedTransaction},
+        account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
         transaction_balances::BalanceCollector,
@@ -174,12 +173,12 @@ use {
     std::{
         collections::{HashMap, HashSet},
         fmt,
-        ops::{AddAssign, RangeFull, RangeInclusive},
+        ops::{AddAssign, RangeFull},
         path::PathBuf,
         slice,
         sync::{
             atomic::{
-                AtomicBool, AtomicI64, AtomicU64, AtomicUsize,
+                AtomicBool, AtomicI64, AtomicU64,
                 Ordering::{self, AcqRel, Acquire, Relaxed},
             },
             Arc, LockResult, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak,
@@ -226,16 +225,6 @@ pub(crate) mod tests;
 pub const SECONDS_PER_YEAR: f64 = 365.25 * 24.0 * 60.0 * 60.0;
 
 pub const MAX_LEADER_SCHEDULE_STAKES: Epoch = 5;
-
-#[derive(Default)]
-struct RentMetrics {
-    hold_range_us: AtomicU64,
-    load_us: AtomicU64,
-    collect_us: AtomicU64,
-    hash_us: AtomicU64,
-    store_us: AtomicU64,
-    count: AtomicUsize,
-}
 
 pub type BankStatusCache = StatusCache<Result<()>>;
 #[cfg_attr(
@@ -2632,7 +2621,6 @@ impl Bank {
         let mut hash = self.hash.write().unwrap();
         if *hash == Hash::default() {
             // finish up any deferred changes to account state
-            self.run_partitioned_rent_exempt_status_updates();
             self.distribute_transaction_fee_details();
             self.update_slot_history();
             self.run_incinerator();
@@ -3917,403 +3905,6 @@ impl Bank {
         // This also makes comparison of files from different nodes deterministic.
         accounts_written_this_slot.sort_unstable_by_key(|account| account.pubkey);
         accounts_written_this_slot
-    }
-
-    fn run_partitioned_rent_exempt_status_updates(&self) {
-        if self.lazy_rent_collection.load(Relaxed) {
-            return;
-        }
-
-        if self
-            .feature_set
-            .is_active(&feature_set::disable_partitioned_rent_collection::id())
-        {
-            return;
-        }
-
-        let mut measure = Measure::start("collect_rent_eagerly-ms");
-        let partitions = self.rent_collection_partitions();
-        let count = partitions.len();
-        let rent_metrics = RentMetrics::default();
-        // partitions will usually be 1, but could be more if we skip slots
-        let mut parallel = count > 1;
-        if parallel {
-            let ranges = partitions
-                .iter()
-                .map(|partition| {
-                    (
-                        *partition,
-                        accounts_partition::pubkey_range_from_partition(*partition),
-                    )
-                })
-                .collect::<Vec<_>>();
-            // test every range to make sure ranges are not overlapping
-            // some tests collect rent from overlapping ranges
-            // example: [(0, 31, 32), (0, 0, 128), (0, 27, 128)]
-            // read-modify-write of an account for rent collection cannot be done in parallel
-            'outer: for i in 0..ranges.len() {
-                for j in 0..ranges.len() {
-                    if i == j {
-                        continue;
-                    }
-
-                    let i = &ranges[i].1;
-                    let j = &ranges[j].1;
-                    // make sure i doesn't contain j
-                    if i.contains(j.start()) || i.contains(j.end()) {
-                        parallel = false;
-                        break 'outer;
-                    }
-                }
-            }
-
-            if parallel {
-                let thread_pool = &self.rc.accounts.accounts_db.thread_pool;
-                thread_pool.install(|| {
-                    ranges.into_par_iter().for_each(|(_, subrange_full)| {
-                        self.update_rent_exempt_status_in_range(subrange_full, &rent_metrics)
-                    });
-                });
-            }
-        }
-        if !parallel {
-            // collect serially
-            partitions.into_iter().for_each(|partition| {
-                self.update_rent_exempt_status_in_partition(partition, &rent_metrics)
-            });
-        }
-        measure.stop();
-        datapoint_info!(
-            "collect_rent_eagerly",
-            ("accounts", rent_metrics.count.load(Relaxed), i64),
-            ("partitions", count, i64),
-            ("total_time_us", measure.as_us(), i64),
-            (
-                "hold_range_us",
-                rent_metrics.hold_range_us.load(Relaxed),
-                i64
-            ),
-            ("load_us", rent_metrics.load_us.load(Relaxed), i64),
-            ("collect_us", rent_metrics.collect_us.load(Relaxed), i64),
-            ("hash_us", rent_metrics.hash_us.load(Relaxed), i64),
-            ("store_us", rent_metrics.store_us.load(Relaxed), i64),
-        );
-    }
-
-    fn rent_collection_partitions(&self) -> Vec<Partition> {
-        if !self.use_fixed_collection_cycle() {
-            // This mode is for production/development/testing.
-            // In this mode, we iterate over the whole pubkey value range for each epochs
-            // including warm-up epochs.
-            // The only exception is the situation where normal epochs are relatively short
-            // (currently less than 2 day). In that case, we arrange a single collection
-            // cycle to be multiple of epochs so that a cycle could be greater than the 2 day.
-            self.variable_cycle_partitions()
-        } else {
-            // This mode is mainly for benchmarking only.
-            // In this mode, we always iterate over the whole pubkey value range with
-            // <slot_count_in_two_day> slots as a collection cycle, regardless warm-up or
-            // alignment between collection cycles and epochs.
-            // Thus, we can simulate stable processing load of eager rent collection,
-            // strictly proportional to the number of pubkeys since genesis.
-            self.fixed_cycle_partitions()
-        }
-    }
-
-    /// Update rent exempt status for `accounts`
-    ///
-    /// This fn is called inside a parallel loop from `collect_rent_in_partition()`.  Avoid adding
-    /// any code that causes contention on shared memory/data (i.e. do not update atomic metrics).
-    ///
-    /// The return value is a struct of computed values that `collect_rent_in_partition()` will
-    /// reduce at the end of its parallel loop.  If possible, place data/computation that cause
-    /// contention/take locks in the return struct and process them in
-    /// `collect_rent_from_partition()` after reducing the parallel loop.
-    fn update_rent_exempt_status_for_accounts(
-        &self,
-        mut accounts: Vec<(Pubkey, AccountSharedData, Slot)>,
-    ) -> CollectRentFromAccountsInfo {
-        let mut accounts_to_store =
-            Vec::<(&Pubkey, &AccountSharedData)>::with_capacity(accounts.len());
-        let mut time_collecting_rent_us = 0;
-        let mut time_storing_accounts_us = 0;
-        for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
-            let rent_epoch_pre = account.rent_epoch();
-            let ((), collect_rent_us) = measure_us!(update_rent_exempt_status_for_account(
-                &self.rent_collector,
-                account
-            ));
-            time_collecting_rent_us += collect_rent_us;
-            let rent_epoch_post = account.rent_epoch();
-
-            // did the account change in any way due to rent collection?
-            let account_changed = rent_epoch_post != rent_epoch_pre;
-
-            // only store accounts where we updated rent epoch
-            if account_changed {
-                datapoint_info!(
-                    "bank-rent_collection_updated_only_rent_epoch",
-                    ("slot", self.slot(), i64),
-                    ("pubkey", pubkey.to_string(), String),
-                    ("rent_epoch_pre", rent_epoch_pre, i64),
-                    ("rent_epoch_post", rent_epoch_post, i64),
-                );
-                accounts_to_store.push((pubkey, account));
-            }
-        }
-
-        if !accounts_to_store.is_empty() {
-            // TODO: Maybe do not call `store_accounts()` here.  Instead return `accounts_to_store`
-            // and have `collect_rent_in_partition()` perform all the stores.
-            let (_, store_accounts_us) =
-                measure_us!(self.store_accounts((self.slot(), &accounts_to_store[..])));
-            time_storing_accounts_us += store_accounts_us;
-        }
-
-        CollectRentFromAccountsInfo {
-            time_collecting_rent_us,
-            time_storing_accounts_us,
-            num_accounts: accounts.len(),
-        }
-    }
-
-    /// convert 'partition' to a pubkey range and 'update_rent_exempt_status_in_range'
-    fn update_rent_exempt_status_in_partition(&self, partition: Partition, metrics: &RentMetrics) {
-        let subrange_full = accounts_partition::pubkey_range_from_partition(partition);
-        self.update_rent_exempt_status_in_range(subrange_full, metrics)
-    }
-
-    /// load accounts with pubkeys in 'subrange_full', update
-    /// 'account.rent_epoch' as necessary,
-    fn update_rent_exempt_status_in_range(
-        &self,
-        subrange_full: RangeInclusive<Pubkey>,
-        metrics: &RentMetrics,
-    ) {
-        let mut hold_range = Measure::start("hold_range");
-        let thread_pool = &self.rc.accounts.accounts_db.thread_pool;
-        thread_pool.install(|| {
-            self.rc
-                .accounts
-                .hold_range_in_memory(&subrange_full, true, thread_pool);
-            hold_range.stop();
-            metrics.hold_range_us.fetch_add(hold_range.as_us(), Relaxed);
-
-            // divide the range into num_threads smaller ranges and process in parallel
-            // Note that 'pubkey_range_from_partition' cannot easily be re-used here to break the range smaller.
-            // It has special handling of 0..0 and partition_count changes affect all ranges unevenly.
-            let num_threads = solana_accounts_db::accounts_db::quarter_thread_count() as u64;
-            let sz = std::mem::size_of::<u64>();
-            let start_prefix = accounts_partition::prefix_from_pubkey(subrange_full.start());
-            let end_prefix_inclusive = accounts_partition::prefix_from_pubkey(subrange_full.end());
-            let range = end_prefix_inclusive - start_prefix;
-            let increment = range / num_threads;
-            let results = (0..num_threads)
-                .into_par_iter()
-                .map(|chunk| {
-                    let offset = |chunk| start_prefix + chunk * increment;
-                    let start = offset(chunk);
-                    let last = chunk == num_threads - 1;
-                    let merge_prefix = |prefix: u64, mut bound: Pubkey| {
-                        bound.as_mut()[0..sz].copy_from_slice(&prefix.to_be_bytes());
-                        bound
-                    };
-                    let start = merge_prefix(start, *subrange_full.start());
-                    let (accounts, measure_load_accounts) = measure_time!(if last {
-                        let end = *subrange_full.end();
-                        let subrange = start..=end; // IN-clusive
-                        self.rc
-                            .accounts
-                            .load_to_collect_rent_eagerly(&self.ancestors, subrange)
-                    } else {
-                        let end = merge_prefix(offset(chunk + 1), *subrange_full.start());
-                        let subrange = start..end; // EX-clusive, the next 'start' will be this same value
-                        self.rc
-                            .accounts
-                            .load_to_collect_rent_eagerly(&self.ancestors, subrange)
-                    });
-                    CollectRentInPartitionInfo::new(
-                        self.update_rent_exempt_status_for_accounts(accounts),
-                        Duration::from_nanos(measure_load_accounts.as_ns()),
-                    )
-                })
-                .reduce(
-                    CollectRentInPartitionInfo::default,
-                    CollectRentInPartitionInfo::reduce,
-                );
-
-            // We cannot assert here that we collected from all expected keys.
-            // Some accounts may have been topped off or may have had all funds removed and gone to 0 lamports.
-
-            self.rc
-                .accounts
-                .hold_range_in_memory(&subrange_full, false, thread_pool);
-
-            metrics
-                .load_us
-                .fetch_add(results.time_loading_accounts_us, Relaxed);
-            metrics
-                .collect_us
-                .fetch_add(results.time_collecting_rent_us, Relaxed);
-            metrics
-                .store_us
-                .fetch_add(results.time_storing_accounts_us, Relaxed);
-            metrics.count.fetch_add(results.num_accounts, Relaxed);
-        });
-    }
-
-    pub(crate) fn fixed_cycle_partitions_between_slots(
-        &self,
-        starting_slot: Slot,
-        ending_slot: Slot,
-    ) -> Vec<Partition> {
-        let slot_count_in_two_day = self.slot_count_in_two_day();
-        accounts_partition::get_partitions(ending_slot, starting_slot, slot_count_in_two_day)
-    }
-
-    fn fixed_cycle_partitions(&self) -> Vec<Partition> {
-        self.fixed_cycle_partitions_between_slots(self.parent_slot(), self.slot())
-    }
-
-    pub(crate) fn variable_cycle_partitions_between_slots(
-        &self,
-        starting_slot: Slot,
-        ending_slot: Slot,
-    ) -> Vec<Partition> {
-        let (starting_epoch, mut starting_slot_index) =
-            self.get_epoch_and_slot_index(starting_slot);
-        let (ending_epoch, ending_slot_index) = self.get_epoch_and_slot_index(ending_slot);
-
-        let mut partitions = vec![];
-        if starting_epoch < ending_epoch {
-            let slot_skipped = (ending_slot - starting_slot) > 1;
-            if slot_skipped {
-                // Generate special partitions because there are skipped slots
-                // exactly at the epoch transition.
-
-                let parent_last_slot_index = self.get_slots_in_epoch(starting_epoch) - 1;
-
-                // ... for parent epoch
-                partitions.push(self.partition_from_slot_indexes_with_gapped_epochs(
-                    starting_slot_index,
-                    parent_last_slot_index,
-                    starting_epoch,
-                ));
-
-                if ending_slot_index > 0 {
-                    // ... for current epoch
-                    partitions.push(self.partition_from_slot_indexes_with_gapped_epochs(
-                        0,
-                        0,
-                        ending_epoch,
-                    ));
-                }
-            }
-            starting_slot_index = 0;
-        }
-
-        partitions.push(self.partition_from_normal_slot_indexes(
-            starting_slot_index,
-            ending_slot_index,
-            ending_epoch,
-        ));
-
-        partitions
-    }
-
-    fn variable_cycle_partitions(&self) -> Vec<Partition> {
-        self.variable_cycle_partitions_between_slots(self.parent_slot(), self.slot())
-    }
-
-    fn do_partition_from_slot_indexes(
-        &self,
-        start_slot_index: SlotIndex,
-        end_slot_index: SlotIndex,
-        epoch: Epoch,
-        generated_for_gapped_epochs: bool,
-    ) -> Partition {
-        let slot_count_per_epoch = self.get_slots_in_epoch(epoch);
-
-        let cycle_params = if !self.use_multi_epoch_collection_cycle(epoch) {
-            // mnb should always go through this code path
-            accounts_partition::rent_single_epoch_collection_cycle_params(
-                epoch,
-                slot_count_per_epoch,
-            )
-        } else {
-            accounts_partition::rent_multi_epoch_collection_cycle_params(
-                epoch,
-                slot_count_per_epoch,
-                self.first_normal_epoch(),
-                self.slot_count_in_two_day() / slot_count_per_epoch,
-            )
-        };
-        accounts_partition::get_partition_from_slot_indexes(
-            cycle_params,
-            start_slot_index,
-            end_slot_index,
-            generated_for_gapped_epochs,
-        )
-    }
-
-    fn partition_from_normal_slot_indexes(
-        &self,
-        start_slot_index: SlotIndex,
-        end_slot_index: SlotIndex,
-        epoch: Epoch,
-    ) -> Partition {
-        self.do_partition_from_slot_indexes(start_slot_index, end_slot_index, epoch, false)
-    }
-
-    fn partition_from_slot_indexes_with_gapped_epochs(
-        &self,
-        start_slot_index: SlotIndex,
-        end_slot_index: SlotIndex,
-        epoch: Epoch,
-    ) -> Partition {
-        self.do_partition_from_slot_indexes(start_slot_index, end_slot_index, epoch, true)
-    }
-
-    // Given short epochs, it's too costly to collect rent eagerly
-    // within an epoch, so lower the frequency of it.
-    // These logic isn't strictly eager anymore and should only be used
-    // for development/performance purpose.
-    // Absolutely not under ClusterType::MainnetBeta!!!!
-    fn use_multi_epoch_collection_cycle(&self, epoch: Epoch) -> bool {
-        // Force normal behavior, disabling multi epoch collection cycle for manual local testing
-        #[cfg(not(test))]
-        if self.slot_count_per_normal_epoch() == solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH {
-            return false;
-        }
-
-        epoch >= self.first_normal_epoch()
-            && self.slot_count_per_normal_epoch() < self.slot_count_in_two_day()
-    }
-
-    pub(crate) fn use_fixed_collection_cycle(&self) -> bool {
-        // Force normal behavior, disabling fixed collection cycle for manual local testing
-        #[cfg(not(test))]
-        if self.slot_count_per_normal_epoch() == solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH {
-            return false;
-        }
-
-        self.cluster_type() != ClusterType::MainnetBeta
-            && self.slot_count_per_normal_epoch() < self.slot_count_in_two_day()
-    }
-
-    fn slot_count_in_two_day(&self) -> SlotCount {
-        Self::slot_count_in_two_day_helper(self.ticks_per_slot)
-    }
-
-    // This value is specially chosen to align with slots per epoch in mainnet-beta and testnet
-    // Also, assume 500GB account data set as the extreme, then for 2 day (=48 hours) to collect
-    // rent eagerly, we'll consume 5.7 MB/s IO bandwidth, bidirectionally.
-    pub fn slot_count_in_two_day_helper(ticks_per_slot: SlotCount) -> SlotCount {
-        2 * DEFAULT_TICKS_PER_SECOND * SECONDS_PER_DAY / ticks_per_slot
-    }
-
-    fn slot_count_per_normal_epoch(&self) -> SlotCount {
-        self.get_slots_in_epoch(self.first_normal_epoch())
     }
 
     pub fn cluster_type(&self) -> ClusterType {
@@ -7000,62 +6591,6 @@ enum ApplyFeatureActivationsCaller {
     FinishInit,
     NewFromParent,
     WarpFromParent,
-}
-
-/// Return the computed values from `collect_rent_from_accounts()`
-///
-/// Since `collect_rent_from_accounts()` is running in parallel, instead of updating the
-/// atomics/shared data inside this function, return those values in this struct for the caller to
-/// process later.
-#[derive(Debug, Default)]
-struct CollectRentFromAccountsInfo {
-    time_collecting_rent_us: u64,
-    time_storing_accounts_us: u64,
-    num_accounts: usize,
-}
-
-/// Return the computed values—of each iteration in the parallel loop inside
-/// `collect_rent_in_partition()`—and then perform a reduce on all of them.
-#[derive(Debug, Default)]
-struct CollectRentInPartitionInfo {
-    time_loading_accounts_us: u64,
-    time_collecting_rent_us: u64,
-    time_storing_accounts_us: u64,
-    num_accounts: usize,
-}
-
-impl CollectRentInPartitionInfo {
-    /// Create a new `CollectRentInPartitionInfo` from the results of loading accounts and
-    /// collecting rent on them.
-    #[must_use]
-    fn new(info: CollectRentFromAccountsInfo, time_loading_accounts: Duration) -> Self {
-        Self {
-            time_loading_accounts_us: time_loading_accounts.as_micros() as u64,
-            time_collecting_rent_us: info.time_collecting_rent_us,
-            time_storing_accounts_us: info.time_storing_accounts_us,
-            num_accounts: info.num_accounts,
-        }
-    }
-
-    /// Reduce (i.e. 'combine') two `CollectRentInPartitionInfo`s into one.
-    ///
-    /// This fn is used by `collect_rent_in_partition()` as the reduce step (of map-reduce) in its
-    /// parallel loop of rent collection.
-    #[must_use]
-    fn reduce(lhs: Self, rhs: Self) -> Self {
-        Self {
-            time_loading_accounts_us: lhs
-                .time_loading_accounts_us
-                .saturating_add(rhs.time_loading_accounts_us),
-            time_collecting_rent_us: lhs
-                .time_collecting_rent_us
-                .saturating_add(rhs.time_collecting_rent_us),
-            time_storing_accounts_us: lhs
-                .time_storing_accounts_us
-                .saturating_add(rhs.time_storing_accounts_us),
-            num_accounts: lhs.num_accounts.saturating_add(rhs.num_accounts),
-        }
-    }
 }
 
 /// Struct to collect stats when scanning all accounts in `get_total_accounts_stats()`
