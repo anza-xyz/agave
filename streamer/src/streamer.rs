@@ -167,14 +167,12 @@ fn recv_loop<P: SocketProvider>(
     is_staked_service: bool,
 ) -> Result<()> {
     let mut socket = provider.current_socket_ref();
-    #[cfg(unix)]
-    let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
-
     // Non-unix implementation may block indefinitely due to its lack of polling support,
     // so we set a read timeout to avoid blocking indefinitely.
-    #[cfg(not(unix))]
     socket.set_read_timeout(Some(Duration::from_secs(1)))?;
 
+    #[cfg(unix)]
+    let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
     #[cfg(unix)]
     socket.set_nonblocking(true)?;
 
@@ -240,17 +238,14 @@ fn recv_loop<P: SocketProvider>(
 
         if let CurrentSocket::Changed(s) = provider.current_socket() {
             socket = s;
-            // Non-unix implementation may block indefinitely due to its lack of polling support,
-            // so we set a read timeout to avoid blocking indefinitely.
-            #[cfg(not(unix))]
             socket.set_read_timeout(Some(Duration::from_secs(1)))?;
-            #[cfg(unix)]
-            socket.set_nonblocking(true)?;
 
             #[cfg(unix)]
             {
                 poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
             }
+            #[cfg(unix)]
+            socket.set_nonblocking(true)?;
         }
     }
 }
