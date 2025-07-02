@@ -39,7 +39,7 @@ pub enum BankForksUtilsError {
          incremental snapshot archive: {incremental_snapshot_archive}"
     )]
     BankFromSnapshotsArchive {
-        source: snapshot_utils::SnapshotError,
+        source: Box<snapshot_utils::SnapshotError>,
         full_snapshot_archive: String,
         incremental_snapshot_archive: String,
     },
@@ -320,7 +320,7 @@ fn bank_forks_from_snapshot(
             exit,
         )
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsArchive {
-            source: err,
+            source: Box::new(err),
             full_snapshot_archive: full_snapshot_archive_info.path().display().to_string(),
             incremental_snapshot_archive: incremental_snapshot_archive_info
                 .as_ref()

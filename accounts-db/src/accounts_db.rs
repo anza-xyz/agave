@@ -72,7 +72,7 @@ use {
         read_only_accounts_cache::ReadOnlyAccountsCache,
         sorted_storages::SortedStorages,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
-        utils,
+        u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
     crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
@@ -7893,6 +7893,13 @@ impl AccountsDb {
             let mut info = storage_info.entry(store_id).or_default();
             info.stored_size += stored_size_alive;
             info.count += generate_index_results.count;
+
+            // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
+            // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
+            assert!(info.stored_size <= u64_align!(storage.accounts.len()),
+                "Stored size ({}) is larger than the size of the accounts file ({}) for store_id: {}",
+                info.stored_size, storage.accounts.len(), store_id
+            );
         }
 
         // dirty_pubkeys will contain a pubkey if an item has multiple rooted entries for
