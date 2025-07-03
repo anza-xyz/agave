@@ -4,8 +4,8 @@ use {
         umem::{Frame, FrameOffset},
     },
     libc::{
-        ifreq, mmap, munmap, syscall, xdp_ring_offset, SYS_ioctl, IF_NAMESIZE, SIOCGIFADDR,
-        SIOCGIFHWADDR,
+        ifreq, mmap, munmap, socket, syscall, xdp_ring_offset, SYS_ioctl, AF_INET, IF_NAMESIZE,
+        SIOCETHTOOL, SIOCGIFADDR, SIOCGIFHWADDR, SOCK_DGRAM,
     },
     std::{
         ffi::{c_char, CStr, CString},
@@ -134,22 +134,71 @@ impl NetworkDevice {
         Ok(addr)
     }
 
-    pub fn open_queue(&self, queue_id: QueueId) -> DeviceQueue {
-        DeviceQueue::new(self.if_index, queue_id)
+    pub fn open_queue(&self, queue_id: QueueId) -> Result<DeviceQueue, io::Error> {
+        let (rx_size, tx_size) = Self::ring_sizes(&self.if_name)?;
+        Ok(DeviceQueue::new(self.if_index, queue_id, rx_size, tx_size))
+    }
+
+    pub fn ring_sizes(if_name: &str) -> Result<(usize, usize), io::Error> {
+        const ETHTOOL_GRINGPARAM: u32 = 0x00000010;
+
+        #[repr(C)]
+        struct EthtoolRingParam {
+            cmd: u32,
+            rx_max_pending: u32,
+            rx_mini_max_pending: u32,
+            rx_jumbo_max_pending: u32,
+            tx_max_pending: u32,
+            rx_pending: u32,
+            rx_mini_pending: u32,
+            rx_jumbo_pending: u32,
+            tx_pending: u32,
+        }
+
+        let fd = unsafe { socket(AF_INET, SOCK_DGRAM, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+
+        let mut rp: EthtoolRingParam = unsafe { mem::zeroed() };
+        rp.cmd = ETHTOOL_GRINGPARAM;
+
+        let mut ifr: ifreq = unsafe { mem::zeroed() };
+        unsafe {
+            ptr::copy_nonoverlapping(
+                if_name.as_ptr() as *const c_char,
+                ifr.ifr_name.as_mut_ptr(),
+                if_name.len().min(IF_NAMESIZE),
+            );
+        }
+        ifr.ifr_name[IF_NAMESIZE - 1] = 0;
+        ifr.ifr_ifru.ifru_data = &mut rp as *mut _ as *mut c_char;
+
+        let res = unsafe { syscall(SYS_ioctl, fd.as_raw_fd(), SIOCETHTOOL, &ifr) };
+        if res < 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok((rp.rx_pending as usize, rp.tx_pending as usize))
     }
 }
 
 pub struct DeviceQueue {
     if_index: u32,
     queue_id: QueueId,
+    rx_size: usize,
+    tx_size: usize,
     completion: Option<TxCompletionRing>,
 }
 
 impl DeviceQueue {
-    pub fn new(if_index: u32, queue_id: QueueId) -> Self {
+    pub fn new(if_index: u32, queue_id: QueueId, rx_size: usize, tx_size: usize) -> Self {
         Self {
             if_index,
             queue_id,
+            rx_size,
+            tx_size,
             completion: None,
         }
     }
@@ -164,6 +213,14 @@ impl DeviceQueue {
 
     pub fn tx_completion(&mut self) -> Option<&TxCompletionRing> {
         self.completion.as_ref()
+    }
+
+    pub fn tx_size(&self) -> usize {
+        self.tx_size
+    }
+
+    pub fn rx_size(&self) -> usize {
+        self.rx_size
     }
 }
 

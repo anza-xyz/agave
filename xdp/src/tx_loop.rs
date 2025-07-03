@@ -71,7 +71,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
     const RING_SIZE: usize = 2048;
 
     let Ok((mut socket, tx)) = Socket::tx(
-        dev.open_queue(queue_id),
+        dev.open_queue(queue_id).unwrap(),
         umem,
         zero_copy,
         RING_SIZE,
