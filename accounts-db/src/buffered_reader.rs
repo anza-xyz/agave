@@ -205,10 +205,10 @@ impl<'a, T: Backing> BufRead for BufferedReader<'a, T> {
     /// Note that `amt` is not constrained by the size of the buffer returned by `fill_buf`
     /// and can be thus used to seek/skip reads from the underlying file.
     fn consume(&mut self, amt: usize) {
-        if self.buf_valid_bytes.len() >= delta {
-            self.buf_valid_bytes.start += delta;
+        if self.buf_valid_bytes.len() >= amt {
+            self.buf_valid_bytes.start += amt;
         } else {
-            let additional_amount_to_skip = delta - self.buf_valid_bytes.len();
+            let additional_amount_to_skip = amt - self.buf_valid_bytes.len();
             self.buf_valid_bytes = 0..0;
             self.file_offset_of_next_read += additional_amount_to_skip;
         }
