@@ -102,7 +102,6 @@ impl FeatureSet {
 
     pub fn runtime_features(&self) -> SVMFeatureSet {
         SVMFeatureSet {
-            lift_cpi_caller_restriction: self.is_active(&lift_cpi_caller_restriction::id()),
             move_precompile_verification_to_svm: self
                 .is_active(&move_precompile_verification_to_svm::id()),
             remove_accounts_executable_flag_checks: self
