@@ -1,9 +1,13 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(unix)]
-use nix::{
-    poll::{poll, ppoll, PollFd, PollTimeout},
-    sys::time::TimeSpec,
-};
+use nix::poll::{poll, PollFd, PollTimeout};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+))]
+use nix::{poll::ppoll, sys::time::TimeSpec};
 use {
     crate::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
     std::{
@@ -181,7 +185,23 @@ pub(crate) fn recv_from(
         max_wait: Duration,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+        ))]
         const MIN_POLL_DURATION: Duration = Duration::from_micros(100);
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+        )))]
+        // `ppoll` is not supported on non-linuxish platforms, so we use `poll`, which only
+        // supports millisecond precision.
+        const MIN_POLL_DURATION: Duration = Duration::from_millis(1);
+
         let mut i = 0;
         let deadline = Instant::now() + max_wait;
 
@@ -200,7 +220,7 @@ pub(crate) fn recv_from(
                         // `crate::streamer::SOCKET_READ_TIMEOUT` before failing with
                         // `ErrorKind::WouldBlock`. The condition `i == 0` indicates that we are just
                         // after the initial read, which did not result in any packets being read.
-                        TimeSpec::from_duration(SOCKET_READ_TIMEOUT)
+                        SOCKET_READ_TIMEOUT
                     } else {
                         let remaining = deadline.saturating_duration_since(Instant::now());
                         // Avoid excessively short ppoll calls.
@@ -208,19 +228,38 @@ pub(crate) fn recv_from(
                             // Deadline reached.
                             break;
                         }
-                        TimeSpec::from_duration(remaining)
+                        remaining
                     };
-                    // Use `ppoll` for its sub-millisecond precision, which ensures that
-                    // short coalescing waits (e.g., `max_wait` = 1ms, common in the codebase)
-                    // are effective.
-                    //
-                    // The `poll()` syscall takes an integer millisecond timeout. After a
-                    // `recv_mmsg` call, with `max_wait` = 1ms, the remaining wait time is
-                    // virtually guaranteed to be a sub-millisecond duration. `poll` would
-                    // truncate this remainder to 0ms, preventing any actual polling.
-                    // `ppoll` makes coalescing in 1ms windows actually viable.
-                    if ppoll(poll_fd, Some(timeout), None)? == 0 {
-                        break;
+                    #[cfg(any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "dragonfly",
+                        target_os = "freebsd",
+                    ))]
+                    {
+                        // Use `ppoll` for its sub-millisecond precision, which ensures that
+                        // short coalescing waits (e.g., `max_wait` = 1ms, common in the codebase)
+                        // are effective.
+                        //
+                        // The `poll()` syscall takes an integer millisecond timeout. After a
+                        // `recv_mmsg` call, with `max_wait` = 1ms, the remaining wait time is
+                        // virtually guaranteed to be a sub-millisecond duration. `poll` would
+                        // truncate this remainder to 0ms, preventing any actual polling.
+                        // `ppoll` makes coalescing in 1ms windows actually viable.
+                        if ppoll(poll_fd, Some(TimeSpec::from_duration(timeout)), None)? == 0 {
+                            break;
+                        }
+                    }
+                    #[cfg(not(any(
+                        target_os = "linux",
+                        target_os = "android",
+                        target_os = "dragonfly",
+                        target_os = "freebsd",
+                    )))]
+                    {
+                        if poll(poll_fd, PollTimeout::from(timeout.as_millis() as u16))? == 0 {
+                            break;
+                        }
                     }
                 }
                 Err(e) => return Err(e),
