@@ -147,6 +147,54 @@ macro_rules! define_accounts_db_test {
 }
 pub(crate) use define_accounts_db_test;
 
+fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
+    let slot0 = 0;
+
+    let pubkey = Pubkey::from([1; 32]);
+
+    let append_vec = db.create_and_insert_store(slot0, 1000, "test");
+
+    let mut account_small = AccountSharedData::default();
+    account_small.set_data(vec![1]);
+    account_small.set_lamports(1);
+    let mut account_big = AccountSharedData::default();
+    account_big.set_data(vec![5; 10]);
+    account_big.set_lamports(2);
+    assert_ne!(
+        aligned_stored_size(account_big.data().len()),
+        aligned_stored_size(account_small.data().len())
+    );
+    // same account twice with different data lens
+    // Rules are the last one of each pubkey is the one that ends up in the index.
+    let mut data = vec![(&pubkey, &account_big), (&pubkey, &account_small)];
+    if reverse {
+        data = data.into_iter().rev().collect();
+    }
+    let storable_accounts = (slot0, &data[..]);
+
+    // construct append vec with account to generate an index from
+    append_vec.accounts.append_accounts(&storable_accounts, 0);
+
+    assert!(!db.accounts_index.contains(&pubkey));
+    db.generate_index(None, false, false);
+}
+
+define_accounts_db_test!(
+    test_generate_index_duplicates_within_slot,
+    panic = "Duplicate pub keys are not allowed within single slot items",
+    |db| {
+        run_generate_index_duplicates_within_slot_test(db, false);
+    }
+);
+
+define_accounts_db_test!(
+    test_generate_index_duplicates_within_slot_reverse,
+    panic = "Duplicate pub keys are not allowed within single slot items",
+    |db| {
+        run_generate_index_duplicates_within_slot_test(db, true);
+    }
+);
+
 #[test]
 fn test_generate_index_for_single_ref_zero_lamport_slot() {
     let db = AccountsDb::new_single_for_tests();

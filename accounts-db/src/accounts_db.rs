@@ -7863,19 +7863,18 @@ impl AccountsDb {
             // this closure is the shared code when scanning the storage
             let mut itemizer = |info: IndexInfo| {
                 stored_size_alive += info.stored_size_aligned;
-                let index_info = &info.index_info;
-                if index_info.lamports > 0 {
-                    accounts_data_len += index_info.data_len;
+                if info.index_info.lamports > 0 {
+                    accounts_data_len += info.index_info.data_len;
                     all_accounts_are_zero_lamports = false;
                 } else {
                     // zero lamport accounts
-                    zero_lamport_pubkeys.push(index_info.pubkey);
+                    zero_lamport_pubkeys.push(info.index_info.pubkey);
                 }
                 keyed_account_infos.push((
-                    index_info.pubkey,
+                    info.index_info.pubkey,
                     AccountInfo::new(
-                        StorageLocation::AppendVec(store_id, index_info.offset), // will never be cached
-                        index_info.is_zero_lamport(),
+                        StorageLocation::AppendVec(store_id, info.index_info.offset), // will never be cached
+                        info.index_info.is_zero_lamport(),
                     ),
                 ));
             };
@@ -7940,9 +7939,8 @@ impl AccountsDb {
                 info.stored_size, storage.accounts.len(), store_id
             );
         }
-
-        // zero_lamport_pubkeys will contain a pubkey if an item has multiple rooted entries for
-        // a given pubkey. If there is just a single item, there is no cleaning to
+        // zero_lamport_pubkeys are candidates for cleaning. So add them to uncleaned_pubkeys
+        // for later cleaning. If there is just a single item, there is no cleaning to
         // be done on that pubkey. Use only those pubkeys with multiple updates.
         if !zero_lamport_pubkeys.is_empty() {
             let old = self
