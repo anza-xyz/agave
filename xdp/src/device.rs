@@ -241,7 +241,6 @@ impl RingConsumer {
         }
     }
 
-    #[cfg(test)]
     pub fn available(&self) -> u32 {
         self.cached_producer.wrapping_sub(self.cached_consumer)
     }
