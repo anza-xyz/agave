@@ -412,7 +412,6 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
- "indexmap 2.9.0",
  "indicatif",
  "itertools 0.12.1",
  "jsonrpc-core",

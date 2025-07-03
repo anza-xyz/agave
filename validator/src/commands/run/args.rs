@@ -4,7 +4,6 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{values_t, App, Arg, ArgMatches},
-    indexmap::IndexSet,
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -59,17 +58,20 @@ impl FromClapArgMatches for RunArgs {
             .map(|s| s.into())
             .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
 
-        let entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
-        let mut parsed_entrypoints = IndexSet::new();
-        for entrypoint in entrypoints {
-            let parsed = solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
-                Box::<dyn std::error::Error>::from(format!(
-                    "failed to parse entrypoint address: {err}"
-                ))
-            })?;
-            parsed_entrypoints.insert(parsed);
-        }
-        let entrypoints = parsed_entrypoints.into_iter().collect();
+        let mut entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
+        // sort() + dedup() to yield a vector of unique elements
+        entrypoints.sort();
+        entrypoints.dedup();
+        let entrypoints = entrypoints
+            .into_iter()
+            .map(|entrypoint| {
+                solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
+                    crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
+                        "failed to parse entrypoint address: {err}"
+                    )))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let known_validators = validators_set(
             &identity_keypair.pubkey(),
