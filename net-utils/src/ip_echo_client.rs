@@ -227,7 +227,6 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
 ///
-#[allow(tail_expr_drop_order)]
 pub(crate) async fn verify_all_reachable_udp(
     ip_echo_server_addr: SocketAddr,
     sockets: &[&UdpSocket],
@@ -315,7 +314,11 @@ pub(crate) async fn verify_all_reachable_udp(
                         socket.set_read_timeout(original_read_timeout).unwrap();
                     });
                 }
-                while let Some(r) = checkers.join_next().await {
+                loop {
+                    let next = checkers.join_next().await;
+                    let Some(r) = next else {
+                        break;
+                    };
                     r.expect("Threads should exit cleanly");
                 }
                 // Might have lost a UDP packet, check that all ports were reached
