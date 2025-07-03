@@ -877,7 +877,7 @@ where
             )?;
 
             let caller_account =
-                if instruction_account.is_writable || (direct_mapping && update_caller) {
+                if instruction_account.is_writable() || (direct_mapping && update_caller) {
                     Some(caller_account)
                 } else {
                     None
@@ -1597,15 +1597,15 @@ mod tests {
             let instruction_accounts = $instruction_accounts
                 .iter()
                 .enumerate()
-                .map(
-                    |(index_in_callee, index_in_transaction)| InstructionAccount {
-                        index_in_transaction: *index_in_transaction as IndexOfAccount,
-                        index_in_caller: *index_in_transaction as IndexOfAccount,
-                        index_in_callee: index_in_callee as IndexOfAccount,
-                        is_signer: false,
-                        is_writable: $transaction_accounts[*index_in_transaction as usize].2,
-                    },
-                )
+                .map(|(index_in_callee, index_in_transaction)| {
+                    InstructionAccount::new(
+                        *index_in_transaction as IndexOfAccount,
+                        *index_in_transaction as IndexOfAccount,
+                        index_in_callee as IndexOfAccount,
+                        false,
+                        $transaction_accounts[*index_in_transaction as usize].2,
+                    )
+                })
                 .collect::<Vec<_>>();
             let transaction_accounts = $transaction_accounts
                 .into_iter()
@@ -2531,20 +2531,20 @@ mod tests {
 
         invoke_context.transaction_context.get_next_instruction_context().unwrap()
             .configure(&[0], vec![
-                InstructionAccount {
-                    index_in_transaction: 1,
-                    index_in_caller: 0,
-                    index_in_callee: 0,
-                    is_signer: false,
-                    is_writable: true,
-                },
-                InstructionAccount {
-                    index_in_transaction: 1,
-                    index_in_caller: 0,
-                    index_in_callee: 0,
-                    is_signer: false,
-                    is_writable: true,
-                },
+                InstructionAccount::new(
+                    1,
+                    0,
+                    0,
+                    false,
+                    true,
+                ),
+                InstructionAccount::new(
+                    1,
+                    0,
+                    0,
+                    false,
+                    true,
+                ),
             ], &[]);
         let accounts = SyscallInvokeSignedRust::translate_accounts(
             vm_addr,

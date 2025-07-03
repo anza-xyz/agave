@@ -409,13 +409,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount {
-                index_in_transaction: 0,
-                index_in_caller: 0,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            });
+            instruction_accounts.push(InstructionAccount::new(0, 0, 0, false, true));
             vec![]
         }
         Err(_) => {
@@ -486,13 +480,13 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         transaction_accounts.push((pubkey, account));
                         idx
                     };
-                    InstructionAccount {
-                        index_in_transaction: txn_acct_index as IndexOfAccount,
-                        index_in_caller: txn_acct_index as IndexOfAccount,
-                        index_in_callee: txn_acct_index as IndexOfAccount,
-                        is_signer: account_info.is_signer.unwrap_or(false),
-                        is_writable: account_info.is_writable.unwrap_or(false),
-                    }
+                    InstructionAccount::new(
+                        txn_acct_index as IndexOfAccount,
+                        txn_acct_index as IndexOfAccount,
+                        txn_acct_index as IndexOfAccount,
+                        account_info.is_signer.unwrap_or(false),
+                        account_info.is_writable.unwrap_or(false),
+                    )
                 })
                 .collect();
             input.instruction_data
