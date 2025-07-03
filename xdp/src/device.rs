@@ -378,7 +378,7 @@ pub(crate) unsafe fn mmap_ring<T>(
             ring_type as i64,
         )
     };
-    if map_addr == libc::MAP_FAILED {
+    if ptr::eq(map_addr, libc::MAP_FAILED) {
         return Err(io::Error::last_os_error());
     }
     // Safety: manual pointer arithmetic. We are sure that the given offsets
