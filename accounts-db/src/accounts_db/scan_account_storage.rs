@@ -342,7 +342,7 @@ impl AccountsDb {
                                 scanner.set_slot(slot, ancient, storage);
 
                                 Self::scan_single_account_storage(storage, &mut scanner)
-                                    .expect("Failed to scan account storage");
+                                    .expect("must scan accounts storage");
                             });
                             if ancient {
                                 stats
