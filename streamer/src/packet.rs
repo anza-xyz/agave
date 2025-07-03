@@ -94,49 +94,40 @@ pub(crate) fn recv_from(
     max_wait: Option<Duration>,
     poll_fd: &mut [PollFd],
 ) -> Result<usize> {
+    // Implementation note:
+    // This is a reimplementation of the above (now, non-unix) `recv_from` function, and
+    // is explicitly meant to preserve the existing behavior, refactored for performance.
+    //
+    // This implementation is broken into two separate functions:
+    // 1. `recv_from_coalesce` - when `max_wait` is provided.
+    // 2. `recv_from_once` - when `max_wait` is not provided.
+    //
+    // This is done to avoid excessive branching in the main loop.
+
+    /// The initial socket polling timeout.
+    ///
+    /// The socket will be polled for this duration in the event that the initial
+    /// `recv_mmsg` call fails with `WouldBlock`.
+    ///
+    /// This is meant to emulate the blocking behavior of the original `recv_from` function.
+    /// The original implementation explicitly sets the socket its given as blocking, and implicitly
+    /// expects that the caller will set `socket.set_read_timeout(Some(Duration::from_millis(SOCKET_READ_TIMEOUT)))`
+    /// some time before invocation.
+    ///
+    /// Given that we are using `poll` in this implementation, and we assume the socket is set to
+    /// non-blocking, we don't need to worry about `recv_mmsg` hanging indefinitely.
     const SOCKET_READ_TIMEOUT: u16 = crate::streamer::SOCKET_READ_TIMEOUT.as_millis() as u16;
 
-    fn recv_from_coalesce(
-        batch: &mut PinnedPacketBatch,
-        socket: &UdpSocket,
-        max_wait: Duration,
-        poll_fd: &mut [PollFd],
-    ) -> Result<usize> {
-        let mut i = 0;
-        let deadline = Instant::now() + max_wait;
-
-        loop {
-            match recv_mmsg(socket, &mut batch[i..]) {
-                Ok(npkts) => {
-                    i += npkts;
-                    if i >= PACKETS_PER_BATCH {
-                        break;
-                    }
-                }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    let timeout = if i == 0 {
-                        PollTimeout::from(SOCKET_READ_TIMEOUT)
-                    } else {
-                        let remaining = deadline
-                            .saturating_duration_since(Instant::now())
-                            .as_millis() as u16;
-                        if remaining == 0 {
-                            break;
-                        }
-                        PollTimeout::from(remaining)
-                    };
-                    let n_ready = poll(poll_fd, timeout)?;
-                    if n_ready == 0 {
-                        break;
-                    }
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Ok(i)
-    }
-
+    /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or there are no more packets to read.
+    ///
+    /// Upon calling, this will attempt to read packets from the socket, and poll for [`SOCKET_READ_TIMEOUT`]
+    /// when [`ErrorKind::WouldBlock`] is encountered.
+    ///
+    /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered:
+    /// - If any packets were read, the function will exit.
+    /// - If no packets were read, the function will continue to poll for [`SOCKET_READ_TIMEOUT`] and try again.
+    ///   It is possible for this to loop indefinitely (though not in a busy-loop fashion) if it never reads any packets.
+    ///   This is consistent with the original implementation.
     fn recv_from_once(
         batch: &mut PinnedPacketBatch,
         socket: &UdpSocket,
@@ -157,6 +148,65 @@ pub(crate) fn recv_from(
                         break;
                     }
                     let n_ready = poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT))?;
+                    if n_ready == 0 {
+                        break;
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(i)
+    }
+
+    /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or `max_wait` is reached.
+    ///
+    /// Upon calling, this will attempt to read packets from the socket, and poll for [`SOCKET_READ_TIMEOUT`]
+    /// when [`ErrorKind::WouldBlock`] is encountered.
+    ///
+    /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered, poll for the
+    /// saturating duration since the start of the loop.
+    fn recv_from_coalesce(
+        batch: &mut PinnedPacketBatch,
+        socket: &UdpSocket,
+        max_wait: Duration,
+        poll_fd: &mut [PollFd],
+    ) -> Result<usize> {
+        let mut i = 0;
+        let deadline = Instant::now() + max_wait;
+
+        loop {
+            match recv_mmsg(socket, &mut batch[i..]) {
+                Ok(npkts) => {
+                    i += npkts;
+                    if i >= PACKETS_PER_BATCH {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    let timeout = if i == 0 {
+                        // This emulates the behavior of the original `recv_from` function,
+                        // where it anticipates that the first read of the socket will block for
+                        // `crate::streamer::SOCKET_READ_TIMEOUT` before failing with
+                        // `ErrorKind::WouldBlock`. The condition `i == 0` indicates that we are just
+                        // after the initial read, which did not result in any packets being read.
+                        PollTimeout::from(SOCKET_READ_TIMEOUT)
+                    } else {
+                        // Compute the remaining time until the deadline.
+                        // Note that converting the duration to milliseconds will truncate submillisecond
+                        // durations. We do this explicitly because `poll` operates in terms of milliseconds,
+                        // and it would be wasteful to send a poll syscall that returns immediately. We lose
+                        // submillisecond precision in our deadline, but that is worth the trade-off of busy-looping.
+                        let remaining = deadline
+                            .saturating_duration_since(Instant::now())
+                            .as_millis() as u16;
+                        if remaining == 0 {
+                            // Deadline reached.
+                            break;
+                        }
+                        PollTimeout::from(remaining)
+                    };
+                    let n_ready = poll(poll_fd, timeout)?;
                     if n_ready == 0 {
                         break;
                     }
