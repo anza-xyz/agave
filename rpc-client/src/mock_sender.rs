@@ -356,6 +356,7 @@ impl RpcSender for MockSender {
                     return_data: None,
                     inner_instructions: None,
                     replacement_blockhash: None,
+                    fee: None,
                     pre_balances: None,
                     post_balances: None,
                     pre_token_balances: None,

@@ -336,6 +336,7 @@ pub struct TransactionSimulationResult {
     pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
+    pub fee: Option<u64>,
     pub pre_balances: Option<Vec<u64>>,
     pub post_balances: Option<Vec<u64>>,
     pub pre_token_balances: Option<Vec<SvmTokenInfo>>,
@@ -3324,6 +3325,7 @@ impl Bank {
         let (
             post_simulation_accounts,
             result,
+            fee,
             logs,
             return_data,
             inner_instructions,
@@ -3342,6 +3344,7 @@ impl Bank {
                     (
                         post_simulation_accounts,
                         details.status,
+                        Some(executed_tx.loaded_transaction.fee_details.total_fee()),
                         details.log_messages,
                         details.return_data,
                         details.inner_instructions,
@@ -3352,6 +3355,7 @@ impl Bank {
                 ProcessedTransaction::FeesOnly(fees_only_tx) => (
                     vec![],
                     Err(fees_only_tx.load_error),
+                    Some(fees_only_tx.fee_details.total_fee()),
                     None,
                     None,
                     None,
@@ -3359,7 +3363,7 @@ impl Bank {
                     fees_only_tx.rollback_accounts.data_size() as u32,
                 ),
             },
-            Err(error) => (vec![], Err(error), None, None, None, 0, 0),
+            Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
         };
         let logs = logs.unwrap_or_default();
 
@@ -3387,6 +3391,7 @@ impl Bank {
             loaded_accounts_data_size,
             return_data,
             inner_instructions,
+            fee,
             pre_balances,
             post_balances,
             pre_token_balances,

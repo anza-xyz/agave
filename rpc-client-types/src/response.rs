@@ -406,6 +406,7 @@ pub struct RpcSimulateTransactionResult {
     pub return_data: Option<UiTransactionReturnData>,
     pub inner_instructions: Option<Vec<UiInnerInstructions>>,
     pub replacement_blockhash: Option<RpcBlockhash>,
+    pub fee: Option<u64>,
     pub pre_balances: Option<Vec<u64>>,
     pub post_balances: Option<Vec<u64>>,
     pub pre_token_balances: Option<Vec<UiTransactionTokenBalance>>,

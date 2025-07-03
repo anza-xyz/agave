@@ -191,6 +191,7 @@ fn simulate_transaction(
         loaded_accounts_data_size,
         return_data,
         inner_instructions,
+        fee: _,
         pre_balances: _,
         post_balances: _,
         pre_token_balances: _,
