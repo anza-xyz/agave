@@ -2677,9 +2677,12 @@ fn test_shrink_candidate_slots_with_dead_ancient_account() {
     // used. More generally the pubkey of the smallest account
     // shouldn't be present in the shrunk storage, which is
     // validated by the following scan of the storage accounts.
-    storage.accounts.scan_pubkeys(|pubkey| {
-        assert_ne!(pubkey, &modified_account_pubkey);
-    });
+    storage
+        .accounts
+        .scan_pubkeys(|pubkey| {
+            assert_ne!(pubkey, &modified_account_pubkey);
+        })
+        .expect("must scan accounts storage");
 }
 
 #[test]
@@ -3899,7 +3902,8 @@ define_accounts_db_test!(test_alive_bytes, |accounts_db| {
                     num_obsolete_accounts
                 );
             }
-        });
+        })
+        .expect("must scan accounts storage");
 });
 
 // Test alive_bytes_exclude_zero_lamport_single_ref_accounts calculation
@@ -6679,15 +6683,21 @@ fn get_all_accounts_from_storages<'a>(
     storages
         .flat_map(|storage| {
             let mut vec = Vec::default();
-            storage.accounts.scan_accounts(|_offset, account| {
-                vec.push((*account.pubkey(), account.to_account_shared_data()));
-            });
+            storage
+                .accounts
+                .scan_accounts(|_offset, account| {
+                    vec.push((*account.pubkey(), account.to_account_shared_data()));
+                })
+                .expect("must scan accounts storage");
             // make sure scan_pubkeys results match
             // Note that we assume traversals are both in the same order, but this doesn't have to be true.
             let mut compare = Vec::default();
-            storage.accounts.scan_pubkeys(|k| {
-                compare.push(*k);
-            });
+            storage
+                .accounts
+                .scan_pubkeys(|k| {
+                    compare.push(*k);
+                })
+                .expect("must scan accounts storage");
             assert_eq!(compare, vec.iter().map(|(k, _)| *k).collect::<Vec<_>>());
             vec
         })

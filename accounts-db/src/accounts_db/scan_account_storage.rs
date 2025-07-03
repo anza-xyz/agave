@@ -680,7 +680,7 @@ mod tests {
                 value_to_use_for_lamports: expected,
             };
 
-            AccountsDb::scan_single_account_storage(&storage, &mut test_scan);
+            AccountsDb::scan_single_account_storage(&storage, &mut test_scan).unwrap();
             let accum = test_scan.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), 1);
             assert_eq!(
@@ -709,9 +709,12 @@ mod tests {
                     let slot = storage.slot();
                     let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                     let mut all_accounts = Vec::default();
-                    storage.accounts.scan_accounts(|_offset, acct| {
-                        all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
-                    });
+                    storage
+                        .accounts
+                        .scan_accounts(|_offset, acct| {
+                            all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                        })
+                        .expect("must scan accounts storage");
                     let accounts = all_accounts
                         .iter()
                         .map(|stored| (&stored.0, &stored.1))
@@ -743,9 +746,12 @@ mod tests {
                 let slot = storage.slot() + max_slot;
                 let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                 let mut all_accounts = Vec::default();
-                storage.accounts.scan_accounts(|_offset, acct| {
-                    all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
-                });
+                storage
+                    .accounts
+                    .scan_accounts(|_offset, acct| {
+                        all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                    })
+                    .expect("must scan accounts storage");
                 let accounts = all_accounts
                     .iter()
                     .map(|stored| (&stored.0, &stored.1))
@@ -1140,7 +1146,7 @@ mod tests {
             };
             scanner.set_slot(max_slot as Slot, false, &storage);
 
-            AccountsDb::scan_single_account_storage(&storage, &mut scanner);
+            AccountsDb::scan_single_account_storage(&storage, &mut scanner).unwrap();
             scanner.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), expected_count as u64);
         }

@@ -922,14 +922,17 @@ mod tests {
         // get all the lt hashes for each version of all accounts
         let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
         for storage in &storages {
-            storage.accounts.scan_accounts(|_offset, account| {
-                let pubkey = account.pubkey();
-                let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
-                stored_accounts_map
-                    .entry(*pubkey)
-                    .or_default()
-                    .push(account_lt_hash)
-            });
+            storage
+                .accounts
+                .scan_accounts(|_offset, account| {
+                    let pubkey = account.pubkey();
+                    let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
+                    stored_accounts_map
+                        .entry(*pubkey)
+                        .or_default()
+                        .push(account_lt_hash)
+                })
+                .expect("must scan accounts storage");
         }
 
         // calculate the duplicates lt hash by skipping the first version (latest) of each account,

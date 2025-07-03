@@ -659,9 +659,12 @@ mod tests {
 
         let mut account_count = 0;
         snapshot_storages.into_iter().for_each(|storage| {
-            storage.accounts.scan_pubkeys(|_| {
-                account_count += 1;
-            });
+            storage
+                .accounts
+                .scan_pubkeys(|_| {
+                    account_count += 1;
+                })
+                .expect("must scan accounts storage");
         });
 
         assert_eq!(
