@@ -7,9 +7,8 @@ use {
             AtomicSocketProvider, AtomicUdpSocket, CurrentSocket, FixedSocketProvider,
             SocketProvider,
         },
-        packet::{
-            self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
-        },
+        packet::{self, PacketBatch, PacketRef, PACKETS_PER_BATCH},
+        recvmmsg::{RecvBuffer, RecvMetas},
         sendmmsg::{batch_send, SendPktsError},
         socket::SocketAddrSpace,
     },
@@ -154,14 +153,14 @@ fn recv_loop<P: SocketProvider>(
     provider: &mut P,
     exit: &AtomicBool,
     packet_batch_sender: &impl ChannelSend<PacketBatch>,
-    recycler: &PacketBatchRecycler,
     stats: &StreamerReceiveStats,
     coalesce: Option<Duration>,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
     let mut has_set_timeout = false;
+    let mut buffer = RecvBuffer::new();
+    let mut metas = RecvMetas::new();
     loop {
         let socket = match provider.current_socket() {
             CurrentSocket::Changed(sock) => {
@@ -177,11 +176,6 @@ fn recv_loop<P: SocketProvider>(
                 sock
             }
         };
-        let mut packet_batch = if use_pinned_memory {
-            PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
-        } else {
-            PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
-        };
         loop {
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
@@ -196,7 +190,10 @@ fn recv_loop<P: SocketProvider>(
                 }
             }
 
-            if let Ok(len) = packet::recv_from(&mut packet_batch, socket, coalesce) {
+            if let Ok(packet_batch) =
+                packet::recv_from(socket, &mut buffer, &mut metas, coalesce, is_staked_service)
+            {
+                let len = packet_batch.len();
                 if len > 0 {
                     let StreamerReceiveStats {
                         packets_count,
@@ -212,19 +209,22 @@ fn recv_loop<P: SocketProvider>(
                     if len == PACKETS_PER_BATCH {
                         full_packet_batches_count.fetch_add(1, Ordering::Relaxed);
                     }
-                    packet_batch
-                        .iter_mut()
-                        .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
+
                     match packet_batch_sender.try_send(packet_batch.into()) {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
-                            stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
+                            stats
+                                .num_packets_dropped
+                                .fetch_add(metas.len(), Ordering::Relaxed);
                         }
                         Err(TrySendError::Disconnected(err)) => {
                             return Err(StreamerError::Send(SendError(err)))
                         }
                     }
                 }
+
+                buffer.reserve();
+                metas.clear();
                 break;
             }
         }
@@ -237,10 +237,8 @@ pub fn receiver(
     socket: Arc<UdpSocket>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: impl ChannelSend<PacketBatch>,
-    recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
@@ -254,10 +252,8 @@ pub fn receiver(
                 &mut provider,
                 &exit,
                 &packet_batch_sender,
-                &recycler,
                 &stats,
                 coalesce,
-                use_pinned_memory,
                 in_vote_only_mode,
                 is_staked_service,
             );
@@ -271,10 +267,8 @@ pub fn receiver_atomic(
     socket: Arc<AtomicUdpSocket>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: impl ChannelSend<PacketBatch>,
-    recycler: PacketBatchRecycler,
     stats: Arc<StreamerReceiveStats>,
     coalesce: Option<Duration>,
-    use_pinned_memory: bool,
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
@@ -286,10 +280,8 @@ pub fn receiver_atomic(
                 &mut provider,
                 &exit,
                 &packet_batch_sender,
-                &recycler,
                 &stats,
                 coalesce,
-                use_pinned_memory,
                 in_vote_only_mode,
                 is_staked_service,
             );
@@ -607,7 +599,6 @@ mod test {
         },
         crossbeam_channel::unbounded,
         solana_net_utils::bind_to_localhost,
-        solana_perf::recycler::Recycler,
         std::{
             io,
             io::Write,
@@ -621,12 +612,11 @@ mod test {
 
     fn get_packet_batches(r: PacketBatchReceiver, num_packets: &mut usize) {
         for _ in 0..10 {
-            let packet_batch_res = r.recv_timeout(Duration::new(1, 0));
-            if packet_batch_res.is_err() {
+            let Ok(packet_batch_res) = r.recv_timeout(Duration::new(1, 0)) else {
                 continue;
-            }
+            };
 
-            *num_packets -= packet_batch_res.unwrap().len();
+            *num_packets -= packet_batch_res.len();
 
             if *num_packets == 0 {
                 break;
@@ -654,10 +644,8 @@ mod test {
             Arc::new(read),
             exit.clone(),
             s_reader,
-            Recycler::default(),
             stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
-            true,
             None,
             false,
         );

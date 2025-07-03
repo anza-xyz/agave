@@ -1,5 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+use jemallocator::Jemalloc;
 use {
     clap::{crate_description, crate_name, value_t_or_exit, Arg, Command},
     crossbeam_channel::unbounded,
@@ -8,7 +10,7 @@ use {
         sockets::{multi_bind_in_range_with_config, SocketConfiguration},
     },
     solana_streamer::{
-        packet::{Packet, PacketBatchRecycler, PinnedPacketBatch, PACKET_DATA_SIZE},
+        packet::{Packet, PinnedPacketBatch, PACKET_DATA_SIZE},
         sendmmsg::batch_send,
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
@@ -22,6 +24,10 @@ use {
         time::{Duration, SystemTime},
     },
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> {
     let send = bind_to_unspecified().unwrap();
@@ -116,7 +122,6 @@ fn main() -> Result<()> {
     .unwrap();
 
     let mut addr = SocketAddr::new(ip_addr, 0);
-    let recycler = PacketBatchRecycler::default();
     let exit = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(StreamerReceiveStats::new("bench-streamer-test"));
 
@@ -134,10 +139,8 @@ fn main() -> Result<()> {
                 Arc::new(read_socket),
                 exit.clone(),
                 packet_sender,
-                recycler.clone(),
                 stats.clone(),
                 Some(Duration::from_millis(1)), // coalesce
-                true,
                 None,
                 false,
             );

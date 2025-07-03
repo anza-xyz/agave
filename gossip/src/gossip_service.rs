@@ -12,7 +12,6 @@ use {
     solana_client::{connection_cache::ConnectionCache, tpu_client::TpuClientWrapper},
     solana_keypair::Keypair,
     solana_net_utils::DEFAULT_IP_ECHO_SERVER_THREADS,
-    solana_perf::recycler::Recycler,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::bank_forks::BankForks,
@@ -67,10 +66,8 @@ impl GossipService {
             gossip_socket.clone(),
             exit.clone(),
             request_sender,
-            Recycler::default(),
             gossip_receiver_stats.clone(),
             Some(Duration::from_millis(1)), // coalesce
-            false,
             None,
             false,
         );

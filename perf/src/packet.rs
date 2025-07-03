@@ -1,10 +1,8 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
-#[cfg(feature = "dev-context-only-utils")]
-use bytes::{BufMut, BytesMut};
 use {
     crate::{cuda_runtime::PinnedVec, recycler::Recycler},
     bincode::config::Options,
-    bytes::Bytes,
+    bytes::{BufMut, Bytes, BytesMut},
     rayon::{
         iter::{IndexedParallelIterator, ParallelIterator},
         prelude::{IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator},
@@ -26,7 +24,6 @@ pub use {
 pub const NUM_PACKETS: usize = 1024 * 8;
 
 pub const PACKETS_PER_BATCH: usize = 64;
-pub const NUM_RCVMMSGS: usize = 64;
 
 /// Representation of a packet used in TPU.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -50,7 +47,8 @@ impl BytesPacket {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    pub fn from_bytes(dest: Option<&SocketAddr>, buffer: Bytes) -> Self {
+    pub fn from_bytes(dest: Option<&SocketAddr>, buffer: impl Into<Bytes>) -> Self {
+        let buffer = buffer.into();
         let mut meta = Meta {
             size: buffer.len(),
             ..Default::default()
@@ -62,7 +60,6 @@ impl BytesPacket {
         Self { buffer, meta }
     }
 
-    #[cfg(feature = "dev-context-only-utils")]
     pub fn from_data<T>(dest: Option<&SocketAddr>, data: T) -> bincode::Result<Self>
     where
         T: solana_packet::Encode,
@@ -132,6 +129,18 @@ impl BytesPacket {
     #[inline]
     pub fn as_mut(&mut self) -> PacketRefMut<'_> {
         PacketRefMut::Bytes(self)
+    }
+
+    #[inline]
+    pub fn buffer(&self) -> &Bytes {
+        &self.buffer
+    }
+
+    #[inline]
+    pub fn set_buffer(&mut self, buffer: impl Into<Bytes>) {
+        let buffer = buffer.into();
+        self.meta.size = buffer.len();
+        self.buffer = buffer;
     }
 }
 

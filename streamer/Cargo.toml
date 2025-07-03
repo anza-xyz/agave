@@ -21,6 +21,7 @@ dev-context-only-utils = []
 
 [dependencies]
 arc-swap = { workspace = true }
+arrayvec = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
