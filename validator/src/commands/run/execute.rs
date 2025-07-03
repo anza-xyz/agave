@@ -266,8 +266,6 @@ pub fn execute(
         None
     };
 
-    let known_validators = run_args.known_validators;
-
     let repair_validators = validators_set(
         &identity_keypair.pubkey(),
         matches,
@@ -661,7 +659,7 @@ pub fn execute(
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
-        known_validators,
+        known_validators: run_args.known_validators,
         repair_validators,
         repair_whitelist,
         gossip_validators,
