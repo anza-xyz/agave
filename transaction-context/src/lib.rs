@@ -68,9 +68,9 @@ pub struct InstructionAccount {
     /// This excludes the program accounts.
     pub index_in_callee: IndexOfAccount,
     /// Is this account supposed to sign
-    is_signer: bool,
+    is_signer: u8,
     /// Is this account allowed to become writable
-    is_writable: bool,
+    is_writable: u8,
 }
 
 impl InstructionAccount {
@@ -85,25 +85,25 @@ impl InstructionAccount {
             index_in_transaction,
             index_in_caller,
             index_in_callee,
-            is_signer,
-            is_writable,
+            is_signer: is_signer as u8,
+            is_writable: is_writable as u8,
         }
     }
 
     pub fn is_signer(&self) -> bool {
-        self.is_signer
+        self.is_signer == 1
     }
 
     pub fn is_writable(&self) -> bool {
-        self.is_writable
+        self.is_writable == 1
     }
 
     pub fn set_is_signer(&mut self, value: bool) {
-        self.is_signer = value;
+        self.is_signer = value as u8;
     }
 
     pub fn set_is_writable(&mut self, value: bool) {
-        self.is_writable = value;
+        self.is_writable = value as u8;
     }
 }
 
@@ -831,7 +831,7 @@ impl InstructionContext {
             .instruction_accounts
             .get(instruction_account_index as usize)
             .ok_or(InstructionError::MissingAccount)?
-            .is_signer)
+            .is_signer())
     }
 
     /// Returns whether an instruction account is writable
@@ -843,7 +843,7 @@ impl InstructionContext {
             .instruction_accounts
             .get(instruction_account_index as usize)
             .ok_or(InstructionError::MissingAccount)?
-            .is_writable)
+            .is_writable())
     }
 
     /// Calculates the set of all keys of signer instruction accounts in this Instruction
@@ -853,7 +853,7 @@ impl InstructionContext {
     ) -> Result<HashSet<Pubkey>, InstructionError> {
         let mut result = HashSet::new();
         for instruction_account in self.instruction_accounts.iter() {
-            if instruction_account.is_signer {
+            if instruction_account.is_signer() {
                 result.insert(
                     *transaction_context
                         .get_key_of_account_at_index(instruction_account.index_in_transaction)?,
