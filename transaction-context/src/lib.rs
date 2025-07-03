@@ -68,9 +68,43 @@ pub struct InstructionAccount {
     /// This excludes the program accounts.
     pub index_in_callee: IndexOfAccount,
     /// Is this account supposed to sign
-    pub is_signer: bool,
+    is_signer: bool,
     /// Is this account allowed to become writable
-    pub is_writable: bool,
+    is_writable: bool,
+}
+
+impl InstructionAccount {
+    pub fn new(
+        index_in_transaction: IndexOfAccount,
+        index_in_caller: IndexOfAccount,
+        index_in_callee: IndexOfAccount,
+        is_signer: bool,
+        is_writable: bool,
+    ) -> InstructionAccount {
+        InstructionAccount {
+            index_in_transaction,
+            index_in_caller,
+            index_in_callee,
+            is_signer,
+            is_writable,
+        }
+    }
+
+    pub fn is_signer(&self) -> bool {
+        self.is_signer
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.is_writable
+    }
+
+    pub fn set_is_signer(&mut self, value: bool) {
+        self.is_signer = value;
+    }
+
+    pub fn set_is_writable(&mut self, value: bool) {
+        self.is_writable = value;
+    }
 }
 
 /// An account key and the matching account

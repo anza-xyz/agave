@@ -628,13 +628,13 @@ mod tests {
                     .iter()
                     .position(|account_index| account_index == index_in_transaction)
                     .unwrap_or(index_in_instruction);
-                InstructionAccount {
-                    index_in_transaction: *index_in_transaction,
-                    index_in_caller: *index_in_transaction,
-                    index_in_callee: index_in_callee as IndexOfAccount,
-                    is_signer: false,
-                    is_writable: is_writable(index_in_instruction),
-                }
+                InstructionAccount::new(
+                    *index_in_transaction,
+                    *index_in_transaction,
+                    index_in_callee as IndexOfAccount,
+                    false,
+                    is_writable(index_in_instruction),
+                )
             })
             .collect()
     }

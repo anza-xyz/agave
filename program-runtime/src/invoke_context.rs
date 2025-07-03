@@ -357,8 +357,10 @@ impl<'a> InvokeContext<'a> {
                 let instruction_account = deduplicated_instruction_accounts
                     .get_mut(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
-                instruction_account.is_signer |= account_meta.is_signer;
-                instruction_account.is_writable |= account_meta.is_writable;
+                instruction_account
+                    .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
+                instruction_account
+                    .set_is_writable(instruction_account.is_writable() || account_meta.is_writable);
             } else {
                 let index_in_caller = instruction_context
                     .find_index_of_instruction_account(
@@ -374,13 +376,13 @@ impl<'a> InvokeContext<'a> {
                         InstructionError::MissingAccount
                     })?;
                 duplicate_indicies.push(deduplicated_instruction_accounts.len());
-                deduplicated_instruction_accounts.push(InstructionAccount {
+                deduplicated_instruction_accounts.push(InstructionAccount::new(
                     index_in_transaction,
                     index_in_caller,
-                    index_in_callee: instruction_account_index as IndexOfAccount,
-                    is_signer: account_meta.is_signer,
-                    is_writable: account_meta.is_writable,
-                });
+                    instruction_account_index as IndexOfAccount,
+                    account_meta.is_signer,
+                    account_meta.is_writable,
+                ));
             }
         }
         for instruction_account in deduplicated_instruction_accounts.iter() {
@@ -390,7 +392,7 @@ impl<'a> InvokeContext<'a> {
             )?;
 
             // Readonly in caller cannot become writable in callee
-            if instruction_account.is_writable && !borrowed_account.is_writable() {
+            if instruction_account.is_writable() && !borrowed_account.is_writable() {
                 ic_msg!(
                     self,
                     "{}'s writable privilege escalated",
@@ -401,7 +403,7 @@ impl<'a> InvokeContext<'a> {
 
             // To be signed in the callee,
             // it must be either signed in the caller or by the program
-            if instruction_account.is_signer
+            if instruction_account.is_signer()
                 && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
             {
                 ic_msg!(
@@ -838,13 +840,13 @@ pub fn mock_process_instruction_with_feature_set<
                 instruction_account.index_in_transaction == index_in_transaction
             })
             .unwrap_or(instruction_account_index) as IndexOfAccount;
-        instruction_accounts.push(InstructionAccount {
+        instruction_accounts.push(InstructionAccount::new(
             index_in_transaction,
-            index_in_caller: index_in_transaction,
+            index_in_transaction,
             index_in_callee,
-            is_signer: account_meta.is_signer,
-            is_writable: account_meta.is_writable,
-        });
+            account_meta.is_signer,
+            account_meta.is_writable,
+        ));
     }
     if program_indices.is_empty() {
         program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
@@ -959,12 +961,14 @@ mod tests {
             let instruction_data = instruction_context.get_instruction_data();
             let program_id = instruction_context.get_last_program_key(transaction_context)?;
             let instruction_accounts = (0..4)
-                .map(|instruction_account_index| InstructionAccount {
-                    index_in_transaction: instruction_account_index,
-                    index_in_caller: instruction_account_index,
-                    index_in_callee: instruction_account_index,
-                    is_signer: false,
-                    is_writable: false,
+                .map(|instruction_account_index| {
+                    InstructionAccount::new(
+                        instruction_account_index,
+                        instruction_account_index,
+                        instruction_account_index,
+                        false,
+                        false,
+                    )
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
@@ -1064,26 +1068,26 @@ mod tests {
                 solana_pubkey::new_rand(),
                 AccountSharedData::new(index as u64, 1, invoke_stack.get(index).unwrap()),
             ));
-            instruction_accounts.push(InstructionAccount {
-                index_in_transaction: index as IndexOfAccount,
-                index_in_caller: index as IndexOfAccount,
-                index_in_callee: instruction_accounts.len() as IndexOfAccount,
-                is_signer: false,
-                is_writable: true,
-            });
+            instruction_accounts.push(InstructionAccount::new(
+                index as IndexOfAccount,
+                index as IndexOfAccount,
+                instruction_accounts.len() as IndexOfAccount,
+                false,
+                true,
+            ));
         }
         for (index, program_id) in invoke_stack.iter().enumerate() {
             transaction_accounts.push((
                 *program_id,
                 AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
             ));
-            instruction_accounts.push(InstructionAccount {
-                index_in_transaction: index as IndexOfAccount,
-                index_in_caller: index as IndexOfAccount,
-                index_in_callee: index as IndexOfAccount,
-                is_signer: false,
-                is_writable: false,
-            });
+            instruction_accounts.push(InstructionAccount::new(
+                index as IndexOfAccount,
+                index as IndexOfAccount,
+                index as IndexOfAccount,
+                false,
+                false,
+            ));
         }
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
@@ -1154,12 +1158,14 @@ mod tests {
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
         let instruction_accounts = (0..4)
-            .map(|instruction_account_index| InstructionAccount {
-                index_in_transaction: instruction_account_index,
-                index_in_caller: instruction_account_index,
-                index_in_callee: instruction_account_index,
-                is_signer: false,
-                is_writable: instruction_account_index < 2,
+            .map(|instruction_account_index| {
+                InstructionAccount::new(
+                    instruction_account_index,
+                    instruction_account_index,
+                    instruction_account_index,
+                    false,
+                    instruction_account_index < 2,
+                )
             })
             .collect::<Vec<_>>();
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
@@ -1210,12 +1216,14 @@ mod tests {
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
         let instruction_accounts = (0..4)
-            .map(|instruction_account_index| InstructionAccount {
-                index_in_transaction: instruction_account_index,
-                index_in_caller: instruction_account_index,
-                index_in_callee: instruction_account_index,
-                is_signer: false,
-                is_writable: instruction_account_index < 2,
+            .map(|instruction_account_index| {
+                InstructionAccount::new(
+                    instruction_account_index,
+                    instruction_account_index,
+                    instruction_account_index,
+                    false,
+                    instruction_account_index < 2,
+                )
             })
             .collect::<Vec<_>>();
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
@@ -1307,20 +1315,8 @@ mod tests {
             (program_key, program_account),
         ];
         let instruction_accounts = [
-            InstructionAccount {
-                index_in_transaction: 0,
-                index_in_caller: 0,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            },
-            InstructionAccount {
-                index_in_transaction: 1,
-                index_in_caller: 1,
-                index_in_callee: 1,
-                is_signer: false,
-                is_writable: false,
-            },
+            InstructionAccount::new(0, 0, 0, false, true),
+            InstructionAccount::new(1, 1, 1, false, false),
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();

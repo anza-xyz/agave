@@ -4438,13 +4438,13 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = [InstructionAccount {
-                    index_in_transaction: index_in_trace.saturating_add(1) as IndexOfAccount,
-                    index_in_caller: 0, // This is incorrect / inconsistent but not required
-                    index_in_callee: 0,
-                    is_signer: false,
-                    is_writable: false,
-                }];
+                let instruction_accounts = [InstructionAccount::new(
+                    index_in_trace.saturating_add(1) as IndexOfAccount,
+                    0, // This is incorrect / inconsistent but not required
+                    0,
+                    false,
+                    false,
+                )];
                 invoke_context
                     .transaction_context
                     .get_next_instruction_context()
