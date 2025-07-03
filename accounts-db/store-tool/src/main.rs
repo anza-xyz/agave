@@ -153,7 +153,12 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
         num_accounts += 1;
         stored_accounts_size += account.stored_size();
         lamports += account.lamports();
-    });
+    }).map_err(|err| {
+        format!(
+            "failed to scan accounts in file '{}': {err}",
+            file.as_ref().display(),
+        )
+    })?;
 
     println!(
         "number of accounts: {}, stored accounts size: {}, file size: {}, lamports: {}",
@@ -189,7 +194,7 @@ fn do_search(
             dir.as_ref().display(),
         )
     })?;
-    files.par_iter().for_each(|file| {
+    files.par_iter().map(|file| {
         let file_size = match fs::metadata(file) {
             Ok(metadata) => metadata.len() as usize,
             Err(err) => {
@@ -197,7 +202,7 @@ fn do_search(
                     "failed to get storage metadata '{}': {err}",
                     file.display(),
                 );
-                return;
+                return Ok(());
             }
         };
         let Ok((storage, _size)) = AccountsFile::new_from_file(file, file_size, StorageAccess::default()).inspect_err(|err| {
@@ -206,7 +211,7 @@ fn do_search(
                 file.display(),
             )
         }) else {
-            return;
+            return Ok(());
         };
         // By default, when the storage is dropped, the backing file will be removed.
         // We do not want to remove the backing file here in the store-tool, so prevent dropping.
@@ -229,8 +234,13 @@ fn do_search(
                     );
                 }
             }
-        });
-    });
+        }).map_err(|err| {
+            format!(
+                "failed to scan accounts in file '{}': {err}",
+                file.display(),
+            )
+        })
+    }).collect::<Result<(), _>>()?;
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 use {
     super::{AccountStorageEntry, AccountsDb, BinnedHashData, LoadedAccount, SplitAncientStorages},
     crate::{
+        accounts_file::AccountsFileError,
         accounts_hash::{
             AccountHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
         },
@@ -340,7 +341,8 @@ impl AccountsDb {
                                 }
                                 scanner.set_slot(slot, ancient, storage);
 
-                                Self::scan_single_account_storage(storage, &mut scanner);
+                                Self::scan_single_account_storage(storage, &mut scanner)
+                                    .expect("Failed to scan account storage");
                             });
                             if ancient {
                                 stats
@@ -373,7 +375,10 @@ impl AccountsDb {
     }
 
     /// iterate over a single storage, calling scanner on each item
-    fn scan_single_account_storage<S>(storage: &AccountStorageEntry, scanner: &mut S)
+    fn scan_single_account_storage<S>(
+        storage: &AccountStorageEntry,
+        scanner: &mut S,
+    ) -> Result<(), AccountsFileError>
     where
         S: AppendVecScan,
     {
@@ -381,7 +386,7 @@ impl AccountsDb {
             if scanner.filter(account.pubkey()) {
                 scanner.found_account(&LoadedAccount::Stored(account))
             }
-        });
+        })
     }
 }
 
@@ -629,7 +634,7 @@ mod tests {
             accum: Vec::default(),
             calls: calls.clone(),
         };
-        AccountsDb::scan_single_account_storage(&storage, &mut scanner);
+        AccountsDb::scan_single_account_storage(&storage, &mut scanner).unwrap();
         let accum = scanner.scanning_complete();
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(
