@@ -125,15 +125,14 @@ pub(crate) fn recv_from(
     ///
     /// On subsequent iterations, when [`ErrorKind::WouldBlock`] is encountered:
     /// - If any packets were read, the function will exit.
-    /// - If no packets were read, the function will continue to poll for [`SOCKET_READ_TIMEOUT`] and try again.
-    ///   It is possible for this to loop indefinitely (though not in a busy-loop fashion) if it never reads any packets.
-    ///   This is consistent with the original implementation.
+    /// - If no packets were read, the function will return an error.
     fn recv_from_once(
         batch: &mut PinnedPacketBatch,
         socket: &UdpSocket,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
         let mut i = 0;
+        let mut did_poll = false;
 
         loop {
             match recv_mmsg(socket, &mut batch[i..]) {
@@ -144,12 +143,18 @@ pub(crate) fn recv_from(
                     }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    // If we have read any packets, we can exit.
                     if i > 0 {
                         break;
                     }
-                    let n_ready = poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT))?;
-                    if n_ready == 0 {
-                        break;
+                    // If we have already polled once, return the error.
+                    if did_poll {
+                        return Err(e);
+                    }
+                    did_poll = true;
+                    // If we have not read any packets or polled, poll for `SOCKET_READ_TIMEOUT`.
+                    if poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT))? == 0 {
+                        return Err(e);
                     }
                 }
                 Err(e) => return Err(e),
@@ -206,8 +211,7 @@ pub(crate) fn recv_from(
                         }
                         PollTimeout::from(remaining)
                     };
-                    let n_ready = poll(poll_fd, timeout)?;
-                    if n_ready == 0 {
+                    if poll(poll_fd, timeout)? == 0 {
                         break;
                     }
                 }
