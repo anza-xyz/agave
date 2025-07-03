@@ -7,8 +7,6 @@
 mod meta;
 pub mod test_utils;
 
-use std::io::BufRead;
-
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
@@ -42,7 +40,7 @@ use {
         self,
         convert::TryFrom,
         fs::{remove_file, File, OpenOptions},
-        io::{Seek, SeekFrom, Write},
+        io::{BufRead, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
