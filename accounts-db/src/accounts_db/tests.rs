@@ -6907,22 +6907,25 @@ pub fn get_account_from_account_from_storage(
 fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
     slots.into_iter().for_each(|slot| {
         if let Some(storage) = db.get_storage_for_slot(slot) {
-            storage.accounts.scan_accounts_stored_meta(|account| {
-                let info = AccountInfo::new(
-                    StorageLocation::AppendVec(storage.id(), account.offset()),
-                    account.is_zero_lamport(),
-                );
-                db.accounts_index.upsert(
-                    slot,
-                    slot,
-                    account.pubkey(),
-                    &account,
-                    &AccountSecondaryIndexes::default(),
-                    info,
-                    &mut Vec::default(),
-                    UpsertReclaim::IgnoreReclaims,
-                );
-            })
+            storage
+                .accounts
+                .scan_accounts_stored_meta(|account| {
+                    let info = AccountInfo::new(
+                        StorageLocation::AppendVec(storage.id(), account.offset()),
+                        account.is_zero_lamport(),
+                    );
+                    db.accounts_index.upsert(
+                        slot,
+                        slot,
+                        account.pubkey(),
+                        &account,
+                        &AccountSecondaryIndexes::default(),
+                        info,
+                        &mut Vec::default(),
+                        UpsertReclaim::IgnoreReclaims,
+                    );
+                })
+                .expect("must scan accounts storage");
         }
     })
 }
