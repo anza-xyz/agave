@@ -1,6 +1,9 @@
 //! The `packet` module defines data structures and methods to pull data from the network.
 #[cfg(unix)]
-use nix::poll::{poll, PollFd, PollTimeout};
+use nix::{
+    poll::{poll, ppoll, PollFd, PollTimeout},
+    sys::time::TimeSpec,
+};
 use {
     crate::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
     std::{
@@ -116,7 +119,8 @@ pub(crate) fn recv_from(
     ///
     /// Given that we are using `poll` in this implementation, and we assume the socket is set to
     /// non-blocking, we don't need to worry about `recv_mmsg` hanging indefinitely.
-    const SOCKET_READ_TIMEOUT: u16 = crate::streamer::SOCKET_READ_TIMEOUT.as_millis() as u16;
+    const SOCKET_READ_TIMEOUT_MS: u16 = SOCKET_READ_TIMEOUT.as_millis() as u16;
+    use crate::streamer::SOCKET_READ_TIMEOUT;
 
     /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or there are no more packets to read.
     ///
@@ -153,7 +157,7 @@ pub(crate) fn recv_from(
                     }
                     did_poll = true;
                     // If we have not read any packets or polled, poll for `SOCKET_READ_TIMEOUT`.
-                    if poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT))? == 0 {
+                    if poll(poll_fd, PollTimeout::from(SOCKET_READ_TIMEOUT_MS))? == 0 {
                         return Err(e);
                     }
                 }
@@ -177,6 +181,7 @@ pub(crate) fn recv_from(
         max_wait: Duration,
         poll_fd: &mut [PollFd],
     ) -> Result<usize> {
+        const MIN_POLL_DURATION: Duration = Duration::from_micros(100);
         let mut i = 0;
         let deadline = Instant::now() + max_wait;
 
@@ -195,23 +200,26 @@ pub(crate) fn recv_from(
                         // `crate::streamer::SOCKET_READ_TIMEOUT` before failing with
                         // `ErrorKind::WouldBlock`. The condition `i == 0` indicates that we are just
                         // after the initial read, which did not result in any packets being read.
-                        PollTimeout::from(SOCKET_READ_TIMEOUT)
+                        TimeSpec::from_duration(SOCKET_READ_TIMEOUT)
                     } else {
-                        // Compute the remaining time until the deadline.
-                        // Note that converting the duration to milliseconds will truncate submillisecond
-                        // durations. We do this explicitly because `poll` operates in terms of milliseconds,
-                        // and it would be wasteful to send a poll syscall that returns immediately. We lose
-                        // submillisecond precision in our deadline, but that is worth the trade-off of busy-looping.
-                        let remaining = deadline
-                            .saturating_duration_since(Instant::now())
-                            .as_millis() as u16;
-                        if remaining == 0 {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        // Avoid excessively short ppoll calls.
+                        if remaining < MIN_POLL_DURATION {
                             // Deadline reached.
                             break;
                         }
-                        PollTimeout::from(remaining)
+                        TimeSpec::from_duration(remaining)
                     };
-                    if poll(poll_fd, timeout)? == 0 {
+                    // Use `ppoll` for its sub-millisecond precision, which ensures that
+                    // short coalescing waits (e.g., `max_wait` = 1ms, common in the codebase)
+                    // are effective.
+                    //
+                    // The `poll()` syscall takes an integer millisecond timeout. After a
+                    // `recv_mmsg` call, with `max_wait` = 1ms, the remaining wait time is
+                    // virtually guaranteed to be a sub-millisecond duration. `poll` would
+                    // truncate this remainder to 0ms, preventing any actual polling.
+                    // `ppoll` makes coalescing in 1ms windows actually viable.
+                    if ppoll(poll_fd, Some(timeout), None)? == 0 {
                         break;
                     }
                 }
