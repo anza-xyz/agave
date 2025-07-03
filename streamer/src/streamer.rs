@@ -1,10 +1,6 @@
 //! The `streamer` module defines a set of services for efficiently pulling data from UDP sockets.
 //!
 
-#[cfg(unix)]
-use nix::poll::{PollFd, PollFlags};
-#[cfg(unix)]
-use std::os::fd::AsFd;
 use {
     crate::{
         atomic_udp_socket::{
@@ -35,6 +31,11 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+};
+#[cfg(unix)]
+use {
+    nix::poll::{PollFd, PollFlags},
+    std::os::fd::AsFd,
 };
 
 pub trait ChannelSend<T>: Send + 'static {
