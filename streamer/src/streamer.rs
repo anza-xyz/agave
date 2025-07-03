@@ -169,16 +169,22 @@ fn recv_loop<P: SocketProvider>(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
-    let mut socket = provider.current_socket_ref();
-    // Non-unix implementation may block indefinitely due to its lack of polling support,
-    // so we set a read timeout to avoid blocking indefinitely.
-    #[cfg(not(unix))]
-    socket.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
+    fn setup_socket(socket: &UdpSocket) -> Result<()> {
+        // Non-unix implementation may block indefinitely due to its lack of polling support,
+        // so we set a read timeout to avoid blocking indefinitely.
+        #[cfg(not(unix))]
+        socket.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
 
+        #[cfg(unix)]
+        socket.set_nonblocking(true)?;
+
+        Ok(())
+    }
+
+    let mut socket = provider.current_socket_ref();
+    setup_socket(&socket)?;
     #[cfg(unix)]
     let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
-    #[cfg(unix)]
-    socket.set_nonblocking(true)?;
 
     loop {
         let mut packet_batch = if use_pinned_memory {
@@ -242,15 +248,12 @@ fn recv_loop<P: SocketProvider>(
 
         if let CurrentSocket::Changed(s) = provider.current_socket() {
             socket = s;
-            #[cfg(not(unix))]
-            socket.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
+            setup_socket(&socket)?;
 
             #[cfg(unix)]
             {
                 poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
             }
-            #[cfg(unix)]
-            socket.set_nonblocking(true)?;
         }
     }
 }
