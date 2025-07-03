@@ -1392,18 +1392,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         items.sort_unstable_by(|(pubkey_a, _), (pubkey_b, _)| {
             ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
                 .cmp(&((bin_calc.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
+                .then_with(|| pubkey_a.cmp(pubkey_b))
         });
 
         while !items.is_empty() {
             let mut start_index = items.len() - 1;
-            let pubkey_bin = bin_calc.bin_from_pubkey(&items[start_index].0);
+            let mut last_pubkey = &items[start_index].0;
+            let pubkey_bin = bin_calc.bin_from_pubkey(last_pubkey);
             // Find the smallest index with the same pubkey bin
             while start_index > 0 {
                 let next = start_index - 1;
-                if bin_calc.bin_from_pubkey(&items[next].0) != pubkey_bin {
+                let next_pubkey = &items[next].0;
+                assert_ne!(
+                    next_pubkey, last_pubkey,
+                    "Duplicate pub keys are not allowed within single slot items"
+                );
+                if bin_calc.bin_from_pubkey(next_pubkey) != pubkey_bin {
                     break;
                 }
                 start_index = next;
+                last_pubkey = next_pubkey;
             }
 
             let r_account_maps = &self.account_maps[pubkey_bin];
@@ -1925,6 +1933,23 @@ pub mod tests {
         fn is_zero_lamport(&self) -> bool {
             true
         }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_insert_duplicates() {
+        let key = solana_pubkey::new_rand();
+        let pubkey = &key;
+        let slot = 0;
+        let mut ancestors = Ancestors::default();
+        ancestors.insert(slot, 0);
+
+        let account_info = true;
+        let index = AccountsIndex::<bool, bool>::default_for_tests();
+        let account_info2: bool = !account_info;
+        let items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
+        index.set_startup(Startup::Startup);
+        let (_, _result) = index.insert_new_if_missing_into_primary_index(slot, items);
     }
 
     #[test]
