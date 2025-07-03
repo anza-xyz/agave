@@ -117,7 +117,7 @@ impl AccountsDb {
                 ));
                 pure_notify_time += notify_dur;
             })
-            .expect("Failed to scan accounts storage");
+            .expect("must scan accounts storage");
         let notifying_time = notifying_start.elapsed();
 
         GeyserPluginNotifyAtSnapshotRestoreStats {
