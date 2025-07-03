@@ -195,7 +195,7 @@ impl<U: Umem> Socket<U> {
 }
 
 impl<U: Umem> AsFd for Socket<U> {
-    fn as_fd(&self) -> BorrowedFd {
+    fn as_fd(&self) -> BorrowedFd<'_> {
         self.fd.as_fd()
     }
 }
