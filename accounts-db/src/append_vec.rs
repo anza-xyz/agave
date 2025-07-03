@@ -25,7 +25,7 @@ use {
             StoredAccountsInfo,
         },
         accounts_hash::AccountHash,
-        buffered_reader::{BufferedReader, BufferedReaderStatus, Stack},
+        buffered_reader::{BufferedReader, Stack},
         file_io::read_into_buffer,
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
@@ -1068,17 +1068,23 @@ impl AppendVec {
                 // Buffer for account data that doesn't fit within the stack allocated buffer.
                 // This will be re-used for each account that doesn't fit within the stack allocated buffer.
                 let mut data_overflow_buffer = vec![];
-                while let BufferedReaderStatus::Success = reader.read()? {
-                    let (offset, bytes_subset) = reader.get_offset_and_data();
-                    let (meta, next) = Self::get_type::<StoredMeta>(bytes_subset, 0).unwrap();
-                    let (account_meta, next) =
-                        Self::get_type::<AccountMeta>(bytes_subset, next).unwrap();
-                    let (hash, next) = Self::get_type::<AccountHash>(bytes_subset, next).unwrap();
+                loop {
+                    let offset = reader.get_offset();
+                    let bytes = match reader.fill_buf() {
+                        Ok(bytes) if bytes.is_empty() => break,
+                        Ok(bytes) => ValidSlice::new(bytes),
+                        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(err) => return Err(AccountsFileError::Io(err)),
+                    };
+
+                    let (meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
+                    let (account_meta, next) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
+                    let (hash, next) = Self::get_type::<AccountHash>(bytes, next).unwrap();
                     let data_len = meta.data_len as usize;
-                    let leftover = bytes_subset.len() - next;
+                    let leftover = bytes.len() - next;
                     if leftover >= data_len {
                         // we already read enough data to load this account
-                        let data = &bytes_subset.0[next..(next + data_len)];
+                        let data = &bytes.0[next..(next + data_len)];
                         let stored_size = aligned_stored_size(data_len);
                         let account = StoredAccountMeta {
                             meta,
@@ -1111,7 +1117,7 @@ impl AppendVec {
                         }
 
                         // Copy already read data to overflow buffer.
-                        data_overflow_buffer[..leftover].copy_from_slice(&bytes_subset.0[next..]);
+                        data_overflow_buffer[..leftover].copy_from_slice(&bytes.0[next..]);
 
                         // Read remaining data into overflow buffer.
                         let Ok(bytes_read) = read_into_buffer(
@@ -1261,12 +1267,13 @@ impl AppendVec {
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
                 );
                 loop {
-                    let offset = reader.get_next_fill_offset();
-                    let bytes = reader.fill_buf()?;
-                    if bytes.is_empty() {
-                        break;
-                    }
-                    let bytes = ValidSlice::new(bytes);
+                    let offset = reader.get_offset();
+                    let bytes = match reader.fill_buf() {
+                        Ok(bytes) if bytes.is_empty() => break,
+                        Ok(bytes) => ValidSlice::new(bytes),
+                        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(err) => return Err(AccountsFileError::Io(err)),
+                    };
                     let (stored_meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let (account_meta, _) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
                     if account_meta.lamports == 0 && stored_meta.pubkey == Pubkey::default() {
