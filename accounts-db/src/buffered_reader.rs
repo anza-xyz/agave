@@ -169,7 +169,7 @@ impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
     }
 }
 
-impl<'a, T: Backing> io::Read for BufferedReader<'a, T> {
+impl<T: Backing> io::Read for BufferedReader<'_, T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let available = self.fill_buf()?;
         if available.is_empty() {
@@ -184,7 +184,7 @@ impl<'a, T: Backing> io::Read for BufferedReader<'a, T> {
 
 /// `BufferedReader` implements a more permissive API compared to `BufRead`
 /// by allowing `consume` to advance beyond the end of the buffer returned by `fill_buf`.
-impl<'a, T: Backing> BufRead for BufferedReader<'a, T> {
+impl<T: Backing> BufRead for BufferedReader<'_, T> {
     /// Return the biggest slice of valid data starting at the current offset.
     ///
     /// Note that `fill_buf` has stronger guarantee than `BufRead::fill_buf` and returns

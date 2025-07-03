@@ -1071,7 +1071,7 @@ impl AppendVec {
                 loop {
                     let offset = reader.get_offset();
                     let bytes = match reader.fill_buf() {
-                        Ok(bytes) if bytes.is_empty() => break,
+                        Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
                         Err(err) => return Err(AccountsFileError::Io(err)),
@@ -1269,7 +1269,7 @@ impl AppendVec {
                 loop {
                     let offset = reader.get_offset();
                     let bytes = match reader.fill_buf() {
-                        Ok(bytes) if bytes.is_empty() => break,
+                        Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
                         Err(err) => return Err(AccountsFileError::Io(err)),
