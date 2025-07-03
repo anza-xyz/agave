@@ -13,6 +13,7 @@ pub struct RpcBootstrapConfig {
     pub no_incremental_snapshots: bool,
 }
 
+#[cfg(test)]
 impl Default for RpcBootstrapConfig {
     fn default() -> Self {
         Self {
