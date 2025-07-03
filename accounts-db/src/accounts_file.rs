@@ -329,7 +329,7 @@ impl AccountsFile {
             Self::AppendVec(av) => av.scan_accounts(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    reader.scan_accounts(callback)?
+                    reader.scan_accounts(callback)?;
                 }
                 Ok(())
             }
