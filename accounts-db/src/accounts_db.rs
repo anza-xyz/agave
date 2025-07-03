@@ -2426,7 +2426,7 @@ impl AccountsDb {
                                 let is_zero_lamport = account.is_zero_lamport();
                                 insert_candidate(pubkey, is_zero_lamport);
                             })
-                            .expect("Failed to scan accounts index");
+                            .expect("must scan accounts storage");
                     });
                     oldest_dirty_slot
                 })
@@ -2525,7 +2525,7 @@ impl AccountsDb {
                             }
                         }
                     })
-                    .expect("Must read accounts data");
+                    .expect("must scan accounts storage");
             }
         });
         let total = pubkey_refcount.len();
@@ -3374,7 +3374,7 @@ impl AccountsDb {
                     data_len: account.data_len as u64,
                 });
             })
-            .expect("Failed to scan accounts storage");
+            .expect("must scan accounts storage");
 
         // sort by pubkey to keep account index lookups close
         let num_duplicated_accounts = Self::sort_and_remove_dups(&mut stored_accounts);
@@ -4441,7 +4441,7 @@ impl AccountsDb {
                     })
                 }
             }
-            .expect("Failed to scan accounts data")
+            .expect("must scan accounts storage");
         })
     }
 
@@ -5348,7 +5348,7 @@ impl AccountsDb {
                 .scan_pubkeys(|pk| {
                     stored_keys.insert((*pk, remove_slot));
                 })
-                .expect("Failed to scan accounts data");
+                .expect("must scan accounts storage");
         }
         scan_storages_elapsed.stop();
         purge_stats
@@ -6265,7 +6265,7 @@ impl AccountsDb {
                         let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
                         accum.mix_in(&account_lt_hash.0);
                     })
-                    .expect("Failed to scan accounts data");
+                    .expect("must scan accounts storage");
                 accum
             })
             .reduce(LtHash::identity, |mut accum, elem| {
@@ -6895,7 +6895,7 @@ impl AccountsDb {
                     .scan_pubkeys(|pubkey| {
                         accum.insert(*pubkey);
                     })
-                    .expect("Failed to scan accounts storage");
+                    .expect("must scan accounts storage");
             },
         );
         match scan_result {
@@ -7443,7 +7443,7 @@ impl AccountsDb {
                             .scan_pubkeys(|pubkey| {
                                 pubkeys.push((slot, *pubkey));
                             })
-                            .expect("Failed to scan accounts storage");
+                            .expect("must scan accounts storage");
                         pubkeys
                     })
                     .flatten()
@@ -7915,7 +7915,7 @@ impl AccountsDb {
                         itemizer(info);
                     })
             }
-            .expect("Failed to scan accounts storage");
+            .expect("must scan accounts storage");
             let items = items_local.into_iter().map(|info| {
                 (
                     info.pubkey,
@@ -8101,7 +8101,7 @@ impl AccountsDb {
                                     }
                                     assert_eq!(1, count);
                                 })
-                                .expect("Failed to scan accounts storage");
+                                .expect("must scan accounts storage");
                             lookup_time.stop();
                             lookup_time.as_us()
                         };
@@ -8639,7 +8639,7 @@ impl AccountStorageEntry {
             .scan_pubkeys(|_| {
                 count += 1;
             })
-            .expect("Failed to scan accounts storage");
+            .expect("must scan accounts storage");
         count
     }
 }
@@ -8781,7 +8781,7 @@ impl AccountsDb {
                 .scan_accounts_stored_meta(|account| {
                     sizes.push(account.stored_size());
                 })
-                .expect("Failed to scan accounts storage");
+                .expect("must scan accounts storage");
         }
         sizes
     }
