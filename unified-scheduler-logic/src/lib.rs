@@ -632,6 +632,9 @@ const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
 /// Scheduler's internal data for each address ([`Pubkey`](`solana_pubkey::Pubkey`)). Very
 /// opaque wrapper type; no methods just with [`::clone()`](Clone::clone) and
 /// [`::default()`](Default::default).
+///
+/// It's the higher layer's responsibility to ensure to associate the same instance of UsageQueue
+/// for given Pubkey at the time of [task](Task) creation.
 #[derive(Debug, Clone, Default)]
 pub struct UsageQueue(Arc<TokenCell<UsageQueueInner>>);
 const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
