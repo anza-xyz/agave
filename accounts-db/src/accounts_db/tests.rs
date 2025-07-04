@@ -5,7 +5,7 @@ use {
         account_info::StoredSize,
         accounts_file::AccountsFileProvider,
         accounts_hash::MERKLE_FANOUT,
-        accounts_index::{tests::*, AccountIndex, AccountSecondaryIndexesIncludeExclude},
+        accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
             aligned_stored_size, test_utils::TempFile, AccountMeta, AppendVec, StoredAccountMeta,
@@ -170,40 +170,30 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     if reverse {
         data = data.into_iter().rev().collect();
     }
-    let expected_accounts_data_len = data.last().unwrap().1.data().len();
-    let expected_alive_bytes = aligned_stored_size(expected_accounts_data_len);
     let storable_accounts = (slot0, &data[..]);
 
     // construct append vec with account to generate an index from
     append_vec.accounts.append_accounts(&storable_accounts, 0);
 
     assert!(!db.accounts_index.contains(&pubkey));
-    let result = db.generate_index(None, false, false);
-    // index entry should only contain a single entry for the pubkey since index cannot hold more than 1 entry per slot
-    let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
-    assert_eq!(entry.slot_list.read().unwrap().len(), 1);
-    if db.accounts_file_provider == AccountsFileProvider::AppendVec {
-        // alive bytes doesn't match account size for tiered storage
-        assert_eq!(append_vec.alive_bytes(), expected_alive_bytes);
-    }
-    // total # accounts in append vec
-    assert_eq!(append_vec.accounts_count(), 2);
-    // # alive accounts
-    assert_eq!(append_vec.count(), 1);
-    // all account data alive
-    assert_eq!(
-        result.accounts_data_len as usize, expected_accounts_data_len,
-        "reverse: {reverse}"
-    );
+    db.generate_index(None, false, false);
 }
 
-define_accounts_db_test!(test_generate_index_duplicates_within_slot, |db| {
-    run_generate_index_duplicates_within_slot_test(db, false);
-});
+define_accounts_db_test!(
+    test_generate_index_duplicates_within_slot,
+    panic = "Duplicate pub keys are not allowed within single slot items",
+    |db| {
+        run_generate_index_duplicates_within_slot_test(db, false);
+    }
+);
 
-define_accounts_db_test!(test_generate_index_duplicates_within_slot_reverse, |db| {
-    run_generate_index_duplicates_within_slot_test(db, true);
-});
+define_accounts_db_test!(
+    test_generate_index_duplicates_within_slot_reverse,
+    panic = "Duplicate pub keys are not allowed within single slot items",
+    |db| {
+        run_generate_index_duplicates_within_slot_test(db, true);
+    }
+);
 
 #[test]
 fn test_generate_index_for_single_ref_zero_lamport_slot() {
@@ -229,29 +219,6 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
         0,
         append_vec.alive_bytes_exclude_zero_lamport_single_ref_accounts()
     );
-}
-
-#[test]
-fn test_generate_index_duplicates_within_slot_with_secondary_indexes() {
-    let secondary_indexes = AccountSecondaryIndexes {
-        keys: None,
-        indexes: HashSet::from([
-            AccountIndex::ProgramId,
-            AccountIndex::SplTokenMint,
-            AccountIndex::SplTokenOwner,
-        ]),
-    };
-    let accounts_db_config = AccountsDbConfig {
-        account_indexes: Some(secondary_indexes),
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
-    let accounts_db = AccountsDb::new_with_config(
-        Vec::new(),
-        Some(accounts_db_config),
-        None,
-        AtomicBool::new(false).into(),
-    );
-    run_generate_index_duplicates_within_slot_test(accounts_db, false);
 }
 
 fn generate_sample_account_from_storage(i: u8) -> AccountFromStorage {
