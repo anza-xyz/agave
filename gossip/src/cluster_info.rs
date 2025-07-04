@@ -2745,13 +2745,21 @@ impl Node {
 
         let socket_config = SocketConfig::default();
 
-        let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
-            bind_ip_addr,
-            port_range,
-            socket_config,
-            num_tvu_receive_sockets.get(),
-        )
-        .expect("tvu multi_bind");
+        // For each interface, bind the tvu receive socket group.
+        let tvu_socket_count = num_tvu_receive_sockets.get();
+        let mut tvu_sockets = Vec::with_capacity(tvu_socket_count * bind_ip_addrs.len());
+        for ip in bind_ip_addrs.iter() {
+            let (_, mut sockets) =
+                multi_bind_in_range_with_config(*ip, port_range, socket_config, tvu_socket_count)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                    "tvu multi_bind_in_range_with_config should not fail for interface {ip}: {e}"
+                )
+                    });
+            tvu_sockets.append(&mut sockets);
+        }
+        // Only advertise primary interface port
+        let tvu_port = tvu_sockets[0].local_addr().unwrap().port();
 
         let (tvu_quic_port, tvu_quic) =
             Self::bind_with_config(bind_ip_addr, port_range, socket_config);
