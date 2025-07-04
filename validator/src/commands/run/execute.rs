@@ -1128,6 +1128,14 @@ pub fn execute(
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
 
+    let public_shred_addr = matches
+        .value_of("public_shred_addr")
+        .map(|public_shred_addr| {
+            solana_net_utils::parse_host_port(public_shred_addr)
+                .map_err(|err| format!("failed to parse --public-shred-address: {err}"))
+        })
+        .transpose()?;
+
     let public_tpu_addr = matches
         .value_of("public_tpu_addr")
         .map(|public_tpu_addr| {
@@ -1179,6 +1187,7 @@ pub fn execute(
         gossip_port,
         port_range: dynamic_port_range,
         bind_ip_addrs: bind_addresses,
+        public_shred_addr,
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_receive_sockets: tvu_receive_threads,

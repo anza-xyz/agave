@@ -385,6 +385,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("DEPRECATED: Use --bind-address instead."),
     )
     .arg(
+        Arg::with_name("public_shred_addr")
+            .long("public-shred-address")
+            .alias("tvu-host-addr")
+            .value_name("HOST:PORT")
+            .takes_value(true)
+            .validator(solana_net_utils::is_host_port)
+            .help(
+                "Specify TVU address to advertise in gossip for receiving UDP shreds \
+                 [default: ask --entrypoint or localhost when --entrypoint is not provided]",
+            ),
+    )
+    .arg(
         Arg::with_name("public_tpu_addr")
             .long("public-tpu-address")
             .alias("tpu-host-addr")

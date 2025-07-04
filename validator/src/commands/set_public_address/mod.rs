@@ -11,6 +11,7 @@ const COMMAND: &str = "set-public-address";
 
 #[derive(Debug, PartialEq)]
 pub struct SetPublicAddressArgs {
+    pub shred_addr: Option<SocketAddr>,
     pub tpu_addr: Option<SocketAddr>,
     pub tpu_forwards_addr: Option<SocketAddr>,
 }
@@ -33,6 +34,7 @@ impl FromClapArgMatches for SetPublicAddressArgs {
             .transpose()?)
         };
         Ok(SetPublicAddressArgs {
+            shred_addr: parse_arg_addr("shred_addr", "shred")?,
             tpu_addr: parse_arg_addr("tpu_addr", "tpu")?,
             tpu_forwards_addr: parse_arg_addr("tpu_forwards_addr", "tpu-forwards")?,
         })
@@ -71,7 +73,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     let set_public_address_args = SetPublicAddressArgs::from_clap_arg_match(matches)?;
 
     macro_rules! set_public_address {
-        ($public_addr:expr, $set_public_address:ident, $request:literal) => {
+        ($public_addr:expr, $set_public_address:ident) => {
             if let Some(public_addr) = $public_addr {
                 let admin_client = admin_rpc_service::connect(ledger_path);
                 admin_rpc_service::runtime().block_on(async move {
@@ -82,15 +84,11 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
             }
         };
     }
-    set_public_address!(
-        set_public_address_args.tpu_addr,
-        set_public_tpu_address,
-        "setPublicTpuAddress"
-    )?;
+    set_public_address!(set_public_address_args.shred_addr, set_public_shred_address)?;
+    set_public_address!(set_public_address_args.tpu_addr, set_public_tpu_address)?;
     set_public_address!(
         set_public_address_args.tpu_forwards_addr,
-        set_public_tpu_forwards_address,
-        "set public tpu forwards address"
+        set_public_tpu_forwards_address
     )?;
     Ok(())
 }
@@ -115,6 +113,7 @@ mod tests {
             command(),
             vec![COMMAND, "--tpu", "127.0.0.1:8080"],
             SetPublicAddressArgs {
+                shred_addr: None,
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
                 tpu_forwards_addr: None,
             },
@@ -127,6 +126,7 @@ mod tests {
             command(),
             vec![COMMAND, "--tpu-forwards", "127.0.0.1:8081"],
             SetPublicAddressArgs {
+                shred_addr: None,
                 tpu_addr: None,
                 tpu_forwards_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8081))),
             },
@@ -143,8 +143,11 @@ mod tests {
                 "127.0.0.1:8080",
                 "--tpu-forwards",
                 "127.0.0.1:8081",
+                "--shred",
+                "10.0.0.1:8082",
             ],
             SetPublicAddressArgs {
+                shred_addr: Some(SocketAddr::from(([10, 0, 0, 1], 8002))),
                 tpu_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8080))),
                 tpu_forwards_addr: Some(SocketAddr::from(([127, 0, 0, 1], 8081))),
             },

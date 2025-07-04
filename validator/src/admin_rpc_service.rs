@@ -241,6 +241,13 @@ pub trait AdminRpc {
         pubkey_str: String,
     ) -> Result<HashMap<RpcAccountIndex, usize>>;
 
+    #[rpc(meta, name = "setPublicShredAddress")]
+    fn set_public_shred_address(
+        &self,
+        meta: Self::Metadata,
+        public_shred_addr: SocketAddr,
+    ) -> Result<()>;
+
     #[rpc(meta, name = "setPublicTpuAddress")]
     fn set_public_tpu_address(
         &self,
@@ -668,6 +675,43 @@ impl AdminRpc for AdminRpcImpl {
                 debug!("get_secondary_index_key_size: key not found in the secondary index.");
             }
             Ok(found_sizes)
+        })
+    }
+
+    fn set_public_shred_address(
+        &self,
+        meta: Self::Metadata,
+        public_shred_addr: SocketAddr,
+    ) -> Result<()> {
+        debug!("set_public_shred_address rpc request received: {public_shred_addr}");
+
+        meta.with_post_init(|post_init| {
+            post_init
+                .cluster_info
+                .my_contact_info()
+                .tvu(Protocol::UDP)
+                .ok_or_else(|| {
+                    error!(
+                        "The public TVU (shred) address isn't being published. The node is likely in \
+                         repair mode. See help for --restricted-repair-only-mode for more \
+                         information."
+                    );
+                    jsonrpc_core::error::Error::internal_error()
+                })?;
+            post_init
+                .cluster_info
+                .set_tvu(public_shred_addr)
+                .map_err(|err| {
+                    error!("Failed to set public TVU (shred) address to {public_shred_addr}: {err}");
+                    jsonrpc_core::error::Error::internal_error()
+                })?;
+            let my_contact_info = post_init.cluster_info.my_contact_info();
+            warn!(
+                "Public TVU (shred) addresses set to {:?} (udp) and {:?} (quic)",
+                my_contact_info.tvu(Protocol::UDP),
+                my_contact_info.tvu(Protocol::QUIC),
+            );
+            Ok(())
         })
     }
 
