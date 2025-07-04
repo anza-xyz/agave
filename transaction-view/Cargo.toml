@@ -15,7 +15,7 @@ dev-context-only-utils = []
 [dependencies]
 solana-hash = { workspace = true }
 solana-message = { workspace = true }
-solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-short-vec = { workspace = true }

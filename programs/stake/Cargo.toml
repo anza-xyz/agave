@@ -28,7 +28,7 @@ solana-genesis-config = { workspace = true }
 solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-native-token = { workspace = true }
-solana-packet = { workspace = true }
+solana-perf = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-pubkey = { workspace = true, features = ["sha2"] }
 solana-rent = { workspace = true }
