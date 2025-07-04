@@ -2594,7 +2594,7 @@ impl AccountsDb {
                 return;
             }
             if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                storage.accounts.scan_accounts(|account| {
+                storage.accounts.scan_accounts(|_offset, account| {
                     let pk = account.pubkey();
                     match pubkey_refcount.entry(*pk) {
                         dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
@@ -4493,12 +4493,12 @@ impl AccountsDb {
         self.scan_cache_storage_fallback(slot, cache_map_func, |retval, storage| {
             match scan_account_storage_data {
                 ScanAccountStorageData::NoData => {
-                    storage.scan_accounts_without_data(|account_without_data| {
+                    storage.scan_accounts_without_data(|_offset, account_without_data| {
                         storage_scan_func(retval, &account_without_data, None);
                     });
                 }
                 ScanAccountStorageData::DataRefForStorage => {
-                    storage.scan_accounts(|account| {
+                    storage.scan_accounts(|_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
                     });
@@ -6390,7 +6390,7 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
-                storage.accounts.scan_accounts(|account| {
+                storage.accounts.scan_accounts(|_offset, account| {
                     let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
                     accum.mix_in(&account_lt_hash.0);
                 });
@@ -8087,7 +8087,7 @@ impl AccountsDb {
         };
         if secondary {
             // scan storage a second time to update the secondary index
-            storage.accounts.scan_accounts(|stored_account| {
+            storage.accounts.scan_accounts(|_offset, stored_account| {
                 self.accounts_index.update_secondary_indexes(
                     stored_account.pubkey(),
                     &stored_account,

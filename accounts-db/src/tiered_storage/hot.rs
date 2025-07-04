@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        account_info::AccountInfo,
+        account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::StoredAccountInfo,
         accounts_file::{MatchAccountOwnerError, StoredAccountsInfo},
         append_vec::{IndexInfo, IndexInfoInner},
@@ -639,10 +639,12 @@ impl HotStorageReader {
     /// Iterate over all accounts and call `callback` with each account.
     pub fn scan_accounts(
         &self,
-        mut callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
+        mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> TieredStorageResult<()> {
         for i in 0..self.footer.account_entry_count {
-            self.get_stored_account_callback(IndexOffset(i), &mut callback)?;
+            self.get_stored_account_callback(IndexOffset(i), |account| {
+                callback(AccountInfo::reduced_offset_to_offset(i), account)
+            })?;
         }
         Ok(())
     }
@@ -1618,7 +1620,7 @@ mod tests {
         // verify everything
         let mut i = 0;
         hot_storage
-            .scan_accounts(|stored_account| {
+            .scan_accounts(|_offset, stored_account| {
                 storable_accounts.account_default_if_zero_lamport(i, |account| {
                     verify_test_account(
                         &stored_account,
