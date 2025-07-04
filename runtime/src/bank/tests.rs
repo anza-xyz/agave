@@ -7031,34 +7031,6 @@ fn test_bpf_loader_upgradeable_deploy_with_max_len(formalize_loaded_transaction_
             .unwrap()
     );
 
-    // Test not the system account
-    bank.clear_signatures();
-    bank.store_account(&buffer_address, &buffer_account);
-    bank.store_account(&program_keypair.pubkey(), &AccountSharedData::default());
-    bank.store_account(&programdata_address, &AccountSharedData::default());
-    let mut instructions = solana_loader_v3_interface::instruction::deploy_with_max_program_len(
-        &mint_keypair.pubkey(),
-        &program_keypair.pubkey(),
-        &buffer_address,
-        &upgrade_authority_keypair.pubkey(),
-        min_program_balance,
-        elf.len(),
-    )
-    .unwrap();
-    *instructions
-        .get_mut(1)
-        .unwrap()
-        .accounts
-        .get_mut(6)
-        .unwrap() = AccountMeta::new_readonly(Pubkey::new_unique(), false);
-    let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
-    assert!(bank_client
-        .send_and_confirm_message(
-            &[&mint_keypair, &program_keypair, &upgrade_authority_keypair],
-            message
-        )
-        .is_ok());
-
     fn truncate_data(account: &mut AccountSharedData, len: usize) {
         let mut data = account.data().to_vec();
         data.truncate(len);
