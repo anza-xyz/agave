@@ -7712,20 +7712,13 @@ impl AccountsDb {
         // after the account are stored by the above `store_accounts_to`
         // call and all the accounts are stored, all reads after this point
         // will know to not check the cache anymore
-        let mut reclaims = self.update_index(
+        let reclaims = self.update_index(
             infos,
             &accounts,
             UpsertReclaim::IgnoreReclaims,
             UpdateIndexThreadSelection::PoolWithThreshold,
             &self.thread_pool_clean,
         );
-
-        // For each updated account, `reclaims` should only have at most one
-        // item (if the account was previously updated in this slot).
-        // filter out the cached reclaims as those don't actually map
-        // to anything that needs to be cleaned in the backing storage
-        // entries
-        reclaims.retain(|(_, r)| !r.is_cached());
 
         update_index_time.stop();
         self.stats

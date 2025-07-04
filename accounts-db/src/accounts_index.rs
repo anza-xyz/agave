@@ -2518,9 +2518,8 @@ pub mod tests {
                 &mut reclaims,
                 UpsertReclaim::PopulateReclaims,
             );
-            // reclaimed
-            assert!(!reclaims.is_empty());
-            reclaims.clear();
+            // No reclaims, since the entry replaced was cached
+            assert!(reclaims.is_empty());
             index.upsert(
                 slot,
                 slot,
