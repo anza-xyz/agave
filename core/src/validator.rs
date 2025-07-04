@@ -861,6 +861,7 @@ impl Validator {
         cluster_info.set_contact_debug_interval(config.contact_debug_interval);
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
+        cluster_info.set_bind_ip_addrs(node.bind_ip_addrs);
         let cluster_info = Arc::new(cluster_info);
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
