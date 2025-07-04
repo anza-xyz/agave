@@ -241,7 +241,6 @@ impl RingConsumer {
         }
     }
 
-    #[cfg(test)]
     pub fn available(&self) -> u32 {
         self.cached_producer.wrapping_sub(self.cached_consumer)
     }
@@ -354,7 +353,7 @@ impl TxCompletionRing {
 }
 
 pub struct RxFillRing<F: Frame> {
-    mmap: RingMmap<XdpDesc>,
+    mmap: RingMmap<u64>,
     producer: RingProducer,
     size: u32,
     _fd: RawFd,
@@ -362,7 +361,7 @@ pub struct RxFillRing<F: Frame> {
 }
 
 impl<F: Frame> RxFillRing<F> {
-    pub(crate) fn new(mmap: RingMmap<XdpDesc>, size: u32, fd: RawFd) -> Self {
+    pub(crate) fn new(mmap: RingMmap<u64>, size: u32, fd: RawFd) -> Self {
         debug_assert!(size.is_power_of_two());
         Self {
             producer: RingProducer::new(mmap.producer, mmap.consumer, size),
@@ -373,7 +372,7 @@ impl<F: Frame> RxFillRing<F> {
         }
     }
 
-    pub fn write(&mut self, frame: F, options: u32) -> Result<(), io::Error> {
+    pub fn write(&mut self, frame: F) -> Result<(), io::Error> {
         let Some(index) = self.producer.produce() else {
             return Err(ErrorKind::StorageFull.into());
         };
@@ -381,11 +380,7 @@ impl<F: Frame> RxFillRing<F> {
         let desc = unsafe { self.mmap.desc.add(index as usize) };
         // Safety: index is within the ring so the pointer is valid
         unsafe {
-            desc.write(XdpDesc {
-                addr: frame.offset().0 as u64,
-                len: frame.len() as u32,
-                options,
-            });
+            desc.write(frame.offset().0 as u64);
         }
 
         Ok(())
