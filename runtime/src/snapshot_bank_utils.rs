@@ -1175,6 +1175,11 @@ mod tests {
             .unwrap();
         bank0.fill_bank_with_ticks_for_tests();
 
+        // Test isn't valid with mark obsolete acounts enabled.
+        if bank0.accounts().accounts_db.mark_obsolete_accounts {
+            return;
+        }
+
         // Force flush the bank to create the account storage entry
         bank0.squash();
         bank0.force_flush_accounts_cache();
