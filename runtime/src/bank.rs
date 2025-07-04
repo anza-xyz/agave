@@ -6612,6 +6612,11 @@ impl Bank {
     pub fn clear_epoch_rewards_cache(&self) {
         self.epoch_rewards_calculation_cache.lock().unwrap().clear();
     }
+
+    /// Sets the accounts lt hash, only to be used by SnapshotMinimizer
+    pub fn set_accounts_lt_hash_for_snapshot_minimizer(&self, accounts_lt_hash: AccountsLtHash) {
+        *self.accounts_lt_hash.lock().unwrap() = accounts_lt_hash;
+    }
 }
 
 impl InvokeContextCallback for Bank {

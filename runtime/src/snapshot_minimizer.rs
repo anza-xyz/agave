@@ -78,6 +78,17 @@ impl<'a> SnapshotMinimizer<'a> {
         // Update accounts_cache and capitalization
         minimizer.bank.force_flush_accounts_cache();
         minimizer.bank.set_capitalization();
+
+        if minimizer.bank.is_accounts_lt_hash_enabled() {
+            // Since the account state has changed, the accounts lt hash must be recalculated
+            let new_accounts_lt_hash = minimizer
+                .accounts_db()
+                .calculate_accounts_lt_hash_at_startup_from_index(
+                    &minimizer.bank.ancestors,
+                    minimizer.bank.slot(),
+                );
+            bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
+        }
     }
 
     /// Helper function to measure time and number of accounts added
@@ -389,11 +400,17 @@ impl<'a> SnapshotMinimizer<'a> {
 mod tests {
     use {
         crate::{
-            bank::Bank, genesis_utils::create_genesis_config_with_leader,
+            bank::Bank,
+            genesis_utils::{self, create_genesis_config_with_leader},
+            runtime_config::RuntimeConfig,
+            snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
             snapshot_minimizer::SnapshotMinimizer,
+            snapshot_utils,
         },
         dashmap::DashSet,
         solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_genesis_config::{create_genesis_config, GenesisConfig},
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_pubkey::Pubkey,
@@ -401,6 +418,7 @@ mod tests {
         solana_signer::Signer,
         solana_stake_interface as stake,
         std::sync::Arc,
+        tempfile::TempDir,
     };
 
     #[test]
@@ -668,5 +686,90 @@ mod tests {
             account_count,
             minimizer.minimized_account_set.len() + num_accounts_per_slot
         ); // snapshot slot is untouched, so still has all 300 accounts
+    }
+
+    /// Ensure that minimization recalculates the accounts lt hash correctly
+    /// so the minimized snapshot is loadable.
+    #[test]
+    fn test_minimize_and_accounts_lt_hash() {
+        let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
+        let (bank, bank_forks) =
+            Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
+
+        // ensure the accounts lt hash is enabled, otherwise minimization
+        // doesn't need to recalculate it
+        assert!(bank.is_accounts_lt_hash_enabled());
+
+        // write to multiple accounts and keep track of one, for minimization later
+        let pubkey_to_keep = Pubkey::new_unique();
+        let slot = bank.slot() + 1;
+        let bank = Bank::new_from_parent(bank, &Pubkey::default(), slot);
+        let bank = bank_forks
+            .write()
+            .unwrap()
+            .insert(bank)
+            .clone_without_scheduler();
+        bank.register_unique_recent_blockhash_for_test();
+        bank.transfer(
+            1_000_000_000,
+            &genesis_config_info.mint_keypair,
+            &Pubkey::new_unique(),
+        )
+        .unwrap();
+        bank.transfer(
+            1_000_000_000,
+            &genesis_config_info.mint_keypair,
+            &pubkey_to_keep,
+        )
+        .unwrap();
+        bank.fill_bank_with_ticks_for_tests();
+        bank.squash();
+        bank.force_flush_accounts_cache();
+
+        // do the minimization
+        SnapshotMinimizer::minimize(
+            &bank,
+            bank.slot(),
+            bank.slot(),
+            DashSet::from_iter([pubkey_to_keep]),
+        );
+
+        // take a snapshot of the minimized bank, then load it
+        let snapshot_config = SnapshotConfig::default();
+        let bank_snapshots_dir = TempDir::new().unwrap();
+        let snapshot_archives_dir = TempDir::new().unwrap();
+        let snapshot = snapshot_bank_utils::bank_to_full_snapshot_archive(
+            &bank_snapshots_dir,
+            &bank,
+            Some(snapshot_config.snapshot_version),
+            &snapshot_archives_dir,
+            &snapshot_archives_dir,
+            snapshot_config.archive_format,
+        )
+        .unwrap();
+        let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
+        let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
+            &[accounts_dir],
+            &bank_snapshots_dir,
+            &snapshot,
+            None,
+            &genesis_config_info.genesis_config,
+            &RuntimeConfig::default(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
+            None,
+            Arc::default(),
+        )
+        .unwrap();
+
+        // Wait for the startup verification to complete.  If we don't panic, then we're good!
+        roundtrip_bank.wait_for_initial_accounts_hash_verification_completed_for_tests();
+        assert_eq!(roundtrip_bank, *bank);
     }
 }
