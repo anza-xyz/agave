@@ -27,6 +27,7 @@ mod deprecated;
 pub mod duplicate_shred;
 pub mod duplicate_shred_handler;
 pub mod duplicate_shred_listener;
+pub mod egress_socket_select;
 pub mod epoch_slots;
 pub mod epoch_specs;
 pub mod gossip_error;

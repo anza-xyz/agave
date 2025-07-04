@@ -16,7 +16,10 @@ use {
         validator::ValidatorStartProgress,
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
-    solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+    solana_gossip::{
+        contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+        egress_socket_select,
+    },
     solana_keypair::{read_keypair_file, Keypair},
     solana_net_utils::sockets::bind_to,
     solana_pubkey::Pubkey,
@@ -218,6 +221,23 @@ pub trait AdminRpc {
 
     #[rpc(meta, name = "setGossipSocket")]
     fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
+
+    #[rpc(meta, name = "setTvuIngressAdvertisedAddress")]
+    fn set_tvu_ingress_advertised_address(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+    ) -> Result<()>;
+
+    #[rpc(meta, name = "setRetransmitSocketsInterface")]
+    fn set_retransmit_sockets_interface(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+    ) -> Result<()>;
+
+    #[rpc(meta, name = "getActiveInterface")]
+    fn active_interface(&self, meta: Self::Metadata) -> Result<String>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -545,7 +565,8 @@ impl AdminRpc for AdminRpcImpl {
         let new_addr = SocketAddr::new(ip, port);
 
         meta.with_post_init(|post_init| {
-            if let Some(socket) = &post_init.gossip_socket {
+            if let Some(node) = &post_init.node {
+                let socket = &node.sockets.gossip;
                 let new_socket = bind_to(new_addr.ip(), new_addr.port()).map_err(|e| {
                     jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
                 })?;
@@ -564,6 +585,112 @@ impl AdminRpc for AdminRpcImpl {
                     })?;
             }
             Ok(())
+        })
+    }
+
+    fn set_tvu_ingress_advertised_address(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+    ) -> Result<()> {
+        info!(
+            "greg: set_tvu_ingress_advertised_address interface received: {}",
+            interface_index
+        );
+        meta.with_post_init(|post_init| {
+            if let Some(node) = &post_init.node {
+                let sockets_per_interface = node.num_tvu_receive_sockets.get();
+                let offset = interface_index.saturating_mul(sockets_per_interface);
+                if offset >= node.sockets.tvu.len() {
+                    return Err(jsonrpc_core::Error::invalid_params( format!(
+                        "Interface index {interface_index} out of range: tvu has {} sockets but needs offset {offset}",
+                        node.sockets.tvu.len()
+                    )));
+                }
+                let socket_address = node.sockets.tvu[offset]
+                    .local_addr()
+                    .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Failed to get socket address at tvu socket offset {}: {}", offset, e)))?;
+
+                let ip_addr = node.bind_ip_addrs.set_active(interface_index).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+                })?;
+
+                if ip_addr != socket_address.ip() {
+                    return Err(jsonrpc_core::Error::invalid_params(format!("IP address mismatch: expected {} but got {}", ip_addr, socket_address.ip())));
+                }
+
+                post_init.cluster_info.set_tvu_socket(socket_address).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Failed to set TVU socket: {}", e))
+                })?;
+
+                info!("greg: set_tvu_ingress_advertised_address success.");
+            }
+            Ok(())
+        })
+    }
+
+    fn set_retransmit_sockets_interface(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+    ) -> Result<()> {
+        info!(
+            "greg: set_retransmit_sockets interface received: {}",
+            interface_index
+        );
+        meta.with_post_init(|post_init| {
+            if let Some(node) = &post_init.node {
+                let sockets_per_interface = node.num_tvu_retransmit_sockets.get();
+                let offset = interface_index.saturating_mul(sockets_per_interface);
+                if offset >= node.sockets.retransmit_sockets.len() {
+                    return Err(jsonrpc_core::Error::invalid_params(format!(
+                        "Interface index {interface_index} out of range: retransmit_sockets has {} sockets but needs offset {offset}",
+                        node.sockets.retransmit_sockets.len()
+                    )));
+                }
+
+                let socket_address = node.sockets.retransmit_sockets[offset]
+                    .local_addr()
+                    .map_err(|e| jsonrpc_core::Error::invalid_params(format!(
+                        "Failed to get socket address at retransmit_sockets offset {}: {}", offset, e
+                    )))?;
+
+                let ip_addr = node.bind_ip_addrs.set_active(interface_index).map_err(|e| {
+                    jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+                })?;
+
+                if ip_addr != socket_address.ip() {
+                    return Err(jsonrpc_core::Error::invalid_params(format!(
+                        "IP address mismatch: expected {} but got {}",
+                        ip_addr,
+                        socket_address.ip()
+                    )));
+                }
+
+                egress_socket_select::select_interface(interface_index);
+
+                info!("greg: set_retransmit_sockets_interface success.");
+            }
+            Ok(())
+        })
+    }
+
+    fn active_interface(&self, meta: Self::Metadata) -> Result<String> {
+        meta.with_post_init(|post_init| {
+            if let Some(node) = &post_init.node {
+                let interface_ip = node.bind_ip_addrs.active().to_string();
+
+                info!(
+                    "greg: active_interface queried. Current interface: {}",
+                    interface_ip
+                );
+
+                Ok(interface_ip)
+            } else {
+                Err(jsonrpc_core::Error::invalid_params(
+                    "`Node` not initialized in `post_init`",
+                ))
+            }
         })
     }
 
@@ -1027,7 +1154,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
-                    gossip_socket: None,
+                    node: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

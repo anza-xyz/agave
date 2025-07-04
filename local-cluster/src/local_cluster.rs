@@ -21,6 +21,7 @@ use {
     solana_gossip::{
         cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
+        egress_socket_select,
         gossip_service::{discover, discover_validators},
     },
     solana_keypair::Keypair,
@@ -196,6 +197,7 @@ impl LocalCluster {
 
     pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
+        egress_socket_select::init(1);
 
         let quic_connection_cache_config = config.tpu_use_quic.then(|| {
             let client_keypair = Keypair::new();

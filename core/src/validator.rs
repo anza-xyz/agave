@@ -50,7 +50,7 @@ use {
     },
     solana_gossip::{
         cluster_info::{
-            ClusterInfo, Node, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
+            ClusterInfo, Node, NodeMultihoming, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         },
         contact_info::ContactInfo,
@@ -862,6 +862,7 @@ impl Validator {
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
         let cluster_info = Arc::new(cluster_info);
+        let node_multihoming = NodeMultihoming::from(&node);
 
         assert!(is_snapshot_config_valid(&config.snapshot_config));
 
@@ -1678,10 +1679,10 @@ impl Validator {
             vote_account: *vote_account,
             repair_whitelist: config.repair_whitelist.clone(),
             notifies: key_notifiers,
-            repair_socket: Arc::new(node.sockets.repair),
+            repair_socket: Arc::new(node.sockets.repair.try_clone().unwrap()),
             outstanding_repair_requests,
             cluster_slots,
-            gossip_socket: Some(node.sockets.gossip.clone()),
+            node: Some(Arc::new(node_multihoming)),
         });
 
         Ok(Self {

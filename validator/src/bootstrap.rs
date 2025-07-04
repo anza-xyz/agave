@@ -96,9 +96,14 @@ fn verify_reachable_ports(
         udp_sockets.extend(node.sockets.tpu_vote.iter());
     }
     if verify_address(&node.info.tvu(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tvu.iter());
+        udp_sockets.extend(node.sockets.tvu.iter().map(|socket| socket.as_ref()));
         udp_sockets.extend(node.sockets.broadcast.iter());
-        udp_sockets.extend(node.sockets.retransmit_sockets.iter());
+        udp_sockets.extend(
+            node.sockets
+                .retransmit_sockets
+                .iter()
+                .map(|socket| socket.as_ref()),
+        );
     }
     if !solana_net_utils::verify_all_reachable_udp(
         &cluster_entrypoint.gossip().unwrap(),
