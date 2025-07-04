@@ -2,7 +2,6 @@
 pub struct SVMFeatureSet {
     pub lift_cpi_caller_restriction: bool,
     pub move_precompile_verification_to_svm: bool,
-    pub remove_accounts_executable_flag_checks: bool,
     pub bpf_account_data_direct_mapping: bool,
     pub enable_bpf_loader_set_authority_checked_ix: bool,
     pub enable_loader_v4: bool,
@@ -45,7 +44,6 @@ impl SVMFeatureSet {
         Self {
             lift_cpi_caller_restriction: true,
             move_precompile_verification_to_svm: true,
-            remove_accounts_executable_flag_checks: true,
             bpf_account_data_direct_mapping: true,
             enable_bpf_loader_set_authority_checked_ix: true,
             enable_loader_v4: true,
