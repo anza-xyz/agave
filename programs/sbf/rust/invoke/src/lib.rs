@@ -1024,7 +1024,8 @@ fn process_instruction<'a>(
             let realloc_program_id = accounts[REALLOC_PROGRAM_INDEX].key;
             let realloc_program_owner = accounts[REALLOC_PROGRAM_INDEX].owner;
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
-            let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
+            let direct_mapping = instruction_data[1];
+            let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
             let prev_len = account.data_len();
             let expected = account.data.borrow()[..new_len].to_vec();
             let mut instruction_data = vec![REALLOC, 0];
@@ -1045,7 +1046,7 @@ fn process_instruction<'a>(
 
             // deserialize_parameters_unaligned predates realloc support, and
             // hardcodes the account data length to the original length.
-            if !bpf_loader_deprecated::check_id(realloc_program_owner) {
+            if !bpf_loader_deprecated::check_id(realloc_program_owner) && direct_mapping == 0 {
                 assert_eq!(&*account.data.borrow(), &expected);
                 assert_eq!(
                     unsafe {
@@ -1066,7 +1067,7 @@ fn process_instruction<'a>(
             let invoke_program_id = accounts[INVOKE_PROGRAM_INDEX].key;
 
             let prev_data = {
-                let data = &instruction_data[9..];
+                let data = &instruction_data[10..];
                 let prev_len = account.data_len();
                 account.resize(prev_len + data.len())?;
                 account.data.borrow_mut()[prev_len..].copy_from_slice(data);
@@ -1084,8 +1085,9 @@ fn process_instruction<'a>(
             };
 
             let mut expected = account.data.borrow().to_vec();
-            let new_len = usize::from_le_bytes(instruction_data[1..9].try_into().unwrap());
-            expected.extend_from_slice(&instruction_data[9..]);
+            let direct_mapping = instruction_data[1];
+            let new_len = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
+            expected.extend_from_slice(&instruction_data[10..]);
             let mut instruction_data =
                 vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED];
             instruction_data.extend_from_slice(&new_len.to_le_bytes());
@@ -1103,19 +1105,21 @@ fn process_instruction<'a>(
             .unwrap();
 
             assert_eq!(*account.data.borrow(), &prev_data[..new_len]);
-            assert_eq!(
-                unsafe {
-                    slice::from_raw_parts(
-                        account.data.borrow().as_ptr().add(new_len),
-                        prev_data.len() - new_len,
-                    )
-                },
-                &vec![0; prev_data.len() - new_len]
-            );
-            assert_eq!(
-                unsafe { *account.data.borrow().as_ptr().add(prev_data.len()) },
-                SENTINEL
-            );
+            if direct_mapping == 0 {
+                assert_eq!(
+                    unsafe {
+                        slice::from_raw_parts(
+                            account.data.borrow().as_ptr().add(new_len),
+                            prev_data.len() - new_len,
+                        )
+                    },
+                    &vec![0; prev_data.len() - new_len]
+                );
+                assert_eq!(
+                    unsafe { *account.data.borrow().as_ptr().add(prev_data.len()) },
+                    SENTINEL
+                );
+            }
         }
         TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED => {
             msg!("TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS_NESTED");
@@ -1227,124 +1231,15 @@ fn process_instruction<'a>(
             )
             .unwrap();
         }
-        TEST_CPI_CHANGE_ACCOUNT_DATA_MEMORY_ALLOCATION => {
-            msg!("TEST_CPI_CHANGE_ACCOUNT_DATA_MEMORY_ALLOCATION");
-            const CALLEE_PROGRAM_INDEX: usize = 2;
-            let account = &accounts[ARGUMENT_INDEX];
-            let callee_program_id = accounts[CALLEE_PROGRAM_INDEX].key;
-            let original_data_len = account.data_len();
-
-            // Initial data is all [0xFF; 20]
-            assert_eq!(&*account.data.borrow(), &[0xFF; 20]);
-
-            // Realloc to [0xFE; 10]
-            invoke(
-                &create_instruction(
-                    *callee_program_id,
-                    &[
-                        (account.key, true, false),
-                        (callee_program_id, false, false),
-                    ],
-                    vec![0xFE; 10],
-                ),
-                accounts,
-            )
-            .unwrap();
-
-            // Check that [10..20] is zeroed
-            let new_len = account.data_len();
-            assert_eq!(&*account.data.borrow(), &[0xFE; 10]);
-            assert_eq!(
-                unsafe {
-                    slice::from_raw_parts(
-                        account.data.borrow().as_ptr().add(new_len),
-                        original_data_len - new_len,
-                    )
-                },
-                &vec![0; original_data_len - new_len]
-            );
-
-            // Realloc to [0xFD; 5]
-            invoke(
-                &create_instruction(
-                    *callee_program_id,
-                    &[
-                        (accounts[ARGUMENT_INDEX].key, true, false),
-                        (callee_program_id, false, false),
-                    ],
-                    vec![0xFD; 5],
-                ),
-                accounts,
-            )
-            .unwrap();
-
-            // Check that [5..20] is zeroed
-            let new_len = account.data_len();
-            assert_eq!(&*account.data.borrow(), &[0xFD; 5]);
-            assert_eq!(
-                unsafe {
-                    slice::from_raw_parts(
-                        account.data.borrow().as_ptr().add(new_len),
-                        original_data_len - new_len,
-                    )
-                },
-                &vec![0; original_data_len - new_len]
-            );
-
-            // Realloc to [0xFC; 2]
-            invoke(
-                &create_instruction(
-                    *callee_program_id,
-                    &[
-                        (accounts[ARGUMENT_INDEX].key, true, false),
-                        (callee_program_id, false, false),
-                    ],
-                    vec![0xFC; 2],
-                ),
-                accounts,
-            )
-            .unwrap();
-
-            // Check that [2..20] is zeroed
-            let new_len = account.data_len();
-            assert_eq!(&*account.data.borrow(), &[0xFC; 2]);
-            assert_eq!(
-                unsafe {
-                    slice::from_raw_parts(
-                        account.data.borrow().as_ptr().add(new_len),
-                        original_data_len - new_len,
-                    )
-                },
-                &vec![0; original_data_len - new_len]
-            );
-
-            // Realloc to [0xFC; 2]. Here we keep the same length, but realloc the underlying
-            // vector. CPI must zero even if the length is unchanged.
-            invoke(
-                &create_instruction(
-                    *callee_program_id,
-                    &[
-                        (accounts[ARGUMENT_INDEX].key, true, false),
-                        (callee_program_id, false, false),
-                    ],
-                    vec![0xFC; 2],
-                ),
-                accounts,
-            )
-            .unwrap();
-
-            // Check that [2..20] is zeroed
-            let new_len = account.data_len();
-            assert_eq!(&*account.data.borrow(), &[0xFC; 2]);
-            assert_eq!(
-                unsafe {
-                    slice::from_raw_parts(
-                        account.data.borrow().as_ptr().add(new_len),
-                        original_data_len - new_len,
-                    )
-                },
-                &vec![0; original_data_len - new_len]
-            );
+        TEST_READ_ACCOUNT => {
+            msg!("TEST_READ_ACCOUNT");
+            let account_index = instruction_data[1] as usize;
+            let account = &accounts[account_index];
+            let byte_index = usize::from_le_bytes(instruction_data[2..10].try_into().unwrap());
+            let data = unsafe {
+                *(account.data.borrow().get_unchecked(byte_index) as *const u8).cast::<u64>()
+            };
+            assert_eq!(data, 0);
         }
         TEST_WRITE_ACCOUNT => {
             msg!("TEST_WRITE_ACCOUNT");

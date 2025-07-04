@@ -349,11 +349,11 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     .chain(additional_regions)
     .collect();
 
-    Ok(MemoryMapping::new_with_cow(
+    Ok(MemoryMapping::new_with_access_violation_handler(
         regions,
         config,
         sbpf_version,
-        transaction_context.account_data_write_access_handler(),
+        transaction_context.access_violation_handler(),
     )?)
 }
 
@@ -1692,44 +1692,67 @@ fn execute<'a, 'b: 'a>(
                 }
 
                 if direct_mapping {
-                    if let EbpfError::AccessViolation(
-                        AccessType::Store,
-                        address,
-                        _size,
-                        _section_name,
-                    ) = error
+                    if let EbpfError::SyscallError(err) = error {
+                        error = err
+                            .downcast::<EbpfError>()
+                            .map(|err| *err)
+                            .unwrap_or_else(EbpfError::SyscallError);
+                    }
+                    if let EbpfError::AccessViolation(access_type, vm_addr, len, _section_name) =
+                        error
                     {
                         // If direct_mapping is enabled and a program tries to write to a readonly
                         // region we'll get a memory access violation. Map it to a more specific
                         // error so it's easier for developers to see what happened.
-                        if let Some((instruction_account_index, _)) = account_region_addrs
-                            .iter()
-                            .enumerate()
-                            .find(|(_, vm_region)| vm_region.contains(&address))
+                        if let Some((instruction_account_index, vm_addr_range)) =
+                            account_region_addrs
+                                .iter()
+                                .enumerate()
+                                .find(|(_, vm_addr_range)| vm_addr_range.contains(&vm_addr))
                         {
                             let transaction_context = &invoke_context.transaction_context;
                             let instruction_context =
                                 transaction_context.get_current_instruction_context()?;
-
                             let account = instruction_context.try_borrow_instruction_account(
                                 transaction_context,
                                 instruction_account_index as IndexOfAccount,
                             )?;
-
-                            error = EbpfError::SyscallError(Box::new(
-                                #[allow(deprecated)]
-                                if !invoke_context
-                                    .get_feature_set()
-                                    .remove_accounts_executable_flag_checks
-                                    && account.is_executable()
-                                {
-                                    InstructionError::ExecutableDataModified
-                                } else if account.is_writable() {
-                                    InstructionError::ExternalAccountDataModified
-                                } else {
-                                    InstructionError::ReadonlyDataModified
-                                },
-                            ));
+                            if vm_addr.saturating_add(len) <= vm_addr_range.end {
+                                // The access was within the range of the accounts address space,
+                                // but it might not be within the range of the actual data.
+                                let is_access_outside_of_data = vm_addr
+                                    .saturating_add(len)
+                                    .saturating_sub(vm_addr_range.start)
+                                    as usize
+                                    > account.get_data().len();
+                                error = EbpfError::SyscallError(Box::new(
+                                    #[allow(deprecated)]
+                                    match access_type {
+                                        AccessType::Store => {
+                                            if let Err(err) = account.can_data_be_changed() {
+                                                err
+                                            } else {
+                                                // The store was allowed but failed,
+                                                // thus it must have been an attempt to grow the account.
+                                                debug_assert!(is_access_outside_of_data);
+                                                InstructionError::InvalidRealloc
+                                            }
+                                        }
+                                        AccessType::Load => {
+                                            // Loads should only fail when they are outside of the account data.
+                                            debug_assert!(is_access_outside_of_data);
+                                            if account.can_data_be_changed().is_err() {
+                                                // Load beyond readonly account data happened because the program
+                                                // expected more data than there actually is.
+                                                InstructionError::AccountDataTooSmall
+                                            } else {
+                                                // Load beyond writable account data also attempted to grow.
+                                                InstructionError::InvalidRealloc
+                                            }
+                                        }
+                                    },
+                                ));
+                            }
                         }
                     }
                 }
