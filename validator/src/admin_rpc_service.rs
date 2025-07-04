@@ -219,6 +219,13 @@ pub trait AdminRpc {
     #[rpc(meta, name = "setGossipSocket")]
     fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
 
+    #[rpc(meta, name = "setRetransmitSocketsInterface")]
+    fn set_retransmit_sockets_interface(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+    ) -> Result<()>;
+
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
         &self,
@@ -562,6 +569,24 @@ impl AdminRpc for AdminRpcImpl {
                             "Failed to refresh gossip ContactInfo: {e}"
                         ))
                     })?;
+            }
+            Ok(())
+        })
+    }
+
+    fn set_retransmit_sockets_interface(
+        &self,
+        meta: Self::Metadata,
+        interface_index: usize,
+    ) -> Result<()> {
+        info!(
+            "greg: set_retransmit_sockets interface received: {}",
+            interface_index
+        );
+        meta.with_post_init(|post_init| {
+            if let Some(selector) = &post_init.retransmit_socket_selector {
+                info!("greg: setting interface index to {}", interface_index);
+                selector(interface_index);
             }
             Ok(())
         })
@@ -1028,6 +1053,7 @@ mod tests {
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
                     gossip_socket: None,
+                    retransmit_socket_selector: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,
