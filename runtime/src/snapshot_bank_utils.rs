@@ -1,6 +1,13 @@
 #[cfg(feature = "dev-context-only-utils")]
 use {
-    crate::{bank::BankFieldsToDeserialize, serde_snapshot::fields_from_streams},
+    crate::{
+        bank::BankFieldsToDeserialize,
+        serde_snapshot::fields_from_streams,
+        snapshot_utils::{
+            deserialize_snapshot_data_files, verify_unpacked_snapshots_dir_and_version,
+            SnapshotRootPaths, UnpackedSnapshotsDirAndVersion,
+        },
+    },
     solana_accounts_db::accounts_file::StorageAccess,
     tempfile::TempDir,
 };
@@ -9,7 +16,10 @@ use {
         bank::{Bank, BankSlotDelta},
         epoch_stakes::EpochStakes,
         runtime_config::RuntimeConfig,
-        serde_snapshot::{bank_from_streams, BankIncrementalSnapshotPersistence},
+        serde_snapshot::{
+            reconstruct_bank_from_fields, BankIncrementalSnapshotPersistence,
+            SnapshotAccountsDbFields, SnapshotBankFields,
+        },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfoGetter,
         },
@@ -17,13 +27,12 @@ use {
         snapshot_hash::SnapshotHash,
         snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
         snapshot_utils::{
-            self, deserialize_snapshot_data_file, deserialize_snapshot_data_files,
-            get_highest_bank_snapshot_post, get_highest_full_snapshot_archive_info,
-            get_highest_incremental_snapshot_archive_info, rebuild_storages_from_snapshot_dir,
-            serialize_snapshot_data_file, verify_and_unarchive_snapshots,
-            verify_unpacked_snapshots_dir_and_version, ArchiveFormat, BankSnapshotInfo,
-            SnapshotError, SnapshotRootPaths, SnapshotVersion, StorageAndNextAccountsFileId,
-            UnpackedSnapshotsDirAndVersion, VerifyEpochStakesError, VerifySlotDeltasError,
+            self, deserialize_snapshot_data_file, get_highest_bank_snapshot_post,
+            get_highest_full_snapshot_archive_info, get_highest_incremental_snapshot_archive_info,
+            rebuild_storages_from_snapshot_dir, serialize_snapshot_data_file,
+            verify_and_unarchive_snapshots, ArchiveFormat, BankSnapshotInfo, SnapshotError,
+            SnapshotVersion, StorageAndNextAccountsFileId, UnarchivedSnapshots,
+            VerifyEpochStakesError, VerifySlotDeltasError,
         },
         status_cache,
     },
@@ -32,8 +41,7 @@ use {
     log::*,
     solana_accounts_db::{
         accounts_db::{
-            AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId,
-            CalcAccountsHashDataSource, DuplicatesLtHash,
+            AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId, CalcAccountsHashDataSource,
         },
         accounts_hash::MerkleOrLatticeAccountsHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -104,22 +112,24 @@ pub fn bank_fields_from_snapshot_archives(
 
     let account_paths = vec![temp_accounts_dir.path().to_path_buf()];
 
-    let (unarchived_full_snapshot, unarchived_incremental_snapshot, _next_append_vec_id) =
-        verify_and_unarchive_snapshots(
-            &temp_unpack_dir,
-            &full_snapshot_archive_info,
-            incremental_snapshot_archive_info.as_ref(),
-            &account_paths,
-            storage_access,
-        )?;
+    let (
+        UnarchivedSnapshots {
+            full_unpacked_snapshots_dir_and_version,
+            incremental_unpacked_snapshots_dir_and_version,
+            ..
+        },
+        _guard,
+    ) = verify_and_unarchive_snapshots(
+        &temp_unpack_dir,
+        &full_snapshot_archive_info,
+        incremental_snapshot_archive_info.as_ref(),
+        &account_paths,
+        storage_access,
+    )?;
 
     bank_fields_from_snapshots(
-        &unarchived_full_snapshot.unpacked_snapshots_dir_and_version,
-        unarchived_incremental_snapshot
-            .as_ref()
-            .map(|unarchive_preparation_result| {
-                &unarchive_preparation_result.unpacked_snapshots_dir_and_version
-            }),
+        &full_unpacked_snapshots_dir_and_version,
+        incremental_unpacked_snapshots_dir_and_version.as_ref(),
     )
 }
 
@@ -182,23 +192,33 @@ pub fn bank_from_snapshot_archives(
             )
     );
 
-    let (unarchived_full_snapshot, mut unarchived_incremental_snapshot, next_append_vec_id) =
-        verify_and_unarchive_snapshots(
-            bank_snapshots_dir,
-            full_snapshot_archive_info,
-            incremental_snapshot_archive_info,
-            account_paths,
-            accounts_db_config
-                .as_ref()
-                .map(|config| config.storage_access)
-                .unwrap_or_default(),
-        )?;
+    let (
+        UnarchivedSnapshots {
+            full_storage: mut storage,
+            incremental_storage,
+            bank_fields,
+            accounts_db_fields,
+            full_unpacked_snapshots_dir_and_version,
+            incremental_unpacked_snapshots_dir_and_version,
+            full_measure_untar,
+            incremental_measure_untar,
+            next_append_vec_id,
+            ..
+        },
+        _guard,
+    ) = verify_and_unarchive_snapshots(
+        bank_snapshots_dir,
+        full_snapshot_archive_info,
+        incremental_snapshot_archive_info,
+        account_paths,
+        accounts_db_config
+            .as_ref()
+            .map(|config| config.storage_access)
+            .unwrap_or_default(),
+    )?;
 
-    let mut storage = unarchived_full_snapshot.storage;
-    if let Some(ref mut unarchive_preparation_result) = unarchived_incremental_snapshot {
-        let incremental_snapshot_storages =
-            std::mem::take(&mut unarchive_preparation_result.storage);
-        storage.extend(incremental_snapshot_storages);
+    if let Some(incremental_storage) = incremental_storage {
+        storage.extend(incremental_storage);
     }
 
     let storage_and_next_append_vec_id = StorageAndNextAccountsFileId {
@@ -207,17 +227,13 @@ pub fn bank_from_snapshot_archives(
     };
 
     let mut measure_rebuild = Measure::start("rebuild bank from snapshots");
-    let (bank, info) = rebuild_bank_from_unarchived_snapshots(
-        &unarchived_full_snapshot.unpacked_snapshots_dir_and_version,
-        unarchived_incremental_snapshot
-            .as_ref()
-            .map(|unarchive_preparation_result| {
-                &unarchive_preparation_result.unpacked_snapshots_dir_and_version
-            }),
-        account_paths,
-        storage_and_next_append_vec_id,
+    let (bank, info) = reconstruct_bank_from_fields(
+        bank_fields,
+        accounts_db_fields,
         genesis_config,
         runtime_config,
+        account_paths,
+        storage_and_next_append_vec_id,
         debug_keys,
         additional_builtins,
         limit_load_slot_count_from_snapshot,
@@ -228,6 +244,31 @@ pub fn bank_from_snapshot_archives(
     )?;
     measure_rebuild.stop();
     info!("{}", measure_rebuild);
+
+    verify_epoch_stakes(&bank)?;
+
+    // The status cache is rebuilt from the latest snapshot.  So, if there's an incremental
+    // snapshot, use that.  Otherwise use the full snapshot.
+    let status_cache_path = incremental_unpacked_snapshots_dir_and_version
+        .as_ref()
+        .map_or_else(
+            || {
+                full_unpacked_snapshots_dir_and_version
+                    .unpacked_snapshots_dir
+                    .as_path()
+            },
+            |unarchived_incremental_snapshot| {
+                unarchived_incremental_snapshot
+                    .unpacked_snapshots_dir
+                    .as_path()
+            },
+        )
+        .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
+    let slot_deltas = deserialize_status_cache(&status_cache_path)?;
+
+    verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
+
+    bank.status_cache.write().unwrap().append(&slot_deltas);
 
     let snapshot_archive_info = incremental_snapshot_archive_info.map_or_else(
         || full_snapshot_archive_info.snapshot_archive_info(),
@@ -272,10 +313,10 @@ pub fn bank_from_snapshot_archives(
     measure_verify.stop();
 
     let timings = BankFromArchivesTimings {
-        untar_full_snapshot_archive_us: unarchived_full_snapshot.measure_untar.as_us(),
-        untar_incremental_snapshot_archive_us: unarchived_incremental_snapshot
-            .map_or(0, |unarchive_preparation_result| {
-                unarchive_preparation_result.measure_untar.as_us()
+        untar_full_snapshot_archive_us: full_measure_untar.as_us(),
+        untar_incremental_snapshot_archive_us: incremental_measure_untar
+            .map_or(0, |incremental_measure_untar| {
+                incremental_measure_untar.as_us()
             }),
         rebuild_bank_us: measure_rebuild.as_us(),
         verify_bank_us: measure_verify.as_us(),
@@ -393,7 +434,7 @@ pub fn bank_from_snapshot_dir(
         .map(|config| config.storage_access)
         .unwrap_or_default();
 
-    let (storage, measure_rebuild_storages) = measure_time!(
+    let ((storage, bank_fields, accounts_db_fields), measure_rebuild_storages) = measure_time!(
         rebuild_storages_from_snapshot_dir(
             bank_snapshot,
             account_paths,
@@ -410,13 +451,16 @@ pub fn bank_from_snapshot_dir(
         storage,
         next_append_vec_id,
     };
+    let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
+    let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
     let ((bank, info), measure_rebuild_bank) = measure_time!(
-        rebuild_bank_from_snapshot(
-            bank_snapshot,
-            account_paths,
-            storage_and_next_append_vec_id,
+        reconstruct_bank_from_fields(
+            snapshot_bank_fields,
+            snapshot_accounts_db_fields,
             genesis_config,
             runtime_config,
+            account_paths,
+            storage_and_next_append_vec_id,
             debug_keys,
             additional_builtins,
             limit_load_slot_count_from_snapshot,
@@ -428,6 +472,17 @@ pub fn bank_from_snapshot_dir(
         "rebuild bank from snapshot"
     );
     info!("{}", measure_rebuild_bank);
+
+    verify_epoch_stakes(&bank)?;
+
+    let status_cache_path = bank_snapshot
+        .snapshot_dir
+        .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
+    let slot_deltas = deserialize_status_cache(&status_cache_path)?;
+
+    verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
+
+    bank.status_cache.write().unwrap().append(&slot_deltas);
 
     if bank
         .feature_set
@@ -546,6 +601,7 @@ fn verify_bank_against_expected_slot_hash(
 }
 
 /// Returns the validated version and root paths for the given snapshots.
+#[cfg(feature = "dev-context-only-utils")]
 fn snapshot_version_and_root_paths(
     full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
     incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
@@ -593,155 +649,6 @@ fn deserialize_status_cache(
             .deserialize_from(stream)?;
         Ok(slot_delta)
     })
-}
-
-/// This struct contains side-info from rebuilding the bank
-#[derive(Debug)]
-struct RebuiltBankInfo {
-    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn rebuild_bank_from_unarchived_snapshots(
-    full_snapshot_unpacked_snapshots_dir_and_version: &UnpackedSnapshotsDirAndVersion,
-    incremental_snapshot_unpacked_snapshots_dir_and_version: Option<
-        &UnpackedSnapshotsDirAndVersion,
-    >,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
-    debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
-    limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, RebuiltBankInfo)> {
-    let (snapshot_version, snapshot_root_paths) = snapshot_version_and_root_paths(
-        full_snapshot_unpacked_snapshots_dir_and_version,
-        incremental_snapshot_unpacked_snapshots_dir_and_version,
-    )?;
-
-    info!(
-        "Rebuilding bank from full snapshot {} and incremental snapshot {:?}",
-        snapshot_root_paths.full_snapshot_root_file_path.display(),
-        snapshot_root_paths.incremental_snapshot_root_file_path,
-    );
-
-    let (bank, info) = deserialize_snapshot_data_files(&snapshot_root_paths, |snapshot_streams| {
-        Ok(match snapshot_version {
-            SnapshotVersion::V1_2_0 => bank_from_streams(
-                snapshot_streams,
-                account_paths,
-                storage_and_next_append_vec_id,
-                genesis_config,
-                runtime_config,
-                debug_keys,
-                additional_builtins,
-                limit_load_slot_count_from_snapshot,
-                verify_index,
-                accounts_db_config,
-                accounts_update_notifier,
-                exit,
-            ),
-        }?)
-    })?;
-
-    verify_epoch_stakes(&bank)?;
-
-    // The status cache is rebuilt from the latest snapshot.  So, if there's an incremental
-    // snapshot, use that.  Otherwise use the full snapshot.
-    let status_cache_path = incremental_snapshot_unpacked_snapshots_dir_and_version
-        .map_or_else(
-            || {
-                full_snapshot_unpacked_snapshots_dir_and_version
-                    .unpacked_snapshots_dir
-                    .as_path()
-            },
-            |unpacked_snapshots_dir_and_version| {
-                unpacked_snapshots_dir_and_version
-                    .unpacked_snapshots_dir
-                    .as_path()
-            },
-        )
-        .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
-    let slot_deltas = deserialize_status_cache(&status_cache_path)?;
-
-    verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
-
-    bank.status_cache.write().unwrap().append(&slot_deltas);
-
-    info!("Rebuilt bank for slot: {}", bank.slot());
-    Ok((
-        bank,
-        RebuiltBankInfo {
-            duplicates_lt_hash: info.duplicates_lt_hash,
-        },
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn rebuild_bank_from_snapshot(
-    bank_snapshot: &BankSnapshotInfo,
-    account_paths: &[PathBuf],
-    storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-    genesis_config: &GenesisConfig,
-    runtime_config: &RuntimeConfig,
-    debug_keys: Option<Arc<HashSet<Pubkey>>>,
-    additional_builtins: Option<&[BuiltinPrototype]>,
-    limit_load_slot_count_from_snapshot: Option<usize>,
-    verify_index: bool,
-    accounts_db_config: Option<AccountsDbConfig>,
-    accounts_update_notifier: Option<AccountsUpdateNotifier>,
-    exit: Arc<AtomicBool>,
-) -> snapshot_utils::Result<(Bank, RebuiltBankInfo)> {
-    info!(
-        "Rebuilding bank from snapshot {}",
-        bank_snapshot.snapshot_dir.display(),
-    );
-
-    let snapshot_root_paths = SnapshotRootPaths {
-        full_snapshot_root_file_path: bank_snapshot.snapshot_path(),
-        incremental_snapshot_root_file_path: None,
-    };
-
-    let (bank, info) = deserialize_snapshot_data_files(&snapshot_root_paths, |snapshot_streams| {
-        Ok(bank_from_streams(
-            snapshot_streams,
-            account_paths,
-            storage_and_next_append_vec_id,
-            genesis_config,
-            runtime_config,
-            debug_keys,
-            additional_builtins,
-            limit_load_slot_count_from_snapshot,
-            verify_index,
-            accounts_db_config,
-            accounts_update_notifier,
-            exit,
-        )?)
-    })?;
-
-    verify_epoch_stakes(&bank)?;
-
-    let status_cache_path = bank_snapshot
-        .snapshot_dir
-        .join(snapshot_utils::SNAPSHOT_STATUS_CACHE_FILENAME);
-    let slot_deltas = deserialize_status_cache(&status_cache_path)?;
-
-    verify_slot_deltas(slot_deltas.as_slice(), &bank)?;
-
-    bank.status_cache.write().unwrap().append(&slot_deltas);
-
-    info!("Rebuilt bank for slot: {}", bank.slot());
-    Ok((
-        bank,
-        RebuiltBankInfo {
-            duplicates_lt_hash: info.duplicates_lt_hash,
-        },
-    ))
 }
 
 /// Verify that the snapshot's slot deltas are not corrupt/invalid
