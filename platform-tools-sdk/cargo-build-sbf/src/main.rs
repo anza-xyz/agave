@@ -334,10 +334,13 @@ fn corrupted_toolchain(config: &Config) -> bool {
 
     let binaries = toolchain_path.join("bin");
 
+    let rustc = binaries.join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    let cargo = binaries.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+
     !toolchain_path.try_exists().unwrap_or(false)
         || !binaries.try_exists().unwrap_or(false)
-        || !binaries.join("rustc").try_exists().unwrap_or(false)
-        || !binaries.join("cargo").try_exists().unwrap_or(false)
+        || !rustc.try_exists().unwrap_or(false)
+        || !cargo.try_exists().unwrap_or(false)
 }
 
 // check whether custom solana toolchain is linked, and link it if it is not.
