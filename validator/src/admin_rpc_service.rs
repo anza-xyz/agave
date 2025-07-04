@@ -153,7 +153,13 @@ pub trait AdminRpc {
     type Metadata;
 
     #[rpc(meta, name = "exit")]
+    /// Initiates validator exit; exit is asynchronous so the validator
+    /// will almost certainly still be running when this method returns
     fn exit(&self, meta: Self::Metadata) -> Result<()>;
+
+    /// Return the process id (pid)
+    #[rpc(meta, name = "pid")]
+    fn pid(&self, meta: Self::Metadata) -> Result<u32>;
 
     #[rpc(meta, name = "reloadPlugin")]
     fn reload_plugin(
@@ -270,7 +276,7 @@ impl AdminRpc for AdminRpcImpl {
                 // receive a confusing error as the validator shuts down before a response is sent back.
                 thread::sleep(Duration::from_millis(100));
 
-                warn!("validator exit requested");
+                info!("validator exit requested");
                 meta.validator_exit.write().unwrap().exit();
 
                 if !meta.validator_exit_backpressure.is_empty() {
@@ -313,6 +319,10 @@ impl AdminRpc for AdminRpcImpl {
             .unwrap();
 
         Ok(())
+    }
+
+    fn pid(&self, _meta: Self::Metadata) -> Result<u32> {
+        Ok(std::process::id())
     }
 
     fn reload_plugin(
