@@ -12,11 +12,15 @@ use {
     solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
-        quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
+        quic::{
+            default_num_tpu_transaction_receive_threads, spawn_server_multi, EndpointKeyUpdater,
+            QuicServerParams, DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
+        },
         streamer::StakedNodes,
     },
     std::{
         net::{SocketAddr, UdpSocket},
+        num::NonZeroUsize,
         sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
@@ -125,7 +129,8 @@ impl Vortexor {
             max_connections_per_ipaddr_per_min,
             wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
             coalesce: tpu_coalesce,
-            ..Default::default()
+            coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
+            num_threads: NonZeroUsize::new(default_num_tpu_transaction_receive_threads()).unwrap(),
         };
 
         let TpuSockets {

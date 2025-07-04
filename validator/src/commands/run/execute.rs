@@ -67,7 +67,8 @@ use {
     solana_send_transaction_service::send_transaction_service,
     solana_signer::Signer,
     solana_streamer::{
-        quic::{QuicServerParams, DEFAULT_TPU_COALESCE},
+        nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
+        quic::{QuicServerParams, DEFAULT_MAX_COALESCE_CHANNEL_SIZE, DEFAULT_TPU_COALESCE},
         socket::SocketAddrSpace,
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
@@ -1283,9 +1284,10 @@ pub fn execute(
         max_unstaked_connections: tpu_max_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         coalesce: tpu_coalesce,
+        coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
         num_threads: tpu_transaction_receive_threads,
-        ..Default::default()
     };
 
     let tpu_fwd_quic_server_config = QuicServerParams {
@@ -1294,9 +1296,10 @@ pub fn execute(
         max_unstaked_connections: tpu_max_fwd_unstaked_connections.try_into().unwrap(),
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
+        wait_for_chunk_timeout: DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         coalesce: tpu_coalesce,
+        coalesce_channel_size: DEFAULT_MAX_COALESCE_CHANNEL_SIZE,
         num_threads: tpu_transaction_forward_receive_threads,
-        ..Default::default()
     };
 
     // Vote shares TPU forward's characteristics, except that we accept 1 connection
