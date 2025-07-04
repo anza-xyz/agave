@@ -213,7 +213,7 @@ pub(crate) async fn verify_all_reachable_tcp(
                 ok = false;
             }
         }
-        thread_handle.await.expect("Thread should exit cleanly")
+        thread_handle.await.expect("Thread should exit cleanly");
     }
 
     ok
@@ -226,6 +226,7 @@ pub(crate) async fn verify_all_reachable_tcp(
 /// necessary if checking many ports.
 /// A given amount of retries will be made to accommodate packet loss.
 /// This function may panic.
+///
 pub(crate) async fn verify_all_reachable_udp(
     ip_echo_server_addr: SocketAddr,
     sockets: &[&UdpSocket],
@@ -313,8 +314,11 @@ pub(crate) async fn verify_all_reachable_udp(
                         socket.set_read_timeout(original_read_timeout).unwrap();
                     });
                 }
-
-                while let Some(r) = checkers.join_next().await {
+                loop {
+                    let next = checkers.join_next().await;
+                    let Some(r) = next else {
+                        break;
+                    };
                     r.expect("Threads should exit cleanly");
                 }
                 // Might have lost a UDP packet, check that all ports were reached
