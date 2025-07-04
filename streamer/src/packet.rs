@@ -101,6 +101,8 @@ pub(crate) fn recv_from(
     max_wait: Option<Duration>,
     poll_fd: &mut [PollFd],
 ) -> Result<usize> {
+    use crate::streamer::SOCKET_READ_TIMEOUT;
+
     // Implementation note:
     // This is a reimplementation of the above (now, non-unix) `recv_from` function, and
     // is explicitly meant to preserve the existing behavior, refactored for performance.
@@ -124,7 +126,6 @@ pub(crate) fn recv_from(
     /// Given that we are using `poll` in this implementation, and we assume the socket is set to
     /// non-blocking, we don't need to worry about `recv_mmsg` hanging indefinitely.
     const SOCKET_READ_TIMEOUT_MS: u16 = SOCKET_READ_TIMEOUT.as_millis() as u16;
-    use crate::streamer::SOCKET_READ_TIMEOUT;
 
     /// Read and batch packets from the socket until batch size is [`PACKETS_PER_BATCH`] or there are no more packets to read.
     ///
