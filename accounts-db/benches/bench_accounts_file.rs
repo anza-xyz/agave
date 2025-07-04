@@ -165,14 +165,14 @@ fn bench_scan_pubkeys(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("append_vec_mmap", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
-                append_vec_mmap.scan_pubkeys(|_| count += 1);
+                append_vec_mmap.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });
         group.bench_function(BenchmarkId::new("append_vec_file", accounts_count), |b| {
             b.iter(|| {
                 let mut count = 0;
-                append_vec_file.scan_pubkeys(|_| count += 1);
+                append_vec_file.scan_pubkeys(|_| count += 1).unwrap();
                 assert_eq!(count, accounts_count);
             });
         });

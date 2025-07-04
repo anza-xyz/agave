@@ -2425,7 +2425,8 @@ impl AccountsDb {
                                 let pubkey = *account.pubkey();
                                 let is_zero_lamport = account.is_zero_lamport();
                                 insert_candidate(pubkey, is_zero_lamport);
-                            });
+                            })
+                            .expect("must scan accounts storage");
                     });
                     oldest_dirty_slot
                 })
@@ -2509,19 +2510,22 @@ impl AccountsDb {
                 return;
             }
             if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                storage.accounts.scan_accounts(|_offset, account| {
-                    let pk = account.pubkey();
-                    match pubkey_refcount.entry(*pk) {
-                        dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
-                            if !occupied_entry.get().iter().any(|s| s == &slot) {
-                                occupied_entry.get_mut().push(slot);
+                storage
+                    .accounts
+                    .scan_accounts(|_offset, account| {
+                        let pk = account.pubkey();
+                        match pubkey_refcount.entry(*pk) {
+                            dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
+                                if !occupied_entry.get().iter().any(|s| s == &slot) {
+                                    occupied_entry.get_mut().push(slot);
+                                }
+                            }
+                            dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
+                                vacant_entry.insert(vec![slot]);
                             }
                         }
-                        dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
-                            vacant_entry.insert(vec![slot]);
-                        }
-                    }
-                });
+                    })
+                    .expect("must scan accounts storage");
             }
         });
         let total = pubkey_refcount.len();
@@ -3369,7 +3373,8 @@ impl AccountsDb {
                     pubkey: *account.pubkey(),
                     data_len: account.data_len as u64,
                 });
-            });
+            })
+            .expect("must scan accounts storage");
 
         // sort by pubkey to keep account index lookups close
         let num_duplicated_accounts = Self::sort_and_remove_dups(&mut stored_accounts);
@@ -4427,15 +4432,16 @@ impl AccountsDb {
                 ScanAccountStorageData::NoData => {
                     storage.scan_accounts_without_data(|_offset, account_without_data| {
                         storage_scan_func(retval, &account_without_data, None);
-                    });
+                    })
                 }
                 ScanAccountStorageData::DataRefForStorage => {
                     storage.scan_accounts(|_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
-                    });
+                    })
                 }
-            };
+            }
+            .expect("must scan accounts storage");
         })
     }
 
@@ -5337,9 +5343,12 @@ impl AccountsDb {
             .storage
             .get_slot_storage_entry_shrinking_in_progress_ok(remove_slot)
         {
-            storage.accounts.scan_pubkeys(|pk| {
-                stored_keys.insert((*pk, remove_slot));
-            });
+            storage
+                .accounts
+                .scan_pubkeys(|pk| {
+                    stored_keys.insert((*pk, remove_slot));
+                })
+                .expect("must scan accounts storage");
         }
         scan_storages_elapsed.stop();
         purge_stats
@@ -6250,10 +6259,13 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
-                storage.accounts.scan_accounts(|_offset, account| {
-                    let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                    accum.mix_in(&account_lt_hash.0);
-                });
+                storage
+                    .accounts
+                    .scan_accounts(|_offset, account| {
+                        let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                        accum.mix_in(&account_lt_hash.0);
+                    })
+                    .expect("must scan accounts storage");
                 accum
             })
             .reduce(LtHash::identity, |mut accum, elem| {
@@ -6879,9 +6891,11 @@ impl AccountsDb {
             slot,
             |loaded_account| Some(*loaded_account.pubkey()),
             |accum: &mut HashSet<Pubkey>, storage| {
-                storage.scan_pubkeys(|pubkey| {
-                    accum.insert(*pubkey);
-                });
+                storage
+                    .scan_pubkeys(|pubkey| {
+                        accum.insert(*pubkey);
+                    })
+                    .expect("must scan accounts storage");
             },
         );
         match scan_result {
@@ -7424,9 +7438,12 @@ impl AccountsDb {
                     .map(|store| {
                         let slot = store.slot();
                         let mut pubkeys = Vec::with_capacity(store.count());
-                        store.accounts.scan_pubkeys(|pubkey| {
-                            pubkeys.push((slot, *pubkey));
-                        });
+                        store
+                            .accounts
+                            .scan_pubkeys(|pubkey| {
+                                pubkeys.push((slot, *pubkey));
+                            })
+                            .expect("must scan accounts storage");
                         pubkeys
                     })
                     .flatten()
@@ -7877,7 +7894,7 @@ impl AccountsDb {
                         &account,
                         &self.account_indexes,
                     );
-                });
+                })
             } else {
                 // withOUT secondary indexes -- scan accounts withOUT account data
                 storage
@@ -7896,8 +7913,9 @@ impl AccountsDb {
                             },
                         };
                         itemizer(info);
-                    });
+                    })
             }
+            .expect("must scan accounts storage");
             let items = items_local.into_iter().map(|info| {
                 (
                     info.pubkey,
@@ -8082,7 +8100,8 @@ impl AccountsDb {
                                         }
                                     }
                                     assert_eq!(1, count);
-                                });
+                                })
+                                .expect("must scan accounts storage");
                             lookup_time.stop();
                             lookup_time.as_us()
                         };
@@ -8616,9 +8635,11 @@ pub(crate) enum UpdateIndexThreadSelection {
 impl AccountStorageEntry {
     fn accounts_count(&self) -> usize {
         let mut count = 0;
-        self.accounts.scan_pubkeys(|_| {
-            count += 1;
-        });
+        self.accounts
+            .scan_pubkeys(|_| {
+                count += 1;
+            })
+            .expect("must scan accounts storage");
         count
     }
 }
@@ -8755,9 +8776,12 @@ impl AccountsDb {
     pub fn sizes_of_accounts_in_storage_for_tests(&self, slot: Slot) -> Vec<usize> {
         let mut sizes = Vec::default();
         if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-            storage.accounts.scan_accounts_stored_meta(|account| {
-                sizes.push(account.stored_size());
-            });
+            storage
+                .accounts
+                .scan_accounts_stored_meta(|account| {
+                    sizes.push(account.stored_size());
+                })
+                .expect("must scan accounts storage");
         }
         sizes
     }
