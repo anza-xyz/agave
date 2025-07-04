@@ -42,9 +42,19 @@ use {
         io::{Read, Seek, SeekFrom},
         path::{Path, PathBuf},
         str::FromStr,
+        sync::Arc,
     },
     test_case::test_case,
 };
+
+fn setup_rpc_client(config: &mut CliConfig) {
+    config.rpc_client = Some(Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    )));
+}
 
 fn test_validator_genesis(mint_keypair: Keypair) -> TestValidatorGenesis {
     let mut genesis = TestValidatorGenesis::default();
@@ -1567,6 +1577,8 @@ fn test_cli_program_migrate_program() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Deploy the upgradeable program
@@ -1653,6 +1665,8 @@ fn test_cli_program_write_buffer() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Write a buffer with default params
@@ -2038,6 +2052,8 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Write a buffer with default params
@@ -2125,6 +2141,8 @@ fn test_cli_program_set_buffer_authority() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Write a buffer
@@ -2297,6 +2315,8 @@ fn test_cli_program_mismatch_buffer_authority() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Write a buffer
@@ -2433,6 +2453,8 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         lamports: 100 * minimum_balance_for_large_buffer, // gotta be enough for this test
     };
     config.signers = vec![&online_signer];
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -2619,6 +2641,8 @@ fn test_cli_program_show() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Write a buffer
@@ -2816,6 +2840,8 @@ fn test_cli_program_dump() {
         pubkey: None,
         lamports: 100 * minimum_balance_for_buffer,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Write a buffer
@@ -2961,6 +2987,8 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
 
     // Deploy the upgradeable program with specified program_id
@@ -3116,7 +3144,10 @@ fn test_cli_program_v4() {
         pubkey: None,
         lamports: 10000000,
     };
+    // keep using rpc_client and the runtime
+    setup_rpc_client(&mut config);
     process_command(&config).unwrap();
+
     config.command = CliCommand::Airdrop {
         pubkey: Some(program_keypair.pubkey()),
         lamports: 1000,
