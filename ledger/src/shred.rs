@@ -55,8 +55,6 @@ pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
 };
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
 pub use {
     self::{
         payload::Payload,
@@ -85,6 +83,12 @@ use {
     static_assertions::const_assert_eq,
     std::{fmt::Debug, time::Instant},
     thiserror::Error,
+};
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use {
+    rand::Rng,
+    rayon::ThreadPoolBuilder,
+    solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet},
 };
 
 mod common;
@@ -202,6 +206,8 @@ pub enum Error {
     InvalidShredType,
     #[error("Invalid shred variant")]
     InvalidShredVariant,
+    #[error("Invalid packet size, could not get the shred")]
+    InvalidPacketSize,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Unknown proof size")]
@@ -1040,6 +1046,37 @@ pub fn verify_test_data_shred(
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+pub fn make_merkle_shreds_for_tests<R: Rng>(
+    rng: &mut R,
+    slot: Slot,
+    data_size: usize,
+    chained: bool,
+    is_last_in_slot: bool,
+) -> Result<Vec<merkle::Shred>, Error> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+    let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+    let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
+    let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
+    let mut data = vec![0u8; data_size];
+    rng.fill(&mut data[..]);
+    merkle::make_shreds_from_data(
+        &thread_pool,
+        &Keypair::new(),
+        chained_merkle_root,
+        &data[..],
+        slot,
+        parent_slot,
+        rng.gen(),            // shred_version
+        rng.gen_range(1..64), // reference_tick
+        is_last_in_slot,
+        rng.gen_range(0..671), // next_shred_index
+        rng.gen_range(0..781), // next_code_index
+        &ReedSolomonCache::default(),
+        &mut ProcessShredsStats::default(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -1049,7 +1086,6 @@ mod tests {
         itertools::Itertools,
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
-        rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
         solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
@@ -1066,36 +1102,6 @@ mod tests {
 
     fn bs58_decode<T: AsRef<[u8]>>(data: T) -> Vec<u8> {
         bs58::decode(data).into_vec().unwrap()
-    }
-
-    pub(super) fn make_merkle_shreds_for_tests<R: Rng>(
-        rng: &mut R,
-        slot: Slot,
-        data_size: usize,
-        chained: bool,
-        is_last_in_slot: bool,
-    ) -> Result<Vec<merkle::Shred>, Error> {
-        let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
-        let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
-        let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
-        let mut data = vec![0u8; data_size];
-        rng.fill(&mut data[..]);
-        merkle::make_shreds_from_data(
-            &thread_pool,
-            &Keypair::new(),
-            chained_merkle_root,
-            &data[..],
-            slot,
-            parent_slot,
-            rng.gen(),            // shred_version
-            rng.gen_range(1..64), // reference_tick
-            is_last_in_slot,
-            rng.gen_range(0..671), // next_shred_index
-            rng.gen_range(0..781), // next_code_index
-            &ReedSolomonCache::default(),
-            &mut ProcessShredsStats::default(),
-        )
     }
 
     #[test]

@@ -1,5 +1,14 @@
 #[cfg(test)]
 use crate::shred::ShredType;
+#[cfg(feature = "dev-context-only-utils")]
+use {
+    crate::shred::Nonce,
+    rand::Rng,
+    solana_perf::packet::{
+        bytes::{BufMut, BytesMut},
+        BytesPacket, Packet, PACKET_DATA_SIZE,
+    },
+};
 use {
     crate::{
         shred::{
@@ -70,7 +79,7 @@ pub struct ShredCode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Shred {
+pub enum Shred {
     ShredCode(ShredCode),
     ShredData(ShredData),
 }
@@ -85,7 +94,7 @@ impl Shred {
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
     dispatch!(pub(super) fn payload(&self) -> &Payload);
-    dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
+    dispatch!(pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     #[inline]
     fn fec_set_index(&self) -> u32 {
@@ -136,14 +145,63 @@ impl Shred {
     }
 }
 
+#[cfg(feature = "dev-context-only-utils")]
+impl Shred {
+    dispatch!(pub fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
+
+    fn write_into_packet_buffer<R: Rng, W: Write>(
+        &self,
+        rng: &mut R,
+        nonce: Option<Nonce>,
+        writer: &mut W,
+    ) -> usize {
+        let payload = self.payload();
+        writer.write_all(payload).unwrap();
+        let mut pos = payload.len();
+        // Write some random many bytes trailing shred payload.
+        let mut bytes = {
+            let size = PACKET_DATA_SIZE
+                - pos
+                - if nonce.is_some() {
+                    std::mem::size_of::<Nonce>()
+                } else {
+                    0
+                };
+            vec![0u8; rng.gen_range(0..=size)]
+        };
+        rng.fill(&mut bytes[..]);
+        writer.write_all(&bytes).unwrap();
+        pos += bytes.len();
+        if let Some(nonce) = nonce {
+            writer.write_all(&nonce.to_le_bytes()).unwrap();
+            pos += size_of::<u32>();
+        }
+        pos
+    }
+
+    pub fn to_packet<R: Rng>(&self, rng: &mut R, nonce: Option<Nonce>) -> Packet {
+        let mut packet = Packet::default();
+        let size = self.write_into_packet_buffer(rng, nonce, &mut packet.buffer_mut());
+        packet.meta_mut().size = size;
+        packet
+    }
+
+    pub fn to_bytes_packet<R: Rng>(&self, rng: &mut R, nonce: Option<Nonce>) -> BytesPacket {
+        let buffer = BytesMut::with_capacity(PACKET_DATA_SIZE);
+        let mut buffer = buffer.writer();
+        self.write_into_packet_buffer(rng, nonce, &mut buffer);
+        let buffer = buffer.into_inner().freeze();
+        BytesPacket::from_bytes(None, buffer)
+    }
+}
+
 #[cfg(test)]
 impl Shred {
     dispatch!(fn erasure_shard(&self) -> Result<&[u8], Error>);
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
     dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
-    dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
     fn index(&self) -> u32 {
         self.common_header().index
