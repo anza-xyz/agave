@@ -303,7 +303,7 @@ macro_rules! mock_create_vm {
         let loader = solana_type_overrides::sync::Arc::new(BuiltinProgram::new_mock());
         let function_registry = solana_sbpf::program::FunctionRegistry::default();
         let executable = solana_sbpf::elf::Executable::<InvokeContext>::from_text_bytes(
-            &[0x9D, 0, 0, 0, 0, 0, 0, 0],
+            &[0x07, 0x0A, 0, 0, 0, 0, 0, 0, 0x9D, 0, 0, 0, 0, 0, 0, 0],
             loader,
             SBPFVersion::V3,
             function_registry,
