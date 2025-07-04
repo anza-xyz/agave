@@ -44,7 +44,6 @@ use {
         epoch_stakes::{NodeVoteAccounts, VersionedEpochStakes},
         inflation_rewards::points::InflationPointCalculationEvent,
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
-        rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
         serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
@@ -3441,14 +3440,12 @@ impl Bank {
 
         let (blockhash, blockhash_lamports_per_signature) =
             self.last_blockhash_and_lamports_per_signature();
-        let rent_collector_with_metrics =
-            RentCollectorWithMetrics::new(self.rent_collector.clone());
         let processing_environment = TransactionProcessingEnvironment {
             blockhash,
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
-            rent_collector: Some(&rent_collector_with_metrics),
+            rent: Some(&self.rent_collector.rent),
         };
 
         let sanitized_output = self
@@ -4040,7 +4037,7 @@ impl Bank {
         for (pubkey, account, _loaded_slot) in accounts.iter_mut() {
             let rent_epoch_pre = account.rent_epoch();
             let ((), collect_rent_us) = measure_us!(update_rent_exempt_status_for_account(
-                &self.rent_collector,
+                &self.rent_collector.rent,
                 account
             ));
             time_collecting_rent_us += collect_rent_us;
@@ -7092,14 +7089,10 @@ impl TotalAccountsStats {
             self.executable_data_len += data_len;
         }
 
-        if !rent_collector.should_collect_rent(address, account.executable())
+        if (account.executable() || *address == incinerator::id())
             || rent_collector
-                .get_rent_due(
-                    account.lamports(),
-                    account.data().len(),
-                    account.rent_epoch(),
-                )
-                .is_exempt()
+                .rent
+                .is_exempt(account.lamports(), account.data().len())
         {
             self.num_rent_exempt_accounts += 1;
         } else {
