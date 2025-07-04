@@ -1,8 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-use solana_entry::entry::{self, create_ticks, init_poh, EntrySlice, VerifyRecyclers};
+use solana_entry::entry::{self, create_ticks, init_poh, VerifyRecyclers};
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-use solana_entry::entry::{create_ticks, init_poh, EntrySlice, VerifyRecyclers};
+use solana_entry::entry::{create_ticks, init_poh, VerifyRecyclers};
+use solana_entry::entry::{verify_cpu_generic, VerifyEntries as _};
 use {
     clap::{crate_description, crate_name, Arg, Command},
     solana_measure::measure::Measure,
@@ -89,9 +90,10 @@ fn main() {
     while num_entries <= max_num_entries as usize {
         let mut time = Measure::start("time");
         for _ in 0..iterations {
-            assert!(ticks[..num_entries]
-                .verify_cpu_generic(&start_hash, &thread_pool)
-                .finish_verify(&thread_pool));
+            assert!(
+                verify_cpu_generic(&ticks[..num_entries], &start_hash, &thread_pool)
+                    .finish_verify(&thread_pool)
+            );
         }
         time.stop();
         println!(
@@ -106,11 +108,17 @@ fn main() {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if is_x86_feature_detected!("avx2") && entry::api().is_some() {
+                use solana_entry::entry::verify_cpu_x86_simd;
+
                 let mut time = Measure::start("time");
                 for _ in 0..iterations {
-                    assert!(ticks[..num_entries]
-                        .verify_cpu_x86_simd(&start_hash, 8, &thread_pool)
-                        .finish_verify(&thread_pool));
+                    assert!(verify_cpu_x86_simd(
+                        &ticks[..num_entries],
+                        &start_hash,
+                        8,
+                        &thread_pool
+                    )
+                    .finish_verify(&thread_pool));
                 }
                 time.stop();
                 println!(
@@ -121,11 +129,17 @@ fn main() {
             }
 
             if is_x86_feature_detected!("avx512f") && entry::api().is_some() {
+                use solana_entry::entry::verify_cpu_x86_simd;
+
                 let mut time = Measure::start("time");
                 for _ in 0..iterations {
-                    assert!(ticks[..num_entries]
-                        .verify_cpu_x86_simd(&start_hash, 16, &thread_pool)
-                        .finish_verify(&thread_pool));
+                    assert!(verify_cpu_x86_simd(
+                        &ticks[..num_entries],
+                        &start_hash,
+                        16,
+                        &thread_pool
+                    )
+                    .finish_verify(&thread_pool));
                 }
                 time.stop();
                 println!(
