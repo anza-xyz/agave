@@ -68,7 +68,7 @@ where
 }
 
 // Total stake and nodes => stake map
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct StakedNodes {
     stakes: Arc<HashMap<Pubkey, u64>>,
     overrides: HashMap<Pubkey, u64>,
