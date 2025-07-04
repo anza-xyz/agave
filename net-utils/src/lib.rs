@@ -344,7 +344,8 @@ pub fn bind_with_any_port_with_config(
 ) -> io::Result<UdpSocket> {
     let sock = udp_socket_with_config(config.into())?;
     let addr = SocketAddr::new(ip_addr, 0);
-    match sock.bind(&SockAddr::from(addr)) {
+    let bind = sock.bind(&SockAddr::from(addr));
+    match bind {
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
@@ -552,7 +553,8 @@ pub fn find_available_ports_in_range<const N: usize>(
     let config = sockets::SocketConfiguration::default();
     while num < N {
         let port_to_try = next_port_to_try.next().unwrap(); // this unwrap never fails since we exit earlier
-        match sockets::bind_common_with_config(ip_addr, port_to_try, config) {
+        let bind = sockets::bind_common_with_config(ip_addr, port_to_try, config);
+        match bind {
             Ok(_) => {
                 result[num] = port_to_try;
                 num = num.saturating_add(1);

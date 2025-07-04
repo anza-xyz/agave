@@ -111,7 +111,9 @@ async fn process_connection(
         Ok(udp_socket) => {
             for udp_port in &msg.udp_ports {
                 if *udp_port != 0 {
-                    match udp_socket.send_to(&[0], SocketAddr::from((peer_addr.ip(), *udp_port))) {
+                    let result =
+                        udp_socket.send_to(&[0], SocketAddr::from((peer_addr.ip(), *udp_port)));
+                    match result {
                         Ok(_) => debug!("Successful send_to udp/{}", udp_port),
                         Err(err) => info!("Failed to send_to udp/{}: {}", udp_port, err),
                     }
