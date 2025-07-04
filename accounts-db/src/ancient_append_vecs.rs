@@ -2088,7 +2088,8 @@ pub mod tests {
                 .accounts
                 .scan_accounts(|_, _| {
                     count += 1;
-                });
+                })
+                .expect("must scan accounts storage");
             assert_eq!(count, 1);
             let account = shrink_in_progress
                 .new_storage()
@@ -2247,9 +2248,12 @@ pub mod tests {
                 })
                 .unwrap();
             let mut count = 0;
-            storage.accounts.scan_accounts(|_, _| {
-                count += 1;
-            });
+            storage
+                .accounts
+                .scan_accounts(|_, _| {
+                    count += 1;
+                })
+                .expect("must scan accounts storage");
             assert_eq!(count, 2);
             assert_eq!(accounts_shrunk_same_slot.0, *pk_with_2_refs);
             assert_eq!(accounts_shrunk_same_slot.1, account_shared_data_with_2_refs);
@@ -3108,9 +3112,12 @@ pub mod tests {
                             .iter()
                             .map(|storage| {
                                 let mut accounts = Vec::default();
-                                storage.accounts.scan_accounts_stored_meta(|account| {
-                                    accounts.push(AccountFromStorage::new(&account));
-                                });
+                                storage
+                                    .accounts
+                                    .scan_accounts_stored_meta(|account| {
+                                        accounts.push(AccountFromStorage::new(&account));
+                                    })
+                                    .expect("must scan accounts storage");
                                 (storage.slot(), accounts)
                             })
                             .collect::<Vec<_>>();
@@ -3182,11 +3189,15 @@ pub mod tests {
                             );
                             // make sure the single new append vec contains all the same accounts
                             let mut two = Vec::default();
-                            one.first().unwrap().1.new_storage().accounts.scan_accounts(
-                                |_offset, meta| {
+                            one.first()
+                                .unwrap()
+                                .1
+                                .new_storage()
+                                .accounts
+                                .scan_accounts(|_offset, meta| {
                                     two.push((*meta.pubkey(), meta.to_account_shared_data()));
-                                },
-                            );
+                                })
+                                .expect("must scan accounts storage");
 
                             compare_all_accounts(&initial_accounts, &two[..]);
                         }

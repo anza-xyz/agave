@@ -103,18 +103,21 @@ impl AccountsDb {
         let mut pure_notify_time = Duration::ZERO;
         let mut i = 0;
         let notifying_start = Instant::now();
-        storage.accounts.scan_accounts_for_geyser(|account| {
-            i += 1;
-            // later entries in the same slot are more recent and override earlier accounts for the same pubkey
-            // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
-            // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
-            let (_, notify_dur) = meas_dur!(notifier.notify_account_restore_from_snapshot(
-                storage.slot(),
-                i as u64,
-                &account
-            ));
-            pure_notify_time += notify_dur;
-        });
+        storage
+            .accounts
+            .scan_accounts_for_geyser(|account| {
+                i += 1;
+                // later entries in the same slot are more recent and override earlier accounts for the same pubkey
+                // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
+                // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
+                let (_, notify_dur) = meas_dur!(notifier.notify_account_restore_from_snapshot(
+                    storage.slot(),
+                    i as u64,
+                    &account
+                ));
+                pure_notify_time += notify_dur;
+            })
+            .expect("must scan accounts storage");
         let notifying_time = notifying_start.elapsed();
 
         GeyserPluginNotifyAtSnapshotRestoreStats {

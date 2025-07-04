@@ -301,13 +301,14 @@ impl AccountsFile {
     pub fn scan_accounts_without_data(
         &self,
         callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
-    ) {
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_without_data(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts_without_data(callback);
+                    reader.scan_accounts_without_data(callback)?;
                 }
+                Ok(())
             }
         }
     }
@@ -323,13 +324,14 @@ impl AccountsFile {
     pub fn scan_accounts(
         &self,
         callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
-    ) {
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts(callback);
+                    reader.scan_accounts(callback)?;
                 }
+                Ok(())
             }
         }
     }
@@ -342,7 +344,7 @@ impl AccountsFile {
     pub fn scan_accounts_stored_meta(
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) {
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
             Self::TieredStorage(_) => {
@@ -356,7 +358,7 @@ impl AccountsFile {
     pub fn scan_accounts_for_geyser(
         &self,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
-    ) {
+    ) -> Result<()> {
         self.scan_accounts(|_offset, account| {
             let account_for_geyser = AccountForGeyser {
                 pubkey: account.pubkey(),
@@ -394,13 +396,14 @@ impl AccountsFile {
     }
 
     /// iterate over all pubkeys
-    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) {
+    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_pubkeys(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_pubkeys(callback);
+                    reader.scan_pubkeys(callback)?;
                 }
+                Ok(())
             }
         }
     }
