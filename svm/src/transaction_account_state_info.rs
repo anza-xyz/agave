@@ -21,17 +21,18 @@ impl TransactionAccountStateInfo {
         (0..message.account_keys().len())
             .map(|i| {
                 let rent_state = if message.is_writable(i) {
-                    let state = if let Ok(account) = transaction_context
+                    let state = match transaction_context
                         .accounts()
                         .try_borrow(i as IndexOfAccount)
                     {
-                        // Native programs appear to be RentPaying because they carry low lamport
-                        // balances; however they will never be loaded as writable
-                        debug_assert!(!native_loader::check_id(account.owner()));
+                        Ok(account) => {
+                            // Native programs appear to be RentPaying because they carry low lamport
+                            // balances; however they will never be loaded as writable
+                            debug_assert!(!native_loader::check_id(account.owner()));
 
-                        Some(rent_collector.get_account_rent_state(&account))
-                    } else {
-                        None
+                            Some(rent_collector.get_account_rent_state(&account))
+                        }
+                        _ => None,
                     };
                     debug_assert!(
                         state.is_some(),

@@ -284,14 +284,15 @@ mod tests {
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.borrow().get(account) {
-                if data.lamports() == 0 {
-                    None
-                } else {
-                    owners.iter().position(|entry| data.owner() == entry)
+            match self.account_shared_data.borrow().get(account) {
+                Some(data) => {
+                    if data.lamports() == 0 {
+                        None
+                    } else {
+                        owners.iter().position(|entry| data.owner() == entry)
+                    }
                 }
-            } else {
-                None
+                _ => None,
             }
         }
 
