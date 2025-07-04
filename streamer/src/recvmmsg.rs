@@ -186,7 +186,6 @@ mod tests {
             bind_in_range_with_config, localhost_port_range_for_tests,
             SocketConfiguration as SocketConfig,
         },
-        solana_packet::Meta,
         std::{
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
             time::{Duration, Instant},
