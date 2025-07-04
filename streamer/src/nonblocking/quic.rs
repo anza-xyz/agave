@@ -322,8 +322,27 @@ async fn run_server(
         })
         .collect::<FuturesUnordered<_>>();
 
+    const STAKED_NODES_INTERVAL: Duration = Duration::from_secs(10);
+    let mut staked_nodes_interval = tokio::time::interval(STAKED_NODES_INTERVAL);
+    let mut cached_staked_nodes = Arc::new(staked_nodes.read().unwrap().clone());
+
     while !exit.load(Ordering::Relaxed) {
         let timeout_connection = select! {
+            _ = staked_nodes_interval.tick() => {
+                let total_stake = cached_staked_nodes.total_stake();
+                let staked_nodes = staked_nodes.clone();
+                if let Some(staked_nodes) = tokio::task::spawn_blocking(move || {
+                    let staked_nodes = staked_nodes.read().unwrap();
+                    if staked_nodes.total_stake() != total_stake {
+                        Some(staked_nodes.clone())
+                    } else {
+                        None
+                    }}
+                ).await.unwrap() {
+                    cached_staked_nodes = Arc::new(staked_nodes);
+                }
+                continue;
+            }
             ready = accepts.next() => {
                 if let Some((connecting, i)) = ready {
                     accepts.push(
@@ -411,7 +430,7 @@ async fn run_server(
                         staked_connection_table.clone(),
                         sender.clone(),
                         max_connections_per_peer,
-                        staked_nodes.clone(),
+                        cached_staked_nodes.clone(),
                         max_staked_connections,
                         max_unstaked_connections,
                         max_streams_per_ms,
@@ -458,11 +477,10 @@ pub fn get_remote_pubkey(connection: &Connection) -> Option<Pubkey> {
 
 fn get_connection_stake(
     connection: &Connection,
-    staked_nodes: &RwLock<StakedNodes>,
+    staked_nodes: &StakedNodes,
 ) -> Option<(Pubkey, u64, u64, u64, u64)> {
     let pubkey = get_remote_pubkey(connection)?;
     debug!("Peer public key is {pubkey:?}");
-    let staked_nodes = staked_nodes.read().unwrap();
     Some((
         pubkey,
         staked_nodes.get_node_stake(&pubkey)?,
@@ -700,7 +718,7 @@ async fn setup_connection(
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
     packet_sender: Sender<PacketAccumulator>,
     max_connections_per_peer: usize,
-    staked_nodes: Arc<RwLock<StakedNodes>>,
+    staked_nodes: Arc<StakedNodes>,
     max_staked_connections: usize,
     max_unstaked_connections: usize,
     max_streams_per_ms: u64,
