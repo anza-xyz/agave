@@ -387,19 +387,21 @@ impl RequestMiddleware for RpcRequestMiddleware {
                 .into();
             }
         }
-
-        if let Some(path) = match_supply_path(request.uri().path()) {
-            process_rest(&self.bank_forks, path)
-        } else if self.is_file_get_path(request.uri().path()) {
-            self.process_file_get(request.uri().path())
-        } else if request.uri().path() == "/health" {
-            hyper::Response::builder()
-                .status(hyper::StatusCode::OK)
-                .body(hyper::Body::from(self.health_check()))
-                .unwrap()
-                .into()
-        } else {
-            request.into()
+        match match_supply_path(request.uri().path()) {
+            Some(path) => process_rest(&self.bank_forks, path),
+            _ => {
+                if self.is_file_get_path(request.uri().path()) {
+                    self.process_file_get(request.uri().path())
+                } else if request.uri().path() == "/health" {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .body(hyper::Body::from(self.health_check()))
+                        .unwrap()
+                        .into()
+                } else {
+                    request.into()
+                }
+            }
         }
     }
 }
@@ -735,54 +737,54 @@ impl JsonRpcService {
         let exit_bigtable_ledger_upload_service = Arc::new(AtomicBool::new(false));
 
         let (bigtable_ledger_storage, _bigtable_ledger_upload_service) =
-            if let Some(RpcBigtableConfig {
-                enable_bigtable_ledger_upload,
-                ref bigtable_instance_name,
-                ref bigtable_app_profile_id,
-                timeout,
-                max_message_size,
-            }) = config.rpc_bigtable_config
-            {
-                let bigtable_config = solana_storage_bigtable::LedgerStorageConfig {
-                    read_only: !enable_bigtable_ledger_upload,
+            match config.rpc_bigtable_config {
+                Some(RpcBigtableConfig {
+                    enable_bigtable_ledger_upload,
+                    ref bigtable_instance_name,
+                    ref bigtable_app_profile_id,
                     timeout,
-                    credential_type: CredentialType::Filepath(None),
-                    instance_name: bigtable_instance_name.clone(),
-                    app_profile_id: bigtable_app_profile_id.clone(),
                     max_message_size,
-                };
-                runtime
-                    .block_on(solana_storage_bigtable::LedgerStorage::new_with_config(
-                        bigtable_config,
-                    ))
-                    .map(|bigtable_ledger_storage| {
-                        info!("BigTable ledger storage initialized");
+                }) => {
+                    let bigtable_config = solana_storage_bigtable::LedgerStorageConfig {
+                        read_only: !enable_bigtable_ledger_upload,
+                        timeout,
+                        credential_type: CredentialType::Filepath(None),
+                        instance_name: bigtable_instance_name.clone(),
+                        app_profile_id: bigtable_app_profile_id.clone(),
+                        max_message_size,
+                    };
+                    runtime
+                        .block_on(solana_storage_bigtable::LedgerStorage::new_with_config(
+                            bigtable_config,
+                        ))
+                        .map(|bigtable_ledger_storage| {
+                            info!("BigTable ledger storage initialized");
 
-                        let bigtable_ledger_upload_service = if enable_bigtable_ledger_upload {
-                            Some(Arc::new(BigTableUploadService::new_with_config(
-                                runtime.clone(),
-                                bigtable_ledger_storage.clone(),
-                                blockstore.clone(),
-                                block_commitment_cache.clone(),
-                                max_complete_transaction_status_slot.clone(),
-                                ConfirmedBlockUploadConfig::default(),
-                                exit_bigtable_ledger_upload_service.clone(),
-                            )))
-                        } else {
-                            None
-                        };
+                            let bigtable_ledger_upload_service = if enable_bigtable_ledger_upload {
+                                Some(Arc::new(BigTableUploadService::new_with_config(
+                                    runtime.clone(),
+                                    bigtable_ledger_storage.clone(),
+                                    blockstore.clone(),
+                                    block_commitment_cache.clone(),
+                                    max_complete_transaction_status_slot.clone(),
+                                    ConfirmedBlockUploadConfig::default(),
+                                    exit_bigtable_ledger_upload_service.clone(),
+                                )))
+                            } else {
+                                None
+                            };
 
-                        (
-                            Some(bigtable_ledger_storage),
-                            bigtable_ledger_upload_service,
-                        )
-                    })
-                    .unwrap_or_else(|err| {
-                        error!("Failed to initialize BigTable ledger storage: {:?}", err);
-                        (None, None)
-                    })
-            } else {
-                (None, None)
+                            (
+                                Some(bigtable_ledger_storage),
+                                bigtable_ledger_upload_service,
+                            )
+                        })
+                        .unwrap_or_else(|err| {
+                            error!("Failed to initialize BigTable ledger storage: {:?}", err);
+                            (None, None)
+                        })
+                }
+                _ => (None, None),
             };
 
         let full_api = config.full_api;
@@ -891,12 +893,13 @@ impl JsonRpcService {
             .register_exit(Box::new(move || {
                 close_handle_.close();
             }));
+        let client_updater = Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>;
         Ok(Self {
             thread_hdl,
             #[cfg(test)]
             request_processor: test_request_processor,
             close_handle: Some(close_handle),
-            client_updater: Arc::new(client) as Arc<dyn NotifyKeyUpdate + Send + Sync>,
+            client_updater,
         })
     }
 
@@ -1238,12 +1241,15 @@ mod tests {
 
         // File does not exist => request should fail.
         let action = rrm.process_file_get(DEFAULT_GENESIS_DOWNLOAD_PATH);
-        if let RequestMiddlewareAction::Respond { response, .. } = action {
-            let response = runtime.block_on(response);
-            let response = response.unwrap();
-            assert_ne!(response.status(), 200);
-        } else {
-            panic!("Unexpected RequestMiddlewareAction variant");
+        match action {
+            RequestMiddlewareAction::Respond { response, .. } => {
+                let response = runtime.block_on(response);
+                let response = response.unwrap();
+                assert_ne!(response.status(), 200);
+            }
+            _ => {
+                panic!("Unexpected RequestMiddlewareAction variant");
+            }
         }
 
         {
@@ -1253,12 +1259,15 @@ mod tests {
 
         // Normal file exist => request should succeed.
         let action = rrm.process_file_get(DEFAULT_GENESIS_DOWNLOAD_PATH);
-        if let RequestMiddlewareAction::Respond { response, .. } = action {
-            let response = runtime.block_on(response);
-            let response = response.unwrap();
-            assert_eq!(response.status(), 200);
-        } else {
-            panic!("Unexpected RequestMiddlewareAction variant");
+        match action {
+            RequestMiddlewareAction::Respond { response, .. } => {
+                let response = runtime.block_on(response);
+                let response = response.unwrap();
+                assert_eq!(response.status(), 200);
+            }
+            _ => {
+                panic!("Unexpected RequestMiddlewareAction variant");
+            }
         }
 
         std::fs::remove_file(&genesis_path).unwrap();
@@ -1270,12 +1279,15 @@ mod tests {
 
         // File is a symbolic link => request should fail.
         let action = rrm.process_file_get(DEFAULT_GENESIS_DOWNLOAD_PATH);
-        if let RequestMiddlewareAction::Respond { response, .. } = action {
-            let response = runtime.block_on(response);
-            let response = response.unwrap();
-            assert_ne!(response.status(), 200);
-        } else {
-            panic!("Unexpected RequestMiddlewareAction variant");
+        match action {
+            RequestMiddlewareAction::Respond { response, .. } => {
+                let response = runtime.block_on(response);
+                let response = response.unwrap();
+                assert_ne!(response.status(), 200);
+            }
+            _ => {
+                panic!("Unexpected RequestMiddlewareAction variant");
+            }
         }
     }
 }

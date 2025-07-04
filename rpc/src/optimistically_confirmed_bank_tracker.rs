@@ -280,34 +280,43 @@ impl OptimisticallyConfirmedBankTracker {
         match notification {
             BankNotification::OptimisticallyConfirmed(slot) => {
                 let bank = bank_forks.read().unwrap().get(slot);
-                if let Some(bank) = bank {
-                    let mut w_optimistically_confirmed_bank =
-                        optimistically_confirmed_bank.write().unwrap();
+                match bank {
+                    Some(bank) => {
+                        let mut w_optimistically_confirmed_bank =
+                            optimistically_confirmed_bank.write().unwrap();
 
-                    if bank.slot() > w_optimistically_confirmed_bank.bank.slot() && bank.is_frozen()
-                    {
-                        w_optimistically_confirmed_bank.bank = bank.clone();
+                        if bank.slot() > w_optimistically_confirmed_bank.bank.slot()
+                            && bank.is_frozen()
+                        {
+                            w_optimistically_confirmed_bank.bank = bank.clone();
+                        }
+
+                        if slot > *highest_confirmed_slot {
+                            Self::notify_or_defer_confirmed_banks(
+                                subscriptions,
+                                bank_forks,
+                                bank,
+                                *highest_confirmed_slot,
+                                last_notified_confirmed_slot,
+                                pending_optimistically_confirmed_banks,
+                                slot_notification_subscribers,
+                                prioritization_fee_cache,
+                            );
+
+                            *highest_confirmed_slot = slot;
+                        }
+                        drop(w_optimistically_confirmed_bank);
                     }
-
-                    if slot > *highest_confirmed_slot {
-                        Self::notify_or_defer_confirmed_banks(
-                            subscriptions,
-                            bank_forks,
-                            bank,
-                            *highest_confirmed_slot,
-                            last_notified_confirmed_slot,
-                            pending_optimistically_confirmed_banks,
-                            slot_notification_subscribers,
-                            prioritization_fee_cache,
-                        );
-
-                        *highest_confirmed_slot = slot;
+                    _ => {
+                        if slot > bank_forks.read().unwrap().root() {
+                            pending_optimistically_confirmed_banks.insert(slot);
+                        } else {
+                            inc_new_counter_info!(
+                                "dropped-already-rooted-optimistic-bank-notification",
+                                1
+                            );
+                        }
                     }
-                    drop(w_optimistically_confirmed_bank);
-                } else if slot > bank_forks.read().unwrap().root() {
-                    pending_optimistically_confirmed_banks.insert(slot);
-                } else {
-                    inc_new_counter_info!("dropped-already-rooted-optimistic-bank-notification", 1);
                 }
 
                 // Send slot notification regardless of whether the bank is replayed
