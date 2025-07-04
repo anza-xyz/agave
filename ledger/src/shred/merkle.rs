@@ -1299,10 +1299,11 @@ fn finish_erasure_batch(
         debug_assert!(shred.verify(&keypair.pubkey()));
         debug_assert_matches!(shred.sanitize(), Ok(()));
         // Assert that shred payload is fully populated.
-        debug_assert_eq!(shred, {
+        let expected = {
             let shred = shred.payload().clone();
-            &Shred::from_payload(shred).unwrap()
-        });
+            Shred::from_payload(shred).unwrap()
+        };
+        debug_assert_eq!(shred, &expected);
     }
     Ok(root)
 }

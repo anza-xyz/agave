@@ -3405,14 +3405,15 @@ impl Blockstore {
         let mut get_initial_slot_timer = Measure::start("get_initial_slot_timer");
         let mut signatures = self.find_address_signatures_for_slot(address, slot)?;
         signatures.reverse();
-        if let Some(excluded_signatures) = before_excluded_signatures.take() {
-            address_signatures.extend(
+        match before_excluded_signatures.take() {
+            Some(excluded_signatures) => address_signatures.extend(
                 signatures
                     .into_iter()
                     .filter(|(_, signature)| !excluded_signatures.contains(signature)),
-            )
-        } else {
-            address_signatures.append(&mut signatures);
+            ),
+            _ => {
+                address_signatures.append(&mut signatures);
+            }
         }
         get_initial_slot_timer.stop();
 
@@ -4568,26 +4569,27 @@ impl Blockstore {
         // Check if we've already inserted the slot metadata for this shred's slot
         slot_meta_working_set.entry(slot).or_insert_with(|| {
             // Store a 2-tuple of the metadata (working copy, backup copy)
-            if let Some(mut meta) = self
+            match self
                 .meta_cf
                 .get(slot)
                 .expect("Expect database get to succeed")
             {
-                let backup = Some(meta.clone());
-                // If parent_slot == None, then this is one of the orphans inserted
-                // during the chaining process, see the function find_slot_meta_in_cached_state()
-                // for details. Slots that are orphans are missing a parent_slot, so we should
-                // fill in the parent now that we know it.
-                if meta.is_orphan() {
-                    meta.parent_slot = Some(parent_slot);
-                }
+                Some(mut meta) => {
+                    let backup = Some(meta.clone());
+                    // If parent_slot == None, then this is one of the orphans inserted
+                    // during the chaining process, see the function find_slot_meta_in_cached_state()
+                    // for details. Slots that are orphans are missing a parent_slot, so we should
+                    // fill in the parent now that we know it.
+                    if meta.is_orphan() {
+                        meta.parent_slot = Some(parent_slot);
+                    }
 
-                SlotMetaWorkingSetEntry::new(Rc::new(RefCell::new(meta)), backup)
-            } else {
-                SlotMetaWorkingSetEntry::new(
+                    SlotMetaWorkingSetEntry::new(Rc::new(RefCell::new(meta)), backup)
+                }
+                _ => SlotMetaWorkingSetEntry::new(
                     Rc::new(RefCell::new(SlotMeta::new(slot, Some(parent_slot)))),
                     None,
-                )
+                ),
             }
         })
     }
@@ -4626,13 +4628,16 @@ impl Blockstore {
         slot: Slot,
         insert_map: &mut HashMap<u64, Rc<RefCell<SlotMeta>>>,
     ) -> Result<Rc<RefCell<SlotMeta>>> {
-        if let Some(slot_meta) = self.meta_cf.get(slot)? {
-            insert_map.insert(slot, Rc::new(RefCell::new(slot_meta)));
-        } else {
-            // If this slot doesn't exist, make a orphan slot. This way we
-            // remember which slots chained to this one when we eventually get a real shred
-            // for this slot
-            insert_map.insert(slot, Rc::new(RefCell::new(SlotMeta::new_orphan(slot))));
+        match self.meta_cf.get(slot)? {
+            Some(slot_meta) => {
+                insert_map.insert(slot, Rc::new(RefCell::new(slot_meta)));
+            }
+            _ => {
+                // If this slot doesn't exist, make a orphan slot. This way we
+                // remember which slots chained to this one when we eventually get a real shred
+                // for this slot
+                insert_map.insert(slot, Rc::new(RefCell::new(SlotMeta::new_orphan(slot))));
+            }
         }
         Ok(insert_map.get(&slot).unwrap().clone())
     }

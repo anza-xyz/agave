@@ -289,15 +289,12 @@ pub trait ColumnIndexDeprecation: Column {
     fn convert_index(deprecated_index: Self::DeprecatedIndex) -> Self::Index;
 
     fn index(key: &[u8]) -> Self::Index {
-        if let Ok(index) = Self::try_current_index(key) {
-            index
-        } else if let Ok(index) = Self::try_deprecated_index(key) {
-            Self::convert_index(index)
-        } else {
-            // Way back in the day, we broke the TransactionStatus column key. This fallback
-            // preserves the existing logic for ancient keys, but realistically should never be
-            // executed.
-            Self::as_index(0)
+        match Self::try_current_index(key) {
+            Ok(index) => index,
+            Err(_) => match Self::try_deprecated_index(key) {
+                Ok(index) => Self::convert_index(index),
+                Err(_) => Self::as_index(0),
+            },
         }
     }
 }

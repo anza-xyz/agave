@@ -1079,11 +1079,13 @@ mod tests {
         let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
         let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let keypair = Keypair::new();
         let mut data = vec![0u8; data_size];
         rng.fill(&mut data[..]);
         merkle::make_shreds_from_data(
             &thread_pool,
-            &Keypair::new(),
+            &keypair,
             chained_merkle_root,
             &data[..],
             slot,
@@ -1093,7 +1095,7 @@ mod tests {
             is_last_in_slot,
             rng.gen_range(0..671), // next_shred_index
             rng.gen_range(0..781), // next_code_index
-            &ReedSolomonCache::default(),
+            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         )
     }
