@@ -56,7 +56,7 @@ pub struct CiphertextCiphertextEqualityProof {
 impl CiphertextCiphertextEqualityProof {
     /// Creates a ciphertext-ciphertext equality proof.
     ///
-    /// The function does *not* hash the public key, ciphertext, or commitment into the transcript.
+    /// The function does *not* hash the public keys, first ciphertext, or second ciphertext into the transcript.
     /// For security, the caller (the main protocol) should hash these public components prior to
     /// invoking this constructor.
     ///

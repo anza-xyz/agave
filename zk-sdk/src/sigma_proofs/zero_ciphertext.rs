@@ -1,6 +1,6 @@
 //! The zero-ciphertext sigma proof system.
 //!
-//! The protocol guarantees computationally soundness (by the hardness of discrete log) and perfect
+//! The protocol guarantees computational soundness (by the hardness of discrete log) and perfect
 //! zero-knowledge in the random oracle model.
 
 #[cfg(target_arch = "wasm32")]
