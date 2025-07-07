@@ -304,11 +304,7 @@ impl SimulatorLoopLogger {
                     } else {
                         "-"
                     },
-                    if elapsed_simulation_time > elapsed_event_time {
-                        elapsed_simulation_time - elapsed_event_time
-                    } else {
-                        elapsed_event_time - elapsed_simulation_time
-                    },
+                    elapsed_simulation_time.abs_diff(elapsed_event_time),
                     elapsed_simulation_time,
                     elapsed_event_time,
                 );
