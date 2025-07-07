@@ -173,6 +173,8 @@ pub struct StreamerStats {
     pub(crate) total_bytes_sent_to_consumer: AtomicUsize,
     pub(crate) total_chunks_processed_by_batcher: AtomicUsize,
     pub(crate) total_packets_too_small: AtomicUsize,
+    pub(crate) total_packets_deduped_by_batcher: AtomicUsize,
+    pub(crate) total_chunks_deduped_by_batcher: AtomicUsize,
     pub(crate) total_stream_read_errors: AtomicUsize,
     pub(crate) total_stream_read_timeouts: AtomicUsize,
     pub(crate) num_evictions: AtomicUsize,
@@ -428,6 +430,18 @@ impl StreamerStats {
             (
                 "total_packets_too_small",
                 self.total_packets_too_small.swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "total_packets_deduped_by_batcher",
+                self.total_packets_deduped_by_batcher
+                    .swap(0, Ordering::Relaxed),
+                i64
+            ),
+            (
+                "total_chunks_deduped_by_batcher",
+                self.total_chunks_deduped_by_batcher
+                    .swap(0, Ordering::Relaxed),
                 i64
             ),
             (

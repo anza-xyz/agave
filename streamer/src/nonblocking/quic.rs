@@ -874,6 +874,77 @@ fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, fro
     }
 }
 
+const LIKE_SIGNATURE_OFFSET: usize = 1;
+const LIKE_SIGNATURE_LEN: usize = solana_signature::SIGNATURE_BYTES;
+
+type LikeSignature = [u8; LIKE_SIGNATURE_LEN];
+struct PacketBatchDeduper {
+    buffer: [[u8; LIKE_SIGNATURE_LEN]; PACKETS_PER_BATCH],
+    len: usize,
+}
+
+impl PacketBatchDeduper {
+    fn new() -> Self {
+        Self {
+            buffer: [[0; LIKE_SIGNATURE_LEN]; PACKETS_PER_BATCH],
+            len: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    fn insert(&mut self, new_signature: &LikeSignature) -> bool {
+        if self.len > 0 {
+            for signature in self.buffer.iter().take(self.len) {
+                if *signature == *new_signature {
+                    return false;
+                }
+            }
+        }
+        if self.len < self.buffer.len() {
+            self.buffer[self.len] = *new_signature;
+            self.len += 1;
+        }
+        true
+    }
+}
+
+fn get_signature_slice_from_chunks<'a>(
+    packet_accumulator: &'a PacketAccumulator,
+    signature_buffer_across_chunks: &'a mut [u8; LIKE_SIGNATURE_LEN], // avoid allocations
+) -> &'a [u8] {
+    assert!(packet_accumulator.meta.size >= LIKE_SIGNATURE_OFFSET + LIKE_SIGNATURE_LEN);
+    if packet_accumulator.chunks.len() == 1 {
+        return &packet_accumulator.chunks[0]
+            [LIKE_SIGNATURE_OFFSET..LIKE_SIGNATURE_OFFSET + LIKE_SIGNATURE_LEN];
+    }
+    let mut packet_offset = LIKE_SIGNATURE_OFFSET;
+    let mut signature_offset = 0;
+    for chunk in packet_accumulator.chunks.iter() {
+        if chunk.len() >= packet_offset + LIKE_SIGNATURE_LEN - signature_offset {
+            if signature_offset == 0 {
+                return &chunk[packet_offset..packet_offset + LIKE_SIGNATURE_LEN];
+            } else {
+                assert_eq!(packet_offset, 0);
+                signature_buffer_across_chunks[signature_offset..LIKE_SIGNATURE_LEN]
+                    .copy_from_slice(&chunk[0..LIKE_SIGNATURE_LEN - signature_offset]);
+            }
+            break;
+        } else if chunk.len() <= packet_offset {
+            packet_offset -= chunk.len();
+        } else {
+            signature_buffer_across_chunks
+                [signature_offset..signature_offset + chunk.len() - packet_offset]
+                .copy_from_slice(&chunk[packet_offset..chunk.len()]);
+            signature_offset += chunk.len() - packet_offset;
+            packet_offset = 0;
+        }
+    }
+    &signature_buffer_across_chunks[..]
+}
+
 // Holder(s) of the Sender<PacketAccumulator> on the other end should not
 // wait for this function to exit
 fn packet_batch_sender(
@@ -885,10 +956,13 @@ fn packet_batch_sender(
 ) {
     trace!("enter packet_batch_sender");
     let mut batch_start_time = Instant::now();
+    let mut signature_buffer_across_chunks = [0; LIKE_SIGNATURE_LEN];
+    let mut deduper = PacketBatchDeduper::new();
     loop {
         let mut packet_perf_measure: Vec<([u8; 64], Instant)> = Vec::default();
         let mut packet_batch = BytesPacketBatch::with_capacity(PACKETS_PER_BATCH);
         let mut total_bytes: usize = 0;
+        deduper.clear();
 
         stats
             .total_packet_batches_allocated
@@ -959,6 +1033,24 @@ fn packet_batch_sender(
                     batch_start_time = Instant::now();
                 }
 
+                let discard = {
+                    let signature_slice = get_signature_slice_from_chunks(
+                        &packet_accumulator,
+                        &mut signature_buffer_across_chunks,
+                    );
+                    if !deduper.insert(signature_slice.try_into().unwrap()) {
+                        stats
+                            .total_chunks_deduped_by_batcher
+                            .fetch_add(packet_accumulator.chunks.len(), Ordering::Relaxed);
+                        stats
+                            .total_packets_deduped_by_batcher
+                            .fetch_add(1, Ordering::Relaxed);
+                        true
+                    } else {
+                        false
+                    }
+                };
+
                 // 86% of transactions/packets come in one chunk. In that case,
                 // we can just move the chunk to the `Packet` and no copy is
                 // made.
@@ -966,28 +1058,33 @@ fn packet_batch_sender(
                 // them into one `Bytes` buffer. We make a copy once, with
                 // intention to not do it again.
                 let num_chunks = packet_accumulator.chunks.len();
-                let mut packet = if packet_accumulator.chunks.len() == 1 {
-                    BytesPacket::new(
-                        packet_accumulator.chunks.pop().expect("expected one chunk"),
-                        packet_accumulator.meta,
-                    )
-                } else {
-                    let size: usize = packet_accumulator.chunks.iter().map(Bytes::len).sum();
-                    let mut buf = BytesMut::with_capacity(size);
-                    for chunk in packet_accumulator.chunks {
-                        buf.put_slice(&chunk);
+                if !discard {
+                    let mut packet = if packet_accumulator.chunks.len() == 1 {
+                        BytesPacket::new(
+                            packet_accumulator.chunks.pop().expect("expected one chunk"),
+                            packet_accumulator.meta,
+                        )
+                    } else {
+                        let size: usize = packet_accumulator.chunks.iter().map(Bytes::len).sum();
+                        let mut buf = BytesMut::with_capacity(size);
+                        for chunk in packet_accumulator.chunks {
+                            buf.put_slice(&chunk);
+                        }
+                        BytesPacket::new(buf.freeze(), packet_accumulator.meta)
+                    };
+
+                    total_bytes += packet.meta().size;
+
+                    if let Some(signature) =
+                        signature_if_should_track_packet(&packet).ok().flatten()
+                    {
+                        packet_perf_measure.push((*signature, packet_accumulator.start_time));
+                        // we set the PERF_TRACK_PACKET on
+                        packet.meta_mut().set_track_performance(true);
                     }
-                    BytesPacket::new(buf.freeze(), packet_accumulator.meta)
-                };
-
-                total_bytes += packet.meta().size;
-
-                if let Some(signature) = signature_if_should_track_packet(&packet).ok().flatten() {
-                    packet_perf_measure.push((*signature, packet_accumulator.start_time));
-                    // we set the PERF_TRACK_PACKET on
-                    packet.meta_mut().set_track_performance(true);
+                    packet_batch.push(packet);
                 }
-                packet_batch.push(packet);
+                // if discarded, should they be counted as processed?
                 stats
                     .total_chunks_processed_by_batcher
                     .fetch_add(num_chunks, Ordering::Relaxed);
