@@ -234,12 +234,8 @@ fn do_search(
                     );
                 }
             }
-        }).expect(
-            &format!(
-                "failed to scan accounts in file '{}'",
-                file.display(),
-            )
-        );
+        }).unwrap_or_else(|err| panic!("failed to scan accounts in file '{}': {err}",
+                         file.display()));
     });
 
     Ok(())
