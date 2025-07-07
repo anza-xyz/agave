@@ -411,7 +411,7 @@ mod tests {
             snapshot_utils,
         },
         dashmap::DashSet,
-<<<<<<< HEAD
+        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
         solana_sdk::{
             account::{AccountSharedData, ReadableAccount, WritableAccount},
             bpf_loader_upgradeable::{self, UpgradeableLoaderState},
@@ -420,16 +420,6 @@ mod tests {
             signer::Signer,
             stake,
         },
-=======
-        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
-        solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
-        solana_genesis_config::{create_genesis_config, GenesisConfig},
-        solana_loader_v3_interface::state::UpgradeableLoaderState,
-        solana_pubkey::Pubkey,
-        solana_sdk_ids::bpf_loader_upgradeable,
-        solana_signer::Signer,
-        solana_stake_interface as stake,
->>>>>>> f1f21ee68 (Recalculates the accounts lt hash when creating minimized snapshots (#6843))
         std::sync::Arc,
         tempfile::TempDir,
     };
