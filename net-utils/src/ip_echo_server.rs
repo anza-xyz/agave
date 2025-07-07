@@ -158,8 +158,8 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
         TcpListener::from_std(tcp_listener).expect("Failed to convert std::TcpListener");
 
     loop {
-        let accept_result = tcp_listener.accept().await;
-        match accept_result {
+        let connection = tcp_listener.accept().await;
+        match connection {
             Ok((socket, peer_addr)) => {
                 runtime::Handle::current().spawn(async move {
                     if let Err(err) = process_connection(socket, peer_addr, shred_version).await {

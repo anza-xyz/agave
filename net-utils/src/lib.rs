@@ -501,12 +501,12 @@ pub fn bind_two_in_range_with_offset_and_config(
     }
 
     for port in range.0..range.1 {
-        let first_bind_result = bind_to_with_config(ip_addr, port, sock1_config);
-        if let Ok(first_bind) = first_bind_result {
+        let first_bind = bind_to_with_config(ip_addr, port, sock1_config);
+        if let Ok(first_bind) = first_bind {
             if range.1.saturating_sub(port) >= offset {
-                let second_bind_result =
+                let second_bind =
                     bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config);
-                if let Ok(second_bind) = second_bind_result {
+                if let Ok(second_bind) = second_bind {
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
