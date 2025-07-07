@@ -555,7 +555,7 @@ impl JsonRpcRequestProcessor {
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
             feature_set: bank.feature_set.runtime_features(),
-            rent_collector: None,
+            rent: None,
         };
 
         let sanitized_output = self
