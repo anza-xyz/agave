@@ -1257,6 +1257,17 @@ async fn handle_chunks(
         return Err(());
     }
 
+    // (1 + 64) + (1 + 1 + 1) + (1 + 32) + 32 + 1 = 134 - no instructions
+    // (32 - program account) + (1 + (1 + 0) + (1 + 0) = 3 - the smallest instruction) = 35
+    // 134 + 35 = 169
+    const MINIMUM_SIGNIFICANT_TRANSACTION_SIZE: usize = 169;
+    if accum.meta.size < MINIMUM_SIGNIFICANT_TRANSACTION_SIZE {
+        stats
+            .total_packets_too_small
+            .fetch_add(1, Ordering::Relaxed);
+        return Err(());
+    }
+
     // done receiving chunks
     let bytes_sent = accum.meta.size;
     let chunks_sent = accum.chunks.len();
