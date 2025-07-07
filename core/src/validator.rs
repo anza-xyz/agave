@@ -197,8 +197,8 @@ impl BlockProductionMethod {
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum TransactionStructure {
-    #[default]
     Sdk,
+    #[default]
     View,
 }
 
