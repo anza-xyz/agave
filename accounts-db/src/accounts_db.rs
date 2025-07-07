@@ -6278,6 +6278,55 @@ impl AccountsDb {
         AccountsLtHash(lt_hash)
     }
 
+    /// Calculates the capitalization
+    ///
+    /// Note, this is *very* expensive!  It walks the whole accounts index,
+    /// account-by-account, summing each account's balance.
+    ///
+    /// Only intended to be called at startup by ledger-tool or tests.
+    pub fn calculate_capitalization_at_startup_from_index(
+        &self,
+        ancestors: &Ancestors,
+        startup_slot: Slot,
+    ) -> u64 {
+        self.accounts_index
+            .account_maps
+            .par_iter()
+            .map(|accounts_index_bin| {
+                accounts_index_bin
+                    .keys()
+                    .into_iter()
+                    .map(|pubkey| {
+                        self.accounts_index
+                            .get_with_and_then(
+                                &pubkey,
+                                Some(ancestors),
+                                Some(startup_slot),
+                                false,
+                                |(slot, account_info)| {
+                                    (!account_info.is_zero_lamport()).then(|| {
+                                        self.get_account_accessor(
+                                            slot,
+                                            &pubkey,
+                                            &account_info.storage_location(),
+                                        )
+                                        .get_loaded_account(|loaded_account| {
+                                            loaded_account.lamports()
+                                        })
+                                        // SAFETY: The index said this pubkey exists, so
+                                        // there must be an account to load.
+                                        .unwrap()
+                                    })
+                                },
+                            )
+                            .flatten()
+                            .unwrap_or(0)
+                    })
+                    .sum::<u64>()
+            })
+            .sum()
+    }
+
     /// This is only valid to call from tests.
     /// run the accounts hash calculation and store the results
     pub fn update_accounts_hash_for_tests(

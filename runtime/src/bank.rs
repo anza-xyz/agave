@@ -5512,9 +5512,14 @@ impl Bank {
         Ok(())
     }
 
-    /// only called from ledger-tool or tests
-    fn calculate_capitalization(&self, debug_verify: bool) -> u64 {
-        let is_startup = true;
+    /// Calculates and returns the capitalization.
+    ///
+    /// Note, this is *very* expensive!  It walks the whole accounts index,
+    /// account-by-account, summing each account's balance.
+    ///
+    /// Only intended to be called at startup by ledger-tool or tests.
+    /// (cannot be made DCOU due to snapshot-minimizer)
+    pub fn calculate_capitalization(&self) -> u64 {
         self.rc
             .accounts
             .accounts_db
@@ -5523,44 +5528,22 @@ impl Bank {
         self.rc
             .accounts
             .accounts_db
-            .update_accounts_hash_with_verify_from(
-                // we have to use the index since the slot could be in the write cache still
-                CalcAccountsHashDataSource::IndexForTests,
-                debug_verify,
-                self.slot(),
-                &self.ancestors,
-                None,
-                self.epoch_schedule(),
-                is_startup,
-            )
-            .1
+            .calculate_capitalization_at_startup_from_index(&self.ancestors, self.slot())
     }
 
-    /// only called from tests or ledger tool
-    pub fn calculate_and_verify_capitalization(&self, debug_verify: bool) -> bool {
-        let calculated = self.calculate_capitalization(debug_verify);
-        let expected = self.capitalization();
-        if calculated == expected {
-            true
-        } else {
-            warn!(
-                "Capitalization mismatch: calculated: {} != expected: {}",
-                calculated, expected
-            );
-            false
-        }
-    }
-
-    /// Forcibly overwrites current capitalization by actually recalculating accounts' balances.
-    /// This should only be used for developing purposes.
+    /// Forcibly overwrites capitalization by recalculating accounts' balances.
+    ///
+    /// Returns the previous capitalization.
+    ///
+    /// Note, this is *very* expensive!  It walks the whole accounts index,
+    /// account-by-account, summing each account's balance.
+    ///
+    /// Only intended to be called at startup by ledger-tool or tests.
+    /// (cannot be made DCOU due to snapshot-minimizer)
     pub fn set_capitalization(&self) -> u64 {
         let old = self.capitalization();
-        // We cannot debug verify the hash calculation here because calculate_capitalization will use the index calculation due to callers using the write cache.
-        // debug_verify only exists as an extra debugging step under the assumption that this code path is only used for tests. But, this is used by ledger-tool create-snapshot
-        // for example.
-        let debug_verify = false;
         self.capitalization
-            .store(self.calculate_capitalization(debug_verify), Relaxed);
+            .store(self.calculate_capitalization(), Relaxed);
         old
     }
 

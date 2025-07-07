@@ -469,7 +469,7 @@ fn assert_capitalization_diff(
     let new = bank.capitalization();
     if asserter(old, new) {
         add_root_and_flush_write_cache(bank);
-        assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+        assert_eq!(bank.capitalization(), bank.calculate_capitalization());
     }
 }
 
@@ -1374,7 +1374,7 @@ where
     add_root_and_flush_write_cache(&bank0);
     add_root_and_flush_write_cache(&bank1);
     add_root_and_flush_write_cache(&bank2);
-    assert!(bank2.calculate_and_verify_capitalization(true));
+    assert_eq!(bank2.capitalization(), bank2.calculate_capitalization());
 }
 
 fn do_test_bank_update_rewards_determinism() -> u64 {
@@ -1451,7 +1451,7 @@ fn do_test_bank_update_rewards_determinism() -> u64 {
     bank1.freeze();
     add_root_and_flush_write_cache(&bank);
     add_root_and_flush_write_cache(&bank1);
-    assert!(bank1.calculate_and_verify_capitalization(true));
+    assert_eq!(bank1.capitalization(), bank1.calculate_capitalization());
 
     // verify voting and staking rewards are recorded
     let rewards = bank1.rewards.read().unwrap();
@@ -3253,7 +3253,7 @@ fn test_bank_update_sysvar_account() {
         let bank1 = Arc::new(Bank::new_for_tests(&genesis_config));
         if pass == 0 {
             add_root_and_flush_write_cache(&bank1);
-            assert_eq!(bank1.calculate_capitalization(true), bank1.capitalization());
+            assert_eq!(bank1.calculate_capitalization(), bank1.capitalization());
             continue;
         }
 
@@ -4147,7 +4147,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         assert!(bank.stakes_cache.stakes().stake_delegations().is_empty());
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.calculate_capitalization(true), bank.capitalization());
+            assert_eq!(bank.calculate_capitalization(), bank.capitalization());
             continue;
         }
 
@@ -4164,7 +4164,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         assert!(!bank.stakes_cache.stakes().stake_delegations().is_empty());
         if pass == 1 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.calculate_capitalization(true), bank.capitalization());
+            assert_eq!(bank.calculate_capitalization(), bank.capitalization());
             continue;
         }
 
@@ -4187,7 +4187,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         assert!(bank.stakes_cache.stakes().stake_delegations().is_empty());
         if pass == 2 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.calculate_capitalization(true), bank.capitalization());
+            assert_eq!(bank.calculate_capitalization(), bank.capitalization());
             continue;
         }
         assert_eq!(
@@ -4213,7 +4213,7 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
             assert!(stakes.vote_accounts().as_ref().is_empty());
         }
         assert!(bank.stakes_cache.stakes().stake_delegations().is_empty());
-        assert_eq!(bank.calculate_capitalization(true), bank.capitalization());
+        assert_eq!(bank.calculate_capitalization(), bank.capitalization());
         assert_eq!(
             "mock_program1",
             String::from_utf8_lossy(bank.get_account(&vote_id).unwrap_or_default().data())
@@ -6150,7 +6150,7 @@ fn test_add_builtin_account_inherited_cap_while_replacing() {
         bank.add_builtin_account("mock_program", &program_id);
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_eq!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
 
@@ -6158,19 +6158,19 @@ fn test_add_builtin_account_inherited_cap_while_replacing() {
         bank.withdraw(&mint_keypair.pubkey(), 10).unwrap();
         if pass == 1 {
             add_root_and_flush_write_cache(&bank);
-            assert_ne!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_ne!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
         test_utils::deposit(&bank, &program_id, 10).unwrap();
         if pass == 2 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_eq!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
 
         bank.add_builtin_account("mock_program v2", &program_id);
         add_root_and_flush_write_cache(&bank);
-        assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+        assert_eq!(bank.capitalization(), bank.calculate_capitalization());
     }
 }
 
@@ -6185,19 +6185,19 @@ fn test_add_builtin_account_squatted_while_not_replacing() {
         bank.withdraw(&mint_keypair.pubkey(), 10).unwrap();
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
-            assert_ne!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_ne!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
         test_utils::deposit(&bank, &program_id, 10).unwrap();
         if pass == 1 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_eq!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
 
         bank.add_builtin_account("mock_program", &program_id);
         add_root_and_flush_write_cache(&bank);
-        assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+        assert_eq!(bank.capitalization(), bank.calculate_capitalization());
     }
 }
 
@@ -6276,7 +6276,7 @@ fn test_add_precompiled_account_inherited_cap_while_replacing() {
         bank.add_precompiled_account(&program_id);
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_eq!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
 
@@ -6284,19 +6284,19 @@ fn test_add_precompiled_account_inherited_cap_while_replacing() {
         bank.withdraw(&mint_keypair.pubkey(), 10).unwrap();
         if pass == 1 {
             add_root_and_flush_write_cache(&bank);
-            assert_ne!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_ne!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
         test_utils::deposit(&bank, &program_id, 10).unwrap();
         if pass == 2 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_eq!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
 
         bank.add_precompiled_account(&program_id);
         add_root_and_flush_write_cache(&bank);
-        assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+        assert_eq!(bank.capitalization(), bank.calculate_capitalization());
     }
 }
 
@@ -6312,20 +6312,20 @@ fn test_add_precompiled_account_squatted_while_not_replacing() {
         if pass == 0 {
             add_root_and_flush_write_cache(&bank);
 
-            assert_ne!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_ne!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
         test_utils::deposit(&bank, &program_id, 10).unwrap();
         if pass == 1 {
             add_root_and_flush_write_cache(&bank);
-            assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+            assert_eq!(bank.capitalization(), bank.calculate_capitalization());
             continue;
         }
 
         bank.add_precompiled_account(&program_id);
         add_root_and_flush_write_cache(&bank);
 
-        assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+        assert_eq!(bank.capitalization(), bank.calculate_capitalization());
     }
 }
 

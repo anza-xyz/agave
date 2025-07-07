@@ -529,8 +529,12 @@ fn minimize_bank_for_snapshot(
 }
 
 fn assert_capitalization(bank: &Bank) {
-    let debug_verify = true;
-    assert!(bank.calculate_and_verify_capitalization(debug_verify));
+    let calculated = bank.calculate_capitalization();
+    let expected = bank.capitalization();
+    assert_eq!(
+        calculated, expected,
+        "Capitalization mismatch: calculated: {calculated} != expected: {expected}",
+    );
 }
 
 fn load_banking_trace_events_or_exit(ledger_path: &Path) -> BankingTraceEvents {
