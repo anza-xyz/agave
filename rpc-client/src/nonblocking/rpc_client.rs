@@ -4726,7 +4726,7 @@ impl RpcClient {
     where
         T: serde::de::DeserializeOwned,
     {
-        assert!(params.is_array() || params.is_null());
+        assert!(params.is_array() || params.is_null() || params.is_object());
 
         let response = self
             .sender
