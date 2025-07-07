@@ -638,10 +638,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address())
-            .and_then(|ref current_nonce_account| {
-                system_program::check_id(current_nonce_account.owner()).then_some(())?;
-                StateMut::<NonceVersions>::state(current_nonce_account).ok()
+            .load_transaction_account(nonce_info.address(), true)
+            .and_then(|ref current_nonce| {
+                system_program::check_id(current_nonce.account.owner()).then_some(())?;
+                StateMut::<NonceVersions>::state(&current_nonce.account).ok()
             })
             .and_then(
                 |current_nonce_versions| match current_nonce_versions.state() {
