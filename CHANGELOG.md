@@ -33,6 +33,7 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 * Reading snapshot archives requires increased `memlock` limits - recommended setting is `LimitMEMLOCK=2000000000` in systemd service configuration. Lack of sufficient limit will result slower startup times.
+* `--transaction-structure view` is now the default.
 
 ## 2.3.0
 
