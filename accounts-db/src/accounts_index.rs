@@ -77,8 +77,9 @@ pub type SlotList<T> = Vec<(Slot, T)>;
 pub type RefCount = u64;
 pub type AtomicRefCount = AtomicU64;
 
+/// values returned from `insert_new_if_missing_into_primary_index()`
 #[derive(Default, Debug, PartialEq, Eq)]
-pub(crate) struct GenerateIndexResult {
+pub(crate) struct InsertNewIfMissingIntoPrimaryIndexInfo {
     /// number of accounts inserted in the index
     pub count: usize,
     /// Number of accounts added to the index that didn't already exist in the index
@@ -1366,12 +1367,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     // Can save time when inserting lots of new keys.
     // But, does NOT update secondary index
     // This is designed to be called at startup time.
-    // returns (insertion_time_us, GenerateIndexResult)
+    // returns (insertion_time_us, InsertNewIfMissingIntoPrimaryIndexInfo)
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
         mut items: Vec<(Pubkey, T)>,
-    ) -> (u64, GenerateIndexResult) {
+    ) -> (u64, InsertNewIfMissingIntoPrimaryIndexInfo) {
         let mut insert_time = Measure::start("insert_into_primary_index");
 
         let use_disk = self.storage.storage.is_disk_index_enabled();
@@ -1465,7 +1466,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
         (
             insert_time.as_us(),
-            GenerateIndexResult {
+            InsertNewIfMissingIntoPrimaryIndexInfo {
                 count,
                 num_did_not_exist,
                 num_existed_in_mem,
