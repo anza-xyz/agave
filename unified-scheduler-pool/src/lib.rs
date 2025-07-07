@@ -499,8 +499,14 @@ where
 
                     if let Some(pooled) = inner.peek_pooled() {
                         if pooled.is_overgrown() {
-                            // This is very unlikely code path to address a theoretically-possible
-                            // attack vector of unbounded mem consumption.
+                            // This code path will be touched sometimes when a given inactive
+                            // idling scheduler becomes overgrown due to buffering, which
+                            // previously passed the overgrown check at the last scheduler
+                            // returning.
+                            //
+                            // At the same time, this code path addresses a theoretically-possible
+                            // attack vector of unbounded mem consumption, which is very unlikely
+                            // to mount a successful one as explained below:
                             //
                             // To make that happen, banking stage would need to be tricked into
                             // returning BankingStageStatus::Active to start buffering on idling,
@@ -509,7 +515,8 @@ where
                             // taking that idling-yet-buffering bp scheduler out of SchedulerPool
                             // at all for the tpu bank at the upcoming leader slots, for quite
                             // extended duration of time. In this way, it's possible to bypass the
-                            // overgrown check on scheduler returning altogether.
+                            // overgrown check on scheduler returning altogether, resulting in no
+                            // discarding of buffered tasks at all.
                             //
                             // This code-path mitigates that possibility. That's because it's not
                             // possible to see BankingStageStatus::Active at the every iteration of
