@@ -44,6 +44,7 @@ pub(crate) struct TransactionStateContainer<Tx: TransactionWithMeta> {
     capacity: usize,
     priority_queue: MinMaxHeap<TransactionPriorityId>,
     id_to_transaction_state: Slab<TransactionState<Tx>>,
+    held_transactions: Vec<TransactionPriorityId>,
 }
 
 #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -94,6 +95,8 @@ pub(crate) trait StateContainer<Tx: TransactionWithMeta> {
     /// Remove transaction by id.
     fn remove_by_id(&mut self, id: TransactionId);
 
+    fn flush_held_transactions(&mut self);
+
     fn get_min_max_priority(&self) -> MinMaxResult<u64>;
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -110,6 +113,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
             capacity,
             priority_queue: MinMaxHeap::with_capacity(capacity + EXTRA_CAPACITY),
             id_to_transaction_state: Slab::with_capacity(capacity + EXTRA_CAPACITY),
+            held_transactions: Vec::with_capacity(capacity),
         }
     }
 
@@ -169,6 +173,12 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 
     fn remove_by_id(&mut self, id: TransactionId) {
         self.id_to_transaction_state.remove(id);
+    }
+
+    fn flush_held_transactions(&mut self) {
+        let mut held_transactions = core::mem::take(&mut self.held_transactions);
+        self.push_ids_into_queue(held_transactions.drain(..));
+        core::mem::swap(&mut self.held_transactions, &mut held_transactions);
     }
 
     fn get_min_max_priority(&self) -> MinMaxResult<u64> {
@@ -326,6 +336,11 @@ impl StateContainer<RuntimeTransactionView> for TransactionViewStateContainer {
     #[inline]
     fn remove_by_id(&mut self, id: TransactionId) {
         self.inner.remove_by_id(id);
+    }
+
+    #[inline]
+    fn flush_held_transactions(&mut self) {
+        self.inner.flush_held_transactions();
     }
 
     #[inline]
