@@ -306,11 +306,18 @@ pub struct BankingStageHelper {
     new_task_sender: Sender<NewTaskPayload>,
 }
 
-// AtomicUsize's fetch_add entails the wrapping semantics. So, it's needed to be rather
-// conservative to prevent overflowing from happening on production, under the constraint of not
-// compromising performance at all (i.e. no limit check on hot path and no d-cache pressure). With
-// these background given, it's exceedingly hard to conceive task id is alloted more than half of
-// usize during a single session (usually a slot).
+// AtomicUsize's fetch_add entails the wrapping semantics. So, address such an overflowing, under
+// the constraint of not compromising performance at all (i.e. no limit check on hot path and no
+// d-cache pressure): use a hard-coded unconditional number.
+// Note that this concern is of theoretical matter. As such, we introduce rather a naive limit with
+// great safety margin, considering relatively frequent check interval (a single session, usually a
+// slot). Regardless the aforementioned interval precondition, it's exceedingly hard to conceive
+// task id is alloted more than half of usize. That's because we'd still need to be running for
+// almost 300 years continuously to index BANKING_STAGE_MAX_TASK_ID txs at the rate of
+// 1_000_000_000/secs ingestion.
+// For the completeness of discussion, the existence of this check will alleviate the concern of
+// being part of more elaborated attacks with combination of unforeseen vulnerability like internal
+// amplification of banking packets.
 const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 
 impl BankingStageHelper {
