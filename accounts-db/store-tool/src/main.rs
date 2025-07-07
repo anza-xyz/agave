@@ -234,7 +234,7 @@ fn do_search(
                     );
                 }
             }
-        }).unwrap_or_else(|err| println!("failed to scan accounts in file '{}': {err}",
+        }).unwrap_or_else(|err| eprintln!("failed to scan accounts in file '{}': {err}",
                          file.display()));
     });
 
