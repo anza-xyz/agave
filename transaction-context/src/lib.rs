@@ -91,11 +91,11 @@ impl InstructionAccount {
     }
 
     pub fn is_signer(&self) -> bool {
-        self.is_signer == 1
+        self.is_signer != 0
     }
 
     pub fn is_writable(&self) -> bool {
-        self.is_writable == 1
+        self.is_writable != 0
     }
 
     pub fn set_is_signer(&mut self, value: bool) {
