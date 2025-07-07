@@ -322,9 +322,13 @@ pub fn execute(
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
+    if !tpu_use_quic {
+        warn!("TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from receiving transactions!");
+    }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
+        warn!("Submission of TPU transactions via UDP is deprecated.");
         true
     } else {
         DEFAULT_TPU_ENABLE_UDP

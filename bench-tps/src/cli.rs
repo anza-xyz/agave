@@ -499,6 +499,7 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
     }
 
     if matches.is_present("tpu_disable_quic") {
+        eprintln!("Warning: TPU over UDP is deprecated");
         args.use_quic = false;
     }
 
