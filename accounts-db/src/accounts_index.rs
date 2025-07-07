@@ -1405,7 +1405,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                 let next_pubkey = &items[next].0;
                 assert_ne!(
                     next_pubkey, last_pubkey,
-                    "Duplicate pub keys are not allowed within single slot items"
+                    "Accounts may only be stored once per slot: {slot}"
                 );
                 if bin_calc.bin_from_pubkey(next_pubkey) != pubkey_bin {
                     break;
@@ -1936,7 +1936,7 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic]
+    #[should_panic(expected = "Accounts may only be stored once per slot:")]
     fn test_insert_duplicates() {
         let key = solana_pubkey::new_rand();
         let pubkey = &key;
