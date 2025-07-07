@@ -358,7 +358,7 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::{
-            consumer::TARGET_NUM_TRANSACTIONS_PER_BATCH,
+            consumer::{RetryableIndex, TARGET_NUM_TRANSACTIONS_PER_BATCH},
             packet_deserializer::PacketDeserializer,
             scheduler_messages::{ConsumeWork, FinishedConsumeWork, TransactionBatchId},
             tests::create_slow_genesis_config,
@@ -879,7 +879,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: consume_work,
-                retryable_indexes: vec![1],
+                retryable_indexes: vec![RetryableIndex::new(1, true)],
             })
             .unwrap();
 
