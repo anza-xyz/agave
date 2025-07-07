@@ -181,7 +181,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
 
 define_accounts_db_test!(
     test_generate_index_duplicates_within_slot,
-    panic = "Duplicate pub keys are not allowed within single slot items",
+    panic = "Accounts may only be stored once per slot:",
     |db| {
         run_generate_index_duplicates_within_slot_test(db, false);
     }
@@ -189,7 +189,7 @@ define_accounts_db_test!(
 
 define_accounts_db_test!(
     test_generate_index_duplicates_within_slot_reverse,
-    panic = "Duplicate pub keys are not allowed within single slot items",
+    panic = "Accounts may only be stored once per slot:",
     |db| {
         run_generate_index_duplicates_within_slot_test(db, true);
     }
