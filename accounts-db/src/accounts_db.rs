@@ -8351,8 +8351,7 @@ impl AccountsDb {
     /// Used during generate_index() to:
     /// 1. get the _duplicate_ accounts data len from the given pubkeys
     /// 2. get the slots that contained duplicate pubkeys
-    /// 3. update rent stats
-    /// 4. build up the duplicates lt hash
+    /// 3. build up the duplicates lt hash
     ///
     /// Note this should only be used when ALL entries in the accounts index are roots.
     ///
