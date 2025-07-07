@@ -335,6 +335,10 @@ impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallba
 }
 
 /// Set the rent epoch to u64::MAX if the account is rent exempt.
+///
+/// TODO: This function is used to update the rent epoch of an account. Once we
+/// completely switched to lthash, where rent_epoch is ignored in accounts
+/// hashing, we can remove this function.
 pub fn update_rent_exempt_status_for_account(
     rent_collector: &dyn SVMRentCollector,
     account: &mut AccountSharedData,
