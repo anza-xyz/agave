@@ -5930,10 +5930,18 @@ fn test_clean_nonrooted() {
     bank3.force_flush_accounts_cache();
 
     bank3.clean_accounts_for_tests();
-    assert_eq!(
-        bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
-        2
-    );
+    if bank3.rc.accounts.accounts_db.mark_obsolete_accounts {
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            1
+        );
+    } else {
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            2
+        );
+    }
+
     assert!(bank3
         .rc
         .accounts

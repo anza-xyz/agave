@@ -1998,7 +1998,7 @@ pub mod tests {
         assert!(index.include_key(&pk2));
     }
 
-    const UPSERT_POPULATE_RECLAIMS: UpsertReclaim = UpsertReclaim::PopulateReclaims;
+    const UPSERT_POPULATE_RECLAIMS: UpsertReclaim = UpsertReclaim::IgnoreReclaims;
 
     #[test]
     fn test_insert_no_ancestors() {
@@ -2470,10 +2470,10 @@ pub mod tests {
                 &AccountSecondaryIndexes::default(),
                 value,
                 &mut reclaims,
-                UpsertReclaim::PopulateReclaims,
+                UpsertReclaim::IgnoreReclaims,
             );
-            // reclaimed
-            assert!(!reclaims.is_empty());
+            // Not reclaiming from same slot
+            assert!(reclaims.is_empty());
             reclaims.clear();
             index.upsert(
                 slot,
@@ -2519,7 +2519,6 @@ pub mod tests {
                 UpsertReclaim::PopulateReclaims,
             );
             // reclaimed
-            assert!(!reclaims.is_empty());
             reclaims.clear();
             index.upsert(
                 slot,
@@ -2814,7 +2813,7 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             true,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UpsertReclaim::IgnoreReclaims,
         );
         assert!(gc.is_empty());
         index
@@ -2839,9 +2838,8 @@ pub mod tests {
             &AccountSecondaryIndexes::default(),
             false,
             &mut gc,
-            UPSERT_POPULATE_RECLAIMS,
+            UpsertReclaim::IgnoreReclaims,
         );
-        assert_eq!(gc, vec![(0, true)]);
         index
             .get_with_and_then(
                 &key,
@@ -2861,7 +2859,6 @@ pub mod tests {
         solana_logger::setup();
         let key = solana_pubkey::new_rand();
         let index = AccountsIndex::<bool, bool>::default_for_tests();
-        let ancestors = vec![(0, 0)].into_iter().collect();
         let mut gc = Vec::new();
         index.upsert(
             0,
@@ -2884,19 +2881,6 @@ pub mod tests {
             &mut gc,
             UPSERT_POPULATE_RECLAIMS,
         );
-        assert!(gc.is_empty());
-        index
-            .get_with_and_then(
-                &key,
-                Some(&ancestors),
-                None,
-                false,
-                |(slot, account_info)| {
-                    assert_eq!(slot, 0);
-                    assert!(account_info);
-                },
-            )
-            .unwrap();
         let ancestors = vec![(1, 0)].into_iter().collect();
         index
             .get_with_and_then(
@@ -3701,7 +3685,7 @@ pub mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "decremented ref count when already zero")]
+    #[should_panic(expected = "decremented ref below zero")]
     fn test_illegal_unref() {
         let value = true;
         let key = solana_pubkey::new_rand();

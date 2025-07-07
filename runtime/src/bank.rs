@@ -6122,7 +6122,10 @@ impl Bank {
         // may not match the frozen hash.
         //
         // So when we're snapshotting, the highest slot to clean is lowered by one.
+        let latest_full_snapshot_slot = self.rc.accounts.accounts_db.latest_full_snapshot_slot().unwrap_or(Slot::MAX);
         let highest_slot_to_clean = self.slot().saturating_sub(1);
+
+        let highest_slot_to_clean = highest_slot_to_clean.min(latest_full_snapshot_slot);
 
         self.rc.accounts.accounts_db.clean_accounts(
             Some(highest_slot_to_clean),
