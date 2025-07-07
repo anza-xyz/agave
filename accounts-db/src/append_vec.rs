@@ -431,13 +431,7 @@ impl AppendVec {
         let path = path.into();
         let new = Self::new_from_file_unchecked(path, current_len, storage_access)?;
 
-        let (sanitized, num_accounts) = new.sanitize_layout_and_length()?;
-        if !sanitized {
-            return Err(AccountsFileError::AppendVecError(
-                AppendVecError::IncorrectLayout(new.path.clone()),
-            ));
-        }
-
+        let num_accounts = new.sanitize_layout_and_length()?;
         Ok((new, num_accounts))
     }
 
@@ -476,14 +470,8 @@ impl AppendVec {
                 current_len,
                 new.path.display(),
             );
-            let (sanitized, _num_accounts) = new.sanitize_layout_and_length();
-            if sanitized {
-                Ok(new)
-            } else {
-                Err(AccountsFileError::AppendVecError(
-                    AppendVecError::IncorrectLayout(new.path.clone()),
-                ))
-            }
+            let _num_accounts = new.sanitize_layout_and_length()?;
+            Ok(new)
         }
     }
 
@@ -558,7 +546,8 @@ impl AppendVec {
         Self::new_from_file_unchecked(path, file_size as usize, StorageAccess::default())
     }
 
-    fn sanitize_layout_and_length(&self) -> Result<(bool, usize)> {
+    /// Checks that all accounts layout is correct and returns the number of accounts.
+    fn sanitize_layout_and_length(&self) -> Result<usize> {
         // This discards allocated accounts immediately after check at each loop iteration.
         //
         // This code should not reuse AppendVec.accounts() method as the current form or
@@ -575,12 +564,15 @@ impl AppendVec {
             last_offset = account.offset() + account.stored_size();
             num_accounts += 1;
         })?;
-        if !matches {
-            return Ok((false, num_accounts));
-        }
         let aligned_current_len = u64_align!(self.current_len.load(Ordering::Acquire));
 
-        Ok((last_offset == aligned_current_len, num_accounts))
+        if !matches || last_offset != aligned_current_len {
+            return Err(AccountsFileError::AppendVecError(
+                AppendVecError::IncorrectLayout(self.path.clone()),
+            ));
+        }
+
+        Ok(num_accounts)
     }
 
     /// Get a reference to the data at `offset` of `size` bytes if that slice
