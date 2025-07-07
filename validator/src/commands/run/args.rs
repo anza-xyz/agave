@@ -822,19 +822,19 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(false)
             .hidden(hidden_unless_forced())
             .conflicts_with("tpu_disable_quic")
-            .help("Use QUIC to send transactions."),
+            .help("DEPRECATED (should always be enabled): Use QUIC to send transactions."),
     )
     .arg(
         Arg::with_name("tpu_disable_quic")
             .long("tpu-disable-quic")
             .takes_value(false)
-            .help("Do not use QUIC to send transactions."),
+            .help("DEPRECATED (UDP support will be dropped): Do not use QUIC to send transactions."),
     )
     .arg(
         Arg::with_name("tpu_enable_udp")
             .long("tpu-enable-udp")
             .takes_value(false)
-            .help("Enable UDP for receiving/sending transactions."),
+            .help("DEPRECATED (UDP support will be dropped): Enable UDP for receiving/sending transactions."),
     )
     .arg(
         Arg::with_name("tpu_connection_pool_size")
