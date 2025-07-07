@@ -84,6 +84,7 @@ where
     }
 
     pub fn run(mut self) -> Result<(), SchedulerError> {
+        let mut last_slot = None;
         loop {
             // BufferedPacketsDecision is shared with legacy BankingStage, which will forward
             // packets. Initially, not renaming these decision variants but the actions taken
@@ -101,6 +102,7 @@ where
                 timing_metrics.decision_time_us += decision_time_us;
             });
             let new_leader_slot = decision.bank_start().map(|b| b.working_bank.slot());
+
             self.leader_detection_metrics
                 .update_and_maybe_report(decision.bank_start());
             self.count_metrics
@@ -109,6 +111,10 @@ where
                 .maybe_report_and_reset_slot(new_leader_slot);
 
             self.receive_completed()?;
+            if last_slot != new_leader_slot {
+                self.container.flush_held_transactions();
+                last_slot = new_leader_slot;
+            }
             self.process_transactions(&decision)?;
             if self.receive_and_buffer_packets(&decision).is_err() {
                 break;
