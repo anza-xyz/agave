@@ -631,6 +631,9 @@ where
             self.block_production_scheduler_inner.lock().unwrap();
 
         if should_trash {
+            // Note that the following steps are tightly in sync with the bp
+            // spawning in cleaner_main_loop.
+
             // Maintain the runtime invariant established in register_banking_stage() about
             // the availability of pooled block production scheduler by re-spawning one.
             if block_production_scheduler_inner.can_put(&scheduler) {
@@ -1416,9 +1419,9 @@ where
         } else {
             self.ensure_join_threads(true);
         }
-        // This assert will always be triggered if abort_detected. This is intentional to progate a
-        // fatal condition of existense of error in response to a graceful thread shutdown request
-        // just above.
+        // This assert will always be triggered if abort_detected. This is intentional to propagate
+        // a fatal condition of existence of error in response to a graceful thread shutdown
+        // request just above.
         assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
     }
 }
