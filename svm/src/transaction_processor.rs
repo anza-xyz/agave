@@ -624,10 +624,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // We must validate the account in case it was reopened, either as a normal system account,
         // or a fake nonce account. We must also check the signer in case the authority was changed.
         //
-        // We do not need to inspect the nonce account here, because by definition it is either the
-        // first account, inspected in `validate_transaction_fee_payer()`, or the second through nth
-        // account, inspected in `load_transaction()`.
-        //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
             .load_transaction_account(nonce_info.address(), true)

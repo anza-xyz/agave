@@ -2439,6 +2439,153 @@ impl InspectedAccounts {
     }
 }
 
+#[test_case(false, false; "separate_nonce::old")]
+#[test_case(false, true; "separate_nonce::simd186")]
+#[test_case(true, false; "fee_paying_nonce::old")]
+#[test_case(true, true; "fee_paying_nonce::simd186")]
+fn svm_inspect_nonce_load_failure(
+    fee_paying_nonce: bool,
+    formalize_loaded_transaction_data_size: bool,
+) {
+    let mut test_entry = SvmTestEntry::default();
+    let mut expected_inspected_accounts = InspectedAccounts::default();
+
+    if !formalize_loaded_transaction_data_size {
+        test_entry
+            .disabled_features
+            .push(feature_set::formalize_loaded_transaction_data_size::id());
+    }
+
+    let fee_payer_keypair = Keypair::new();
+    let dummy_keypair = Keypair::new();
+    let separate_nonce_keypair = Keypair::new();
+
+    let fee_payer = fee_payer_keypair.pubkey();
+    let dummy = dummy_keypair.pubkey();
+    let nonce_pubkey = if fee_paying_nonce {
+        fee_payer
+    } else {
+        separate_nonce_keypair.pubkey()
+    };
+
+    let initial_durable = DurableNonce::from_blockhash(&Hash::new_unique());
+    let initial_nonce_data =
+        nonce::state::Data::new(fee_payer, initial_durable, LAMPORTS_PER_SIGNATURE);
+    let mut initial_nonce_account = AccountSharedData::new_data(
+        LAMPORTS_PER_SOL,
+        &nonce::versions::Versions::new(nonce::state::State::Initialized(
+            initial_nonce_data.clone(),
+        )),
+        &system_program::id(),
+    )
+    .unwrap();
+    initial_nonce_account.set_rent_epoch(u64::MAX);
+    let initial_nonce_account = initial_nonce_account;
+    let initial_nonce_info = NonceInfo::new(nonce_pubkey, initial_nonce_account.clone());
+
+    let advanced_durable = DurableNonce::from_blockhash(&LAST_BLOCKHASH);
+    let mut advanced_nonce_info = initial_nonce_info.clone();
+    advanced_nonce_info
+        .try_advance_nonce(advanced_durable, LAMPORTS_PER_SIGNATURE)
+        .unwrap();
+
+    let compute_instruction = ComputeBudgetInstruction::set_loaded_accounts_data_size_limit(1);
+    let advance_instruction = system_instruction::advance_nonce_account(&nonce_pubkey, &fee_payer);
+    let fee_only_noop_instruction = Instruction::new_with_bytes(
+        Pubkey::new_unique(),
+        &[],
+        vec![AccountMeta {
+            pubkey: dummy,
+            is_writable: true,
+            is_signer: true,
+        }],
+    );
+
+    test_entry.add_initial_account(nonce_pubkey, &initial_nonce_account);
+
+    let mut separate_fee_payer_account = AccountSharedData::default();
+    separate_fee_payer_account.set_lamports(LAMPORTS_PER_SOL);
+    let separate_fee_payer_account = separate_fee_payer_account;
+
+    let dummy_account =
+        AccountSharedData::create(1, vec![0; 2], system_program::id(), false, u64::MAX);
+    test_entry.add_initial_account(dummy, &dummy_account);
+
+    // we always inspect the nonce at least once
+    expected_inspected_accounts.inspect(nonce_pubkey, Inspect::LiveWrite(&initial_nonce_account));
+
+    // if we have a fee-paying nonce, we happen to inspect it again
+    // this is an unimportant implementation detail and also means these cases are trivial
+    // the true test is a separate nonce, to ensure we inspect it in pre-checks
+    if fee_paying_nonce {
+        expected_inspected_accounts
+            .inspect(nonce_pubkey, Inspect::LiveWrite(&initial_nonce_account));
+    } else {
+        test_entry.add_initial_account(fee_payer, &separate_fee_payer_account);
+        expected_inspected_accounts
+            .inspect(fee_payer, Inspect::LiveWrite(&separate_fee_payer_account));
+    }
+
+    // with simd186, transaction loading aborts when we hit the fee-payer because of TRANSACTION_ACCOUNT_BASE_SIZE
+    // without simd186, transaction loading aborts on the dummy account, so it also happens to be inspected
+    // the difference is immaterial to the test as long as it happens before the nonce is loaded for the transaction
+    if !fee_paying_nonce && !formalize_loaded_transaction_data_size {
+        expected_inspected_accounts.inspect(dummy, Inspect::LiveWrite(&dummy_account));
+    }
+
+    // by signing with the dummy account we ensure it precedes a separate nonce
+    let transaction = Transaction::new_signed_with_payer(
+        &[
+            compute_instruction,
+            advance_instruction,
+            fee_only_noop_instruction,
+        ],
+        Some(&fee_payer),
+        &[&fee_payer_keypair, &dummy_keypair],
+        *initial_durable.as_hash(),
+    );
+    if !fee_paying_nonce {
+        let sanitized = SanitizedTransaction::from_transaction_for_tests(transaction.clone());
+        let dummy_index = sanitized
+            .account_keys()
+            .iter()
+            .position(|key| *key == dummy)
+            .unwrap();
+        let nonce_index = sanitized
+            .account_keys()
+            .iter()
+            .position(|key| *key == nonce_pubkey)
+            .unwrap();
+        assert!(dummy_index < nonce_index);
+    }
+
+    test_entry.push_nonce_transaction_with_status(
+        transaction,
+        initial_nonce_info.clone(),
+        ExecutionStatus::ProcessedFailed,
+    );
+
+    test_entry.decrease_expected_lamports(&fee_payer, LAMPORTS_PER_SIGNATURE * 2);
+    test_entry
+        .final_accounts
+        .get_mut(&nonce_pubkey)
+        .unwrap()
+        .data_as_mut_slice()
+        .copy_from_slice(advanced_nonce_info.account().data());
+
+    let env = SvmTestEnvironment::create(test_entry.clone());
+    env.execute();
+
+    let actual_inspected_accounts = env.mock_bank.inspected_accounts.read().unwrap().clone();
+    for (expected_pubkey, expected_account) in &expected_inspected_accounts.0 {
+        let actual_account = actual_inspected_accounts.get(expected_pubkey).unwrap();
+        assert_eq!(
+            expected_account, actual_account,
+            "pubkey: {expected_pubkey}",
+        );
+    }
+}
+
 #[test]
 fn svm_inspect_account() {
     let mut initial_test_entry = SvmTestEntry::default();
