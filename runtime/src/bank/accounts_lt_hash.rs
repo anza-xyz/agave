@@ -166,7 +166,7 @@ impl Bank {
                                     // If the initial state of the account is not in the accounts
                                     // lt hash cache, or is explicitly unknown, then it is likely
                                     // this account was stored *outside* of transaction processing
-                                    // (e.g. as part of rent collection, or creating a new bank).
+                                    // (e.g. creating a new bank).
                                     // Do not populate the read cache, as this account likely will
                                     // not be accessed again soon.
                                     let account_slot = self

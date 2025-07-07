@@ -2680,10 +2680,6 @@ fn test_bank_update_sysvar_account() {
     for pass in 0..5 {
         use sysvar::clock::Clock;
 
-        // This pubkey was chosen empirically.
-        // The test requires that the dummy clock id *not* be loaded for rent collection
-        // (since rent collection will update the rent epoch, thus causing the
-        // subsequent checks to fail spuriously).
         let dummy_clock_id = Pubkey::from_str_const("64jsX5hwtsjsKR7eNcNU4yhgwjuXoU9KR2MpnV47iXXz");
         let dummy_rent_epoch = 44;
         let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
@@ -5510,10 +5506,6 @@ fn test_add_builtin_account() {
 
         let slot = 123;
         // The account at program_id will be created initially with just 1 lamport.
-        // This is below the rent-exempt minimum.  If the program_id is in the
-        // rent collection partition for the banks used in this test, then the
-        // account will be rent-collected away.  That'll make the test fail.
-        // So pick a pubkey that is guaranteed to *not* be part of rent collection.
         let program_id = Pubkey::new_from_array([0xFF; 32]);
 
         let bank = Arc::new(Bank::new_from_parent(
@@ -11006,18 +10998,9 @@ where
         .unwrap();
 
     // create a bank a few epochs in the future..
-    // - when partitioned rent collection is enabled, this will cause a lot of
-    // updated accounts to be added to this bank's accounts db storage entry.
-    // - when partitioned rent collection is disabled, the only account written
-    // will be the stake history sysvar.
     let bank = new_from_parent_next_epoch(bank, &bank_forks, 2);
 
     // create the next bank in the current epoch
-    // - when partitioned rent collection is enabled, the runtime won't add any
-    // accounts to the accounts db storage entry so we explicitly store an
-    // account here.
-    // - when partitioned rent collection is disabled, the only account written
-    // will be the epoch rewards sysvar.
     let slot = bank.slot() + 1;
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &collector, slot);
 
