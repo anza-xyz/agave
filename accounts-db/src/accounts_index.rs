@@ -682,8 +682,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
-    #[cfg(test)]
-    fn do_unchecked_scan_accounts<F, R>(
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn do_unchecked_scan_accounts<F, R>(
         &self,
         metric_name: &'static str,
         ancestors: &Ancestors,
@@ -918,7 +918,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn unchecked_scan_accounts<F>(
         &self,
         metric_name: &'static str,

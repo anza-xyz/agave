@@ -4309,7 +4309,7 @@ impl AccountsDb {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn unchecked_scan_accounts<F>(
         &self,
         metric_name: &'static str,
