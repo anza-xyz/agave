@@ -2133,10 +2133,10 @@ fn test_bank_tx_compute_unit_fee() {
     );
 }
 
-#[test]
-fn test_bank_blockhash_fee_structure() {
-    //solana_logger::setup();
-
+#[test_case(0; "zero fees for tests")]
+#[test_case(10000; "default target lamports per signature")]
+#[test_case(1; "random non-zero target lamports per signature")]
+fn test_bank_transaction_fee(target_lamports_per_signature: u64) {
     let leader = solana_pubkey::new_rand();
     let GenesisConfigInfo {
         mut genesis_config,
@@ -2145,115 +2145,47 @@ fn test_bank_blockhash_fee_structure() {
     } = create_genesis_config_with_leader(1_000_000, &leader, 3);
     genesis_config
         .fee_rate_governor
-        .target_lamports_per_signature = 5000;
+        .target_lamports_per_signature = target_lamports_per_signature;
     genesis_config.fee_rate_governor.target_signatures_per_slot = 0;
 
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     goto_end_of_slot(bank.clone());
-    let cheap_blockhash = bank.last_blockhash();
-    let cheap_lamports_per_signature = bank.get_lamports_per_signature();
-    assert_eq!(cheap_lamports_per_signature, 0);
+    let early_blockhash = bank.last_blockhash();
 
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
     goto_end_of_slot(bank.clone());
-    let expensive_blockhash = bank.last_blockhash();
-    let expensive_lamports_per_signature = bank.get_lamports_per_signature();
-    assert!(cheap_lamports_per_signature < expensive_lamports_per_signature);
+    let later_blockhash = bank.last_blockhash();
 
     let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
 
-    // Send a transfer using cheap_blockhash
-    let key = solana_pubkey::new_rand();
-    let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, cheap_blockhash);
-    assert_eq!(bank.process_transaction(&tx), Ok(()));
-    assert_eq!(bank.get_balance(&key), 1);
-    let cheap_fee = calculate_test_fee(
+    // transaction fee for same transaction must be consistent bewteen block hashs; it is
+    // either `0` if set up for zero_fees_for_test, or a non-zeo fee.
+    let tx_fee = calculate_test_fee(
         &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        cheap_lamports_per_signature,
+        target_lamports_per_signature,
         bank.fee_structure(),
     );
-    assert_eq!(
-        bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - cheap_fee
-    );
 
-    // Send a transfer using expensive_blockhash
+    // Send a transfer using early_blockhash
     let key = solana_pubkey::new_rand();
     let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, expensive_blockhash);
+    let tx = system_transaction::transfer(&mint_keypair, &key, 1, early_blockhash);
     assert_eq!(bank.process_transaction(&tx), Ok(()));
     assert_eq!(bank.get_balance(&key), 1);
-    let expensive_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        expensive_lamports_per_signature,
-        bank.fee_structure(),
-    );
     assert_eq!(
         bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - expensive_fee
+        initial_mint_balance - 1 - tx_fee
     );
-}
 
-#[test]
-fn test_bank_blockhash_compute_unit_fee_structure() {
-    //solana_logger::setup();
-
-    let leader = solana_pubkey::new_rand();
-    let GenesisConfigInfo {
-        mut genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config_with_leader(1_000_000_000, &leader, 3);
-    genesis_config
-        .fee_rate_governor
-        .target_lamports_per_signature = 1000;
-    genesis_config.fee_rate_governor.target_signatures_per_slot = 1;
-
-    let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    goto_end_of_slot(bank.clone());
-    let cheap_blockhash = bank.last_blockhash();
-    let cheap_lamports_per_signature = bank.get_lamports_per_signature();
-    assert_eq!(cheap_lamports_per_signature, 0);
-
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 1);
-    goto_end_of_slot(bank.clone());
-    let expensive_blockhash = bank.last_blockhash();
-    let expensive_lamports_per_signature = bank.get_lamports_per_signature();
-    assert!(cheap_lamports_per_signature < expensive_lamports_per_signature);
-
-    let bank = new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank, &leader, 2);
-
-    // Send a transfer using cheap_blockhash
+    // Send a transfer using later_blockhash
     let key = solana_pubkey::new_rand();
     let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, cheap_blockhash);
+    let tx = system_transaction::transfer(&mint_keypair, &key, 1, later_blockhash);
     assert_eq!(bank.process_transaction(&tx), Ok(()));
     assert_eq!(bank.get_balance(&key), 1);
-    let cheap_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        cheap_lamports_per_signature,
-        bank.fee_structure(),
-    );
     assert_eq!(
         bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - cheap_fee
-    );
-
-    // Send a transfer using expensive_blockhash
-    let key = solana_pubkey::new_rand();
-    let initial_mint_balance = bank.get_balance(&mint_keypair.pubkey());
-    let tx = system_transaction::transfer(&mint_keypair, &key, 1, expensive_blockhash);
-    assert_eq!(bank.process_transaction(&tx), Ok(()));
-    assert_eq!(bank.get_balance(&key), 1);
-    let expensive_fee = calculate_test_fee(
-        &new_sanitized_message(Message::new(&[], Some(&Pubkey::new_unique()))),
-        expensive_lamports_per_signature,
-        bank.fee_structure(),
-    );
-    assert_eq!(
-        bank.get_balance(&mint_keypair.pubkey()),
-        initial_mint_balance - 1 - expensive_fee
+        initial_mint_balance - 1 - tx_fee
     );
 }
 
@@ -5018,7 +4950,12 @@ fn test_nonce_fee_calculator_updates() {
         .unwrap();
 
     assert_ne!(stored_nonce_hash, nonce_hash);
-    assert_ne!(stored_fee_calculator, fee_calculator);
+    // stored lamports_per_signature isn't used to calculate transaction fee, but to determine if
+    // zero_fees_for_test, only assess if the flag is same.
+    assert_eq!(
+        stored_fee_calculator.lamports_per_signature == 0,
+        fee_calculator.lamports_per_signature == 0
+    );
 }
 
 #[test]
@@ -5067,7 +5004,8 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
     );
     bank.process_transaction(&nonce_tx).unwrap();
 
-    // Grab the new hash and fee_calculator; both should be updated
+    // Grab the new hash and fee_calculator; hash shoudl be updated, and lamports_per_signature
+    // should remain same in respect to zero_fees_for_test
     let (nonce_hash, fee_calculator) = bank
         .get_account(&nonce_pubkey)
         .and_then(|acc| {
@@ -5082,7 +5020,10 @@ fn test_nonce_fee_calculator_updates_tx_wide_cap() {
         .unwrap();
 
     assert_ne!(stored_nonce_hash, nonce_hash);
-    assert_ne!(stored_fee_calculator, fee_calculator);
+    assert_eq!(
+        stored_fee_calculator.lamports_per_signature == 0,
+        fee_calculator.lamports_per_signature == 0
+    );
 }
 
 #[test]
@@ -5756,6 +5697,10 @@ fn test_bank_hash_consistency() {
     // Override the creation time to ensure bank hash consistency
     genesis_config.creation_time = 0;
     genesis_config.cluster_type = ClusterType::MainnetBeta;
+    activate_feature(
+        &mut genesis_config,
+        agave_feature_set::remove_fee_rate_governor_from_fee_calculation::id(),
+    );
 
     // Set the feature set to all enabled so that we detect any inconsistencies
     // in the hash computation that may arise from feature set changes
@@ -5781,7 +5726,7 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "AyXhbqmPsC46x7MHAuW89pQcNZVrUZnAND6ABWJ24svx",
+                "21uu53PtWcbdKui4zoBmR86WyW5mTPmHud32yNFM7D9T"
             );
         }
 
@@ -5789,14 +5734,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "ApbSYzbXgNBobjzp8ytimvVsMBUxtuJR9nFieePdpwj3"
+                "DHNFJRf1Vrfj18FTNafax4Y2HDc81BCsgygJxKXcAn33"
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "FxaFn1Dj7fetY1SXWWi6DyEYidoiDLZexe3hM1tNvkwJ"
+                "8TwCL1HkVoTqzoUZnWHbwinCnAR4MEboPx9uPojNsqoZ"
             );
             break;
         }
