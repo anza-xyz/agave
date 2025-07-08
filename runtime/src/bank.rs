@@ -5118,22 +5118,12 @@ impl Bank {
             .calculate_capitalization_at_startup_from_index(&self.ancestors, self.slot())
     }
 
-    /// Forcibly overwrites capitalization by recalculating accounts' balances.
+    /// Sets the capitalization.
     ///
-    /// Returns the previous capitalization.
-    ///
-    /// Panics if capitalization overflows a u64.
-    ///
-    /// Note, this is *very* expensive!  It walks the whole accounts index,
-    /// account-by-account, summing each account's balance.
-    ///
-    /// Only intended to be called at startup by ledger-tool or tests.
+    /// Only intended to be called by ledger-tool or tests.
     /// (cannot be made DCOU due to snapshot-minimizer)
-    pub fn set_capitalization(&self) -> u64 {
-        let old = self.capitalization();
-        self.capitalization
-            .store(self.calculate_capitalization(), Relaxed);
-        old
+    pub fn set_capitalization(&self, capitalization: u64) {
+        self.capitalization.store(capitalization, Relaxed);
     }
 
     /// Returns the `AccountsHash` that was calculated for this bank's slot
