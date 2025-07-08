@@ -5514,6 +5514,8 @@ impl Bank {
 
     /// Calculates and returns the capitalization.
     ///
+    /// Panics if capitalization overflows a u64.
+    ///
     /// Note, this is *very* expensive!  It walks the whole accounts index,
     /// account-by-account, summing each account's balance.
     ///
@@ -5534,6 +5536,8 @@ impl Bank {
     /// Forcibly overwrites capitalization by recalculating accounts' balances.
     ///
     /// Returns the previous capitalization.
+    ///
+    /// Panics if capitalization overflows a u64.
     ///
     /// Note, this is *very* expensive!  It walks the whole accounts index,
     /// account-by-account, summing each account's balance.

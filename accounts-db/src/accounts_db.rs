@@ -6280,6 +6280,8 @@ impl AccountsDb {
 
     /// Calculates the capitalization
     ///
+    /// Panics if capitalization overflows a u64.
+    ///
     /// Note, this is *very* expensive!  It walks the whole accounts index,
     /// account-by-account, summing each account's balance.
     ///
@@ -6322,9 +6324,10 @@ impl AccountsDb {
                             .flatten()
                             .unwrap_or(0)
                     })
-                    .sum::<u64>()
+                    .try_fold(0, u64::checked_add)
             })
-            .sum()
+            .try_reduce(|| 0, u64::checked_add)
+            .expect("capitalization cannot overflow")
     }
 
     /// This is only valid to call from tests.

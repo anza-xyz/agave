@@ -7387,3 +7387,51 @@ fn test_clean_old_storages_with_reclaims_unrooted() {
     assert_eq!(slot_list.len(), slots.len());
     assert!(slot_list.iter().map(|(slot, _)| slot).eq(slots.iter()));
 }
+
+/// Ensure the calculating capitalization produces the correct value
+#[test]
+fn test_calculate_capitalization_simple() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    accounts_db.store_for_tests(
+        0,
+        &[(
+            &Pubkey::new_unique(),
+            &AccountSharedData::new(123, 0, &Pubkey::default()),
+        )],
+    );
+    accounts_db.store_for_tests(
+        1,
+        &[(
+            &Pubkey::new_unique(),
+            &AccountSharedData::new(456, 0, &Pubkey::default()),
+        )],
+    );
+    assert_eq!(
+        accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1),
+        123 + 456,
+    );
+}
+
+/// Ensure that calculating capitalization panics of there is an overflow
+/// while summing balance within a single slot.
+#[test]
+#[should_panic(expected = "capitalization cannot overflow")]
+fn test_calculate_capitalization_overflow_intra_slot() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
+    accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
+    accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
+    accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0]), 0);
+}
+
+/// Ensure that calculating capitalization panics of there is an overflow
+/// while summing balance across multiple slots.
+#[test]
+#[should_panic(expected = "capitalization cannot overflow")]
+fn test_calculate_capitalization_overflow_inter_slot() {
+    let accounts_db = AccountsDb::new_single_for_tests();
+    let account = AccountSharedData::new(u64::MAX - 1, 0, &Pubkey::default());
+    accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
+    accounts_db.store_for_tests(1, &[(&Pubkey::new_unique(), &account)]);
+    accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1);
+}
