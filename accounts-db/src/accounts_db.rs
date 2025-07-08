@@ -5541,7 +5541,7 @@ impl AccountsDb {
             let mut append_accounts = Measure::start("append_accounts");
             let stored_accounts_info = storage
                 .accounts
-                .append_accounts(accounts_and_meta_to_store, infos.len());
+                .write_accounts(accounts_and_meta_to_store, infos.len());
             append_accounts.stop();
             total_append_accounts_us += append_accounts.as_us();
             let Some(stored_accounts_info) = stored_accounts_info else {

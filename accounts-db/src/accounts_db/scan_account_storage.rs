@@ -723,7 +723,7 @@ mod tests {
                     let storable_accounts = (slot, slice);
                     copied_storage
                         .accounts
-                        .append_accounts(&storable_accounts, 0);
+                        .write_accounts(&storable_accounts, 0);
                     copied_storage
                 })
                 .collect::<Vec<_>>();
@@ -760,7 +760,7 @@ mod tests {
                 let storable_accounts = (slot, slice);
                 copied_storage
                     .accounts
-                    .append_accounts(&storable_accounts, 0);
+                    .write_accounts(&storable_accounts, 0);
                 copied_storage
             })
             .collect::<Vec<_>>();
@@ -1124,7 +1124,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .append_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]), 0);
 
         // Mark each account obsolete at a different slot
         for (i, offsets) in offsets.unwrap().offsets.iter().enumerate() {

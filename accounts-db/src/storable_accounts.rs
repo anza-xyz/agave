@@ -659,7 +659,7 @@ pub mod tests {
                     // accounts so they can be looked up later in `db`
                     if let Some(offsets) = storage
                         .accounts
-                        .append_accounts(&(source_slot, &three[..]), 0)
+                        .write_accounts(&(source_slot, &three[..]), 0)
                     {
                         three_accounts_from_storage_byval
                             .iter_mut()
@@ -800,7 +800,7 @@ pub mod tests {
                                     let storage = setup_sample_storage(&db, slot);
                                     if let Some(offsets) = storage
                                         .accounts
-                                        .append_accounts(&(slot, &raw2_refs[range.clone()]), 0)
+                                        .write_accounts(&(slot, &raw2_refs[range.clone()]), 0)
                                     {
                                         result.iter_mut().zip(offsets.offsets.iter()).for_each(
                                             |(account, offset)| {

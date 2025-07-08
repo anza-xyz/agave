@@ -173,7 +173,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     let storable_accounts = (slot0, &data[..]);
 
     // construct append vec with account to generate an index from
-    append_vec.accounts.append_accounts(&storable_accounts, 0);
+    append_vec.accounts.write_accounts(&storable_accounts, 0);
 
     assert!(!db.accounts_index.contains(&pubkey));
     db.generate_index(None, false, false);
@@ -205,7 +205,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
 
     let data = [(&pubkey, &account)];
     let storable_accounts = (slot0, &data[..]);
-    append_vec.accounts.append_accounts(&storable_accounts, 0);
+    append_vec.accounts.write_accounts(&storable_accounts, 0);
     assert!(!db.accounts_index.contains(&pubkey));
     let result = db.generate_index(None, false, false);
     let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
@@ -481,7 +481,7 @@ pub(crate) fn append_single_account_with_default_hash(
     let storable_accounts = (slot, slice);
     let stored_accounts_info = storage
         .accounts
-        .append_accounts(&storable_accounts, 0)
+        .write_accounts(&storable_accounts, 0)
         .unwrap();
     if mark_alive {
         // updates 'alive_bytes' on the storage
@@ -5091,7 +5091,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
     let storage = accounts.create_and_insert_store(slot0, 4_000, "flush_slot_cache");
     storage
         .accounts
-        .append_accounts(&(slot0, &[(&shared_key, &account)][..]), 0);
+        .write_accounts(&(slot0, &[(&shared_key, &account)][..]), 0);
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let storage_info = StorageSizeAndCountMap::default();
@@ -5148,7 +5148,7 @@ define_accounts_db_test!(
         let account_big = AccountSharedData::new(1, 1000, AccountSharedData::default().owner());
         let slot0 = 0;
         let storage = accounts.create_and_insert_store(slot0, 4_000, "flush_slot_cache");
-        storage.accounts.append_accounts(
+        storage.accounts.write_accounts(
             &(slot0, &[(&keys[0], &account), (&keys[1], &account_big)][..]),
             0,
         );
