@@ -1,6 +1,8 @@
 //! File i/o helper functions.
 #[cfg(unix)]
 use std::os::unix::prelude::FileExt;
+#[cfg(not(unix))]
+use std::os::windows::fs::FileExt;
 use std::{fs::File, ops::Range};
 
 /// `buffer` contains `valid_bytes` of data at its end.
@@ -73,17 +75,44 @@ pub fn read_into_buffer(
 }
 
 #[cfg(not(unix))]
-/// this cannot be supported if we're not on unix-os
 pub fn read_into_buffer(
-    _file: &File,
-    _valid_file_len: usize,
-    _start_offset: usize,
-    _buffer: &mut [u8],
+    file: &File,
+    valid_file_len: usize,
+    start_offset: usize,
+    buffer: &mut [u8],
 ) -> std::io::Result<usize> {
-    panic!("unimplemented");
+    let mut offset = start_offset;
+    let mut buffer_offset = 0;
+    let mut total_bytes_read = 0;
+    if start_offset >= valid_file_len {
+        return Ok(0);
+    }
+
+    while buffer_offset < buffer.len() {
+        match file.seek_read(&mut buffer[buffer_offset..], offset as u64) {
+            Err(err) => {
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err);
+            }
+            Ok(bytes_read_this_time) => {
+                total_bytes_read += bytes_read_this_time;
+                if total_bytes_read + start_offset >= valid_file_len {
+                    total_bytes_read -= (total_bytes_read + start_offset) - valid_file_len;
+                    // we've read all there is in the file
+                    break;
+                }
+                // There is possibly more to read. `read_at` may have returned partial results, so prepare to loop and read again.
+                buffer_offset += bytes_read_this_time;
+                offset += bytes_read_this_time;
+            }
+        }
+    }
+    Ok(total_bytes_read)
 }
 
-#[cfg(all(unix, test))]
+#[cfg(all(test))]
 mod tests {
 
     use {super::*, std::io::Write, tempfile::tempfile};
