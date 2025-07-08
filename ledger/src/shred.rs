@@ -55,8 +55,6 @@ pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
 };
-#[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
 pub use {
     self::{
         payload::Payload,
@@ -74,7 +72,7 @@ use {
     rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::Entry,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_perf::packet::PacketRef,
@@ -85,6 +83,11 @@ use {
     static_assertions::const_assert_eq,
     std::{fmt::Debug, time::Instant},
     thiserror::Error,
+};
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use {
+    solana_entry::entry::create_ticks,
+    solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet},
 };
 
 mod common;
@@ -989,11 +992,13 @@ where
     false
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 pub fn max_ticks_per_n_shreds(num_shreds: u64, shred_data_size: Option<usize>) -> u64 {
     let ticks = create_ticks(1, 0, Hash::default());
     max_entries_per_n_shred(&ticks[0], num_shreds, shred_data_size)
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 pub fn max_entries_per_n_shred(
     entry: &Entry,
     num_shreds: u64,
@@ -1012,6 +1017,7 @@ pub fn max_entries_per_n_shred(
     (shred_data_size * num_shreds - count_size) / entry_size
 }
 
+#[cfg(any(test, feature = "dev-context-only-utils"))]
 pub fn verify_test_data_shred(
     shred: &Shred,
     index: u32,
