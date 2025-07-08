@@ -112,7 +112,7 @@ pub fn read_into_buffer(
     Ok(total_bytes_read)
 }
 
-#[cfg(all(test))]
+#[cfg(test)]
 mod tests {
 
     use {super::*, std::io::Write, tempfile::tempfile};
