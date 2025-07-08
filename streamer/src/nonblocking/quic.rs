@@ -354,7 +354,20 @@ async fn run_server(
                 .fetch_add(1, Ordering::Relaxed);
 
             let remote_address = incoming.remote_address();
+            if incoming.remote_address_validated() {
+                stats
+                    .incoming_connection_attempts_with_validated_remote_address
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                stats
+                    .incoming_connection_attempts_with_unvalidated_remote_address
+                    .fetch_add(1, Ordering::Relaxed);
+                // remote_address_validated = false --> may_retry = true
+                let _ = incoming.retry();
+                continue;
+            }
 
+            // Do rate limiting checks after address validation
             // first do per IpAddr rate limiting
             if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
                 rate_limiter.retain_recent();
