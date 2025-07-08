@@ -55,6 +55,7 @@ pub type IndexOfAccount = u16;
 /// Contains account meta data which varies between instruction.
 ///
 /// It also contains indices to other structures for faster lookup.
+#[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
