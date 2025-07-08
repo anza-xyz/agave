@@ -1019,10 +1019,6 @@ pub mod remove_accounts_executable_flag_checks {
     solana_pubkey::declare_id!("FXs1zh47QbNnhXcnB6YiAQoJ4sGB91tKF3UFHLcKT7PM");
 }
 
-pub mod lift_cpi_caller_restriction {
-    solana_pubkey::declare_id!("HcW8ZjBezYYgvcbxNJwqv1t484Y2556qJsfNDWvJGZRH");
-}
-
 pub mod disable_account_loader_special_case {
     solana_pubkey::declare_id!("EQUMpNFr7Nacb1sva56xn1aLfBxppEoSBH8RRVdkcD1x");
 }
@@ -1329,7 +1325,6 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enable_sbpf_v2_deployment_and_execution::id(), "SIMD-0173 and SIMD-0174: Enable deployment and execution of SBPFv2 programs"),
         (enable_sbpf_v3_deployment_and_execution::id(), "SIMD-0178, SIMD-0179 and SIMD-0189: Enable deployment and execution of SBPFv3 programs"),
         (remove_accounts_executable_flag_checks::id(), "SIMD-0162: Remove checks of accounts is_executable flag"),
-        (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
         (accounts_lt_hash::id(), "SIMD-0215: enables lattice-based accounts hash"),
         (snapshots_lt_hash::id(), "SIMD-0220: snapshots use lattice-based accounts hash"),
