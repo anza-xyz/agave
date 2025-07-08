@@ -372,12 +372,13 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
         }
 
         let total_read_len = *buf_off + last_read_len;
+        let buf = mem::replace(buf, IoFixedBuffer::empty());
 
         if last_read_len > 0 && last_read_len < *read_len {
             // Partial read, retry the op with updated offsets
             let op: ReadOp = ReadOp {
                 fd: *fd,
-                buf: buf.sub_buf_to(buf.len()), // Still use the full buf
+                buf,
                 buf_off: total_read_len,
                 file_off: *file_off + last_read_len,
                 read_len: *read_len - last_read_len,

@@ -1,5 +1,6 @@
 use {
-    crate::file_io::FilesCreator,
+    crate::file_io::FileCreator,
+    bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     log::*,
     rand::{thread_rng, Rng},
@@ -7,7 +8,7 @@ use {
     std::{
         collections::HashMap,
         fs::{self, File},
-        io::{self, Read},
+        io::{self, BufReader, Read},
         path::{
             Component::{self, CurDir, Normal},
             Path, PathBuf,
@@ -107,7 +108,7 @@ where
     let mut open_dirs = Vec::new();
 
     let mut files_creator =
-        crate::file_io::files_creator(file_path_processor, UNPACK_WRITE_BUF_SIZE)?;
+        crate::file_io::file_creator(file_path_processor, UNPACK_WRITE_BUF_SIZE)?;
 
     for entry in archive.entries()? {
         let entry = entry?;
@@ -195,7 +196,7 @@ where
 }
 
 fn unpack_entry<'a, R: Read>(
-    files_creator: &mut Box<dyn FilesCreator + 'a>,
+    files_creator: &mut Box<dyn FileCreator + 'a>,
     mut entry: tar::Entry<'_, R>,
     dst: PathBuf,
     dst_open_dir: Arc<File>,
@@ -216,7 +217,7 @@ fn unpack_entry<'a, R: Read>(
 
             if !entry.header().entry_type().is_dir() {
                 // Process file after setting permissions
-                files_creator.on_written(dst);
+                files_creator.file_complete(dst);
             }
 
             return Ok(unpacked);
@@ -224,7 +225,7 @@ fn unpack_entry<'a, R: Read>(
         _ => (),
     }
 
-    files_creator.schedule_create_with_dir(dst, mode, dst_open_dir, &mut entry)?;
+    files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
 
     return Ok(tar::Unpacked::__Nonexhaustive);
 
@@ -509,7 +510,7 @@ pub fn unpack_genesis_archive(
 
     fs::create_dir_all(destination_dir)?;
     let tar_bz2 = File::open(archive_filename)?;
-    let tar = bzip2::read::BzDecoder::new(tar_bz2);
+    let tar = BzDecoder::new(BufReader::new(tar_bz2));
     let archive = Archive::new(tar);
     unpack_genesis(archive, destination_dir, max_genesis_archive_unpacked_size)?;
     info!(

@@ -90,7 +90,7 @@ pub fn read_into_buffer(
 }
 
 /// An asynchronous queue for file creation.
-pub trait FilesCreator {
+pub trait FileCreator {
     #[allow(unused)]
     fn schedule_create(
         &mut self,
@@ -103,7 +103,7 @@ pub trait FilesCreator {
     ///
     /// `parent_dir_handle` is assumed to be a parent directory of `path` such that file may be
     /// created using optimized kernel API to create `path.file_name()` inside `parent_dir_handle`.
-    fn schedule_create_with_dir(
+    fn schedule_create_at_dir(
         &mut self,
         path: PathBuf,
         mode: u32,
@@ -112,21 +112,21 @@ pub trait FilesCreator {
     ) -> io::Result<()>;
 
     /// Invoke implementation specific logic to handle file creation completion.
-    fn on_written(&mut self, path: PathBuf);
+    fn file_complete(&mut self, path: PathBuf);
 
     /// Waits for all operations to be completed
     fn drain(&mut self) -> io::Result<()>;
 }
 
-pub fn files_creator<'a>(
+pub fn file_creator<'a>(
     wrote_callback: impl FnMut(PathBuf) + 'a,
     buf_size: usize,
-) -> io::Result<Box<dyn FilesCreator + 'a>> {
+) -> io::Result<Box<dyn FileCreator + 'a>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
-        use crate::io_uring::files_creator::IoUringFilesCreator;
+        use crate::io_uring::file_creator::IoUringFileCreator;
 
-        let io_uring_creator = IoUringFilesCreator::with_capacity(buf_size, wrote_callback);
+        let io_uring_creator = IoUringFileCreator::with_capacity(buf_size, wrote_callback);
         match io_uring_creator {
             Ok(creator) => return Ok(Box::new(creator)),
             Err((callback, error)) => {
@@ -139,13 +139,13 @@ pub fn files_creator<'a>(
 }
 
 pub struct SyncIoFilesCreator<'a> {
-    wrote_callback: Box<dyn FnMut(PathBuf) + 'a>,
+    file_complete: Box<dyn FnMut(PathBuf) + 'a>,
 }
 
 impl<'a> SyncIoFilesCreator<'a> {
     fn new(callback: impl FnMut(PathBuf) + 'a, _buf_size: usize) -> Self {
         Self {
-            wrote_callback: Box::new(callback),
+            file_complete: Box::new(callback),
         }
     }
 
@@ -169,7 +169,7 @@ impl<'a> SyncIoFilesCreator<'a> {
         #[cfg(windows)]
         set_file_readonly(&path, mode & 0o200 == 0)?;
 
-        self.on_written(path);
+        self.file_complete(path);
         Ok(())
     }
 }
@@ -181,7 +181,7 @@ pub(super) fn set_file_readonly(path: &std::path::Path, readonly: bool) -> io::R
     std::fs::set_permissions(path, perm)
 }
 
-impl FilesCreator for SyncIoFilesCreator<'_> {
+impl FileCreator for SyncIoFilesCreator<'_> {
     fn schedule_create(
         &mut self,
         path: PathBuf,
@@ -191,7 +191,7 @@ impl FilesCreator for SyncIoFilesCreator<'_> {
         self.do_create(path, mode, contents)
     }
 
-    fn schedule_create_with_dir(
+    fn schedule_create_at_dir(
         &mut self,
         path: PathBuf,
         mode: u32,
@@ -201,8 +201,8 @@ impl FilesCreator for SyncIoFilesCreator<'_> {
         self.do_create(path, mode, contents)
     }
 
-    fn on_written(&mut self, path: PathBuf) {
-        (self.wrote_callback)(path)
+    fn file_complete(&mut self, path: PathBuf) {
+        (self.file_complete)(path)
     }
 
     fn drain(&mut self) -> io::Result<()> {
@@ -342,7 +342,7 @@ mod tests {
         let mut callback_invoked_path: Option<PathBuf> = None;
 
         // Instantiate FilesCreator
-        let mut creator = files_creator(
+        let mut creator = file_creator(
             |path| {
                 callback_invoked_path.replace(path);
             },
@@ -364,10 +364,10 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let file_path = temp_dir.path().join("test.txt");
         let contents = "Hello, world!";
-        let mut creator = files_creator(|_| {}, 2 << 20)?;
+        let mut creator = file_creator(|_| {}, 2 << 20)?;
 
         let dir = Arc::new(File::open(temp_dir.path())?);
-        creator.schedule_create_with_dir(
+        creator.schedule_create_at_dir(
             file_path.clone(),
             0o644,
             dir,
@@ -384,7 +384,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
 
-        let mut creator = files_creator(
+        let mut creator = file_creator(
             |path: PathBuf| {
                 let contents = read_file_to_string(&path);
                 assert!(contents.starts_with("File "));

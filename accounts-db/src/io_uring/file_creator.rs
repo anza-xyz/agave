@@ -1,6 +1,6 @@
 use {
     crate::{
-        file_io::FilesCreator,
+        file_io::FileCreator,
         io_uring::{
             memory::{IoFixedBuffer, LargeBuffer},
             IO_PRIO_BE_HIGHEST,
@@ -36,23 +36,23 @@ const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::fro
 
 /// Multiple files creator with `io_uring` queue for open -> write -> close
 /// operations.
-pub struct IoUringFilesCreator<'a, B = LargeBuffer> {
+pub struct IoUringFileCreator<'a, B = LargeBuffer> {
     ring: Ring<FileCreatorState<'a>, FileCreatorOp>,
     #[allow(dead_code)]
     backing_buffer: B,
 }
 
-impl<'a> IoUringFilesCreator<'a, LargeBuffer> {
-    /// Create a new `IoUringFilesCreator` using `wrote_callback` to notify caller when
+impl<'a> IoUringFileCreator<'a, LargeBuffer> {
+    /// Create a new `IoUringFileCreator` using `wrote_callback` to notify caller when
     /// file contents are already persisted.
     ///
-    /// See [IoUringFilesCreator::with_buffer] for more information.
+    /// See [IoUringFileCreator::with_buffer] for more information.
     #[allow(dead_code)]
     pub fn new<F: FnMut(PathBuf) + 'a>(wrote_callback: F) -> Result<Self, (F, io::Error)> {
         Self::with_capacity(DEFAULT_BUFFER_SIZE, wrote_callback)
     }
 
-    /// Create a new `IoUringFilesCreator` using internally allocated buffer of specified
+    /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
     /// `buf_size` and default write size.
     pub fn with_capacity<F: FnMut(PathBuf) + 'a>(
         buf_size: usize,
@@ -66,8 +66,8 @@ impl<'a> IoUringFilesCreator<'a, LargeBuffer> {
     }
 }
 
-impl<'a, B: AsMut<[u8]>> IoUringFilesCreator<'a, B> {
-    /// Create a new `IoUringFilesCreator` using provided `buffer` and `wrote_callback`
+impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
+    /// Create a new `IoUringFileCreator` using provided `buffer` and `wrote_callback`
     /// to notify caller when file contents are already persisted.
     ///
     /// `buffer` is the internal buffer used for writing scheduled file contents.
@@ -121,7 +121,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFilesCreator<'a, B> {
     }
 }
 
-impl<B> FilesCreator for IoUringFilesCreator<'_, B> {
+impl<B> FileCreator for IoUringFileCreator<'_, B> {
     fn schedule_create(
         &mut self,
         path: PathBuf,
@@ -132,7 +132,7 @@ impl<B> FilesCreator for IoUringFilesCreator<'_, B> {
         self.write_and_close(contents, file_key)
     }
 
-    fn schedule_create_with_dir(
+    fn schedule_create_at_dir(
         &mut self,
         path: PathBuf,
         mode: u32,
@@ -143,7 +143,7 @@ impl<B> FilesCreator for IoUringFilesCreator<'_, B> {
         self.write_and_close(contents, file_key)
     }
 
-    fn on_written(&mut self, path: PathBuf) {
+    fn file_complete(&mut self, path: PathBuf) {
         (self.ring.context_mut().wrote_callback)(path)
     }
 
@@ -154,7 +154,7 @@ impl<B> FilesCreator for IoUringFilesCreator<'_, B> {
     }
 }
 
-impl<B> IoUringFilesCreator<'_, B> {
+impl<B> IoUringFileCreator<'_, B> {
     /// Schedule opening file at `path` with `mode` permissons.
     ///
     /// Returns key that can be used for scheduling writes for it.

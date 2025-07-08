@@ -161,7 +161,7 @@ impl IoFixedBuffer {
     }
 
     /// Return a clone of `self` reduced to specified `size`
-    pub fn sub_buf_to(&self, size: usize) -> Self {
+    pub fn sub_buf_to(self, size: usize) -> Self {
         assert!(size <= self.size);
         Self {
             ptr: self.ptr,
