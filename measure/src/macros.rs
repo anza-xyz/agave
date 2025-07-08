@@ -73,20 +73,20 @@
 /// ```
 #[macro_export]
 macro_rules! measure_time {
-    ($val:expr, $name:tt $(,)?) => {{
+    ($val:expr_2021, $name:tt $(,)?) => {{
         let mut measure = $crate::measure::Measure::start($name);
         let result = $val;
         measure.stop();
         (result, measure)
     }};
-    ($val:expr) => {
+    ($val:expr_2021) => {
         measure_time!($val, "")
     };
 }
 
 #[macro_export]
 macro_rules! measure_us {
-    ($expr:expr) => {{
+    ($expr:expr_2021) => {{
         let (result, duration) = $crate::meas_dur!($expr);
         (result, duration.as_micros() as u64)
     }};
@@ -107,7 +107,7 @@ macro_rules! measure_us {
 // When said aloud, the pronunciation is close to "measure".
 #[macro_export]
 macro_rules! meas_dur {
-    ($expr:expr) => {{
+    ($expr:expr_2021) => {{
         let start = std::time::Instant::now();
         let result = $expr;
         (result, start.elapsed())
