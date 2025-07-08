@@ -524,7 +524,7 @@ fn minimize_bank_for_snapshot(
     let total_accounts_len = transaction_account_set.len();
     info!("Added {total_accounts_len} accounts from transactions. {transaction_accounts_measure}");
 
-    SnapshotMinimizer::minimize(bank, snapshot_slot, ending_slot, transaction_account_set);
+    SnapshotMinimizer::minimize(bank, snapshot_slot, transaction_account_set);
     possibly_incomplete
 }
 
