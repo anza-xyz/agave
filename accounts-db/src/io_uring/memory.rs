@@ -135,7 +135,7 @@ impl DerefMut for PageAlignedMemory {
 pub(super) struct IoFixedBuffer {
     ptr: *mut u8,
     size: usize,
-    io_buf_index: usize,
+    io_buf_index: Option<u16>,
 }
 
 impl IoFixedBuffer {
@@ -143,7 +143,7 @@ impl IoFixedBuffer {
         Self {
             ptr: std::ptr::null_mut(),
             size: 0,
-            io_buf_index: 0,
+            io_buf_index: None,
         }
     }
 
@@ -156,8 +156,8 @@ impl IoFixedBuffer {
     }
 
     /// The index of the fixed buffer in the ring. See register_buffers().
-    pub fn io_buf_index(&self) -> u16 {
-        self.io_buf_index as u16
+    pub fn io_buf_index(&self) -> Option<u16> {
+        self.io_buf_index.clone()
     }
 
     /// Return a clone of `self` reduced to specified `size`
@@ -186,13 +186,20 @@ impl IoFixedBuffer {
             .collect::<Vec<_>>();
         unsafe { ring.submitter().register_buffers(&iovecs)? };
 
+        if buffer.len() / FIXED_BUFFER_LEN > u16::MAX as usize {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::QuotaExceeded,
+                "buffer too large to register in io_uring",
+            ));
+        }
+
         let buf_start = buffer.as_ptr() as usize;
         Ok(buffer.chunks_exact_mut(chunk_size).map(move |buf| {
             let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
             Self {
                 ptr: buf.as_mut_ptr(),
                 size: buf.len(),
-                io_buf_index,
+                io_buf_index: Some(io_buf_index as u16),
             }
         }))
     }
@@ -200,7 +207,7 @@ impl IoFixedBuffer {
 
 impl std::fmt::Debug for IoFixedBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WriteBuf")
+        f.debug_struct("IoFixedBuffer")
             .field("io_buf_index", &self.io_buf_index)
             .finish()
     }

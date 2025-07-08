@@ -443,7 +443,8 @@ impl<'a> WriteOp {
             types::Fixed(*file_key as u32),
             buf.as_mut_ptr(),
             *write_len as u32,
-            buf.io_buf_index(),
+            buf.io_buf_index()
+                .expect("should have a valid fixed buffer"),
         )
         .offset(*offset as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)

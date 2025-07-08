@@ -344,7 +344,8 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             // Safety: we assert that the buffer is large enough to hold the read.
             unsafe { buf.as_mut_ptr().byte_add(*buf_off) },
             *read_len as u32,
-            buf.io_buf_index(),
+            buf.io_buf_index()
+                .expect("should have a valid fixed buffer"),
         )
         .offset(*file_off as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
