@@ -118,7 +118,7 @@ impl<'a> ValidSlice<'a> {
     }
 
     #[inline(always)]
-    #[cfg(all(unix, test))]
+    #[cfg(test)]
     pub(crate) fn slice(&self) -> &[u8] {
         self.0
     }
