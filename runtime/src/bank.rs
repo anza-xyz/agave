@@ -5085,8 +5085,8 @@ impl Bank {
     /// account-by-account, summing each account's balance.
     ///
     /// Only intended to be called at startup by ledger-tool or tests.
-    /// (cannot be made DCOU due to snapshot-minimizer)
-    pub fn calculate_capitalization(&self) -> u64 {
+    /// (cannot be made DCOU due to solana-program-test)
+    pub fn calculate_capitalization_for_tests(&self) -> u64 {
         self.rc
             .accounts
             .accounts_db
@@ -5101,8 +5101,8 @@ impl Bank {
     /// Sets the capitalization.
     ///
     /// Only intended to be called by ledger-tool or tests.
-    /// (cannot be made DCOU due to snapshot-minimizer)
-    pub fn set_capitalization(&self, capitalization: u64) {
+    /// (cannot be made DCOU due to solana-program-test)
+    pub fn set_capitalization_for_tests(&self, capitalization: u64) {
         self.capitalization.store(capitalization, Relaxed);
     }
 

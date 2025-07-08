@@ -77,7 +77,7 @@ impl<'a> SnapshotMinimizer<'a> {
         minimizer.bank.force_flush_accounts_cache();
         minimizer
             .bank
-            .set_capitalization(minimizer.bank.calculate_capitalization());
+            .set_capitalization_for_tests(minimizer.bank.calculate_capitalization_for_tests());
 
         if minimizer.bank.is_accounts_lt_hash_enabled() {
             // Since the account state has changed, the accounts lt hash must be recalculated

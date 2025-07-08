@@ -529,7 +529,7 @@ fn minimize_bank_for_snapshot(
 }
 
 fn assert_capitalization(bank: &Bank) {
-    let calculated = bank.calculate_capitalization();
+    let calculated = bank.calculate_capitalization_for_tests();
     let expected = bank.capitalization();
     assert_eq!(
         calculated, expected,
@@ -2346,8 +2346,8 @@ fn main() {
                     }
 
                     let pre_capitalization = bank.capitalization();
-                    let post_capitalization = bank.calculate_capitalization();
-                    bank.set_capitalization(post_capitalization);
+                    let post_capitalization = bank.calculate_capitalization_for_tests();
+                    bank.set_capitalization_for_tests(post_capitalization);
 
                     let capitalization_message = if pre_capitalization != post_capitalization {
                         let amount = if pre_capitalization > post_capitalization {
@@ -2645,8 +2645,8 @@ fn main() {
                     if arg_matches.is_present("recalculate_capitalization") {
                         println!("Recalculating capitalization");
                         let old_capitalization = bank.capitalization();
-                        let new_capitalization = bank.calculate_capitalization();
-                        bank.set_capitalization(new_capitalization);
+                        let new_capitalization = bank.calculate_capitalization_for_tests();
+                        bank.set_capitalization_for_tests(new_capitalization);
                         if old_capitalization == new_capitalization {
                             eprintln!("Capitalization was identical: {}", Sol(old_capitalization));
                         }
@@ -2734,8 +2734,8 @@ fn main() {
                                 // we have no choice; maybe locally created blank cluster with
                                 // not-Development cluster type.
                                 let old_cap = base_bank.capitalization();
-                                let new_cap = base_bank.calculate_capitalization();
-                                base_bank.set_capitalization(new_cap);
+                                let new_cap = base_bank.calculate_capitalization_for_tests();
+                                base_bank.set_capitalization_for_tests(new_cap);
                                 warn!(
                                     "Skewing capitalization a bit to enable \
                                          credits_auto_rewind as requested: increasing {} from {} \
