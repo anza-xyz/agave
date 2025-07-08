@@ -341,7 +341,7 @@ mod tests {
         // Shared state to capture callback invocations
         let mut callback_invoked_path: Option<PathBuf> = None;
 
-        // Instantiate FilesCreator
+        // Instantiate FileCreator
         let mut creator = file_creator(
             |path| {
                 callback_invoked_path.replace(path);
@@ -360,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn test_create_with_dir_writes_contents() -> io::Result<()> {
+    fn test_create_at_dir_writes_contents() -> io::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let file_path = temp_dir.path().join("test.txt");
         let contents = "Hello, world!";
