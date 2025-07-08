@@ -48,14 +48,8 @@ static_assertions::const_assert_eq!(
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
-/// Contains account meta data which varies between instruction.
-///
-/// It also contains indices to other structures for faster lookup.
-#[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InstructionAccount {
-    /// Points to the account and its key in the `TransactionContext`
-    pub index_in_transaction: IndexOfAccount,
+pub struct AccountCallIndexes {
     /// Points to the first occurrence in the parent `InstructionContext`
     ///
     /// This excludes the program accounts.
@@ -64,24 +58,46 @@ pub struct InstructionAccount {
     ///
     /// This excludes the program accounts.
     pub index_in_callee: IndexOfAccount,
+}
+
+/// Contains account meta data which varies between instruction.
+///
+/// It also contains indices to other structures for faster lookup.
+#[repr(C)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InstructionAccount {
+    /// Points to the account and its key in the `TransactionContext`
+    pub index_in_transaction: IndexOfAccount,
     /// Is this account supposed to sign
     is_signer: u8,
     /// Is this account allowed to become writable
     is_writable: u8,
 }
 
+pub fn create_instruction_account_metadata(
+    index_in_transaction: IndexOfAccount,
+    index_in_caller: IndexOfAccount,
+    index_in_callee: IndexOfAccount,
+    is_signer: bool,
+    is_writable: bool,
+) -> (InstructionAccount, AccountCallIndexes) {
+    let instr_acc = InstructionAccount::new(index_in_transaction, is_signer, is_writable);
+    let indexes = AccountCallIndexes {
+        index_in_callee,
+        index_in_caller
+    };
+
+    (instr_acc, indexes)
+}
+
 impl InstructionAccount {
     pub fn new(
         index_in_transaction: IndexOfAccount,
-        index_in_caller: IndexOfAccount,
-        index_in_callee: IndexOfAccount,
         is_signer: bool,
         is_writable: bool,
     ) -> InstructionAccount {
         InstructionAccount {
             index_in_transaction,
-            index_in_caller,
-            index_in_callee,
             is_signer: is_signer as u8,
             is_writable: is_writable as u8,
         }
@@ -573,6 +589,7 @@ pub struct InstructionContext {
     instruction_accounts_lamport_sum: u128,
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
+    account_call_indexes: Vec<AccountCallIndexes>,
     instruction_data: Vec<u8>,
 }
 
@@ -582,11 +599,12 @@ impl InstructionContext {
     pub fn configure(
         &mut self,
         program_accounts: &[IndexOfAccount],
-        instruction_accounts: Vec<InstructionAccount>,
+        instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>),
         instruction_data: &[u8],
     ) {
         self.program_accounts = program_accounts.to_vec();
-        self.instruction_accounts = instruction_accounts;
+        self.instruction_accounts = instruction_accounts.0;
+        self.account_call_indexes = instruction_accounts.1;
         self.instruction_data = instruction_data.to_vec();
     }
 
@@ -688,7 +706,7 @@ impl InstructionContext {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Option<IndexOfAccount>, InstructionError> {
         let index_in_callee = self
-            .instruction_accounts
+            .account_call_indexes
             .get(instruction_account_index as usize)
             .ok_or(InstructionError::NotEnoughAccountKeys)?
             .index_in_callee;

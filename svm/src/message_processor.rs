@@ -6,6 +6,7 @@ use {
     solana_transaction_context::{IndexOfAccount, InstructionAccount},
     solana_transaction_error::TransactionError,
 };
+use solana_transaction_context::create_instruction_account_metadata;
 
 /// Process a message.
 /// This method calls each instruction in the message over the set of loaded accounts.
@@ -26,6 +27,7 @@ pub(crate) fn process_message(
         .enumerate()
     {
         let mut instruction_accounts = Vec::with_capacity(instruction.accounts.len());
+        let mut instruction_indexes = Vec::with_capacity(instruction.accounts.len());
         for (instruction_account_index, index_in_transaction) in
             instruction.accounts.iter().enumerate()
         {
@@ -38,23 +40,29 @@ pub(crate) fn process_message(
                 .unwrap_or(instruction_account_index)
                 as IndexOfAccount;
             let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
+            let (instr_acc, instr_idx) = create_instruction_account_metadata(
                 index_in_transaction as IndexOfAccount,
                 index_in_transaction as IndexOfAccount,
                 index_in_callee,
                 message.is_signer(index_in_transaction),
                 message.is_writable(index_in_transaction),
-            ));
+            );
+            instruction_accounts.push(instr_acc);
+            instruction_indexes.push(instr_idx);
         }
 
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
+            // TODO: This should return an error.
+            invoke_context.transaction_context.get_next_instruction_context()
+            .map_err(|err| {
+            TransactionError::InstructionError(top_level_instruction_index as u8, err)
+        })?.configure(program_indices, (instruction_accounts, instruction_indexes), instruction.data);
+            
             if invoke_context.is_precompile(program_id) {
                 invoke_context.process_precompile(
                     program_id,
                     instruction.data,
-                    instruction_accounts,
-                    program_indices,
                     message.instructions_iter().map(|ix| ix.data),
                 )
             } else {

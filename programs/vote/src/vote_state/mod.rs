@@ -1158,21 +1158,7 @@ mod tests {
             0,
         );
         let mut instruction_context = InstructionContext::default();
-<<<<<<< HEAD
-        instruction_context.configure(
-            &[0],
-            vec![InstructionAccount {
-                index_in_transaction: 1,
-                index_in_caller: 1,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            }],
-            &[],
-        );
-=======
-        instruction_context.configure(&[0], &[InstructionAccount::new(1, 1, 0, false, true)], &[]);
->>>>>>> 8216c9a42d (Access is_signer and is_writable via functions)
+        instruction_context.configure(&[0], vec![InstructionAccount::new(1, 1, 0, false, true)], &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
