@@ -62,13 +62,10 @@ use {
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
     ahash::{AHashSet, RandomState},
-    dashmap::{DashMap, DashSet},
+    dashmap::DashMap,
     log::*,
     partitioned_epoch_rewards::PartitionedRewardsCalculation,
-    rayon::{
-        iter::{IntoParallelRefIterator, ParallelIterator},
-        ThreadPoolBuilder,
-    },
+    rayon::ThreadPoolBuilder,
     serde::Serialize,
     solana_account::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
@@ -187,9 +184,10 @@ use {
         time::{Duration, Instant},
     },
 };
-pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
 #[cfg(feature = "dev-context-only-utils")]
 use {
+    dashmap::DashSet,
+    rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     solana_accounts_db::accounts_db::{
         ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
     },
@@ -197,6 +195,7 @@ use {
     solana_nonce_account::{get_system_account_kind, SystemAccountKind},
     solana_program_runtime::{loaded_programs::ProgramCacheForTxBatch, sysvar_cache::SysvarCache},
 };
+pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_info::RewardType};
 
 /// params to `verify_accounts_hash`
 struct VerifyAccountsHashConfig {
@@ -3868,25 +3867,6 @@ impl Bank {
         }
     }
 
-    /// Get stake and stake node accounts
-    pub(crate) fn get_stake_accounts(&self, minimized_account_set: &DashSet<Pubkey>) {
-        self.stakes_cache
-            .stakes()
-            .stake_delegations()
-            .iter()
-            .for_each(|(pubkey, _)| {
-                minimized_account_set.insert(*pubkey);
-            });
-
-        self.stakes_cache
-            .stakes()
-            .staked_nodes()
-            .par_iter()
-            .for_each(|(pubkey, _)| {
-                minimized_account_set.insert(*pubkey);
-            });
-    }
-
     /// Returns the accounts, sorted by pubkey, that were part of accounts delta hash calculation
     /// This is used when writing a bank hash details file.
     pub(crate) fn get_accounts_for_bank_hash_details(&self) -> Vec<PubkeyHashAccount> {
@@ -6546,6 +6526,25 @@ impl Bank {
 
     pub fn set_hash_overrides(&self, hash_overrides: HashOverrides) {
         *self.hash_overrides.lock().unwrap() = hash_overrides;
+    }
+
+    /// Get stake and stake node accounts
+    pub(crate) fn get_stake_accounts(&self, minimized_account_set: &DashSet<Pubkey>) {
+        self.stakes_cache
+            .stakes()
+            .stake_delegations()
+            .iter()
+            .for_each(|(pubkey, _)| {
+                minimized_account_set.insert(*pubkey);
+            });
+
+        self.stakes_cache
+            .stakes()
+            .staked_nodes()
+            .par_iter()
+            .for_each(|(pubkey, _)| {
+                minimized_account_set.insert(*pubkey);
+            });
     }
 }
 

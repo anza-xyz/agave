@@ -1,4 +1,5 @@
 //! Used to create minimal snapshots - separated here to keep accounts_db simpler
+#![cfg(feature = "dev-context-only-utils")]
 
 use {
     crate::{bank::Bank, static_ids},
