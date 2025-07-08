@@ -1018,10 +1018,14 @@ mod tests {
         super::*,
         itertools::{izip, multiunzip},
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_runtime::bank::Bank,
         solana_signer::Signer,
-        std::{iter::repeat_with, time::Duration},
+        std::{
+            iter::repeat_with,
+            net::{IpAddr, Ipv4Addr},
+            time::Duration,
+        },
     };
 
     #[test]
@@ -1034,10 +1038,12 @@ mod tests {
             .build()
             .unwrap();
         let keypairs: Vec<Keypair> = repeat_with(Keypair::new).take(NUM_ENDPOINTS).collect();
-        let sockets: Vec<UdpSocket> = repeat_with(bind_to_localhost)
+        let port_range = localhost_port_range_for_tests();
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let sockets: Vec<UdpSocket> = (port_range.0..port_range.1)
+            .map(|port| bind_to(ip_addr, port).unwrap())
             .take(NUM_ENDPOINTS)
-            .collect::<Result<_, _>>()
-            .unwrap();
+            .collect();
         let addresses: Vec<SocketAddr> = sockets
             .iter()
             .map(UdpSocket::local_addr)
