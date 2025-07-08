@@ -157,7 +157,7 @@ impl IoFixedBuffer {
 
     /// The index of the fixed buffer in the ring. See register_buffers().
     pub fn io_buf_index(&self) -> Option<u16> {
-        self.io_buf_index.clone()
+        self.io_buf_index
     }
 
     /// Return a clone of `self` reduced to specified `size`
