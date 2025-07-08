@@ -338,6 +338,14 @@ impl TransactionContext {
             .ok_or(InstructionError::CallDepth)
     }
 
+    pub fn get_next_instruction_context_imm(
+        &self,
+    ) -> Result<&InstructionContext, InstructionError> {
+        self.instruction_trace
+            .last()
+            .ok_or(InstructionError::CallDepth)
+    }
+
     /// Pushes the next InstructionContext
     #[cfg(not(target_os = "solana"))]
     pub fn push(&mut self) -> Result<(), InstructionError> {
@@ -773,6 +781,14 @@ impl InstructionContext {
             }
         }
         Ok(result)
+    }
+
+    pub fn instruction_accounts(&self) -> &[InstructionAccount] {
+        &self.instruction_accounts
+    }
+
+    pub fn program_accounts(&self) -> &[IndexOfAccount] {
+        &self.program_accounts
     }
 }
 

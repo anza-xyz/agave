@@ -307,13 +307,9 @@ impl<'a> InvokeContext<'a> {
         instruction: StableInstruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
-        let (instruction_accounts, program_indices) =
-            self.prepare_instruction(&instruction, signers)?;
+        let _ = self.prepare_instruction(&instruction, signers)?;
         let mut compute_units_consumed = 0;
         self.process_instruction(
-            &instruction.data,
-            instruction_accounts,
-            &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
         )?;
@@ -326,7 +322,7 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         instruction: &StableInstruction,
         signers: &[Pubkey],
-    ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
+    ) -> Result<(&[InstructionAccount], &[IndexOfAccount]), InstructionError> {
         // Finds the index of each account in the instruction by its pubkey.
         // Then normalizes / unifies the privileges of duplicate accounts.
         // Note: This is an O(n^2) algorithm,
@@ -452,22 +448,20 @@ impl<'a> InvokeContext<'a> {
             borrowed_program_account.get_index_in_transaction()
         };
 
-        Ok((instruction_accounts, vec![program_account_index]))
+
+        let instr = self.transaction_context
+            .get_next_instruction_context()?;
+        instr.configure(&vec![program_account_index], instruction_accounts, &instruction.data);
+        Ok((instr.instruction_accounts(), instr.program_accounts()))
     }
 
     /// Processes an instruction and returns how many compute units were used
     pub fn process_instruction(
         &mut self,
-        instruction_data: &[u8],
-        instruction_accounts: Vec<InstructionAccount>,
-        program_indices: &[IndexOfAccount],
         compute_units_consumed: &mut u64,
         timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         *compute_units_consumed = 0;
-        self.transaction_context
-            .get_next_instruction_context()?
-            .configure(program_indices, instruction_accounts, instruction_data);
         self.push()?;
         self.process_executable_chain(compute_units_consumed, timings)
             // MUST pop if and only if `push` succeeded, independent of `result`.
@@ -885,10 +879,10 @@ pub fn mock_process_instruction_with_feature_set<
     );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);
+    invoke_context.transaction_context.get_next_instruction_context().unwrap().configure(
+        &program_indices, instruction_accounts, instruction_data,
+    );
     let result = invoke_context.process_instruction(
-        instruction_data,
-        instruction_accounts,
-        &program_indices,
         &mut 0,
         &mut ExecuteTimings::default(),
     );
@@ -1252,15 +1246,12 @@ mod tests {
             metas.clone(),
         );
         let inner_instruction = StableInstruction::from(inner_instruction);
-        let (inner_instruction_accounts, program_indices) = invoke_context
+        let _ = invoke_context
             .prepare_instruction(&inner_instruction, &[])
             .unwrap();
 
         let mut compute_units_consumed = 0;
         let result = invoke_context.process_instruction(
-            &inner_instruction.data,
-            inner_instruction_accounts,
-            &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
         );
@@ -1342,10 +1333,11 @@ mod tests {
         let new_len = (user_account_data_len as i64).saturating_add(resize_delta) as u64;
         let instruction_data = bincode::serialize(&MockInstruction::Resize { new_len }).unwrap();
 
+        invoke_context.transaction_context
+            .get_next_instruction_context()
+            .unwrap()
+            .configure(&[2], instruction_accounts, &instruction_data);
         let result = invoke_context.process_instruction(
-            &instruction_data,
-            instruction_accounts,
-            &[2],
             &mut 0,
             &mut ExecuteTimings::default(),
         );

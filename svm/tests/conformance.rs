@@ -394,10 +394,12 @@ fn execute_fixture_as_instr(
 
     let mut compute_units_consumed = 0u64;
     let mut timings = ExecuteTimings::default();
+    let _ = invoke_context
+        .transaction_context
+        .get_next_instruction_context()
+        .unwrap()
+        .configure(&[program_idx as IndexOfAccount], instruction_accounts, &sanitized_message.instructions()[0].data);
     let result = invoke_context.process_instruction(
-        &sanitized_message.instructions()[0].data,
-        instruction_accounts,
-        &[program_idx as IndexOfAccount],
         &mut compute_units_consumed,
         &mut timings,
     );

@@ -276,12 +276,14 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .map(|seeds| Pubkey::create_program_address(seeds, caller).unwrap())
             .collect::<Vec<_>>();
 
-        let (instruction_accounts, program_indices) = invoke_context
+        let _ = invoke_context
             .prepare_instruction(&instruction, &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
         let transaction_context = &invoke_context.transaction_context;
+        let instruction_accounts = transaction_context.get_next_instruction_context_imm()
+            .unwrap().instruction_accounts();
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
@@ -332,9 +334,6 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let mut compute_units_consumed = 0;
         invoke_context
             .process_instruction(
-                &instruction.data,
-                instruction_accounts,
-                &program_indices,
                 &mut compute_units_consumed,
                 &mut ExecuteTimings::default(),
             )

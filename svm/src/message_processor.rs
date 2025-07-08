@@ -59,9 +59,6 @@ pub(crate) fn process_message(
                 )
             } else {
                 invoke_context.process_instruction(
-                    instruction.data,
-                    instruction_accounts,
-                    program_indices,
                     &mut compute_units_consumed,
                     execute_timings,
                 )
