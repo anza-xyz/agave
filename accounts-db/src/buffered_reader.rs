@@ -237,7 +237,7 @@ pub fn large_file_buf_reader(
     Ok(Box::new(BufReader::with_capacity(buf_size, file)))
 }
 
-#[cfg(all(unix, test))]
+#[cfg(test)]
 mod tests {
     use {
         super::*, crate::append_vec::ValidSlice, std::io::Write, tempfile::tempfile,
