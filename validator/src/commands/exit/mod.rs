@@ -130,7 +130,7 @@ pub fn execute(matches: &ArgMatches, ledger_path: &Path) -> Result<()> {
     //
     // Additionally, delay checking the result until it will actually be used.
     // In an upgrade scenario, it is possible that a binary that calls pid()
-    // will be iniating exit against a process that doesn't support pid().
+    // will be initating exit against a process that doesn't support pid().
     // Since PostExitAction::Wait case is opt-in (via --wait-for-exit), the
     // result is checked ONLY in that case to provide a friendlier upgrade
     // path for user who are NOT using --wait-for-exit

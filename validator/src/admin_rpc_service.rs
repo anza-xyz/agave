@@ -152,9 +152,9 @@ impl solana_cli_output::QuietDisplay for AdminRpcRepairWhitelist {}
 pub trait AdminRpc {
     type Metadata;
 
-    #[rpc(meta, name = "exit")]
     /// Initiates validator exit; exit is asynchronous so the validator
     /// will almost certainly still be running when this method returns
+    #[rpc(meta, name = "exit")]
     fn exit(&self, meta: Self::Metadata) -> Result<()>;
 
     /// Return the process id (pid)
