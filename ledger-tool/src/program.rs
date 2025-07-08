@@ -533,7 +533,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .unwrap()
         .configure(
             &[program_index, program_index.saturating_add(1)],
-            &instruction_accounts,
+            instruction_accounts,
             &instruction_data,
         );
     invoke_context.push().unwrap();

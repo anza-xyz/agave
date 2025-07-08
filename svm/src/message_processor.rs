@@ -53,14 +53,14 @@ pub(crate) fn process_message(
                 invoke_context.process_precompile(
                     program_id,
                     instruction.data,
-                    &instruction_accounts,
+                    instruction_accounts,
                     program_indices,
                     message.instructions_iter().map(|ix| ix.data),
                 )
             } else {
                 invoke_context.process_instruction(
                     instruction.data,
-                    &instruction_accounts,
+                    instruction_accounts,
                     program_indices,
                     &mut compute_units_consumed,
                     execute_timings,

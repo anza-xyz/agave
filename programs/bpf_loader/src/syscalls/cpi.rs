@@ -1055,7 +1055,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     let mut compute_units_consumed = 0;
     invoke_context.process_instruction(
         &instruction.data,
-        &instruction_accounts,
+        instruction_accounts,
         &program_indices,
         &mut compute_units_consumed,
         &mut ExecuteTimings::default(),
@@ -1633,7 +1633,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(program_accounts, &instruction_accounts, instruction_data);
+                .configure(program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }

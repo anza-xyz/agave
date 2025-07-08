@@ -1160,7 +1160,7 @@ mod tests {
         let mut instruction_context = InstructionContext::default();
         instruction_context.configure(
             &[0],
-            &[InstructionAccount {
+            vec![InstructionAccount {
                 index_in_transaction: 1,
                 index_in_caller: 1,
                 index_in_callee: 0,
@@ -1315,7 +1315,7 @@ mod tests {
         let mut instruction_context = InstructionContext::default();
         instruction_context.configure(
             &[0],
-            &[InstructionAccount {
+            vec![InstructionAccount {
                 index_in_transaction: 1,
                 index_in_caller: 1,
                 index_in_callee: 0,

@@ -539,11 +539,11 @@ impl InstructionContext {
     pub fn configure(
         &mut self,
         program_accounts: &[IndexOfAccount],
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
         self.program_accounts = program_accounts.to_vec();
-        self.instruction_accounts = instruction_accounts.to_vec();
+        self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
     }
 

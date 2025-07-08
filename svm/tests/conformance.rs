@@ -396,7 +396,7 @@ fn execute_fixture_as_instr(
     let mut timings = ExecuteTimings::default();
     let result = invoke_context.process_instruction(
         &sanitized_message.instructions()[0].data,
-        &instruction_accounts,
+        instruction_accounts,
         &[program_idx as IndexOfAccount],
         &mut compute_units_consumed,
         &mut timings,

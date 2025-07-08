@@ -312,7 +312,7 @@ impl<'a> InvokeContext<'a> {
         let mut compute_units_consumed = 0;
         self.process_instruction(
             &instruction.data,
-            &instruction_accounts,
+            instruction_accounts,
             &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
@@ -459,7 +459,7 @@ impl<'a> InvokeContext<'a> {
     pub fn process_instruction(
         &mut self,
         instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: Vec<InstructionAccount>,
         program_indices: &[IndexOfAccount],
         compute_units_consumed: &mut u64,
         timings: &mut ExecuteTimings,
@@ -480,7 +480,7 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: Vec<InstructionAccount>,
         program_indices: &[IndexOfAccount],
         message_instruction_datas_iter: impl Iterator<Item = &'ix_data [u8]>,
     ) -> Result<(), InstructionError> {
@@ -887,7 +887,7 @@ pub fn mock_process_instruction_with_feature_set<
     pre_adjustments(&mut invoke_context);
     let result = invoke_context.process_instruction(
         instruction_data,
-        &instruction_accounts,
+        instruction_accounts,
         &program_indices,
         &mut 0,
         &mut ExecuteTimings::default(),
@@ -1028,7 +1028,7 @@ mod tests {
                             .transaction_context
                             .get_next_instruction_context()
                             .unwrap()
-                            .configure(&[3], &instruction_accounts, &[]);
+                            .configure(&[3], instruction_accounts, &[]);
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
@@ -1105,7 +1105,7 @@ mod tests {
                 .unwrap()
                 .configure(
                     &[one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
-                    &instruction_accounts,
+                    instruction_accounts.clone(),
                     &[],
                 );
             if Err(InstructionError::CallDepth) == invoke_context.push() {
@@ -1184,7 +1184,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(&[4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
@@ -1241,7 +1241,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(&[4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
             callee_program_id,
@@ -1259,7 +1259,7 @@ mod tests {
         let mut compute_units_consumed = 0;
         let result = invoke_context.process_instruction(
             &inner_instruction.data,
-            &inner_instruction_accounts,
+            inner_instruction_accounts,
             &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
@@ -1293,7 +1293,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0], &[], &[]);
+            .configure(&[0], Vec::new(), &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
@@ -1315,7 +1315,7 @@ mod tests {
             (Pubkey::new_unique(), dummy_account),
             (program_key, program_account),
         ];
-        let instruction_accounts = [
+        let instruction_accounts = vec![
             InstructionAccount {
                 index_in_transaction: 0,
                 index_in_caller: 0,
@@ -1344,7 +1344,7 @@ mod tests {
 
         let result = invoke_context.process_instruction(
             &instruction_data,
-            &instruction_accounts,
+            instruction_accounts,
             &[2],
             &mut 0,
             &mut ExecuteTimings::default(),

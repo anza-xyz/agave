@@ -725,7 +725,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&program_indices, &instruction_accounts, &instruction_data);
+                    .configure(&program_indices, instruction_accounts, &instruction_data);
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
@@ -868,7 +868,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&program_indices, &instruction_accounts, &instruction_data);
+                .configure(&program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1114,7 +1114,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&program_indices, &instruction_accounts, &instruction_data);
+                .configure(&program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
