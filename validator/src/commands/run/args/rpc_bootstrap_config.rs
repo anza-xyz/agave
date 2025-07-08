@@ -7,10 +7,10 @@ use {
 pub struct RpcBootstrapConfig {
     pub no_genesis_fetch: bool,
     pub no_snapshot_fetch: bool,
-    pub check_vote_account: Option<String>,
     pub only_known_rpc: bool,
     pub max_genesis_archive_unpacked_size: u64,
-    pub no_incremental_snapshots: bool,
+    pub check_vote_account: Option<String>,
+    pub incremental_snapshot_fetch: bool,
 }
 
 #[cfg(test)]
@@ -22,7 +22,7 @@ impl Default for RpcBootstrapConfig {
             check_vote_account: None,
             only_known_rpc: false,
             max_genesis_archive_unpacked_size: 10485760,
-            no_incremental_snapshots: false,
+            incremental_snapshot_fetch: true,
         }
     }
 }
@@ -46,7 +46,7 @@ impl FromClapArgMatches for RpcBootstrapConfig {
                 ))
             })?;
 
-        let no_incremental_snapshots = matches.is_present("no_incremental_snapshots");
+        let incremental_snapshot_fetch = !matches.is_present("no_incremental_snapshots");
 
         Ok(Self {
             no_genesis_fetch,
@@ -54,7 +54,7 @@ impl FromClapArgMatches for RpcBootstrapConfig {
             check_vote_account,
             only_known_rpc,
             max_genesis_archive_unpacked_size,
-            no_incremental_snapshots,
+            incremental_snapshot_fetch,
         })
     }
 }
