@@ -232,7 +232,8 @@ fn recv_loop<P: SocketProvider>(
                     packet_batch
                         .iter_mut()
                         .for_each(|p| p.meta_mut().set_from_staked_node(is_staked_service));
-                    match packet_batch_sender.try_send(packet_batch.into()) {
+                    let try_send_batch_r = packet_batch_sender.try_send(packet_batch.into());
+                    match try_send_batch_r {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
                             stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
@@ -246,7 +247,8 @@ fn recv_loop<P: SocketProvider>(
             }
         }
 
-        if let CurrentSocket::Changed(s) = provider.current_socket() {
+        let current_socket = provider.current_socket();
+        if let CurrentSocket::Changed(s) = current_socket {
             socket = s;
             setup_socket(&socket)?;
 

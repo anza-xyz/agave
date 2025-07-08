@@ -135,11 +135,11 @@ pub async fn make_client_endpoint(
     endpoint.set_default_client_config(get_client_config(
         client_keypair.unwrap_or(&default_keypair),
     ));
-    endpoint
+    let connection = endpoint
         .connect(*addr, "localhost")
         .expect("Endpoint configuration should be correct")
-        .await
-        .expect("Test server should be already listening on 'localhost'")
+        .await;
+    connection.expect("Test server should be already listening on 'localhost'")
 }
 
 pub async fn check_multiple_streams(
@@ -167,11 +167,14 @@ pub async fn check_multiple_streams(
     let now = Instant::now();
     let mut total_packets = 0;
     while now.elapsed().as_secs() < 10 {
-        if let Ok(packets) = receiver.try_recv() {
-            total_packets += packets.len();
-            all_packets.push(packets)
-        } else {
-            sleep(Duration::from_secs(1)).await;
+        match receiver.try_recv() {
+            Ok(packets) => {
+                total_packets += packets.len();
+                all_packets.push(packets)
+            }
+            _ => {
+                sleep(Duration::from_secs(1)).await;
+            }
         }
         if total_packets == num_expected_packets {
             break;
