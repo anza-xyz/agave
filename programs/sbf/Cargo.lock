@@ -161,7 +161,7 @@ dependencies = [
  "core_affinity",
  "crossbeam-channel",
  "fd-lock",
- "indicatif",
+ "indicatif 0.18.0",
  "itertools 0.12.1",
  "jsonrpc-core",
  "jsonrpc-core-client",
@@ -2898,6 +2898,19 @@ name = "indicatif"
 version = "0.17.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4adb2ee6ad319a912210a36e56e3623555817bcc877a7e6e8802d1d69c4d8056"
+dependencies = [
+ "console 0.16.0",
+ "portable-atomic",
+ "unicode-width 0.2.0",
+ "unit-prefix",
+ "web-time",
+]
+
+[[package]]
+name = "indicatif"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70a646d946d06bedbbc4cac4c218acf4bbf2d87757a784857025f4d447e4e1cd"
 dependencies = [
  "console 0.16.0",
  "portable-atomic",
@@ -5818,7 +5831,7 @@ dependencies = [
  "clap",
  "console 0.16.0",
  "humantime",
- "indicatif",
+ "indicatif 0.18.0",
  "pretty-hex",
  "semver",
  "serde",
@@ -5859,7 +5872,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-util",
  "indexmap 2.10.0",
- "indicatif",
+ "indicatif 0.18.0",
  "log",
  "quinn",
  "rayon",
@@ -6493,7 +6506,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05a9744774fdbd7ae8575e5bd6d5df6946f321fb9b6019410b300a515369a37d"
 dependencies = [
  "console 0.15.11",
- "indicatif",
+ "indicatif 0.17.12",
  "log",
  "reqwest 0.11.27",
 ]
@@ -7682,7 +7695,7 @@ dependencies = [
  "bincode",
  "bs58",
  "futures 0.3.31",
- "indicatif",
+ "indicatif 0.18.0",
  "log",
  "reqwest 0.12.22",
  "reqwest-middleware",
@@ -9380,7 +9393,7 @@ dependencies = [
  "bincode",
  "futures-util",
  "indexmap 2.10.0",
- "indicatif",
+ "indicatif 0.18.0",
  "log",
  "rayon",
  "solana-client-traits",
