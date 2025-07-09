@@ -1,14 +1,14 @@
-#[cfg(target_os = "linux")]
-use {crate::commands::Error, std::io, std::thread, std::time::Duration};
 use {
     crate::{
         admin_rpc_service,
-        commands::{monitor, wait_for_restart_window, FromClapArgMatches, Result},
+        commands::{monitor, wait_for_restart_window, Error, FromClapArgMatches, Result},
     },
     clap::{value_t_or_exit, App, Arg, ArgMatches, SubCommand},
     solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
     std::path::Path,
 };
+#[cfg(target_os = "linux")]
+use {std::io, std::thread, std::time::Duration};
 
 const COMMAND: &str = "exit";
 
@@ -204,8 +204,9 @@ fn poll_until_pid_terminates(pid: u32) -> Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 fn poll_until_pid_terminates(_pid: u32) -> Result<()> {
-    println!("Unable to wait for agave-validator process termination on this platform");
-    Ok(())
+    Err(Error::Dynamic(
+        "Unable to wait for agave-validator process termination on this platform".into(),
+    ))
 }
 
 #[cfg(test)]
