@@ -1,5 +1,6 @@
 use {
     crate::{
+        bootstrap::RpcBootstrapConfig,
         cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
         commands::{FromClapArgMatches, Result},
     },
@@ -42,7 +43,7 @@ pub struct RunArgs {
     pub logfile: String,
     pub entrypoints: Vec<SocketAddr>,
     pub known_validators: Option<HashSet<Pubkey>>,
-    pub rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig,
+    pub rpc_bootstrap_config: RpcBootstrapConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -85,9 +86,7 @@ impl FromClapArgMatches for RunArgs {
             logfile,
             entrypoints,
             known_validators,
-            rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::from_clap_arg_match(
-                matches,
-            )?,
+            rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
         })
     }
 }
@@ -1786,7 +1785,7 @@ mod tests {
                 logfile,
                 entrypoints,
                 known_validators,
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig::default(),
+                rpc_bootstrap_config: RpcBootstrapConfig::default(),
             }
         }
     }
@@ -1919,9 +1918,9 @@ mod tests {
         {
             let default_run_args = RunArgs::default();
             let expected_args = RunArgs {
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                rpc_bootstrap_config: RpcBootstrapConfig {
                     no_genesis_fetch: true,
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };
@@ -1939,9 +1938,9 @@ mod tests {
         {
             let default_run_args = RunArgs::default();
             let expected_args = RunArgs {
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                rpc_bootstrap_config: RpcBootstrapConfig {
                     no_snapshot_fetch: true,
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };
@@ -2052,9 +2051,9 @@ mod tests {
                     IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                     8000,
                 )],
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                rpc_bootstrap_config: RpcBootstrapConfig {
                     check_vote_account: Some("https://api.mainnet-beta.solana.com".to_string()),
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };
@@ -2201,9 +2200,9 @@ mod tests {
             let known_validators = Some(HashSet::from([known_validators_pubkey]));
             let expected_args = RunArgs {
                 known_validators,
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                rpc_bootstrap_config: RpcBootstrapConfig {
                     only_known_rpc: true,
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };
@@ -2226,9 +2225,9 @@ mod tests {
             let known_validators = Some(HashSet::from([known_validators_pubkey]));
             let expected_args = RunArgs {
                 known_validators,
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                rpc_bootstrap_config: RpcBootstrapConfig {
                     only_known_rpc: true,
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };
@@ -2252,9 +2251,9 @@ mod tests {
             let default_run_args = RunArgs::default();
             let max_genesis_archive_unpacked_size = 1000000000;
             let expected_args = RunArgs {
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
+                rpc_bootstrap_config: RpcBootstrapConfig {
                     max_genesis_archive_unpacked_size,
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };
@@ -2275,9 +2274,9 @@ mod tests {
         {
             let default_run_args = RunArgs::default();
             let expected_args = RunArgs {
-                rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
-                    no_incremental_snapshots: true,
-                    ..rpc_bootstrap_config::RpcBootstrapConfig::default()
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    incremental_snapshot_fetch: false,
+                    ..RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()
             };

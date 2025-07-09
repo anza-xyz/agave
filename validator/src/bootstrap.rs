@@ -56,7 +56,7 @@ pub const MAX_RPC_CONNECTIONS_EVALUATED_PER_ITERATION: usize = 32;
 
 pub const PING_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RpcBootstrapConfig {
     pub no_genesis_fetch: bool,
     pub no_snapshot_fetch: bool,
