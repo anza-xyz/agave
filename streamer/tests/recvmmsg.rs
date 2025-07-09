@@ -1,19 +1,29 @@
 #![cfg(target_os = "linux")]
 
 use {
-    solana_net_utils::bind_to_localhost,
+    solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
     solana_streamer::{
         packet::{Meta, Packet, PACKET_DATA_SIZE},
         recvmmsg::*,
     },
-    std::time::Instant,
+    std::{net::Ipv4Addr, time::Instant},
 };
 
 #[test]
 pub fn test_recv_mmsg_batch_size() {
-    let reader = bind_to_localhost().expect("bind");
-    let addr = reader.local_addr().unwrap();
-    let sender = bind_to_localhost().expect("bind");
+    let port_range = localhost_port_range_for_tests();
+    let mut port_range = port_range.0..port_range.1;
+    let reader_socket = bind_to(
+        std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port_range.next().unwrap(),
+    )
+    .expect("should bind reader");
+    let addr = reader_socket.local_addr().unwrap();
+    let sender_socket = bind_to(
+        std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port_range.next().unwrap(),
+    )
+    .expect("should bind sender");
 
     const TEST_BATCH_SIZE: usize = 64;
     let sent = TEST_BATCH_SIZE;
@@ -23,11 +33,11 @@ pub fn test_recv_mmsg_batch_size() {
     (0..1000).for_each(|_| {
         for _ in 0..sent {
             let data = [0; PACKET_DATA_SIZE];
-            sender.send_to(&data[..], addr).unwrap();
+            sender_socket.send_to(&data[..], addr).unwrap();
         }
         let mut packets = vec![Packet::default(); TEST_BATCH_SIZE];
         let now = Instant::now();
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
+        let recv = recv_mmsg(&reader_socket, &mut packets[..]).unwrap();
         elapsed_in_max_batch += now.elapsed().as_nanos();
         if recv == TEST_BATCH_SIZE {
             num_max_batches += 1;
@@ -39,12 +49,12 @@ pub fn test_recv_mmsg_batch_size() {
     (0..1000).for_each(|_| {
         for _ in 0..sent {
             let data = [0; PACKET_DATA_SIZE];
-            sender.send_to(&data[..], addr).unwrap();
+            sender_socket.send_to(&data[..], addr).unwrap();
         }
         let mut packets = vec![Packet::default(); 4];
         let mut recv = 0;
         let now = Instant::now();
-        while let Ok(num) = recv_mmsg(&reader, &mut packets[..]) {
+        while let Ok(num) = recv_mmsg(&reader_socket, &mut packets[..]) {
             recv += num;
             if recv >= TEST_BATCH_SIZE {
                 break;

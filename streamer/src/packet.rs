@@ -301,8 +301,11 @@ pub fn send_to(
 mod tests {
     use {
         super::{recv_from as recv_from_impl, *},
-        solana_net_utils::bind_to_localhost,
-        std::{io, io::Write, net::SocketAddr},
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
+        std::{
+            io::{self, Write},
+            net::{IpAddr, Ipv4Addr, SocketAddr},
+        },
     };
 
     #[test]
@@ -336,9 +339,13 @@ mod tests {
     #[test]
     pub fn packet_send_recv() {
         solana_logger::setup();
-        let recv_socket = bind_to_localhost().expect("bind");
+        let port_range = localhost_port_range_for_tests();
+        let mut port_range = port_range.0..port_range.1;
+        let recv_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
+            .expect("should bind receiver");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = bind_to_localhost().expect("bind");
+        let send_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
+            .expect("should bind sender");
         let saddr = send_socket.local_addr().unwrap();
 
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
@@ -393,9 +400,13 @@ mod tests {
     #[test]
     fn test_packet_resize() {
         solana_logger::setup();
-        let recv_socket = bind_to_localhost().expect("bind");
+        let port_range = localhost_port_range_for_tests();
+        let mut port_range = port_range.0..port_range.1;
+        let recv_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
+            .expect("should bind receiver");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = bind_to_localhost().expect("bind");
+        let send_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
+            .expect("should bind sender");
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
         batch.resize(PACKETS_PER_BATCH, Packet::default());
 
