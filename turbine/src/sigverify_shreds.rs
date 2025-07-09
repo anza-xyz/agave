@@ -48,7 +48,7 @@ const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = 2;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 
 /// Maximum number of packet batches to process in a single sigverify iteration.
-const SIGVERIFY_SHRED_BATCH_SIZE: usize = 1024 * 8;
+const SIGVERIFY_SHRED_BATCH_SIZE: usize = 1024;
 
 #[allow(clippy::enum_variant_names)]
 enum Error {
