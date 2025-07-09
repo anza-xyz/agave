@@ -3912,12 +3912,11 @@ pub mod rpc_full {
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
                     fee: _,
-                    // Always `None` due to `enable_transaction_balance_recording = false`
                     pre_balances: _,
                     post_balances: _,
                     pre_token_balances: _,
                     post_token_balances: _,
-                } = preflight_bank.simulate_transaction(&transaction, false, false)
+                } = preflight_bank.simulate_transaction(&transaction, false)
                 {
                     match err {
                         TransactionError::BlockhashNotFound => {
@@ -3977,8 +3976,6 @@ pub mod rpc_full {
                 accounts: config_accounts,
                 min_context_slot,
                 inner_instructions: enable_cpi_recording,
-                transaction_balances: enable_transaction_balance_recording,
-                loaded_addresses,
             } = config.unwrap_or_default();
             let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
@@ -4032,11 +4029,7 @@ pub mod rpc_full {
                 post_balances,
                 pre_token_balances,
                 post_token_balances,
-            } = bank.simulate_transaction(
-                &transaction,
-                enable_cpi_recording,
-                enable_transaction_balance_recording,
-            );
+            } = bank.simulate_transaction(&transaction, enable_cpi_recording);
 
             let account_keys = transaction.message().account_keys();
             let number_of_accounts = account_keys.len();
@@ -4113,7 +4106,7 @@ pub mod rpc_full {
                     post_token_balances: post_token_balances.map(|balances| {
                         balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
                     }),
-                    loaded_addresses: loaded_addresses.then(|| UiLoadedAddresses::from(&transaction.get_loaded_addresses()))
+                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
                 },
             ))
         }
