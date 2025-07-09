@@ -621,30 +621,34 @@ mod tests {
             slice::{self, from_raw_parts, from_raw_parts_mut},
         },
     };
+    use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
     fn deduplicated_instruction_accounts(
         transaction_indexes: &[IndexOfAccount],
         is_writable: fn(usize) -> bool,
-    ) -> Vec<InstructionAccount> {
-        transaction_indexes
-            .iter()
-            .enumerate()
-            .map(|(index_in_instruction, index_in_transaction)| {
-                let index_in_callee = transaction_indexes
-                    .get(0..index_in_instruction)
-                    .unwrap()
-                    .iter()
-                    .position(|account_index| account_index == index_in_transaction)
-                    .unwrap_or(index_in_instruction);
-                InstructionAccount::new(
-                    *index_in_transaction,
-                    *index_in_transaction,
-                    index_in_callee as IndexOfAccount,
-                    false,
-                    is_writable(index_in_instruction),
-                )
-            })
-            .collect()
+    ) -> (Vec<InstructionAccount>, Vec<AccountCallIndexes>) {
+        let mut instr_accounts: Vec<InstructionAccount> = Vec::with_capacity(transaction_indexes.len());
+        let mut instr_indexes: Vec<AccountCallIndexes> = Vec::with_capacity(transaction_indexes.len());
+
+        for (index_in_instruction, index_in_transaction) in transaction_indexes.iter().enumerate() {
+            let index_in_callee = transaction_indexes
+                .get(0..index_in_instruction)
+                .unwrap()
+                .iter()
+                .position(|account_index| account_index == index_in_transaction)
+                .unwrap_or(index_in_instruction);
+            let (instr_acc, instr_idx) = create_instruction_account_metadata(
+                *index_in_transaction,
+                *index_in_transaction,
+                index_in_callee as IndexOfAccount,
+                false,
+                is_writable(index_in_instruction),
+            );
+            instr_accounts.push(instr_acc);
+            instr_indexes.push(instr_idx);
+        }
+
+        (instr_accounts, instr_indexes)
     }
 
     #[test]
@@ -711,7 +715,8 @@ mod tests {
                 let mut instruction_accounts =
                     deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
-                    instruction_accounts.push(instruction_accounts.last().cloned().unwrap());
+                    instruction_accounts.0.push(instruction_accounts.0.last().cloned().unwrap());
+                    instruction_accounts.1.push(instruction_accounts.1.last().cloned().unwrap());
                 }
                 let program_indices = [0];
                 let instruction_data = vec![];

@@ -3,7 +3,7 @@ use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::{IndexOfAccount},
     solana_transaction_error::TransactionError,
 };
 use solana_transaction_context::create_instruction_account_metadata;

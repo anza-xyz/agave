@@ -41,6 +41,7 @@ use {
         time::{Duration, Instant},
     },
 };
+use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
 // The ELF magic number [ELFMAG0, ELFMAG1, ELFGMAG2, ELFMAG3] as defined by
 // https://github.com/torvalds/linux/blob/master/include/uapi/linux/elf.h
@@ -399,6 +400,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let loader_id = bpf_loader_upgradeable::id();
     let mut transaction_accounts = Vec::new();
     let mut instruction_accounts = Vec::new();
+    let mut instruction_indexes = Vec::new();
     let mut program_id = Pubkey::new_unique();
     let mut cached_account_keys = vec![];
 
@@ -409,7 +411,9 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount::new(0, 0, 0, false, true));
+            let (instr_acc, instr_idx) = create_instruction_account_metadata(0, 0, 0, false, false);
+            instruction_accounts.push(instr_acc);
+            instruction_indexes.push(instr_idx);
             vec![]
         }
         Err(_) => {
@@ -424,71 +428,75 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             // Maps a public key to the transaction account index
             let mut txn_acct_indices =
                 HashMap::<Pubkey, usize>::with_capacity(input.accounts.len());
-            instruction_accounts = input
-                .accounts
-                .into_iter()
-                .map(|account_info| {
-                    let pubkey = account_info.key.parse::<Pubkey>().unwrap_or_else(|err| {
-                        eprintln!("Invalid key in input {}, error {}", account_info.key, err);
-                        exit(1);
-                    });
-                    let data = account_info.data.unwrap_or_default();
-                    let space = data.len();
-                    let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
-                        let owner = *account.owner();
-                        if bpf_loader_upgradeable::check_id(&owner) {
-                            if let Ok(UpgradeableLoaderState::Program {
-                                programdata_address,
-                            }) = account.state()
+            let mut new_instr_accs: Vec<InstructionAccount> = Vec::new();
+            let mut new_instr_idx: Vec<AccountCallIndexes> = Vec::new();
+            for account_info in input.accounts.into_iter() {
+                let pubkey = account_info.key.parse::<Pubkey>().unwrap_or_else(|err| {
+                    eprintln!("Invalid key in input {}, error {}", account_info.key, err);
+                    exit(1);
+                });
+                let data = account_info.data.unwrap_or_default();
+                let space = data.len();
+                let account = if let Some(account) = bank.get_account_with_fixed_root(&pubkey) {
+                    let owner = *account.owner();
+                    if bpf_loader_upgradeable::check_id(&owner) {
+                        if let Ok(UpgradeableLoaderState::Program {
+                                      programdata_address,
+                                  }) = account.state()
+                        {
+                            debug!("Program data address {}", programdata_address);
+                            if bank
+                                .get_account_with_fixed_root(&programdata_address)
+                                .is_some()
                             {
-                                debug!("Program data address {}", programdata_address);
-                                if bank
-                                    .get_account_with_fixed_root(&programdata_address)
-                                    .is_some()
-                                {
-                                    cached_account_keys.push(pubkey);
-                                }
+                                cached_account_keys.push(pubkey);
                             }
                         }
-                        // Override account data and lamports from input file if provided
-                        if space > 0 {
-                            let lamports = account_info.lamports.unwrap_or(account.lamports());
-                            let mut account = AccountSharedData::new(lamports, space, &owner);
-                            account.set_data_from_slice(&data);
-                            account
-                        } else {
-                            account
-                        }
-                    } else {
-                        let owner = account_info
-                            .owner
-                            .unwrap_or(Pubkey::new_unique().to_string());
-                        let owner = owner.parse::<Pubkey>().unwrap_or_else(|err| {
-                            eprintln!("Invalid owner key in input {owner}, error {err}");
-                            Pubkey::new_unique()
-                        });
-                        let lamports = account_info.lamports.unwrap_or(0);
+                    }
+                    // Override account data and lamports from input file if provided
+                    if space > 0 {
+                        let lamports = account_info.lamports.unwrap_or(account.lamports());
                         let mut account = AccountSharedData::new(lamports, space, &owner);
                         account.set_data_from_slice(&data);
                         account
-                    };
-                    let txn_acct_index = if let Some(idx) = txn_acct_indices.get(&pubkey) {
-                        *idx
                     } else {
-                        let idx = transaction_accounts.len();
-                        txn_acct_indices.insert(pubkey, idx);
-                        transaction_accounts.push((pubkey, account));
-                        idx
-                    };
-                    InstructionAccount::new(
-                        txn_acct_index as IndexOfAccount,
-                        txn_acct_index as IndexOfAccount,
-                        txn_acct_index as IndexOfAccount,
-                        account_info.is_signer.unwrap_or(false),
-                        account_info.is_writable.unwrap_or(false),
-                    )
-                })
-                .collect();
+                        account
+                    }
+                } else {
+                    let owner = account_info
+                        .owner
+                        .unwrap_or(Pubkey::new_unique().to_string());
+                    let owner = owner.parse::<Pubkey>().unwrap_or_else(|err| {
+                        eprintln!("Invalid owner key in input {owner}, error {err}");
+                        Pubkey::new_unique()
+                    });
+                    let lamports = account_info.lamports.unwrap_or(0);
+                    let mut account = AccountSharedData::new(lamports, space, &owner);
+                    account.set_data_from_slice(&data);
+                    account
+                };
+                let txn_acct_index = if let Some(idx) = txn_acct_indices.get(&pubkey) {
+                    *idx
+                } else {
+                    let idx = transaction_accounts.len();
+                    txn_acct_indices.insert(pubkey, idx);
+                    transaction_accounts.push((pubkey, account));
+                    idx
+                };
+
+                let (instr_acc, instr_idx) = create_instruction_account_metadata(
+                    txn_acct_index as IndexOfAccount,
+                    txn_acct_index as IndexOfAccount,
+                    txn_acct_index as IndexOfAccount,
+                    account_info.is_signer.unwrap_or(false),
+                    account_info.is_writable.unwrap_or(false),
+                );
+                new_instr_accs.push(instr_acc);
+                new_instr_idx.push(instr_idx);
+            }
+            instruction_accounts = std::mem::take(&mut new_instr_accs);
+            instruction_indexes = std::mem::take(&mut new_instr_idx);
+
             input.instruction_data
         }
     };
@@ -527,7 +535,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .unwrap()
         .configure(
             &[program_index, program_index.saturating_add(1)],
-            instruction_accounts,
+            (instruction_accounts, instruction_indexes),
             &instruction_data,
         );
     invoke_context.push().unwrap();

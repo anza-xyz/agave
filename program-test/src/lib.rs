@@ -284,11 +284,13 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let transaction_context = &invoke_context.transaction_context;
         let instruction_accounts = transaction_context.get_next_instruction_context_imm()
             .unwrap().instruction_accounts();
+        let instruction_indexes = transaction_context.get_next_instruction_context_imm()
+            .unwrap().instruction_indexes();
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
         let mut account_indices = Vec::with_capacity(instruction_accounts.len());
-        for instruction_account in instruction_accounts.iter() {
+        for (instruction_account, instruction_index) in instruction_accounts.iter().zip(instruction_indexes.iter()) {
             let account_key = transaction_context
                 .get_key_of_account_at_index(instruction_account.index_in_transaction)
                 .unwrap();
@@ -301,7 +303,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             let mut borrowed_account = instruction_context
                 .try_borrow_instruction_account(
                     transaction_context,
-                    instruction_account.index_in_caller,
+                    instruction_index.index_in_caller,
                 )
                 .unwrap();
             if borrowed_account.get_lamports() != account_info.lamports() {
@@ -327,7 +329,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                     .unwrap();
             }
             if instruction_account.is_writable() {
-                account_indices.push((instruction_account.index_in_caller, account_info_index));
+                account_indices.push((instruction_index.index_in_caller, account_info_index));
             }
         }
 

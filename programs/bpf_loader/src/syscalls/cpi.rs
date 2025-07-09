@@ -796,6 +796,7 @@ where
 {
     let transaction_context = &invoke_context.transaction_context;
     let instruction_accounts = transaction_context.get_next_instruction_context_imm()?.instruction_accounts();
+    let instruction_indexes = transaction_context.get_next_instruction_context_imm()?.instruction_indexes();
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let mut accounts = Vec::with_capacity(instruction_accounts.len());
 
@@ -810,15 +811,15 @@ where
         .get_feature_set()
         .bpf_account_data_direct_mapping;
 
-    for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
+    for (instruction_account_index, (instruction_account, instruction_indexes)) in instruction_accounts.iter().zip(instruction_indexes.iter()).enumerate()
     {
-        if instruction_account_index as IndexOfAccount != instruction_account.index_in_callee {
+        if instruction_account_index as IndexOfAccount != instruction_indexes.index_in_callee {
             continue; // Skip duplicate account
         }
 
         let callee_account = instruction_context.try_borrow_instruction_account(
             transaction_context,
-            instruction_account.index_in_caller,
+            instruction_indexes.index_in_caller,
         )?;
         let account_key = invoke_context
             .transaction_context
@@ -837,7 +838,7 @@ where
             account_info_keys.iter().position(|key| *key == account_key)
         {
             let serialized_metadata = accounts_metadata
-                .get(instruction_account.index_in_caller as usize)
+                .get(instruction_indexes.index_in_caller as usize)
                 .ok_or_else(|| {
                     ic_msg!(
                         invoke_context,
@@ -882,7 +883,7 @@ where
                 } else {
                     None
                 };
-            accounts.push((instruction_account.index_in_caller, caller_account));
+            accounts.push((instruction_indexes.index_in_caller, caller_account));
         } else {
             ic_msg!(
                 invoke_context,
@@ -1584,6 +1585,7 @@ mod tests {
             slice,
         },
     };
+    use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes, InstructionAccount};
 
     macro_rules! mock_invoke_context {
         ($invoke_context:ident,
@@ -1594,19 +1596,16 @@ mod tests {
          $instruction_accounts:expr) => {
             let program_accounts = $program_accounts;
             let instruction_data = $instruction_data;
-            let instruction_accounts = $instruction_accounts
-                .iter()
-                .enumerate()
-                .map(|(index_in_callee, index_in_transaction)| {
-                    InstructionAccount::new(
-                        *index_in_transaction as IndexOfAccount,
+            let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (Vec::new(), Vec::new());
+            for (index_in_callee, index_in_transaction) in $instruction_accounts.iter().enumerate() {
+                let acc = create_instruction_account_metadata(*index_in_transaction as IndexOfAccount,
                         *index_in_transaction as IndexOfAccount,
                         index_in_callee as IndexOfAccount,
                         false,
-                        $transaction_accounts[*index_in_transaction as usize].2,
-                    )
-                })
-                .collect::<Vec<_>>();
+                        $transaction_accounts[*index_in_transaction as usize].2,);
+                instruction_accounts.0.push(acc.0);
+                instruction_accounts.1.push(acc.1);
+            }
             let transaction_accounts = $transaction_accounts
                 .into_iter()
                 .map(|a| (a.0, a.1))
@@ -2529,23 +2528,18 @@ mod tests {
 
         mock_create_vm!(_vm, Vec::new(), vec![account_metadata], &mut invoke_context);
 
+        let acc_1 = create_instruction_account_metadata(1,
+                                                        0,
+                                                        0,
+                                                        false,
+                                                        true,);
+        let acc_2 = create_instruction_account_metadata(1,
+                                                        0,
+                                                        0,
+                                                        false,
+                                                        true,);
         invoke_context.transaction_context.get_next_instruction_context().unwrap()
-            .configure(&[0], vec![
-                InstructionAccount::new(
-                    1,
-                    0,
-                    0,
-                    false,
-                    true,
-                ),
-                InstructionAccount::new(
-                    1,
-                    0,
-                    0,
-                    false,
-                    true,
-                ),
-            ], &[]);
+            .configure(&[0], (vec![acc_1.0, acc_2.0], vec![acc_1.1, acc_2.1]), &[]);
         let accounts = SyscallInvokeSignedRust::translate_accounts(
             vm_addr,
             1,

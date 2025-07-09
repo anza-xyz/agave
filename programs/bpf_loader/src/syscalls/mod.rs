@@ -50,7 +50,7 @@ use {
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::{IndexOfAccount},
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -2163,6 +2163,7 @@ mod tests {
         },
         test_case::test_case,
     };
+    use solana_transaction_context::create_instruction_account_metadata;
 
     macro_rules! assert_access_violation {
         ($result:expr, $va:expr, $len:expr) => {
@@ -2191,7 +2192,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&[0, 1], Vec::new(), &[]);
+                .configure(&[0, 1], (Vec::new(), Vec::new()), &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -4392,13 +4393,14 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = vec![InstructionAccount::new(
+                let (instr_acc, instr_idx) = create_instruction_account_metadata(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
                     0, // This is incorrect / inconsistent but not required
                     0,
                     false,
                     false,
-                )];
+                );
+                let instruction_accounts = (vec![instr_acc], vec![instr_idx]);
                 invoke_context
                     .transaction_context
                     .get_next_instruction_context()

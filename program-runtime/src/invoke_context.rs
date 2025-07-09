@@ -1231,6 +1231,8 @@ mod tests {
             AccountMeta::new(transaction_accounts.get(1).unwrap().0, false),
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
+        
+
         let instruction_accounts = (0..4)
             .map(|instruction_account_index| {
                 InstructionAccount::new(
@@ -1305,7 +1307,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0], Vec::new(), &[]);
+            .configure(&[0], (Vec::new(), Vec::new()), &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
@@ -1327,10 +1329,9 @@ mod tests {
             (Pubkey::new_unique(), dummy_account),
             (program_key, program_account),
         ];
-        let instruction_accounts = vec![
-            InstructionAccount::new(0, 0, 0, false, true),
-            InstructionAccount::new(1, 1, 1, false, false),
-        ];
+        let acc_1 = create_instruction_account_metadata(0, 0, 0, false, true);
+        let acc_2 = create_instruction_account_metadata(1, 1, 1, false, false);
+        let instruction_accounts = (vec![acc_1.0, acc_2.0], vec![acc_1.1, acc_2.1]);
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(

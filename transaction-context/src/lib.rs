@@ -602,6 +602,7 @@ impl InstructionContext {
         instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>),
         instruction_data: &[u8],
     ) {
+        debug_assert_eq!(instruction_accounts.0.len(), instruction_accounts.1.len());
         self.program_accounts = program_accounts.to_vec();
         self.instruction_accounts = instruction_accounts.0;
         self.account_call_indexes = instruction_accounts.1;
@@ -838,6 +839,10 @@ impl InstructionContext {
 
     pub fn instruction_accounts(&self) -> &[InstructionAccount] {
         &self.instruction_accounts
+    }
+
+    pub fn instruction_indexes(&self) -> &[AccountCallIndexes] {
+        &self.account_call_indexes
     }
 
     pub fn program_accounts(&self) -> &[IndexOfAccount] {
