@@ -38,7 +38,9 @@ use {
     solana_sdk_ids::{bpf_loader, native_loader},
     solana_signer::Signer,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_transaction_context::{create_instruction_account_metadata, InstructionAccount},
+    solana_transaction_context::{
+        InstructionAccount, InstructionAccountView, InstructionAccountViewVector,
+    },
     std::{mem, sync::Arc},
     test::Bencher,
 };
@@ -60,8 +62,10 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let acc = create_instruction_account_metadata(2, 2, 0, false, true);
-        let instruction_accounts = (vec![acc.0], vec![acc.1]);
+        let instruction_accounts =
+            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+                2, 2, 0, false, true,
+            )]);
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,

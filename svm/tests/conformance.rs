@@ -28,8 +28,8 @@ use {
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
-        create_instruction_account_metadata, AccountCallIndexes, ExecutionRecord, IndexOfAccount,
-        InstructionAccount, TransactionAccount, TransactionContext,
+        ExecutionRecord, IndexOfAccount, InstructionAccountView, InstructionAccountViewVector,
+        TransactionAccount, TransactionContext,
     },
     std::{
         collections::{hash_map::Entry, HashMap},
@@ -368,9 +368,8 @@ fn execute_fixture_as_instr(
         SVMTransactionExecutionCost::default(),
     );
 
-    let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (
-        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()),
-        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()),
+    let mut instruction_accounts = InstructionAccountViewVector::with_capacity(
+        sanitized_message.instructions()[0].accounts.len(),
     );
 
     for (instruction_acct_idx, index_txn) in sanitized_message.instructions()[0]
@@ -386,15 +385,13 @@ fn execute_fixture_as_instr(
             .position(|idx| *idx == *index_txn)
             .unwrap_or(instruction_acct_idx);
 
-        let acc = create_instruction_account_metadata(
+        instruction_accounts.push(InstructionAccountView::new(
             *index_txn as IndexOfAccount,
             *index_txn as IndexOfAccount,
             index_in_callee as IndexOfAccount,
             sanitized_message.is_signer(*index_txn as usize),
             sanitized_message.is_writable(*index_txn as usize),
-        );
-        instruction_accounts.0.push(acc.0);
-        instruction_accounts.1.push(acc.1);
+        ));
     }
 
     let mut compute_units_consumed = 0u64;

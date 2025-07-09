@@ -30,7 +30,7 @@ use {
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_transaction_context::{
-        create_instruction_account_metadata, AccountCallIndexes, IndexOfAccount, InstructionAccount,
+        IndexOfAccount, InstructionAccountView, InstructionAccountViewVector,
     },
     std::{
         collections::HashMap,
@@ -400,8 +400,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let bank = load_blockstore(&ledger_path, matches);
     let loader_id = bpf_loader_upgradeable::id();
     let mut transaction_accounts = Vec::new();
-    let mut instruction_accounts = Vec::new();
-    let mut instruction_indexes = Vec::new();
+    let mut instruction_accounts = InstructionAccountViewVector::new();
     let mut program_id = Pubkey::new_unique();
     let mut cached_account_keys = vec![];
 
@@ -412,9 +411,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            let (instr_acc, instr_idx) = create_instruction_account_metadata(0, 0, 0, false, false);
-            instruction_accounts.push(instr_acc);
-            instruction_indexes.push(instr_idx);
+            instruction_accounts.push(InstructionAccountView::new(0, 0, 0, false, false));
             vec![]
         }
         Err(_) => {
@@ -429,8 +426,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             // Maps a public key to the transaction account index
             let mut txn_acct_indices =
                 HashMap::<Pubkey, usize>::with_capacity(input.accounts.len());
-            let mut new_instr_accs: Vec<InstructionAccount> = Vec::new();
-            let mut new_instr_idx: Vec<AccountCallIndexes> = Vec::new();
+            let mut new_instr_accs = InstructionAccountViewVector::new();
             for account_info in input.accounts.into_iter() {
                 let pubkey = account_info.key.parse::<Pubkey>().unwrap_or_else(|err| {
                     eprintln!("Invalid key in input {}, error {}", account_info.key, err);
@@ -485,7 +481,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     idx
                 };
 
-                let (instr_acc, instr_idx) = create_instruction_account_metadata(
+                let instr_acc = InstructionAccountView::new(
                     txn_acct_index as IndexOfAccount,
                     txn_acct_index as IndexOfAccount,
                     txn_acct_index as IndexOfAccount,
@@ -493,10 +489,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     account_info.is_writable.unwrap_or(false),
                 );
                 new_instr_accs.push(instr_acc);
-                new_instr_idx.push(instr_idx);
             }
             instruction_accounts = std::mem::take(&mut new_instr_accs);
-            instruction_indexes = std::mem::take(&mut new_instr_idx);
 
             input.instruction_data
         }
@@ -536,7 +530,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .unwrap()
         .configure(
             &[program_index, program_index.saturating_add(1)],
-            (instruction_accounts, instruction_indexes),
+            instruction_accounts,
             &instruction_data,
         );
     invoke_context.push().unwrap();

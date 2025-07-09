@@ -31,8 +31,8 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
-        create_instruction_account_metadata, AccountCallIndexes, IndexOfAccount,
-        InstructionAccount, TransactionAccount, TransactionContext,
+        IndexOfAccount, InstructionAccountView, InstructionAccountViewVector, TransactionAccount,
+        TransactionContext,
     },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{
@@ -326,8 +326,8 @@ impl<'a> InvokeContext<'a> {
         // Note: This is an O(n^2) algorithm,
         // but performed on a very small slice and requires no heap allocations.
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-        let mut deduplicated_instruction_indexes: Vec<AccountCallIndexes> = Vec::new();
+        let mut deduplicated_instruction_accounts =
+            InstructionAccountViewVector::with_capacity(instruction.accounts.len() as usize);
         let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len() as usize);
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
@@ -352,7 +352,7 @@ impl<'a> InvokeContext<'a> {
             {
                 duplicate_indicies.push(duplicate_index);
                 let instruction_account = deduplicated_instruction_accounts
-                    .get_mut(duplicate_index)
+                    .get_metadata_mut(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
                 instruction_account
                     .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
@@ -373,25 +373,20 @@ impl<'a> InvokeContext<'a> {
                         InstructionError::MissingAccount
                     })?;
                 duplicate_indicies.push(deduplicated_instruction_accounts.len());
-                let (instr_acc, indexes) = create_instruction_account_metadata(
+                deduplicated_instruction_accounts.push(InstructionAccountView::new(
                     index_in_transaction,
                     index_in_caller,
                     instruction_account_index as IndexOfAccount,
                     account_meta.is_signer,
                     account_meta.is_writable,
-                );
-                deduplicated_instruction_accounts.push(instr_acc);
-                deduplicated_instruction_indexes.push(indexes);
+                ));
             }
         }
 
-        for (instruction_account, account_indexes) in deduplicated_instruction_accounts
-            .iter()
-            .zip(deduplicated_instruction_indexes.iter())
-        {
+        for instruction_account in deduplicated_instruction_accounts.iter() {
             let borrowed_account = instruction_context.try_borrow_instruction_account(
                 self.transaction_context,
-                account_indexes.index_in_caller,
+                instruction_account.index_in_caller,
             )?;
 
             // Readonly in caller cannot become writable in callee
@@ -418,23 +413,13 @@ impl<'a> InvokeContext<'a> {
             }
         }
 
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(duplicate_indicies.len());
-        let mut instruction_indexes: Vec<AccountCallIndexes> =
-            Vec::with_capacity(duplicate_indicies.len());
+        let mut instruction_accounts =
+            InstructionAccountViewVector::with_capacity(duplicate_indicies.len());
 
         for duplicate_index in duplicate_indicies.into_iter() {
-            instruction_accounts.push(
+            instruction_accounts.push_raw(
                 deduplicated_instruction_accounts
-                    .get(duplicate_index)
-                    .cloned()
-                    .ok_or(InstructionError::NotEnoughAccountKeys)?,
-            );
-
-            instruction_indexes.push(
-                deduplicated_instruction_indexes
-                    .get(duplicate_index)
-                    .cloned()
+                    .get_raw_cloned(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?,
             );
         }
@@ -472,7 +457,7 @@ impl<'a> InvokeContext<'a> {
         let instr = self.transaction_context.get_next_instruction_context()?;
         instr.configure(
             &[program_account_index],
-            (instruction_accounts, instruction_indexes),
+            instruction_accounts,
             &instruction.data,
         );
 
@@ -844,10 +829,8 @@ pub fn mock_process_instruction_with_feature_set<
     feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
     // TODO: There could be a function to perform this conversion
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(instruction_account_metas.len());
-    let mut instruction_indexes: Vec<AccountCallIndexes> =
-        Vec::with_capacity(instruction_account_metas.len());
+    let mut instruction_accounts =
+        InstructionAccountViewVector::with_capacity(instruction_account_metas.len());
     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
         let index_in_transaction = transaction_accounts
             .iter()
@@ -855,7 +838,7 @@ pub fn mock_process_instruction_with_feature_set<
             .unwrap_or(transaction_accounts.len())
             as IndexOfAccount;
         let index_in_callee = instruction_accounts
-            .get(0..instruction_account_index)
+            .get_metadata(0..instruction_account_index)
             .unwrap()
             .iter()
             .position(|instruction_account| {
@@ -863,15 +846,13 @@ pub fn mock_process_instruction_with_feature_set<
             })
             .unwrap_or(instruction_account_index) as IndexOfAccount;
 
-        let (instr_acc, instr_idx) = create_instruction_account_metadata(
+        instruction_accounts.push(InstructionAccountView::new(
             index_in_transaction,
             index_in_transaction,
             index_in_callee,
             account_meta.is_signer,
             account_meta.is_writable,
-        );
-        instruction_accounts.push(instr_acc);
-        instruction_indexes.push(instr_idx);
+        ));
     }
     if program_indices.is_empty() {
         program_indices.insert(0, transaction_accounts.len() as IndexOfAccount);
@@ -907,11 +888,7 @@ pub fn mock_process_instruction_with_feature_set<
         .transaction_context
         .get_next_instruction_context()
         .unwrap()
-        .configure(
-            &program_indices,
-            (instruction_accounts, instruction_indexes),
-            instruction_data,
-        );
+        .configure(&program_indices, instruction_accounts, instruction_data);
     let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
@@ -988,18 +965,15 @@ mod tests {
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
             let program_id = instruction_context.get_last_program_key(transaction_context)?;
-            let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
-                (Vec::new(), Vec::new());
+            let mut instruction_accounts = InstructionAccountViewVector::new();
             for instruction_account_index in 0..4 {
-                let acc = create_instruction_account_metadata(
+                instruction_accounts.push(InstructionAccountView::new(
                     instruction_account_index,
                     instruction_account_index,
                     instruction_account_index,
                     false,
                     false,
-                );
-                instruction_accounts.0.push(acc.0);
-                instruction_accounts.1.push(acc.1);
+                ));
             }
             assert_eq!(
                 program_id,
@@ -1093,23 +1067,20 @@ mod tests {
         let mut transaction_accounts = vec![];
         // TODO: This is very confusing, so putting everything together in a data structure would
         // help a lot.
-        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
-            (Vec::new(), Vec::new());
+        let mut instruction_accounts = InstructionAccountViewVector::new();
         for index in 0..one_more_than_max_depth {
             invoke_stack.push(solana_pubkey::new_rand());
             transaction_accounts.push((
                 solana_pubkey::new_rand(),
                 AccountSharedData::new(index as u64, 1, invoke_stack.get(index).unwrap()),
             ));
-            let acc = create_instruction_account_metadata(
+            instruction_accounts.push(InstructionAccountView::new(
                 index as IndexOfAccount,
                 index as IndexOfAccount,
-                instruction_accounts.0.len() as IndexOfAccount,
+                instruction_accounts.len() as IndexOfAccount,
                 false,
                 true,
-            );
-            instruction_accounts.0.push(acc.0);
-            instruction_accounts.1.push(acc.1);
+            ));
         }
         for (index, program_id) in invoke_stack.iter().enumerate() {
             transaction_accounts.push((
@@ -1117,15 +1088,13 @@ mod tests {
                 AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
             ));
 
-            let acc = create_instruction_account_metadata(
+            instruction_accounts.push(InstructionAccountView::new(
                 index as IndexOfAccount,
                 index as IndexOfAccount,
                 index as IndexOfAccount,
                 false,
                 false,
-            );
-            instruction_accounts.0.push(acc.0);
-            instruction_accounts.1.push(acc.1);
+            ));
         }
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
 
@@ -1196,18 +1165,15 @@ mod tests {
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
 
-        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
-            (Vec::new(), Vec::new());
+        let mut instruction_accounts = InstructionAccountViewVector::new();
         for instruction_account_index in 0..4 {
-            let acc = create_instruction_account_metadata(
+            instruction_accounts.push(InstructionAccountView::new(
                 instruction_account_index,
                 instruction_account_index,
                 instruction_account_index,
                 false,
                 instruction_account_index < 2,
-            );
-            instruction_accounts.0.push(acc.0);
-            instruction_accounts.1.push(acc.1);
+            ));
         }
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
@@ -1257,18 +1223,15 @@ mod tests {
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
 
-        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
-            (Vec::new(), Vec::new());
+        let mut instruction_accounts = InstructionAccountViewVector::new();
         for instruction_account_index in 0..4 {
-            let acc = create_instruction_account_metadata(
+            instruction_accounts.push(InstructionAccountView::new(
                 instruction_account_index,
                 instruction_account_index,
                 instruction_account_index,
                 false,
                 instruction_account_index < 2,
-            );
-            instruction_accounts.0.push(acc.0);
-            instruction_accounts.1.push(acc.1);
+            ));
         }
 
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
@@ -1332,7 +1295,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0], (Vec::new(), Vec::new()), &[]);
+            .configure(&[0], InstructionAccountViewVector::new(), &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
@@ -1354,9 +1317,10 @@ mod tests {
             (Pubkey::new_unique(), dummy_account),
             (program_key, program_account),
         ];
-        let acc_1 = create_instruction_account_metadata(0, 0, 0, false, true);
-        let acc_2 = create_instruction_account_metadata(1, 1, 1, false, false);
-        let instruction_accounts = (vec![acc_1.0, acc_2.0], vec![acc_1.1, acc_2.1]);
+        let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+            InstructionAccountView::new(0, 0, 0, false, true),
+            InstructionAccountView::new(1, 1, 1, false, false),
+        ]);
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(

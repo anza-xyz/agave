@@ -257,7 +257,7 @@ mod test {
         solana_program_runtime::with_mock_invoke_context,
         solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
-        solana_transaction_context::create_instruction_account_metadata,
+        solana_transaction_context::{InstructionAccountView, InstructionAccountViewVector},
     };
 
     pub const NONCE_ACCOUNT_INDEX: IndexOfAccount = 0;
@@ -293,9 +293,10 @@ mod test {
                 (Pubkey::new_unique(), create_account(42).into_inner()),
                 (system_program::id(), AccountSharedData::default()),
             ];
-            let acc_1 = create_instruction_account_metadata(0, 0, 0, true, true);
-            let acc_2 = create_instruction_account_metadata(1, 1, 1, false, true);
-            let $instruction_accounts = (vec![acc_1.0, acc_2.0], vec![acc_1.1, acc_2.1]);
+            let $instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+                InstructionAccountView::new(0, 0, 0, true, true),
+                InstructionAccountView::new(1, 1, 1, false, true),
+            ]);
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
         };
     }

@@ -3,7 +3,9 @@ use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_transaction_context::{create_instruction_account_metadata, IndexOfAccount},
+    solana_transaction_context::{
+        IndexOfAccount, InstructionAccountView, InstructionAccountViewVector,
+    },
     solana_transaction_error::TransactionError,
 };
 
@@ -25,8 +27,8 @@ pub(crate) fn process_message(
         .zip(program_indices.iter())
         .enumerate()
     {
-        let mut instruction_accounts = Vec::with_capacity(instruction.accounts.len());
-        let mut instruction_indexes = Vec::with_capacity(instruction.accounts.len());
+        let mut instruction_accounts =
+            InstructionAccountViewVector::with_capacity(instruction.accounts.len());
         for (instruction_account_index, index_in_transaction) in
             instruction.accounts.iter().enumerate()
         {
@@ -39,15 +41,13 @@ pub(crate) fn process_message(
                 .unwrap_or(instruction_account_index)
                 as IndexOfAccount;
             let index_in_transaction = *index_in_transaction as usize;
-            let (instr_acc, instr_idx) = create_instruction_account_metadata(
+            instruction_accounts.push(InstructionAccountView::new(
                 index_in_transaction as IndexOfAccount,
                 index_in_transaction as IndexOfAccount,
                 index_in_callee,
                 message.is_signer(index_in_transaction),
                 message.is_writable(index_in_transaction),
-            );
-            instruction_accounts.push(instr_acc);
-            instruction_indexes.push(instr_idx);
+            ));
         }
 
         let mut compute_units_consumed = 0;
@@ -59,11 +59,7 @@ pub(crate) fn process_message(
                 .map_err(|err| {
                     TransactionError::InstructionError(top_level_instruction_index as u8, err)
                 })?
-                .configure(
-                    program_indices,
-                    (instruction_accounts, instruction_indexes),
-                    instruction.data,
-                );
+                .configure(program_indices, instruction_accounts, instruction.data);
 
             if invoke_context.is_precompile(program_id) {
                 invoke_context.process_precompile(

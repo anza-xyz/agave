@@ -1063,7 +1063,7 @@ mod tests {
         solana_account::{state_traits::StateMut, AccountSharedData},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
-        solana_transaction_context::create_instruction_account_metadata,
+        solana_transaction_context::{InstructionAccountView, InstructionAccountViewVector},
         std::cell::RefCell,
         test_case::test_case,
     };
@@ -1158,8 +1158,11 @@ mod tests {
             0,
         );
         let mut instruction_context = InstructionContext::default();
-        let acc = create_instruction_account_metadata(1, 1, 0, false, true);
-        instruction_context.configure(&[0], (vec![acc.0], vec![acc.1]), &[]);
+        let instruction_accounts =
+            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+                1, 1, 0, false, true,
+            )]);
+        instruction_context.configure(&[0], instruction_accounts, &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
@@ -1305,8 +1308,11 @@ mod tests {
         );
         let mut instruction_context = InstructionContext::default();
 
-        let acc = create_instruction_account_metadata(1, 1, 0, false, true);
-        instruction_context.configure(&[0], (vec![acc.0], vec![acc.1]), &[]);
+        let instruction_accounts =
+            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+                1, 1, 0, false, true,
+            )]);
+        instruction_context.configure(&[0], instruction_accounts, &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
