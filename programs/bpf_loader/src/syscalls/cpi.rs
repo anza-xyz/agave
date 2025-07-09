@@ -1036,7 +1036,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
         == bpf_loader_deprecated::id();
 
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
-    let _ = invoke_context.prepare_instruction(&instruction, &signers)?;
+    invoke_context.prepare_instruction(&instruction, &signers)?;
 
     let mut accounts = S::translate_accounts(
         account_infos_addr,

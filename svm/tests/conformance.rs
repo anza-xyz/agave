@@ -41,6 +41,7 @@ use {
         sync::{Arc, RwLock},
     },
 };
+use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
 mod mock_bank;
 mod transaction_builder;
@@ -367,8 +368,8 @@ fn execute_fixture_as_instr(
         SVMTransactionExecutionCost::default(),
     );
 
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len());
+    let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>)=
+        (Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()), Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()));
 
     for (instruction_acct_idx, index_txn) in sanitized_message.instructions()[0]
         .accounts
@@ -383,18 +384,20 @@ fn execute_fixture_as_instr(
             .position(|idx| *idx == *index_txn)
             .unwrap_or(instruction_acct_idx);
 
-        instruction_accounts.push(InstructionAccount::new(
+        let acc = create_instruction_account_metadata(
             *index_txn as IndexOfAccount,
             *index_txn as IndexOfAccount,
             index_in_callee as IndexOfAccount,
             sanitized_message.is_signer(*index_txn as usize),
             sanitized_message.is_writable(*index_txn as usize),
-        ));
+        );
+        instruction_accounts.0.push(acc.0);
+        instruction_accounts.1.push(acc.1);
     }
 
     let mut compute_units_consumed = 0u64;
     let mut timings = ExecuteTimings::default();
-    let _ = invoke_context
+    invoke_context
         .transaction_context
         .get_next_instruction_context()
         .unwrap()

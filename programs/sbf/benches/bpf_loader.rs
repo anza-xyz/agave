@@ -41,6 +41,7 @@ use {
     solana_transaction_context::InstructionAccount,
     std::{mem, sync::Arc},
     test::Bencher,
+    solana_transaction_context::create_instruction_account_metadata,
 };
 
 const ARMSTRONG_LIMIT: u64 = 500;
@@ -60,7 +61,10 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount::new(2, 2, 0, false, true)];
+        let acc = create_instruction_account_metadata(
+            2, 2, 0, false, true
+        );
+        let instruction_accounts = (vec![acc.0], vec![acc.1]);
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,

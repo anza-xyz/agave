@@ -276,7 +276,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .map(|seeds| Pubkey::create_program_address(seeds, caller).unwrap())
             .collect::<Vec<_>>();
 
-        let _ = invoke_context
+        invoke_context
             .prepare_instruction(&instruction, &signers)
             .unwrap();
 

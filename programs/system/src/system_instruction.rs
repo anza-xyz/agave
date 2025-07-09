@@ -257,7 +257,6 @@ mod test {
         solana_program_runtime::with_mock_invoke_context,
         solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
-        solana_transaction_context::InstructionAccount,
     };
     use solana_transaction_context::create_instruction_account_metadata;
 

@@ -1294,7 +1294,7 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[], Vec::new(), &[index_in_trace as u8]);
+                    .configure(&[], (Vec::new(), Vec::new()), &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }
