@@ -1038,10 +1038,9 @@ fn cpi_common<S: SyscallInvokeSigned>(
         .try_borrow_last_program_account(transaction_context)?
         .get_owner()
         == bpf_loader_deprecated::id();
-
-    check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
     let (instruction_accounts, program_indices) =
         invoke_context.prepare_instruction(&instruction, &signers)?;
+    check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
 
     let mut accounts = S::translate_accounts(
         &instruction_accounts,

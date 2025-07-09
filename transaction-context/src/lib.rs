@@ -61,10 +61,7 @@ type ViewIterator<'a> = Map<
 
 impl InstructionAccountViewVector {
     pub fn new() -> InstructionAccountViewVector {
-        InstructionAccountViewVector {
-            metadata: Vec::new(),
-            indexes: Vec::new(),
-        }
+        InstructionAccountViewVector::default()
     }
 
     pub fn with_capacity(capacity: usize) -> InstructionAccountViewVector {
@@ -952,19 +949,6 @@ impl InstructionContext {
             }
         }
         Ok(result)
-    }
-
-    pub fn instruction_accounts_iter(&self) -> ViewIterator {
-        self.instruction_accounts
-            .iter()
-            .zip(self.account_call_indexes.iter())
-            .map(|(acc, idx)| InstructionAccountView {
-                index_in_callee: idx.index_in_callee,
-                index_in_caller: idx.index_in_caller,
-                index_in_transaction: acc.index_in_transaction,
-                is_signer: acc.is_signer(),
-                is_writable: acc.is_writable(),
-            })
     }
 }
 

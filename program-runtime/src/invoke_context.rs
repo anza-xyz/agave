@@ -839,7 +839,6 @@ pub fn mock_process_instruction_with_feature_set<
     mut post_adjustments: G,
     feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
-    // TODO: There could be a function to perform this conversion
     let mut instruction_accounts =
         InstructionAccountViewVector::with_capacity(instruction_account_metas.len());
     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
@@ -1077,8 +1076,6 @@ mod tests {
             .saturating_add(1);
         let mut invoke_stack = vec![];
         let mut transaction_accounts = vec![];
-        // TODO: This is very confusing, so putting everything together in a data structure would
-        // help a lot.
         let mut instruction_accounts = InstructionAccountViewVector::new();
         for index in 0..one_more_than_max_depth {
             invoke_stack.push(solana_pubkey::new_rand());
@@ -1271,14 +1268,14 @@ mod tests {
             metas.clone(),
         );
         let inner_instruction = StableInstruction::from(inner_instruction);
-        let (instruction_accounts, program_indices) = invoke_context
+        let (inner_instruction_accounts, program_indices) = invoke_context
             .prepare_instruction(&inner_instruction, &[])
             .unwrap();
 
         let mut compute_units_consumed = 0;
         let result = invoke_context.process_instruction(
             &inner_instruction.data,
-            instruction_accounts,
+            inner_instruction_accounts,
             &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
