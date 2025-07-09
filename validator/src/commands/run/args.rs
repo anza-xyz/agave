@@ -1,12 +1,9 @@
-pub mod rpc_bootstrap_config;
-
 use {
     crate::{
         cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
         commands::{FromClapArgMatches, Result},
     },
     clap::{values_t, App, Arg, ArgMatches},
-    rpc_bootstrap_config::RpcBootstrapConfig,
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::keypair_of,
@@ -37,13 +34,15 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+pub mod rpc_bootstrap_config;
+
 #[derive(Debug, PartialEq)]
 pub struct RunArgs {
     pub identity_keypair: Keypair,
     pub logfile: String,
     pub entrypoints: Vec<SocketAddr>,
     pub known_validators: Option<HashSet<Pubkey>>,
-    pub rpc_bootstrap_config: RpcBootstrapConfig,
+    pub rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -2277,7 +2276,7 @@ mod tests {
             let default_run_args = RunArgs::default();
             let expected_args = RunArgs {
                 rpc_bootstrap_config: rpc_bootstrap_config::RpcBootstrapConfig {
-                    incremental_snapshot_fetch: false,
+                    no_incremental_snapshots: true,
                     ..rpc_bootstrap_config::RpcBootstrapConfig::default()
                 },
                 ..default_run_args.clone()

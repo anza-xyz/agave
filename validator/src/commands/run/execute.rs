@@ -169,7 +169,16 @@ pub fn execute(
 
     let init_complete_file = matches.value_of("init_complete_file");
 
-    let rpc_bootstrap_config = run_args.rpc_bootstrap_config;
+    let rpc_bootstrap_config = bootstrap::RpcBootstrapConfig {
+        no_genesis_fetch: run_args.rpc_bootstrap_config.no_genesis_fetch,
+        no_snapshot_fetch: run_args.rpc_bootstrap_config.no_snapshot_fetch,
+        check_vote_account: run_args.rpc_bootstrap_config.check_vote_account,
+        only_known_rpc: run_args.rpc_bootstrap_config.only_known_rpc,
+        max_genesis_archive_unpacked_size: run_args
+            .rpc_bootstrap_config
+            .max_genesis_archive_unpacked_size,
+        incremental_snapshot_fetch: !run_args.rpc_bootstrap_config.no_incremental_snapshots,
+    };
 
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
@@ -883,7 +892,7 @@ pub fn execute(
             (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
         } else {
             match (
-                rpc_bootstrap_config.incremental_snapshot_fetch,
+                !run_args.rpc_bootstrap_config.no_incremental_snapshots,
                 value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
             ) {
                 (true, incremental_snapshot_interval_slots) => {

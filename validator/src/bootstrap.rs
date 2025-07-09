@@ -1,5 +1,4 @@
 use {
-    crate::commands::run::args::rpc_bootstrap_config::RpcBootstrapConfig,
     itertools::Itertools,
     log::*,
     rand::{seq::SliceRandom, thread_rng, Rng},
@@ -56,6 +55,16 @@ const GET_RPC_PEERS_TIMEOUT: Duration = Duration::from_secs(300);
 pub const MAX_RPC_CONNECTIONS_EVALUATED_PER_ITERATION: usize = 32;
 
 pub const PING_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Debug)]
+pub struct RpcBootstrapConfig {
+    pub no_genesis_fetch: bool,
+    pub no_snapshot_fetch: bool,
+    pub only_known_rpc: bool,
+    pub max_genesis_archive_unpacked_size: u64,
+    pub check_vote_account: Option<String>,
+    pub incremental_snapshot_fetch: bool,
+}
 
 fn verify_reachable_ports(
     node: &Node,
