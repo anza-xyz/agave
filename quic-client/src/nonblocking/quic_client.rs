@@ -17,7 +17,10 @@ use {
     },
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_net_utils::{SocketConfig, VALIDATOR_PORT_RANGE},
+    solana_net_utils::{
+        sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
+        VALIDATOR_PORT_RANGE,
+    },
     solana_quic_definitions::{
         QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_KEEP_ALIVE, QUIC_MAX_TIMEOUT, QUIC_SEND_FAIRNESS,
     },
@@ -78,7 +81,7 @@ impl QuicLazyInitializedEndpoint {
             endpoint.clone()
         } else {
             let config = SocketConfig::default();
-            let client_socket = solana_net_utils::bind_in_range_with_config(
+            let client_socket = bind_in_range_with_config(
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 VALIDATOR_PORT_RANGE,
                 config,
