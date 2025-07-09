@@ -8117,6 +8117,7 @@ dependencies = [
  "histogram",
  "indexmap 2.10.0",
  "itertools 0.12.1",
+ "lazy-lru",
  "libc",
  "log",
  "nix",
