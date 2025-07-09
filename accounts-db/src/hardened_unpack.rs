@@ -51,6 +51,7 @@ const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 // The buffer should be relatively large to accomodate for small files (each use up at least
 // one write-capacity sized chunk (1MB)) and write backlog waiting for file open to finish.
 const UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
+const MIN_UNPACK_WRITE_BUF_SIZE: usize = 2 * 1024 * 1024;
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
     trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
@@ -109,7 +110,9 @@ where
     let mut total_entries = 0;
     let mut open_dirs = Vec::new();
 
-    let buf_size = UNPACK_WRITE_BUF_SIZE.min(actual_limit_size as usize);
+    let buf_size = UNPACK_WRITE_BUF_SIZE
+        .min((actual_limit_size.div_ceil(limit_count)) as usize)
+        .max(MIN_UNPACK_WRITE_BUF_SIZE);
     let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {

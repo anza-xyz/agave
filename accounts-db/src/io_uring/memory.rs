@@ -199,7 +199,7 @@ impl IoFixedBuffer {
         ring: &Ring<S, E>,
         buffer: &mut [u8],
     ) -> io::Result<()> {
-        adjust_ulimit_memlock(true)?;
+        adjust_ulimit_memlock(buffer.len())?;
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
             .map(|buf| libc::iovec {
@@ -231,7 +231,7 @@ impl AsMut<[u8]> for IoFixedBuffer {
     }
 }
 
-pub fn adjust_ulimit_memlock(require: bool) -> io::Result<()> {
+pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
     let desired_memlock = 2_000_000_000;
 
     fn get_memlock() -> libc::rlimit {
@@ -246,8 +246,8 @@ pub fn adjust_ulimit_memlock(require: bool) -> io::Result<()> {
     }
 
     let mut memlock = get_memlock();
-    let current = memlock.rlim_cur;
-    if current < desired_memlock {
+    let current = memlock.rlim_cur as usize;
+    if current < min_required {
         memlock.rlim_cur = libc::RLIM_INFINITY;
         memlock.rlim_max = libc::RLIM_INFINITY;
         if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
@@ -264,12 +264,10 @@ pub fn adjust_ulimit_memlock(require: bool) -> io::Result<()> {
                     desired_memlock,
                 );
             }
-            if require {
-                return Err(io::Error::new(
-                    io::ErrorKind::OutOfMemory,
-                    "unable to set memory lock limit",
-                ));
-            }
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "unable to set memory lock limit",
+            ));
         }
 
         memlock = get_memlock();

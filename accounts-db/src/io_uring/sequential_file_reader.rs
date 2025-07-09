@@ -1,6 +1,6 @@
 use {
     super::{
-        memory::{adjust_ulimit_memlock, IoFixedBuffer, LargeBuffer},
+        memory::{IoFixedBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
     },
     agave_io_uring::{Completion, Ring, RingOp},
@@ -71,8 +71,6 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         mut buffer: B,
         read_capacity: usize,
     ) -> io::Result<Self> {
-        adjust_ulimit_memlock(true)?;
-
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for reading.
         let ring_qsize = (buffer.as_mut().len() / read_capacity / 2).max(1) as u32;
