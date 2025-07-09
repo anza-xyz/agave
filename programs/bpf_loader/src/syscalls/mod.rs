@@ -50,7 +50,7 @@ use {
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_transaction_context::{IndexOfAccount},
+    solana_transaction_context::IndexOfAccount,
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -2156,6 +2156,7 @@ mod tests {
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_transaction_context::create_instruction_account_metadata,
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -2163,7 +2164,6 @@ mod tests {
         },
         test_case::test_case,
     };
-    use solana_transaction_context::create_instruction_account_metadata;
 
     macro_rules! assert_access_violation {
         ($result:expr, $va:expr, $len:expr) => {

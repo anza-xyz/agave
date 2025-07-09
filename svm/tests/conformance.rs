@@ -28,7 +28,8 @@ use {
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
-        ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        create_instruction_account_metadata, AccountCallIndexes, ExecutionRecord, IndexOfAccount,
+        InstructionAccount, TransactionAccount, TransactionContext,
     },
     std::{
         collections::{hash_map::Entry, HashMap},
@@ -41,7 +42,6 @@ use {
         sync::{Arc, RwLock},
     },
 };
-use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
 mod mock_bank;
 mod transaction_builder;
@@ -368,8 +368,10 @@ fn execute_fixture_as_instr(
         SVMTransactionExecutionCost::default(),
     );
 
-    let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>)=
-        (Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()), Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()));
+    let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (
+        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()),
+        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len()),
+    );
 
     for (instruction_acct_idx, index_txn) in sanitized_message.instructions()[0]
         .accounts
@@ -401,11 +403,12 @@ fn execute_fixture_as_instr(
         .transaction_context
         .get_next_instruction_context()
         .unwrap()
-        .configure(&[program_idx as IndexOfAccount], instruction_accounts, &sanitized_message.instructions()[0].data);
-    let result = invoke_context.process_instruction(
-        &mut compute_units_consumed,
-        &mut timings,
-    );
+        .configure(
+            &[program_idx as IndexOfAccount],
+            instruction_accounts,
+            &sanitized_message.instructions()[0].data,
+        );
+    let result = invoke_context.process_instruction(&mut compute_units_consumed, &mut timings);
 
     if output.result == 0 {
         assert!(

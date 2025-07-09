@@ -1063,10 +1063,10 @@ mod tests {
         solana_account::{state_traits::StateMut, AccountSharedData},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
+        solana_transaction_context::create_instruction_account_metadata,
         std::cell::RefCell,
         test_case::test_case,
     };
-    use solana_transaction_context::create_instruction_account_metadata;
 
     const MAX_RECENT_VOTES: usize = 16;
 

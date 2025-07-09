@@ -45,6 +45,41 @@ static_assertions::const_assert_eq!(
     solana_account_info::MAX_PERMITTED_DATA_INCREASE
 );
 
+pub struct InstructionAccountView {
+    /// Points to the account and its key in the `TransactionContext`
+    pub index_in_transaction: IndexOfAccount,
+    /// Is this account supposed to sign
+    is_signer: u8,
+    /// Is this account allowed to become writable
+    is_writable: u8,
+    /// Points to the first occurrence in the parent `InstructionContext`
+    ///
+    /// This excludes the program accounts.
+    pub index_in_caller: IndexOfAccount,
+    /// Points to the first occurrence in the current `InstructionContext`
+    ///
+    /// This excludes the program accounts.
+    pub index_in_callee: IndexOfAccount,
+}
+
+impl InstructionAccountView {
+    fn new(
+        index_in_transaction: IndexOfAccount,
+        index_in_caller: IndexOfAccount,
+        index_in_callee: IndexOfAccount,
+        is_signer: bool,
+        is_writable: bool,
+    ) -> InstructionAccountView {
+        InstructionAccountView {
+            index_in_transaction,
+            index_in_caller,
+            index_in_callee,
+            is_writable: is_writable as u8,
+            is_signer: is_signer as u8,
+        }
+    }
+}
+
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
@@ -84,7 +119,7 @@ pub fn create_instruction_account_metadata(
     let instr_acc = InstructionAccount::new(index_in_transaction, is_signer, is_writable);
     let indexes = AccountCallIndexes {
         index_in_callee,
-        index_in_caller
+        index_in_caller,
     };
 
     (instr_acc, indexes)

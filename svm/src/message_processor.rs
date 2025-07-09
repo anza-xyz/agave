@@ -3,10 +3,9 @@ use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_transaction_context::{IndexOfAccount},
+    solana_transaction_context::{create_instruction_account_metadata, IndexOfAccount},
     solana_transaction_error::TransactionError,
 };
-use solana_transaction_context::create_instruction_account_metadata;
 
 /// Process a message.
 /// This method calls each instruction in the message over the set of loaded accounts.
@@ -54,11 +53,18 @@ pub(crate) fn process_message(
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
             // TODO: This should return an error.
-            invoke_context.transaction_context.get_next_instruction_context()
-            .map_err(|err| {
-            TransactionError::InstructionError(top_level_instruction_index as u8, err)
-        })?.configure(program_indices, (instruction_accounts, instruction_indexes), instruction.data);
-            
+            invoke_context
+                .transaction_context
+                .get_next_instruction_context()
+                .map_err(|err| {
+                    TransactionError::InstructionError(top_level_instruction_index as u8, err)
+                })?
+                .configure(
+                    program_indices,
+                    (instruction_accounts, instruction_indexes),
+                    instruction.data,
+                );
+
             if invoke_context.is_precompile(program_id) {
                 invoke_context.process_precompile(
                     program_id,
@@ -66,10 +72,7 @@ pub(crate) fn process_message(
                     message.instructions_iter().map(|ix| ix.data),
                 )
             } else {
-                invoke_context.process_instruction(
-                    &mut compute_units_consumed,
-                    execute_timings,
-                )
+                invoke_context.process_instruction(&mut compute_units_consumed, execute_timings)
             }
         });
 

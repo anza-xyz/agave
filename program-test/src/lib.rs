@@ -282,15 +282,21 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
 
         // Copy caller's account_info modifications into invoke_context accounts
         let transaction_context = &invoke_context.transaction_context;
-        let instruction_accounts = transaction_context.get_next_instruction_context_imm()
-            .unwrap().instruction_accounts();
-        let instruction_indexes = transaction_context.get_next_instruction_context_imm()
-            .unwrap().instruction_indexes();
+        let instruction_accounts = transaction_context
+            .get_next_instruction_context_imm()
+            .unwrap()
+            .instruction_accounts();
+        let instruction_indexes = transaction_context
+            .get_next_instruction_context_imm()
+            .unwrap()
+            .instruction_indexes();
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
         let mut account_indices = Vec::with_capacity(instruction_accounts.len());
-        for (instruction_account, instruction_index) in instruction_accounts.iter().zip(instruction_indexes.iter()) {
+        for (instruction_account, instruction_index) in
+            instruction_accounts.iter().zip(instruction_indexes.iter())
+        {
             let account_key = transaction_context
                 .get_key_of_account_at_index(instruction_account.index_in_transaction)
                 .unwrap();
@@ -335,10 +341,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
 
         let mut compute_units_consumed = 0;
         invoke_context
-            .process_instruction(
-                &mut compute_units_consumed,
-                &mut ExecuteTimings::default(),
-            )
+            .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())
             .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
         // Copy invoke_context accounts modifications into caller's account_info

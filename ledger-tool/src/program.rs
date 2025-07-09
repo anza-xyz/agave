@@ -29,7 +29,9 @@ use {
         verifier::RequisiteVerifier,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::{
+        create_instruction_account_metadata, AccountCallIndexes, IndexOfAccount, InstructionAccount,
+    },
     std::{
         collections::HashMap,
         fmt::{self, Debug, Formatter},
@@ -41,7 +43,6 @@ use {
         time::{Duration, Instant},
     },
 };
-use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
 // The ELF magic number [ELFMAG0, ELFMAG1, ELFGMAG2, ELFMAG3] as defined by
 // https://github.com/torvalds/linux/blob/master/include/uapi/linux/elf.h
@@ -441,8 +442,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     let owner = *account.owner();
                     if bpf_loader_upgradeable::check_id(&owner) {
                         if let Ok(UpgradeableLoaderState::Program {
-                                      programdata_address,
-                                  }) = account.state()
+                            programdata_address,
+                        }) = account.state()
                         {
                             debug!("Program data address {}", programdata_address);
                             if bank

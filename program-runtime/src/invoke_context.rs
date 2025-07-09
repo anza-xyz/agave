@@ -31,7 +31,8 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
-        IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        create_instruction_account_metadata, AccountCallIndexes, IndexOfAccount,
+        InstructionAccount, TransactionAccount, TransactionContext,
     },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{
@@ -41,7 +42,6 @@ use {
         rc::Rc,
     },
 };
-use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
 pub type BuiltinFunctionWithContext = BuiltinFunction<InvokeContext<'static>>;
 
@@ -310,10 +310,7 @@ impl<'a> InvokeContext<'a> {
     ) -> Result<(), InstructionError> {
         self.prepare_instruction(&instruction, signers)?;
         let mut compute_units_consumed = 0;
-        self.process_instruction(
-            &mut compute_units_consumed,
-            &mut ExecuteTimings::default(),
-        )?;
+        self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
     }
 
@@ -388,7 +385,10 @@ impl<'a> InvokeContext<'a> {
             }
         }
 
-        for (instruction_account, account_indexes) in deduplicated_instruction_accounts.iter().zip(deduplicated_instruction_indexes.iter()) {
+        for (instruction_account, account_indexes) in deduplicated_instruction_accounts
+            .iter()
+            .zip(deduplicated_instruction_indexes.iter())
+        {
             let borrowed_account = instruction_context.try_borrow_instruction_account(
                 self.transaction_context,
                 account_indexes.index_in_caller,
@@ -418,19 +418,25 @@ impl<'a> InvokeContext<'a> {
             }
         }
 
-        let mut instruction_accounts: Vec<InstructionAccount> = Vec::with_capacity(duplicate_indicies.len());
-        let mut instruction_indexes: Vec<AccountCallIndexes> = Vec::with_capacity(duplicate_indicies.len());
+        let mut instruction_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(duplicate_indicies.len());
+        let mut instruction_indexes: Vec<AccountCallIndexes> =
+            Vec::with_capacity(duplicate_indicies.len());
 
         for duplicate_index in duplicate_indicies.into_iter() {
             instruction_accounts.push(
-                deduplicated_instruction_accounts.get(duplicate_index)
+                deduplicated_instruction_accounts
+                    .get(duplicate_index)
                     .cloned()
-                    .ok_or(InstructionError::NotEnoughAccountKeys)?);
+                    .ok_or(InstructionError::NotEnoughAccountKeys)?,
+            );
 
             instruction_indexes.push(
-                deduplicated_instruction_indexes.get(duplicate_index)
+                deduplicated_instruction_indexes
+                    .get(duplicate_index)
                     .cloned()
-                    .ok_or(InstructionError::NotEnoughAccountKeys)?);
+                    .ok_or(InstructionError::NotEnoughAccountKeys)?,
+            );
         }
 
         // Find and validate executables / program accounts
@@ -463,10 +469,12 @@ impl<'a> InvokeContext<'a> {
             borrowed_program_account.get_index_in_transaction()
         };
 
-
-        let instr = self.transaction_context
-            .get_next_instruction_context()?;
-        instr.configure(&[program_account_index], (instruction_accounts, instruction_indexes), &instruction.data);
+        let instr = self.transaction_context.get_next_instruction_context()?;
+        instr.configure(
+            &[program_account_index],
+            (instruction_accounts, instruction_indexes),
+            &instruction.data,
+        );
 
         Ok(())
     }
@@ -838,7 +846,8 @@ pub fn mock_process_instruction_with_feature_set<
     // TODO: There could be a function to perform this conversion
     let mut instruction_accounts: Vec<InstructionAccount> =
         Vec::with_capacity(instruction_account_metas.len());
-    let mut instruction_indexes: Vec<AccountCallIndexes> = Vec::with_capacity(instruction_account_metas.len());
+    let mut instruction_indexes: Vec<AccountCallIndexes> =
+        Vec::with_capacity(instruction_account_metas.len());
     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
         let index_in_transaction = transaction_accounts
             .iter()
@@ -894,13 +903,16 @@ pub fn mock_process_instruction_with_feature_set<
     );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);
-    invoke_context.transaction_context.get_next_instruction_context().unwrap().configure(
-        &program_indices, (instruction_accounts, instruction_indexes), instruction_data,
-    );
-    let result = invoke_context.process_instruction(
-        &mut 0,
-        &mut ExecuteTimings::default(),
-    );
+    invoke_context
+        .transaction_context
+        .get_next_instruction_context()
+        .unwrap()
+        .configure(
+            &program_indices,
+            (instruction_accounts, instruction_indexes),
+            instruction_data,
+        );
+    let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
     let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
@@ -976,14 +988,15 @@ mod tests {
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
             let program_id = instruction_context.get_last_program_key(transaction_context)?;
-            let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (Vec::new(), Vec::new());
+            let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
+                (Vec::new(), Vec::new());
             for instruction_account_index in 0..4 {
                 let acc = create_instruction_account_metadata(
                     instruction_account_index,
-                        instruction_account_index,
-                        instruction_account_index,
-                        false,
-                        false,
+                    instruction_account_index,
+                    instruction_account_index,
+                    false,
+                    false,
                 );
                 instruction_accounts.0.push(acc.0);
                 instruction_accounts.1.push(acc.1);
@@ -1080,7 +1093,8 @@ mod tests {
         let mut transaction_accounts = vec![];
         // TODO: This is very confusing, so putting everything together in a data structure would
         // help a lot.
-        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (Vec::new(), Vec::new());
+        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
+            (Vec::new(), Vec::new());
         for index in 0..one_more_than_max_depth {
             invoke_stack.push(solana_pubkey::new_rand());
             transaction_accounts.push((
@@ -1182,7 +1196,8 @@ mod tests {
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
 
-        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (Vec::new(), Vec::new());
+        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
+            (Vec::new(), Vec::new());
         for instruction_account_index in 0..4 {
             let acc = create_instruction_account_metadata(
                 instruction_account_index,
@@ -1242,7 +1257,8 @@ mod tests {
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
 
-        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (Vec::new(), Vec::new());
+        let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
+            (Vec::new(), Vec::new());
         for instruction_account_index in 0..4 {
             let acc = create_instruction_account_metadata(
                 instruction_account_index,
@@ -1285,10 +1301,8 @@ mod tests {
             .unwrap();
 
         let mut compute_units_consumed = 0;
-        let result = invoke_context.process_instruction(
-            &mut compute_units_consumed,
-            &mut ExecuteTimings::default(),
-        );
+        let result = invoke_context
+            .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default());
 
         // Because the instruction had compute cost > 0, then regardless of the execution result,
         // the number of compute units consumed should be a non-default which is something greater
@@ -1354,14 +1368,12 @@ mod tests {
         let new_len = (user_account_data_len as i64).saturating_add(resize_delta) as u64;
         let instruction_data = bincode::serialize(&MockInstruction::Resize { new_len }).unwrap();
 
-        invoke_context.transaction_context
+        invoke_context
+            .transaction_context
             .get_next_instruction_context()
             .unwrap()
             .configure(&[2], instruction_accounts, &instruction_data);
-        let result = invoke_context.process_instruction(
-            &mut 0,
-            &mut ExecuteTimings::default(),
-        );
+        let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
 
         assert!(result.is_ok());
         assert_eq!(

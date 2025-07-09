@@ -613,7 +613,9 @@ mod tests {
         solana_account_info::AccountInfo,
         solana_program_entrypoint::deserialize,
         solana_sdk_ids::bpf_loader,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::{
+            create_instruction_account_metadata, AccountCallIndexes, InstructionAccount,
+        },
         std::{
             cell::RefCell,
             mem::transmute,
@@ -621,14 +623,15 @@ mod tests {
             slice::{self, from_raw_parts, from_raw_parts_mut},
         },
     };
-    use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
     fn deduplicated_instruction_accounts(
         transaction_indexes: &[IndexOfAccount],
         is_writable: fn(usize) -> bool,
     ) -> (Vec<InstructionAccount>, Vec<AccountCallIndexes>) {
-        let mut instr_accounts: Vec<InstructionAccount> = Vec::with_capacity(transaction_indexes.len());
-        let mut instr_indexes: Vec<AccountCallIndexes> = Vec::with_capacity(transaction_indexes.len());
+        let mut instr_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(transaction_indexes.len());
+        let mut instr_indexes: Vec<AccountCallIndexes> =
+            Vec::with_capacity(transaction_indexes.len());
 
         for (index_in_instruction, index_in_transaction) in transaction_indexes.iter().enumerate() {
             let index_in_callee = transaction_indexes
@@ -715,8 +718,12 @@ mod tests {
                 let mut instruction_accounts =
                     deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
-                    instruction_accounts.0.push(instruction_accounts.0.last().cloned().unwrap());
-                    instruction_accounts.1.push(instruction_accounts.1.last().cloned().unwrap());
+                    instruction_accounts
+                        .0
+                        .push(instruction_accounts.0.last().cloned().unwrap());
+                    instruction_accounts
+                        .1
+                        .push(instruction_accounts.1.last().cloned().unwrap());
                 }
                 let program_indices = [0];
                 let instruction_data = vec![];

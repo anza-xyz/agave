@@ -5,9 +5,11 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount, TransactionContext},
+    solana_transaction_context::{
+        create_instruction_account_metadata, AccountCallIndexes, IndexOfAccount,
+        InstructionAccount, TransactionContext,
+    },
 };
-use solana_transaction_context::{create_instruction_account_metadata, AccountCallIndexes};
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext {
     let program_id = solana_pubkey::new_rand();
@@ -83,7 +85,8 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
             }),
         ),
     ];
-    let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) = (Vec::new(), Vec::new());
+    let mut instruction_accounts: (Vec<InstructionAccount>, Vec<AccountCallIndexes>) =
+        (Vec::new(), Vec::new());
     for (instruction_account_index, index_in_transaction) in [1, 1, 2, 3, 4, 4, 5, 6]
         .into_iter()
         .cycle()
@@ -91,7 +94,8 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
         .enumerate()
     {
         let index_in_callee = instruction_accounts
-            .0.iter()
+            .0
+            .iter()
             .position(|account| account.index_in_transaction == index_in_transaction)
             .unwrap_or(instruction_account_index) as IndexOfAccount;
         let acc = create_instruction_account_metadata(
