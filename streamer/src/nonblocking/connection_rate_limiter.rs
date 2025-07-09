@@ -1,6 +1,6 @@
 use {
     governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter},
-    std::{net::IpAddr, num::NonZeroU32, time::Instant},
+    std::{net::IpAddr, num::NonZeroU32, sync::Mutex, time::Instant},
 };
 
 pub struct ConnectionRateLimiter {
@@ -110,7 +110,7 @@ pub mod test {
 
     #[test]
     fn test_token_bucket() {
-        let mut tb = TokenBucket::new(100, 100, 1000.0);
+        let tb = TokenBucket::new(100, 100, 1000.0);
         assert_eq!(tb.current_tokens(), 100);
         tb.consume_tokens(50).expect("Bucket is initially full");
         tb.consume_tokens(50)
@@ -133,14 +133,18 @@ pub mod test {
     }
 }
 
+struct TokenBucketState {
+    tokens: u64,
+    last_access: u64,
+}
+
 /// Enforces a rate limit on the number of requests
 /// over a period of time.
 pub struct TokenBucket {
-    tokens: u64,
     tokens_per_second: f64,
     max_tokens: u64,
-    last_access: u64,
     base_time: Instant,
+    state: Mutex<TokenBucketState>,
 }
 
 impl TokenBucket {
@@ -155,27 +159,33 @@ impl TokenBucket {
         );
         let base_time = Instant::now();
         TokenBucket {
-            tokens: initial_tokens,
             tokens_per_second,
-            last_access: 0,
             max_tokens,
+            state: Mutex::new(TokenBucketState {
+                tokens: initial_tokens,
+                last_access: 0,
+            }),
             base_time,
         }
     }
 
-    pub fn current_tokens(&mut self) -> u64 {
-        self.update_state();
-        return self.tokens;
+    pub fn current_tokens(&self) -> u64 {
+        let now = self.time_us();
+        let mut state = self.state.lock().unwrap();
+        self.update_state(now, &mut state);
+        return state.tokens;
     }
 
-    pub fn consume_tokens(&mut self, request_size: u64) -> Result<u64, u64> {
-        self.update_state();
-        dbg!(self.tokens);
-        if self.tokens >= request_size {
-            self.tokens -= request_size;
-            Ok(self.tokens)
+    pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
+        let now = self.time_us();
+        let mut state = self.state.lock().unwrap();
+        self.update_state(now, &mut state);
+        dbg!(state.tokens);
+        if state.tokens >= request_size {
+            state.tokens -= request_size;
+            Ok(state.tokens)
         } else {
-            Err(request_size - self.tokens)
+            Err(request_size - state.tokens)
         }
     }
 
@@ -185,20 +195,23 @@ impl TokenBucket {
         elapsed.as_micros() as u64
     }
 
-    fn update_state(&mut self) {
-        let now = self.time_us();
-        debug_assert!(now >= self.last_access);
-        let elapsed = (now - self.last_access) as f64;
+    fn update_state(&self, now: u64, state: &mut TokenBucketState) {
+        debug_assert!(now >= state.last_access);
+        let elapsed = (now - state.last_access) as f64;
         let new_tokens = elapsed * self.tokens_per_second / 1e6;
         // check if we can mint at least 1 new token
         if new_tokens > 1.0 {
             dbg!(new_tokens as u64);
             // update time of last mint
-            self.last_access = now;
+            state.last_access = now;
             // fill the bucket
-            self.tokens = self
+            state.tokens = self
                 .max_tokens
-                .min(self.tokens.saturating_add(new_tokens as u64));
+                .min(state.tokens.saturating_add(new_tokens as u64));
         }
     }
+}
+
+struct KeyedRateLimiter {
+    data: Laz,
 }
