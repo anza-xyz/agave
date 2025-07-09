@@ -1619,7 +1619,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&rsp[..]);
         let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+            deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE).unwrap();
         assert_eq!(cursor.position(), rsp.len() as u64);
         if let RepairProtocol::Orphan { header, slot } = deserialized_request {
             assert_eq!(slot, 123);
@@ -1658,7 +1658,7 @@ mod tests {
             .unwrap();
         let mut cursor = Cursor::new(&request_bytes[..]);
         let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+            deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::AncestorHashes {
             header,
@@ -1709,7 +1709,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&request_bytes[..]);
         let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+            deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::WindowIndex {
             header,
@@ -1743,7 +1743,7 @@ mod tests {
 
         let mut cursor = Cursor::new(&request_bytes[..]);
         let deserialized_request: RepairProtocol =
-            deserialize_from_with_limit(&mut cursor).unwrap();
+            deserialize_from_with_limit(&mut cursor, PACKET_DATA_SIZE).unwrap();
         assert_eq!(cursor.position(), request_bytes.len() as u64);
         if let RepairProtocol::HighestWindowIndex {
             header,

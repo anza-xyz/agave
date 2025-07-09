@@ -9,7 +9,7 @@ use {
     bincode::serialize,
     serde::Serialize,
     solana_keypair::signable::Signable,
-    solana_perf::packet::PACKET_DATA_SIZE,
+    solana_packet::PACKET_DATA_SIZE,
     solana_pubkey::Pubkey,
     solana_sanitize::{Sanitize, SanitizeError},
     solana_signature::Signature,
