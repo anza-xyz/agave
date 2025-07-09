@@ -196,9 +196,9 @@ impl IoFixedBuffer {
     }
 
     /// Registed provided buffer as fixed buffer in `io_uring`.
-    pub fn register_buffer<'a, S, E: RingOp<S>>(
+    pub fn register_buffer<S, E: RingOp<S>>(
         ring: &Ring<S, E>,
-        buffer: &'a mut [u8],
+        buffer: &mut [u8],
     ) -> io::Result<()> {
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
