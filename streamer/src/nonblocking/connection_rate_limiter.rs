@@ -73,6 +73,131 @@ impl TotalConnectionRateLimiter {
         }
     }
 }
+#[derive(Clone)]
+struct TokenBucketState {
+    tokens: u64,
+    last_access: u64,
+}
+
+/// Enforces a rate limit on the number of requests
+/// over a period of time.
+pub struct TokenBucket {
+    tokens_per_second: f64,
+    max_tokens: u64,
+    base_time: Instant,
+    state: Mutex<TokenBucketState>,
+}
+
+impl Clone for TokenBucket {
+    fn clone(&self) -> Self {
+        Self {
+            tokens_per_second: self.tokens_per_second,
+            max_tokens: self.max_tokens,
+            base_time: self.base_time,
+            state: Mutex::new(self.state.lock().unwrap().clone()),
+        }
+    }
+}
+
+impl TokenBucket {
+    pub fn new(initial_tokens: u64, max_tokens: u64, tokens_per_second: f64) -> Self {
+        assert!(
+            tokens_per_second > 0.0,
+            "Token bucket can not have zero influx rate"
+        );
+        assert!(
+            initial_tokens <= max_tokens,
+            "Can not have more initial tokens than max tokens"
+        );
+        let base_time = Instant::now();
+        TokenBucket {
+            tokens_per_second,
+            max_tokens,
+            state: Mutex::new(TokenBucketState {
+                tokens: initial_tokens,
+                last_access: 0,
+            }),
+            base_time,
+        }
+    }
+
+    pub fn current_tokens(&self) -> u64 {
+        let now = self.time_us();
+        let mut state = self.state.lock().unwrap();
+        self.update_state(now, &mut state);
+        state.tokens
+    }
+
+    pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
+        let now = self.time_us();
+        let mut state = self.state.lock().unwrap();
+        self.update_state(now, &mut state);
+        if state.tokens >= request_size {
+            state.tokens -= request_size;
+            Ok(state.tokens)
+        } else {
+            Err(request_size - state.tokens)
+        }
+    }
+
+    fn time_us(&self) -> u64 {
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.base_time);
+        elapsed.as_micros() as u64
+    }
+
+    fn update_state(&self, now: u64, state: &mut TokenBucketState) {
+        debug_assert!(now >= state.last_access);
+        let elapsed = (now - state.last_access) as f64;
+        let new_tokens = elapsed * self.tokens_per_second / 1e6;
+        // check if we can mint at least 1 new token
+        if new_tokens > 1.0 {
+            // update time of last mint
+            state.last_access = now;
+            // fill the bucket
+            state.tokens = self
+                .max_tokens
+                .min(state.tokens.saturating_add(new_tokens as u64));
+        }
+    }
+}
+
+/// Provides rate limiting for multiple source IP addresses
+/// on demand. Uses LazyLru under the hood.
+pub struct KeyedRateLimiter {
+    data: LruCache<IpAddr, TokenBucket>,
+    prototype_bucket: TokenBucket,
+}
+
+impl KeyedRateLimiter {
+    pub fn new(capacity: usize, prototype_bucket: TokenBucket) -> Self {
+        Self {
+            data: LruCache::new(capacity),
+            prototype_bucket,
+        }
+    }
+    pub fn current_tokens(&self, key: impl Borrow<IpAddr>) -> Option<u64> {
+        let bucket = self.data.get(key.borrow())?;
+        Some(bucket.current_tokens())
+    }
+
+    pub fn consume_tokens(
+        &mut self,
+        key: impl Borrow<IpAddr>,
+        request_size: u64,
+    ) -> Result<u64, u64> {
+        let bucket = self.data.get(key.borrow());
+        match bucket {
+            Some(bucket) => bucket.consume_tokens(request_size),
+            None => {
+                let bucket = self.prototype_bucket.clone();
+                let res = bucket.consume_tokens(request_size);
+                self.data.put(*key.borrow(), bucket);
+                res
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 pub mod test {
@@ -186,129 +311,5 @@ pub mod test {
         );
         rl.consume_tokens(ip2, 100)
             .expect("New bucket should have been made for ip2");
-    }
-}
-
-#[derive(Clone)]
-struct TokenBucketState {
-    tokens: u64,
-    last_access: u64,
-}
-
-/// Enforces a rate limit on the number of requests
-/// over a period of time.
-pub struct TokenBucket {
-    tokens_per_second: f64,
-    max_tokens: u64,
-    base_time: Instant,
-    state: Mutex<TokenBucketState>,
-}
-
-impl Clone for TokenBucket {
-    fn clone(&self) -> Self {
-        Self {
-            tokens_per_second: self.tokens_per_second,
-            max_tokens: self.max_tokens,
-            base_time: self.base_time,
-            state: Mutex::new(self.state.lock().unwrap().clone()),
-        }
-    }
-}
-
-impl TokenBucket {
-    pub fn new(initial_tokens: u64, max_tokens: u64, tokens_per_second: f64) -> Self {
-        assert!(
-            tokens_per_second > 0.0,
-            "Token bucket can not have zero influx rate"
-        );
-        assert!(
-            initial_tokens <= max_tokens,
-            "Can not have more initial tokens than max tokens"
-        );
-        let base_time = Instant::now();
-        TokenBucket {
-            tokens_per_second,
-            max_tokens,
-            state: Mutex::new(TokenBucketState {
-                tokens: initial_tokens,
-                last_access: 0,
-            }),
-            base_time,
-        }
-    }
-
-    pub fn current_tokens(&self) -> u64 {
-        let now = self.time_us();
-        let mut state = self.state.lock().unwrap();
-        self.update_state(now, &mut state);
-        return state.tokens;
-    }
-
-    pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
-        let now = self.time_us();
-        let mut state = self.state.lock().unwrap();
-        self.update_state(now, &mut state);
-        if state.tokens >= request_size {
-            state.tokens -= request_size;
-            Ok(state.tokens)
-        } else {
-            Err(request_size - state.tokens)
-        }
-    }
-
-    fn time_us(&self) -> u64 {
-        let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.base_time);
-        elapsed.as_micros() as u64
-    }
-
-    fn update_state(&self, now: u64, state: &mut TokenBucketState) {
-        debug_assert!(now >= state.last_access);
-        let elapsed = (now - state.last_access) as f64;
-        let new_tokens = elapsed * self.tokens_per_second / 1e6;
-        // check if we can mint at least 1 new token
-        if new_tokens > 1.0 {
-            // update time of last mint
-            state.last_access = now;
-            // fill the bucket
-            state.tokens = self
-                .max_tokens
-                .min(state.tokens.saturating_add(new_tokens as u64));
-        }
-    }
-}
-
-pub struct KeyedRateLimiter {
-    data: LruCache<IpAddr, TokenBucket>,
-    prototype_bucket: TokenBucket,
-}
-
-impl KeyedRateLimiter {
-    pub fn new(capacity: usize, prototype_bucket: TokenBucket) -> Self {
-        Self {
-            data: LruCache::new(capacity),
-            prototype_bucket,
-        }
-    }
-    pub fn current_tokens(&self, key: impl Borrow<IpAddr>) -> Option<u64> {
-        let bucket = self.data.get(key.borrow())?;
-        Some(bucket.current_tokens())
-    }
-
-    pub fn consume_tokens(
-        &mut self,
-        key: impl Borrow<IpAddr>,
-        request_size: u64,
-    ) -> Result<u64, u64> {
-        let bucket = self.data.get(key.borrow());
-        match bucket {
-            Some(bucket) => bucket.consume_tokens(request_size),
-            None => {
-                let bucket = self.prototype_bucket.clone();
-                let res = bucket.consume_tokens(request_size);
-                self.data.put(*key.borrow(), bucket);
-                return res;
-            }
-        }
     }
 }
