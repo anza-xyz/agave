@@ -2,7 +2,7 @@ use {
     crate::{
         file_io::FileCreator,
         io_uring::{
-            memory::{IoFixedBuffer, LargeBuffer},
+            memory::{adjust_ulimit_memlock, IoFixedBuffer, LargeBuffer},
             IO_PRIO_BE_HIGHEST,
         },
     },
@@ -78,6 +78,8 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         write_capacity: usize,
         file_complete: F,
     ) -> io::Result<Self> {
+        adjust_ulimit_memlock(true)?;
+
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for writing.
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;

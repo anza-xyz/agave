@@ -51,7 +51,6 @@ impl LargeBuffer {
     /// Allocare memory buffer optimized for io_uring operations, i.e.
     /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
-        adjust_ulimit_memlock(true).unwrap();
         if size > PageAlignedMemory::page_size() {
             let size = size.next_power_of_two();
             if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
@@ -200,6 +199,7 @@ impl IoFixedBuffer {
         ring: &Ring<S, E>,
         buffer: &mut [u8],
     ) -> io::Result<()> {
+        adjust_ulimit_memlock(true)?;
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
             .map(|buf| libc::iovec {
@@ -231,7 +231,7 @@ impl AsMut<[u8]> for IoFixedBuffer {
     }
 }
 
-pub fn adjust_ulimit_memlock(enforce_ulimit_memlock: bool) -> io::Result<()> {
+pub fn adjust_ulimit_memlock(require: bool) -> io::Result<()> {
     let desired_memlock = 2_000_000_000;
 
     fn get_memlock() -> libc::rlimit {
@@ -248,7 +248,8 @@ pub fn adjust_ulimit_memlock(enforce_ulimit_memlock: bool) -> io::Result<()> {
     let mut memlock = get_memlock();
     let current = memlock.rlim_cur;
     if current < desired_memlock {
-        memlock.rlim_cur = desired_memlock;
+        memlock.rlim_cur = libc::RLIM_INFINITY;
+        memlock.rlim_max = libc::RLIM_INFINITY;
         if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
             log::error!(
                 "Unable to increase the maximum memory lock limit to {} from {}",
@@ -258,12 +259,12 @@ pub fn adjust_ulimit_memlock(enforce_ulimit_memlock: bool) -> io::Result<()> {
 
             if cfg!(target_os = "macos") {
                 log::error!(
-                    "On mac OS you may need to run |sudo launchctl limit maxfiles {} {}| first",
+                    "On mac OS you may need to run |sudo launchctl limit memlock {} {}| first",
                     desired_memlock,
                     desired_memlock,
                 );
             }
-            if enforce_ulimit_memlock {
+            if require {
                 return Err(io::Error::new(
                     io::ErrorKind::OutOfMemory,
                     "unable to set memory lock limit",
@@ -272,7 +273,7 @@ pub fn adjust_ulimit_memlock(enforce_ulimit_memlock: bool) -> io::Result<()> {
         }
 
         memlock = get_memlock();
+        log::info!("Bumped maximum memory lock limit: {}", memlock.rlim_cur);
     }
-    log::info!("Maximum memory lock limit: {}", memlock.rlim_cur);
     Ok(())
 }

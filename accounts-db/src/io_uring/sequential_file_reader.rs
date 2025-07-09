@@ -1,6 +1,6 @@
 use {
-    crate::io_uring::{
-        memory::{IoFixedBuffer, LargeBuffer},
+    super::{
+        memory::{adjust_ulimit_memlock, IoFixedBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
     },
     agave_io_uring::{Completion, Ring, RingOp},
@@ -71,11 +71,11 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         mut buffer: B,
         read_capacity: usize,
     ) -> io::Result<Self> {
-        let buf_len = buffer.as_mut().len();
+        adjust_ulimit_memlock(true)?;
 
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for reading.
-        let ring_qsize = (buf_len / read_capacity / 2).max(1) as u32;
+        let ring_qsize = (buffer.as_mut().len() / read_capacity / 2).max(1) as u32;
         let ring = IoUring::builder()
             .setup_sqpoll(SQPOLL_IDLE_TIMEOUT)
             .build(ring_qsize)?;
