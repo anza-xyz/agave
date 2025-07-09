@@ -94,7 +94,10 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         file_complete: F,
     ) -> io::Result<Self> {
         let buffer = backing_buffer.as_mut();
-        assert!(buffer.len() % write_capacity == 0);
+        // Take prefix of buffer that is aligned to write_capacity
+        assert!(buffer.len() >= write_capacity);
+        let write_aligned_buf_len = buffer.len() / write_capacity * write_capacity;
+        let buffer = &mut buffer[..write_aligned_buf_len];
 
         let buffers = IoFixedBuffer::split_buffer_chunks(buffer, write_capacity);
         let state = FileCreatorState::new(buffers.collect(), file_complete);
