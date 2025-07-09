@@ -430,9 +430,7 @@ pub(crate) fn find_heaviest_fork(
         bank_forks.clone(),
         &exit,
     )?;
-    info!(
-        "Heaviest fork found: slot: {heaviest_fork_slot}, bankhash: {heaviest_fork_bankhash:?}"
-    );
+    info!("Heaviest fork found: slot: {heaviest_fork_slot}, bankhash: {heaviest_fork_bankhash:?}");
     Ok((heaviest_fork_slot, heaviest_fork_bankhash))
 }
 
@@ -959,9 +957,7 @@ pub(crate) fn send_and_receive_heaviest_fork(
         ) {
             Ok(()) => pushfn(coordinator_slot, coordinator_hash),
             Err(e) => {
-                warn!(
-                    "Failed to verify coordinator heaviest fork: {e:?}, exit soon"
-                );
+                warn!("Failed to verify coordinator heaviest fork: {e:?}, exit soon");
                 pushfn(my_heaviest_fork_slot, my_heaviest_fork_hash);
                 // flush_push_queue only flushes the messages to crds, doesn't guarantee
                 // sending them out, so we still need to wait for a while before exiting.
@@ -1048,9 +1044,7 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                             config.blockstore.clone(),
                             config.exit.clone(),
                         )?;
-                        info!(
-                            "Heaviest fork found: slot: {slot}, bankhash: {bankhash}"
-                        );
+                        info!("Heaviest fork found: slot: {slot}, bankhash: {bankhash}");
                         HeaviestForkRecord {
                             slot,
                             bankhash: bankhash.to_string(),
@@ -1248,9 +1242,7 @@ pub(crate) fn initialize(
         Err(e) => {
             let stdio_err = e.downcast_ref::<std::io::Error>();
             if stdio_err.is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
-                info!(
-                    "wen restart proto file not found at {records_path:?}, write init state"
-                );
+                info!("wen restart proto file not found at {records_path:?}, write init state");
                 let progress = WenRestartProgress {
                     state: RestartState::Init.into(),
                     ..Default::default()

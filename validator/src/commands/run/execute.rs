@@ -1397,9 +1397,7 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
             Err(err) => eprintln!("get_cluster_shred_version failed: {entrypoint}, {err}"),
             Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
-                info!(
-                    "obtained shred-version {shred_version} from {entrypoint}"
-                );
+                info!("obtained shred-version {shred_version} from {entrypoint}");
                 return Some(shred_version);
             }
         }

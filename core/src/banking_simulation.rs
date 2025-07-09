@@ -593,9 +593,7 @@ impl<'a> SenderLoopLogger<'a> {
         batch_count: usize,
         tx_count: usize,
     ) {
-        debug!(
-            "sent {label:?} {batch_count} batches ({tx_count} txes)"
-        );
+        debug!("sent {label:?} {batch_count} batches ({tx_count} txes)");
 
         use ChannelLabel::*;
         let (total_batch_count, total_tx_count) = match label {
@@ -761,9 +759,7 @@ impl BankingSimulator {
         )))
         .unwrap();
         assert!(retracer.is_enabled());
-        info!(
-            "Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",
-        );
+        info!("Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",);
 
         // Create a partially-dummy ClusterInfo for the banking stage.
         let cluster_info_for_banking = Arc::new(DummyClusterInfo {

@@ -1255,9 +1255,7 @@ impl Tower {
         );
         let new_check = Some((switch_slot, decision.clone()));
         if new_check != self.last_switch_threshold_check {
-            trace!(
-                "new switch threshold check: slot {switch_slot}: {decision:?}",
-            );
+            trace!("new switch threshold check: slot {switch_slot}: {decision:?}",);
             self.last_switch_threshold_check = new_check;
         }
         decision

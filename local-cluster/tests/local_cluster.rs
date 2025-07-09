@@ -1953,9 +1953,7 @@ fn test_validator_saves_tower() {
             .rpc_client()
             .get_slot_with_commitment(CommitmentConfig::finalized())
         {
-            trace!(
-                "current root: {root}, last_replayed_root: {last_replayed_root}"
-            );
+            trace!("current root: {root}, last_replayed_root: {last_replayed_root}");
             if root > last_replayed_root {
                 break root;
             }
@@ -2821,9 +2819,7 @@ fn test_oc_bad_signatures() {
             move |vote_slot, leader_vote_tx, parsed_vote, _cluster_info| {
                 info!("received vote for {vote_slot}");
                 let vote_hash = parsed_vote.hash();
-                info!(
-                    "Simulating vote from our node on slot {vote_slot}, hash {vote_hash}"
-                );
+                info!("Simulating vote from our node on slot {vote_slot}, hash {vote_hash}");
 
                 // Add all recent vote slots on this fork to allow cluster to pass
                 // vote threshold checks in replay. Note this will instantly force a
@@ -3316,15 +3312,9 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
     let val_b_ledger_path = cluster.ledger_path(&validator_b_pubkey);
     let val_c_ledger_path = cluster.ledger_path(&validator_c_pubkey);
 
-    info!(
-        "val_a {validator_a_pubkey} ledger path {val_a_ledger_path:?}"
-    );
-    info!(
-        "val_b {validator_b_pubkey} ledger path {val_b_ledger_path:?}"
-    );
-    info!(
-        "val_c {validator_c_pubkey} ledger path {val_c_ledger_path:?}"
-    );
+    info!("val_a {validator_a_pubkey} ledger path {val_a_ledger_path:?}");
+    info!("val_b {validator_b_pubkey} ledger path {val_b_ledger_path:?}");
+    info!("val_c {validator_c_pubkey} ledger path {val_c_ledger_path:?}");
 
     info!("Exiting validator C");
     let mut validator_c_info = cluster.exit_node(&validator_c_pubkey);
@@ -3353,9 +3343,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         .0;
     let base_slot = next_slot_on_a - 1;
 
-    info!(
-        "base slot: {base_slot}, next_slot_on_a: {next_slot_on_a}"
-    );
+    info!("base slot: {base_slot}, next_slot_on_a: {next_slot_on_a}");
 
     // Step 2:
     // Truncate ledger, copy over B's ledger to C
@@ -4014,9 +4002,7 @@ fn run_duplicate_shreds_broadcast_leader(vote_on_duplicate: bool) {
                 info!("received vote for {latest_vote_slot}");
                 // Add to EpochSlots. Mark all slots frozen between slot..=max_vote_slot.
                 let new_epoch_slots: Vec<Slot> = (0..latest_vote_slot + 1).collect();
-                info!(
-                    "Simulating epoch slots from our node: {new_epoch_slots:?}"
-                );
+                info!("Simulating epoch slots from our node: {new_epoch_slots:?}");
                 cluster_info.push_epoch_slots(&new_epoch_slots);
 
                 for slot in duplicate_slot_receiver.try_iter() {
@@ -4129,9 +4115,7 @@ fn test_switch_threshold_uses_gossip_votes() {
         )
         .unwrap();
 
-        info!(
-            "Lighter validator's latest vote is for slot {lighter_validator_latest_vote}"
-        );
+        info!("Lighter validator's latest vote is for slot {lighter_validator_latest_vote}");
 
         // Lighter partition should stop voting after detecting the heavier partition and try
         // to switch. Loop until we see a greater vote by the heavier validator than the last
@@ -4199,14 +4183,10 @@ fn test_switch_threshold_uses_gossip_votes() {
                         new_lighter_validator_latest_vote,
                         lighter_validator_latest_vote
                     );
-                    info!(
-                        "Incrementing voting opportunities: {total_voting_opportunities}"
-                    );
+                    info!("Incrementing voting opportunities: {total_voting_opportunities}");
                     total_voting_opportunities += 1;
                 } else {
-                    info!(
-                        "Tower still locked out, can't vote for slot: {latest_slot}"
-                    );
+                    info!("Tower still locked out, can't vote for slot: {latest_slot}");
                 }
             } else if latest_slot > heavier_validator_latest_vote {
                 warn!(
@@ -4217,9 +4197,7 @@ fn test_switch_threshold_uses_gossip_votes() {
         }
 
         // Make a vote from the killed validator for slot `heavier_validator_latest_vote` in gossip
-        info!(
-            "Simulate vote for slot: {heavier_validator_latest_vote} from dead validator"
-        );
+        info!("Simulate vote for slot: {heavier_validator_latest_vote} from dead validator");
         let vote_keypair = &context
             .dead_validator_info
             .as_ref()
@@ -4776,15 +4754,9 @@ fn test_duplicate_with_pruned_ancestor() {
     let minority_ledger_path = cluster.ledger_path(&minority_pubkey);
     let our_node_ledger_path = cluster.ledger_path(&our_node_pubkey);
 
-    info!(
-        "majority {majority_pubkey} ledger path {majority_ledger_path:?}"
-    );
-    info!(
-        "minority {minority_pubkey} ledger path {minority_ledger_path:?}"
-    );
-    info!(
-        "our_node {our_node_pubkey} ledger path {our_node_ledger_path:?}"
-    );
+    info!("majority {majority_pubkey} ledger path {majority_ledger_path:?}");
+    info!("minority {minority_pubkey} ledger path {minority_ledger_path:?}");
+    info!("our_node {our_node_pubkey} ledger path {our_node_ledger_path:?}");
 
     info!("Killing our node");
     let our_node_info = cluster.exit_node(&our_node_pubkey);
@@ -4829,9 +4801,7 @@ fn test_duplicate_with_pruned_ancestor() {
         }
     }
 
-    info!(
-        "Killing minority validator, fork created successfully: {last_minority_vote:?}"
-    );
+    info!("Killing minority validator, fork created successfully: {last_minority_vote:?}");
     let last_minority_vote =
         wait_for_last_vote_in_tower_to_land_in_ledger(&minority_ledger_path, &minority_pubkey)
             .unwrap();
@@ -5348,9 +5318,7 @@ fn test_duplicate_shreds_switch_failure() {
     fn wait_for_duplicate_fork_frozen(ledger_path: &Path, dup_slot: Slot) -> Hash {
         // Ensure all the slots <= dup_slot are also full so we know we can replay up to dup_slot
         // on restart
-        info!(
-            "Waiting to receive and replay entire duplicate fork with tip {dup_slot}"
-        );
+        info!("Waiting to receive and replay entire duplicate fork with tip {dup_slot}");
         loop {
             let duplicate_fork_validator_blockstore = open_blockstore(ledger_path);
             if let Some(frozen_hash) = duplicate_fork_validator_blockstore.get_bank_hash(dup_slot) {
@@ -5392,9 +5360,7 @@ fn test_duplicate_shreds_switch_failure() {
         let ledger_path = cluster.ledger_path(pubkey);
 
         // Lift the partition after `pubkey` votes on the `dup_slot`
-        info!(
-            "Waiting on duplicate fork to vote on duplicate slot: {dup_slot}"
-        );
+        info!("Waiting on duplicate fork to vote on duplicate slot: {dup_slot}");
         loop {
             let last_vote = last_vote_in_tower(&ledger_path, pubkey);
             if let Some((latest_vote_slot, _hash)) = last_vote {
@@ -5627,9 +5593,7 @@ fn test_duplicate_shreds_switch_failure() {
     assert_eq!(dup_shred1.slot(), dup_slot);
 
     // Purge everything including the `dup_slot` from the `target_switch_fork_validator_pubkey`
-    info!(
-        "Purging towers and ledgers for: {duplicate_leader_validator_pubkey:?}"
-    );
+    info!("Purging towers and ledgers for: {duplicate_leader_validator_pubkey:?}");
     Blockstore::destroy(&target_switch_fork_validator_ledger_path).unwrap();
     {
         let blockstore1 = open_blockstore(&duplicate_leader_ledger_path);
@@ -5642,18 +5606,14 @@ fn test_duplicate_shreds_switch_failure() {
         dup_slot,
     );
 
-    info!(
-        "Purging towers and ledgers for: {duplicate_fork_validator1_pubkey:?}"
-    );
+    info!("Purging towers and ledgers for: {duplicate_fork_validator1_pubkey:?}");
     clear_ledger_and_tower(
         &duplicate_fork_validator1_ledger_path,
         &duplicate_fork_validator1_pubkey,
         dup_slot + 1,
     );
 
-    info!(
-        "Purging towers and ledgers for: {duplicate_fork_validator2_pubkey:?}"
-    );
+    info!("Purging towers and ledgers for: {duplicate_fork_validator2_pubkey:?}");
     // Copy validator 1's ledger to validator 2 so that they have the same version
     // of the duplicate slot
     clear_ledger_and_tower(

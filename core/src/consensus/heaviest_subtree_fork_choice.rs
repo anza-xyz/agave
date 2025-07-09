@@ -935,9 +935,7 @@ impl HeaviestSubtreeForkChoice {
         let fork_info = self.fork_infos.get_mut(&slot_hash_key).unwrap();
         if is_duplicate_confirmed {
             if !fork_info.is_duplicate_confirmed {
-                info!(
-                    "Fork choice setting {slot_hash_key:?} to duplicate confirmed"
-                );
+                info!("Fork choice setting {slot_hash_key:?} to duplicate confirmed");
             }
             fork_info.set_duplicate_confirmed();
         }
@@ -1329,9 +1327,7 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
     }
 
     fn mark_fork_invalid_candidate(&mut self, invalid_slot_hash_key: &SlotHashKey) {
-        info!(
-            "marking fork starting at: {invalid_slot_hash_key:?} invalid candidate"
-        );
+        info!("marking fork starting at: {invalid_slot_hash_key:?} invalid candidate");
         let fork_info = self.fork_infos.get_mut(invalid_slot_hash_key);
         if let Some(fork_info) = fork_info {
             // Should not be marking duplicate confirmed blocks as invalid candidates
@@ -1356,9 +1352,7 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
     }
 
     fn mark_fork_valid_candidate(&mut self, valid_slot_hash_key: &SlotHashKey) -> Vec<SlotHashKey> {
-        info!(
-            "marking fork starting at: {valid_slot_hash_key:?} valid candidate"
-        );
+        info!("marking fork starting at: {valid_slot_hash_key:?} valid candidate");
         let mut newly_duplicate_confirmed_ancestors = vec![];
 
         for ancestor_key in std::iter::once(*valid_slot_hash_key)

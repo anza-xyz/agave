@@ -747,9 +747,7 @@ impl RpcSubscriptions {
             match notification_sender.send(notification_entry.into()) {
                 Ok(()) => (),
                 Err(SendError(notification)) => {
-                    warn!(
-                        "Dropped RPC Notification - receiver disconnected : {notification:?}"
-                    );
+                    warn!("Dropped RPC Notification - receiver disconnected : {notification:?}");
                 }
             }
         }

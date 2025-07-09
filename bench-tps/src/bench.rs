@@ -266,9 +266,7 @@ where
     T: 'static + TpsClient + Send + Sync + ?Sized,
 {
     if target_slots_per_epoch != 0 {
-        info!(
-            "Waiting until epochs are {target_slots_per_epoch} slots long.."
-        );
+        info!("Waiting until epochs are {target_slots_per_epoch} slots long..");
         loop {
             if let Ok(epoch_info) = client.get_epoch_info() {
                 if epoch_info.slots_in_epoch >= target_slots_per_epoch {
@@ -1083,9 +1081,7 @@ fn compute_and_report_stats(
     if total_maxes > 0.0 {
         let num_nodes_with_tps = maxes.read().unwrap().len() - nodes_with_zero_tps;
         let average_max = total_maxes / num_nodes_with_tps as f32;
-        info!(
-            "\nAverage max TPS: {average_max:.2}, {nodes_with_zero_tps} nodes had 0 TPS"
-        );
+        info!("\nAverage max TPS: {average_max:.2}, {nodes_with_zero_tps} nodes had 0 TPS");
     }
 
     let total_tx_send_count = total_tx_send_count as u64;

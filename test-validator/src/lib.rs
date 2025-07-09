@@ -873,9 +873,7 @@ impl TestValidator {
             if feature_set.remove(feature) {
                 info!("Feature for {feature:?} deactivated")
             } else {
-                warn!(
-                    "Feature {feature:?} set for deactivation is not a known Feature public key",
-                )
+                warn!("Feature {feature:?} set for deactivation is not a known Feature public key",)
             }
         }
 

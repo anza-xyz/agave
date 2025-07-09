@@ -350,9 +350,7 @@ impl RepairWeight {
                 // If not they will once again be attached to the pruned set in
                 // `update_orphan_ancestors`.
 
-                info!(
-                    "Dumping pruned slot {slot} of tree {subtree_root} in repair"
-                );
+                info!("Dumping pruned slot {slot} of tree {subtree_root} in repair");
                 let mut subtree = self
                     .pruned_trees
                     .remove(&subtree_root)
@@ -377,9 +375,7 @@ impl RepairWeight {
                 }
             }
             None => {
-                warn!(
-                    "Trying to split off slot {slot} which doesn't currently exist in repair"
-                );
+                warn!("Trying to split off slot {slot} which doesn't currently exist in repair");
                 HashSet::new()
             }
         }

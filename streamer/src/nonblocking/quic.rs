@@ -363,9 +363,7 @@ async fn run_server(
                 .store(rate_limiter.len(), Ordering::Relaxed);
             debug!("Got a connection {remote_address:?}");
             if !rate_limiter.is_allowed(&remote_address.ip()) {
-                debug!(
-                    "Reject connection from {remote_address:?} -- rate limiting exceeded"
-                );
+                debug!("Reject connection from {remote_address:?} -- rate limiting exceeded");
                 stats
                     .connection_rate_limited_per_ipaddr
                     .fetch_add(1, Ordering::Relaxed);

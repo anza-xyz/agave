@@ -56,9 +56,7 @@ impl Blockstore {
             )
         );
         if let Err(e) = purge_result {
-            error!(
-                "Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}"
-            );
+            error!("Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}");
         }
     }
 
@@ -176,9 +174,7 @@ impl Blockstore {
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
         self.write_batch(write_batch).inspect_err(|e| {
-            error!(
-                "Error: {e:?} while submitting write batch for slot {slot:?}"
-            )
+            error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
         Ok(columns_purged)
     }

@@ -1533,9 +1533,7 @@ fn fetch_verified_buffer_program_data(
     };
 
     verify_elf(&buffer_program_data, feature_set).map_err(|err| {
-        format!(
-            "Buffer account {buffer_pubkey} has invalid program data: {err:?}"
-        )
+        format!("Buffer account {buffer_pubkey} has invalid program data: {err:?}")
     })?;
 
     Ok(buffer_program_data)

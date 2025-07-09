@@ -95,9 +95,7 @@ where
         write!(out, "{}", program.display()).unwrap();
         writeln!(out, "{msg}").unwrap();
         out.flush().unwrap();
-        error!(
-            "To rerun the failed command for debugging use {script_name}",
-        );
+        error!("To rerun the failed command for debugging use {script_name}",);
         exit(1);
     }
 }

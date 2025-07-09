@@ -56,9 +56,7 @@ impl SVMRentCollector for RentCollectorWithMetrics {
         if !solana_sdk_ids::incinerator::check_id(address)
             && !self.transition_allowed(pre_rent_state, post_rent_state)
         {
-            debug!(
-                "Account {address} not rent exempt, state {account_state:?}",
-            );
+            debug!("Account {address} not rent exempt, state {account_state:?}",);
             let account_index = account_index as u8;
             Err(TransactionError::InsufficientFundsForRent { account_index })
         } else {

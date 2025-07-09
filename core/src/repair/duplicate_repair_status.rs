@@ -360,9 +360,9 @@ impl AncestorRequestStatus {
                             self.requested_mismatched_slot
                         );
                     }
-                    (Some(decision), true) => panic!(
-                        "Programmer error, {decision:?} should not be set in decision loop"
-                    ),
+                    (Some(decision), true) => {
+                        panic!("Programmer error, {decision:?} should not be set in decision loop")
+                    }
                     (Some(_), false) => { /* Already found a mismatch, descendants continue to mismatch as well */
                     }
                     (None, true) => { /* Mismatch hasn't been found yet */ }

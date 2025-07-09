@@ -294,9 +294,7 @@ pub fn request_airdrop_transaction(
     // Read length of transaction
     let mut buffer = [0; 2];
     stream.read_exact(&mut buffer).map_err(|err| {
-        info!(
-            "request_airdrop_transaction: buffer length read_exact error: {err:?}"
-        );
+        info!("request_airdrop_transaction: buffer length read_exact error: {err:?}");
         err
     })?;
     let transaction_length = u16::from_le_bytes(buffer) as usize;
@@ -309,9 +307,7 @@ pub fn request_airdrop_transaction(
     // Read the transaction
     let mut buffer = vec![0; transaction_length];
     stream.read_exact(&mut buffer).map_err(|err| {
-        info!(
-            "request_airdrop_transaction: buffer read_exact error: {err:?}"
-        );
+        info!("request_airdrop_transaction: buffer read_exact error: {err:?}");
         err
     })?;
 

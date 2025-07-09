@@ -109,9 +109,7 @@ impl HeaviestForkAggregate {
         let from = &received_heaviest_fork.from;
         let sender_stake = self.epoch_stakes.node_id_to_stake(from).unwrap_or(0);
         if sender_stake == 0 {
-            warn!(
-                "Gossip should not accept zero-stake RestartLastVotedFork from {from:?}"
-            );
+            warn!("Gossip should not accept zero-stake RestartLastVotedFork from {from:?}");
             return HeaviestForkAggregateResult::ZeroStakeIgnored;
         }
         if from == &self.my_pubkey {

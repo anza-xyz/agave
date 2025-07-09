@@ -297,9 +297,7 @@ fn run_transactions_dos(
                 }
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
-                    info!(
-                        "Balance {balance} is less than needed: {lamports}, doing aidrop..."
-                    );
+                    info!("Balance {balance} is less than needed: {lamports}, doing aidrop...");
                     if !airdrop_lamports(
                         &client,
                         &faucet_addr,

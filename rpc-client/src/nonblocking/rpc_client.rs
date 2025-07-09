@@ -3890,9 +3890,7 @@ impl RpcClient {
 
         let minimum_balance: u64 = serde_json::from_value(minimum_balance_json)
             .map_err(|err| ClientError::new_with_request(err.into(), request))?;
-        trace!(
-            "Response minimum balance {data_len:?} {minimum_balance:?}"
-        );
+        trace!("Response minimum balance {data_len:?} {minimum_balance:?}");
         Ok(minimum_balance)
     }
 

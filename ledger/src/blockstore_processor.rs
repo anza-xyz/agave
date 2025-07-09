@@ -120,9 +120,7 @@ fn do_get_first_error<T, Tx: SVMTransaction>(
             if first_err.is_none() {
                 first_err = Some((Err(err.clone()), *transaction.signature()));
             }
-            warn!(
-                "Unexpected validator error: {err:?}, transaction: {transaction:?}"
-            );
+            warn!("Unexpected validator error: {err:?}, transaction: {transaction:?}");
             datapoint_error!(
                 "validator_process_entry_error",
                 (
@@ -1002,9 +1000,7 @@ pub fn process_blockstore_from_root(
         let bank = bank_forks.read().unwrap().root_bank();
         #[cfg(feature = "dev-context-only-utils")]
         if let Some(hash_overrides) = &opts.hash_overrides {
-            info!(
-                "Will override following slots' hashes: {hash_overrides:#?}"
-            );
+            info!("Will override following slots' hashes: {hash_overrides:#?}");
             bank.set_hash_overrides(hash_overrides.clone());
         }
         if opts.no_block_cost_limits {
@@ -1066,9 +1062,7 @@ pub fn process_blockstore_from_root(
         //
         // If the ledger has any data at all, the snapshot was likely taken at
         // a slot that is not within the range of ledger min/max slot(s).
-        warn!(
-            "Starting slot {start_slot} is not in Blockstore, unable to process"
-        );
+        warn!("Starting slot {start_slot} is not in Blockstore, unable to process");
         (0, 0)
     };
 
@@ -2253,9 +2247,7 @@ impl TransactionStatusSender {
                 transaction_indexes,
             }))
         {
-            trace!(
-                "Slot {slot} transaction_status send batch failed: {e:?}"
-            );
+            trace!("Slot {slot} transaction_status send batch failed: {e:?}");
         }
     }
 
@@ -2265,9 +2257,7 @@ impl TransactionStatusSender {
             .send(TransactionStatusMessage::Freeze(bank.clone()))
         {
             let slot = bank.slot();
-            warn!(
-                "Slot {slot} transaction_status send freeze message failed: {e:?}"
-            );
+            warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
         }
     }
 }

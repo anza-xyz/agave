@@ -397,9 +397,7 @@ impl StreamerSendStats {
             });
             entries.truncate(MAX_REPORT_ENTRIES);
         }
-        info!(
-            "streamer send {name} hosts: count:{num_entries} {entries:?}",
-        );
+        info!("streamer send {name} hosts: count:{num_entries} {entries:?}",);
     }
 
     fn maybe_submit(&mut self, name: &'static str, sender: &Sender<Box<dyn FnOnce() + Send>>) {

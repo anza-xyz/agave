@@ -377,9 +377,7 @@ fn main() {
         .iter()
         .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
         .sum();
-    info!(
-        "threads: {num_banking_threads} txs: {total_num_transactions}"
-    );
+    info!("threads: {num_banking_threads} txs: {total_num_transactions}");
 
     // fund all the accounts
     all_packets.iter().for_each(|packets_for_single_iteration| {

@@ -624,9 +624,7 @@ impl AdminRpc for AdminRpcImpl {
         meta: Self::Metadata,
         pubkey_str: String,
     ) -> Result<HashMap<RpcAccountIndex, usize>> {
-        debug!(
-            "get_secondary_index_key_size rpc request received: {pubkey_str:?}"
-        );
+        debug!("get_secondary_index_key_size rpc request received: {pubkey_str:?}");
         let index_key = verify_pubkey(&pubkey_str)?;
         meta.with_post_init(|post_init| {
             let bank = post_init.bank_forks.read().unwrap().root_bank();

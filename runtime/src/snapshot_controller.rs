@@ -124,9 +124,7 @@ impl SnapshotController {
                         request_kind,
                         enqueued: Instant::now(),
                     }) {
-                        warn!(
-                            "Error sending snapshot request for bank: {bank_slot}, err: {e:?}"
-                        );
+                        warn!("Error sending snapshot request for bank: {bank_slot}, err: {e:?}");
                     }
                 } else {
                     info!("Not sending snapshot request for bank: {bank_slot}, startup verification is incomplete");

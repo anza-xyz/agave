@@ -743,9 +743,7 @@ impl BankWithSchedulerInner {
             result_with_timings.as_ref().map(|(result, _)| result),
             thread::current(),
         );
-        trace!(
-            "wait_for_scheduler_termination(result_with_timings: {result_with_timings:?})",
-        );
+        trace!("wait_for_scheduler_termination(result_with_timings: {result_with_timings:?})",);
 
         result_with_timings
     }

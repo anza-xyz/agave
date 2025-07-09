@@ -1382,9 +1382,9 @@ impl Blockstore {
         // we must retain the chain by preserving `next_slots`.
         match self.purge_slot_cleanup_chaining(slot) {
             Ok(_) => {}
-            Err(BlockstoreError::SlotUnavailable) => error!(
-                "clear_unconfirmed_slot() called on slot {slot} with no SlotMeta"
-            ),
+            Err(BlockstoreError::SlotUnavailable) => {
+                error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+            }
             Err(e) => panic!("Purge database operations failed {e}"),
         }
     }
@@ -4277,9 +4277,7 @@ impl Blockstore {
         if root_meta.is_connected() {
             return Ok(());
         }
-        info!(
-            "Marking slot {root} and any full children slots as connected"
-        );
+        info!("Marking slot {root} and any full children slots as connected");
         let mut write_batch = self.get_write_batch()?;
 
         // Mark both connected bits on the root slot so that the flags for this

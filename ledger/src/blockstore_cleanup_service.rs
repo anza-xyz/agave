@@ -414,9 +414,7 @@ mod tests {
                 10,
             );
             time.stop();
-            info!(
-                "slot: {slot} size: {num_slots} {insert_time} {time}"
-            );
+            info!("slot: {slot} size: {num_slots} {insert_time} {time}");
             slot += num_slots;
             num_slots *= 2;
         }

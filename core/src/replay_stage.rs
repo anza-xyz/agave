@@ -636,9 +636,7 @@ impl ReplayStage {
                         return;
                     }
                 };
-                warn!(
-                    "Identity changed during startup from {my_old_pubkey} to {my_pubkey}"
-                );
+                warn!("Identity changed during startup from {my_old_pubkey} to {my_pubkey}");
             }
             let (mut progress, mut heaviest_subtree_fork_choice) =
                 Self::initialize_progress_and_fork_choice_with_locked_bank_forks(
@@ -2002,9 +2000,7 @@ impl ReplayStage {
                 } else {
                     ""
                 };
-                info!(
-                    "LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}"
-                );
+                info!("LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}");
             }
         }
         current_leader.replace(new_leader.to_owned());
@@ -2125,9 +2121,7 @@ impl ReplayStage {
             warn!("{my_pubkey} already have bank in forks at {poh_slot}?");
             return false;
         }
-        trace!(
-            "{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}"
-        );
+        trace!("{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}");
 
         if let Some(next_leader) = leader_schedule_cache.slot_leader_at(poh_slot, Some(&parent)) {
             if !has_new_vote_been_rooted {
@@ -2135,9 +2129,7 @@ impl ReplayStage {
                 return false;
             }
 
-            trace!(
-                "{my_pubkey} leader {next_leader} at poh slot: {poh_slot}"
-            );
+            trace!("{my_pubkey} leader {next_leader} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
             if next_leader != *my_pubkey {
@@ -2184,9 +2176,7 @@ impl ReplayStage {
 
             let root_slot = bank_forks.read().unwrap().root();
             datapoint_info!("replay_stage-my_leader_slot", ("slot", poh_slot, i64),);
-            info!(
-                "new fork:{poh_slot} parent:{parent_slot} (leader) root:{root_slot}"
-            );
+            info!("new fork:{poh_slot} parent:{parent_slot} (leader) root:{root_slot}");
 
             let root_distance = poh_slot - root_slot;
             let vote_only_bank = if root_distance > MAX_ROOT_DISTANCE_FOR_VOTE_ONLY {
@@ -2494,9 +2484,7 @@ impl ReplayStage {
         }
         let vote_account = match bank.get_vote_account(vote_account_pubkey) {
             None => {
-                warn!(
-                    "Vote account {vote_account_pubkey} does not exist.  Unable to vote",
-                );
+                warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
                 return GenerateVoteTxResult::Failed;
             }
             Some(vote_account) => vote_account,
@@ -3383,9 +3371,7 @@ impl ReplayStage {
     ) -> bool /* completed a bank */ {
         let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
         let num_active_banks = active_bank_slots.len();
-        trace!(
-            "{num_active_banks} active bank(s) to replay: {active_bank_slots:?}"
-        );
+        trace!("{num_active_banks} active bank(s) to replay: {active_bank_slots:?}");
         if active_bank_slots.is_empty() {
             return false;
         }
@@ -4438,7 +4424,9 @@ pub(crate) mod tests {
         } = vote_simulator;
 
         let blockstore = Arc::new(blockstore);
-        let validator_node_to_vote_keys: HashMap<Pubkey, Pubkey> = validator_keypairs.values().map(|keypairs| {
+        let validator_node_to_vote_keys: HashMap<Pubkey, Pubkey> = validator_keypairs
+            .values()
+            .map(|keypairs| {
                 (
                     keypairs.node_keypair.pubkey(),
                     keypairs.vote_keypair.pubkey(),

@@ -541,9 +541,7 @@ fn invoke_cargo(config: &Config) {
     );
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
-        warn!(
-            "Removed RUSTFLAGS from cargo environment, because it overrides {cargo_target}.",
-        );
+        warn!("Removed RUSTFLAGS from cargo environment, because it overrides {cargo_target}.",);
         env::remove_var("RUSTFLAGS")
     }
     let target_rustflags = env::var(&cargo_target).ok();

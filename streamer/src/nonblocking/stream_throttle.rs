@@ -101,9 +101,7 @@ impl StakedStreamLoadEMA {
         }
 
         let Ok(updated_load_ema) = u64::try_from(updated_load_ema) else {
-            error!(
-                "Failed to convert EMA {updated_load_ema} to a u64. Not updating the load EMA"
-            );
+            error!("Failed to convert EMA {updated_load_ema} to a u64. Not updating the load EMA");
             self.stats
                 .stream_load_ema_overflow
                 .fetch_add(1, Ordering::Relaxed);

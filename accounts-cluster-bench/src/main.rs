@@ -61,9 +61,7 @@ pub fn poll_slot_height(client: &RpcClient) -> Slot {
             return slot;
         } else {
             num_retries -= 1;
-            warn!(
-                "get_slot_height failure: {response:?}. remaining retries {num_retries}"
-            );
+            warn!("get_slot_height failure: {response:?}. remaining retries {num_retries}");
         }
         if num_retries == 0 {
             panic!("failed to get_slot_height(), rpc node down?")
@@ -80,9 +78,7 @@ pub fn poll_get_latest_blockhash(client: &RpcClient) -> Option<Hash> {
             return Some(blockhash);
         } else {
             num_retries -= 1;
-            warn!(
-                "get_latest_blockhash failure: {response:?}. remaining retries {num_retries}"
-            );
+            warn!("get_latest_blockhash failure: {response:?}. remaining retries {num_retries}");
         }
         if num_retries == 0 {
             panic!("failed to get_latest_blockhash(), rpc node down?")
@@ -100,9 +96,7 @@ pub fn poll_get_fee_for_message(client: &RpcClient, message: &mut Message) -> (O
             return (Some(fee), message.recent_blockhash);
         } else {
             num_retries -= 1;
-            warn!(
-                "get_fee_for_message failure: {response:?}. remaining retries {num_retries}"
-            );
+            warn!("get_fee_for_message failure: {response:?}. remaining retries {num_retries}");
 
             let blockhash = poll_get_latest_blockhash(client).expect("blockhash");
             message.recent_blockhash = blockhash;
@@ -914,9 +908,7 @@ fn run_accounts_bench(
                 }
                 last_balance = Instant::now();
                 if *balance < lamports * 2 {
-                    info!(
-                        "Balance {balance} is less than needed: {lamports}, doing airdrop..."
-                    );
+                    info!("Balance {balance} is less than needed: {lamports}, doing airdrop...");
                     if !airdrop_lamports(&client, payer_keypairs[i], lamports * 100_000) {
                         warn!("failed airdrop, exiting");
                         return;

@@ -202,9 +202,7 @@ pub fn run_kill_partition_switch_threshold<C>(
     // Needs to be at least 1/3 or there will be no overlap
     // with the confirmation supermajority 2/3
     static_assertions::const_assert!(SWITCH_FORK_THRESHOLD >= 1f64 / 3f64);
-    info!(
-        "stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}"
-    );
+    info!("stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}");
 
     // This test:
     // 1) Spins up three partitions

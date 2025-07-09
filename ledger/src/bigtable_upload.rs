@@ -54,9 +54,7 @@ pub async fn upload_confirmed_blocks(
 ) -> Result<Slot, Box<dyn std::error::Error>> {
     let mut measure = Measure::start("entire upload");
 
-    info!(
-        "Loading ledger slots from {starting_slot} to {ending_slot}"
-    );
+    info!("Loading ledger slots from {starting_slot} to {ending_slot}");
     let blockstore_slots: Vec<_> = blockstore
         .rooted_slot_iterator(starting_slot)
         .map_err(|err| {
