@@ -1534,8 +1534,7 @@ fn fetch_verified_buffer_program_data(
 
     verify_elf(&buffer_program_data, feature_set).map_err(|err| {
         format!(
-            "Buffer account {buffer_pubkey} has invalid program data: {:?}",
-            err
+            "Buffer account {buffer_pubkey} has invalid program data: {err:?}"
         )
     })?;
 
@@ -1569,8 +1568,7 @@ fn fetch_buffer_program_data(
         }
         if authority_address != Some(buffer_authority) {
             return Err(format!(
-                "Buffer's authority {:?} does not match authority provided {}",
-                authority_address, buffer_authority
+                "Buffer's authority {authority_address:?} does not match authority provided {buffer_authority}"
             )
             .into());
         }
@@ -3248,7 +3246,7 @@ fn send_deploy_messages(
 
             if !transaction_errors.is_empty() {
                 for transaction_error in &transaction_errors {
-                    error!("{:?}", transaction_error);
+                    error!("{transaction_error:?}");
                 }
                 return Err(
                     format!("{} write transactions failed", transaction_errors.len()).into(),
@@ -3715,8 +3713,8 @@ mod tests {
             "test",
             "program",
             "upgrade",
-            format!("{}", buffer_key).as_str(),
-            format!("{}", program_key).as_str(),
+            format!("{buffer_key}").as_str(),
+            format!("{program_key}").as_str(),
             "--skip-feature-verify",
         ]);
         assert_eq!(

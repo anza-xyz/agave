@@ -814,14 +814,13 @@ pub fn process_deploy_program(
     if upload_signer_index.is_none() {
         if upload_account.is_none() {
             return Err(format!(
-                "No ELF was provided or uploaded to the account {:?}",
-                upload_address,
+                "No ELF was provided or uploaded to the account {upload_address:?}",
             )
             .into());
         }
     } else {
         if upload_range.is_empty() {
-            return Err(format!("Attempting to upload empty range {:?}", upload_range).into());
+            return Err(format!("Attempting to upload empty range {upload_range:?}").into());
         }
         let first_write_message = Message::new(
             &[instruction::write(
@@ -1257,7 +1256,7 @@ fn send_messages(
 
         if !transaction_errors.is_empty() {
             for transaction_error in &transaction_errors {
-                error!("{:?}", transaction_error);
+                error!("{transaction_error:?}");
             }
             return Err(format!("{} write transactions failed", transaction_errors.len()).into());
         }

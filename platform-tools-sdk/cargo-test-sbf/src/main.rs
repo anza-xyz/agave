@@ -67,7 +67,7 @@ where
         .iter()
         .map(|arg| arg.as_ref().to_str().unwrap_or("?"))
         .join(" ");
-    info!("spawn: {}", msg);
+    info!("spawn: {msg}");
 
     let mut child = Command::new(program)
         .args(args)
@@ -93,11 +93,10 @@ where
             writeln!(out, "{key}=\"{value}\" \\").unwrap();
         }
         write!(out, "{}", program.display()).unwrap();
-        writeln!(out, "{}", msg).unwrap();
+        writeln!(out, "{msg}").unwrap();
         out.flush().unwrap();
         error!(
-            "To rerun the failed command for debugging use {}",
-            script_name,
+            "To rerun the failed command for debugging use {script_name}",
         );
         exit(1);
     }
@@ -219,7 +218,7 @@ fn test_solana(config: Config, manifest_path: Option<PathBuf>) {
     }
 
     let metadata = metadata_command.exec().unwrap_or_else(|err| {
-        error!("Failed to obtain package metadata: {}", err);
+        error!("Failed to obtain package metadata: {err}");
         exit(1);
     });
 

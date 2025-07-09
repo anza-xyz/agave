@@ -57,8 +57,7 @@ impl SVMRentCollector for RentCollectorWithMetrics {
             && !self.transition_allowed(pre_rent_state, post_rent_state)
         {
             debug!(
-                "Account {} not rent exempt, state {:?}",
-                address, account_state,
+                "Account {address} not rent exempt, state {account_state:?}",
             );
             let account_index = account_index as u8;
             Err(TransactionError::InsufficientFundsForRent { account_index })

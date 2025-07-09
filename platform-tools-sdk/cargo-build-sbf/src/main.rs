@@ -202,8 +202,7 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
     }
     let latest_version = get_latest_platform_tools_version().unwrap_or_else(|err| {
         debug!(
-            "Can't get the latest version of platform-tools: {}. Using built-in version {}.",
-            err, builtin_version,
+            "Can't get the latest version of platform-tools: {err}. Using built-in version {builtin_version}.",
         );
         builtin_version.to_string()
     });
@@ -213,8 +212,7 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
         downloadable_version(requested_version)
     } else {
         warn!(
-            "Version {} is not valid, latest version is {}. Using the built-in version {}",
-            requested_version, latest_version, builtin_version,
+            "Version {requested_version} is not valid, latest version is {latest_version}. Using the built-in version {builtin_version}",
         );
         builtin_version.to_string()
     }
@@ -239,14 +237,14 @@ fn install_if_missing(
 ) -> Result<(), String> {
     if config.force_tools_install {
         if target_path.is_dir() {
-            debug!("Remove directory {:?}", target_path);
+            debug!("Remove directory {target_path:?}");
             fs::remove_dir_all(target_path).map_err(|err| err.to_string())?;
         }
         let source_base = config.sbf_sdk.join("dependencies");
         if source_base.exists() {
             let source_path = source_base.join(package);
             if source_path.exists() {
-                debug!("Remove file {:?}", source_path);
+                debug!("Remove file {source_path:?}");
                 fs::remove_file(source_path).map_err(|err| err.to_string())?;
             }
         }
@@ -262,7 +260,7 @@ fn install_if_missing(
             .next()
             .is_none()
     {
-        debug!("Remove directory {:?}", target_path);
+        debug!("Remove directory {target_path:?}");
         fs::remove_dir(target_path).map_err(|err| err.to_string())?;
     }
 
@@ -275,7 +273,7 @@ fn install_if_missing(
             .unwrap_or(false)
     {
         if target_path.exists() {
-            debug!("Remove file {:?}", target_path);
+            debug!("Remove file {target_path:?}");
             fs::remove_file(target_path).map_err(|err| err.to_string())?;
         }
         fs::create_dir_all(target_path).map_err(|err| err.to_string())?;
@@ -358,7 +356,7 @@ fn link_solana_toolchain(config: &Config) {
         config.generate_child_script_on_failure,
     );
     if config.verbose {
-        debug!("{}", rustup_output);
+        debug!("{rustup_output}");
     }
     let mut do_link = true;
     for line in rustup_output.lines() {
@@ -374,7 +372,7 @@ fn link_solana_toolchain(config: &Config) {
                     config.generate_child_script_on_failure,
                 );
                 if config.verbose {
-                    debug!("{}", output);
+                    debug!("{output}");
                 }
             } else {
                 do_link = false;
@@ -395,7 +393,7 @@ fn link_solana_toolchain(config: &Config) {
             config.generate_child_script_on_failure,
         );
         if config.verbose {
-            debug!("{}", output);
+            debug!("{output}");
         }
     }
 }
@@ -462,7 +460,7 @@ fn install_tools(
                     exit(1);
                 });
             }
-            error!("Failed to install platform-tools: {}", err);
+            error!("Failed to install platform-tools: {err}");
             exit(1);
         });
     }
@@ -500,7 +498,7 @@ fn prepare_environment(
     };
 
     env::set_current_dir(root_dir).unwrap_or_else(|err| {
-        error!("Unable to set current directory to {}: {}", root_dir, err);
+        error!("Unable to set current directory to {root_dir}: {err}");
         exit(1);
     });
 
@@ -544,8 +542,7 @@ fn invoke_cargo(config: &Config) {
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
         warn!(
-            "Removed RUSTFLAGS from cargo environment, because it overrides {}.",
-            cargo_target,
+            "Removed RUSTFLAGS from cargo environment, because it overrides {cargo_target}.",
         );
         env::remove_var("RUSTFLAGS")
     }
@@ -611,7 +608,7 @@ fn invoke_cargo(config: &Config) {
     );
 
     if config.verbose {
-        debug!("{}", output);
+        debug!("{output}");
     }
 }
 
@@ -621,7 +618,7 @@ fn check_solana_target_installed(target: &str) {
     let rustc = PathBuf::from(rustc);
     let output = spawn(&rustc, ["--print", "target-list"], false);
     if !output.contains(target) {
-        error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
+        error!("Provided {rustc:?} does not have {target} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.");
         exit(1);
     }
 }
@@ -677,7 +674,7 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
     }
 
     let metadata = metadata_command.exec().unwrap_or_else(|err| {
-        error!("Failed to obtain package metadata: {}", err);
+        error!("Failed to obtain package metadata: {err}");
         exit(1);
     });
 
@@ -971,8 +968,8 @@ fn main() {
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {
-        debug!("{:?}", config);
-        debug!("manifest_path: {:?}", manifest_path);
+        debug!("{config:?}");
+        debug!("manifest_path: {manifest_path:?}");
     }
     build_solana(config, manifest_path);
 }

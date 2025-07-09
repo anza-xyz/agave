@@ -582,7 +582,7 @@ impl PohRecorder {
             self.clear_bank();
         }
         if send_result.is_err() {
-            info!("WorkingBank::sender disconnected {:?}", send_result);
+            info!("WorkingBank::sender disconnected {send_result:?}");
             // revert the cache, but clear the working bank
             self.clear_bank();
         } else {

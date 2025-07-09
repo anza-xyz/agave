@@ -676,7 +676,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                 let shreds = source.get_data_shreds_for_slot(slot, 0)?;
                 let shreds = shreds.into_iter().map(Cow::Owned);
                 if target.insert_cow_shreds(shreds, None, true).is_err() {
-                    warn!("error inserting shreds for slot {}", slot);
+                    warn!("error inserting shreds for slot {slot}");
                 }
             }
         }
@@ -920,7 +920,7 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
                     .dead_slots_iterator(start_slot)?
                     .take_while(|s| *s <= end_slot);
                 for dead_slot in dead_slots_iter {
-                    info!("Purging dead slot {}", dead_slot);
+                    info!("Purging dead slot {dead_slot}");
                     purge_from_blockstore(dead_slot, dead_slot);
                 }
             }

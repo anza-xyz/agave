@@ -25,7 +25,7 @@ where
         let path = Path::new(client_ids_and_stake_file);
         let file = File::open(path).unwrap();
 
-        info!("Reading {}", client_ids_and_stake_file);
+        info!("Reading {client_ids_and_stake_file}");
         let accounts: HashMap<String, Base64Account> = serde_yaml::from_reader(file).unwrap();
         let mut keypairs = vec![];
         let mut last_balance = 0;

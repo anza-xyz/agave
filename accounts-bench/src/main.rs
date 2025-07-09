@@ -134,7 +134,7 @@ fn main() {
             );
             time_store.stop();
             if results != results_store {
-                error!("results different: \n{:?}\n{:?}", results, results_store);
+                error!("results different: \n{results:?}\n{results_store:?}");
             }
             println!(
                 "hash,{},{},{},{}%",
@@ -150,9 +150,9 @@ fn main() {
     }
 
     for x in elapsed {
-        info!("update_accounts_hash(us),{}", x);
+        info!("update_accounts_hash(us),{x}");
     }
     for x in elapsed_store {
-        info!("calculate_accounts_hash_from_storages(us),{}", x);
+        info!("calculate_accounts_hash_from_storages(us),{x}");
     }
 }

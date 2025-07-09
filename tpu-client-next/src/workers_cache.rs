@@ -278,7 +278,7 @@ impl WorkersCache {
         }
         while let Some(res) = tasks.join_next().await {
             if let Err(err) = res {
-                debug!("A shutdown task failed: {}", err);
+                debug!("A shutdown task failed: {err}");
             }
         }
     }

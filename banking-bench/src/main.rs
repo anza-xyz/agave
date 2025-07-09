@@ -378,8 +378,7 @@ fn main() {
         .map(|packets_for_single_iteration| packets_for_single_iteration.transactions.len() as u64)
         .sum();
     info!(
-        "threads: {} txs: {}",
-        num_banking_threads, total_num_transactions
+        "threads: {num_banking_threads} txs: {total_num_transactions}"
     );
 
     // fund all the accounts
@@ -490,7 +489,7 @@ fn main() {
     let collector = solana_pubkey::new_rand();
     let mut total_sent = 0;
     for current_iteration_index in 0..iterations {
-        trace!("RUNNING ITERATION {}", current_iteration_index);
+        trace!("RUNNING ITERATION {current_iteration_index}");
         let now = Instant::now();
         let mut sent = 0;
 
@@ -599,7 +598,7 @@ fn main() {
         .unwrap()
         .working_bank()
         .transaction_count();
-    debug!("processed: {} base: {}", txs_processed, base_tx_count);
+    debug!("processed: {txs_processed} base: {base_tx_count}");
 
     eprintln!("[total_sent: {}, base_tx_count: {}, txs_processed: {}, txs_landed: {}, total_us: {}, tx_total_us: {}]",
             total_sent, base_tx_count, txs_processed, (txs_processed - base_tx_count), total_us, tx_total_us);

@@ -344,7 +344,7 @@ impl JsonRpcRequestProcessor {
 
     #[allow(deprecated)]
     fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
-        debug!("RPC commitment_config: {:?}", commitment);
+        debug!("RPC commitment_config: {commitment:?}");
 
         let commitment = commitment.unwrap_or_default();
         if commitment.is_confirmed() {
@@ -366,10 +366,10 @@ impl JsonRpcRequestProcessor {
 
         match commitment.commitment {
             CommitmentLevel::Processed => {
-                debug!("RPC using the heaviest slot: {:?}", slot);
+                debug!("RPC using the heaviest slot: {slot:?}");
             }
             CommitmentLevel::Finalized => {
-                debug!("RPC using block: {:?}", slot);
+                debug!("RPC using block: {slot:?}");
             }
             CommitmentLevel::Confirmed => unreachable!(), // SingleGossip variant is deprecated
         };
@@ -1016,7 +1016,7 @@ impl JsonRpcRequestProcessor {
                 None => Err(Error::invalid_request()),
             },
             Err(err) => {
-                warn!("slot_meta_iterator failed: {:?}", err);
+                warn!("slot_meta_iterator failed: {err:?}");
                 Err(Error::invalid_request())
             }
         }
@@ -1897,7 +1897,7 @@ impl JsonRpcRequestProcessor {
                             bigtable_before = None;
                         }
                         Err(err) => {
-                            warn!("Failed to query Bigtable: {:?}", err);
+                            warn!("Failed to query Bigtable: {err:?}");
                             return Err(RpcCustomError::LongTermStorageUnreachable.into());
                         }
                         Ok(_) => {}
@@ -1929,7 +1929,7 @@ impl JsonRpcRequestProcessor {
                     }
                     Err(StorageError::SignatureNotFound) => {}
                     Err(err) => {
-                        warn!("Failed to query Bigtable: {:?}", err);
+                        warn!("Failed to query Bigtable: {err:?}");
                         return Err(RpcCustomError::LongTermStorageUnreachable.into());
                     }
                 }
@@ -2591,8 +2591,7 @@ fn get_spl_token_owner_filter(program_id: &Pubkey, filters: &[RpcFilterType]) ->
     {
         if let Some(incorrect_owner_len) = incorrect_owner_len {
             info!(
-                "Incorrect num bytes ({:?}) provided for spl_token_owner_filter",
-                incorrect_owner_len
+                "Incorrect num bytes ({incorrect_owner_len:?}) provided for spl_token_owner_filter"
             );
         }
         owner_key
@@ -2642,8 +2641,7 @@ fn get_spl_token_mint_filter(program_id: &Pubkey, filters: &[RpcFilterType]) -> 
     {
         if let Some(incorrect_mint_len) = incorrect_mint_len {
             info!(
-                "Incorrect num bytes ({:?}) provided for spl_token_mint_filter",
-                incorrect_mint_len
+                "Incorrect num bytes ({incorrect_mint_len:?}) provided for spl_token_mint_filter"
             );
         }
         mint
@@ -2703,7 +2701,7 @@ fn _send_transaction(
     );
     meta.transaction_sender
         .send(transaction_info)
-        .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {}", err));
+        .unwrap_or_else(|err| warn!("Failed to enqueue transaction: {err}"));
 
     Ok(signature.to_string())
 }
@@ -2792,7 +2790,7 @@ pub mod rpc_minimal {
             pubkey_str: String,
             config: Option<RpcContextConfig>,
         ) -> Result<RpcResponse<u64>> {
-            debug!("get_balance rpc request received: {:?}", pubkey_str);
+            debug!("get_balance rpc request received: {pubkey_str:?}");
             let pubkey = verify_pubkey(&pubkey_str)?;
             meta.get_balance(&pubkey, config.unwrap_or_default())
         }
@@ -2927,7 +2925,7 @@ pub mod rpc_minimal {
             let slot = slot.unwrap_or_else(|| bank.slot());
             let epoch = bank.epoch_schedule().get_epoch(slot);
 
-            debug!("get_leader_schedule rpc request received: {:?}", slot);
+            debug!("get_leader_schedule rpc request received: {slot:?}");
 
             Ok(meta
                 .leader_schedule_cache
@@ -3009,8 +3007,7 @@ pub mod rpc_bank {
             commitment: Option<CommitmentConfig>,
         ) -> Result<u64> {
             debug!(
-                "get_minimum_balance_for_rent_exemption rpc request received: {:?}",
-                data_len
+                "get_minimum_balance_for_rent_exemption rpc request received: {data_len:?}"
             );
             if data_len as u64 > solana_system_interface::MAX_PERMITTED_DATA_LENGTH {
                 return Err(Error::invalid_request());
@@ -3053,8 +3050,7 @@ pub mod rpc_bank {
             limit: u64,
         ) -> Result<Vec<String>> {
             debug!(
-                "get_slot_leaders rpc request received (start: {} limit: {})",
-                start_slot, limit
+                "get_slot_leaders rpc request received (start: {start_slot} limit: {limit})"
             );
 
             let limit = limit as usize;
@@ -3223,7 +3219,7 @@ pub mod rpc_accounts {
             pubkey_str: String,
             config: Option<RpcAccountInfoConfig>,
         ) -> BoxFuture<Result<RpcResponse<Option<UiAccount>>>> {
-            debug!("get_account_info rpc request received: {:?}", pubkey_str);
+            debug!("get_account_info rpc request received: {pubkey_str:?}");
             async move {
                 let pubkey = verify_pubkey(&pubkey_str)?;
                 meta.get_account_info(pubkey, config).await
@@ -3276,8 +3272,7 @@ pub mod rpc_accounts {
             commitment: Option<CommitmentConfig>,
         ) -> Result<RpcResponse<UiTokenAmount>> {
             debug!(
-                "get_token_account_balance rpc request received: {:?}",
-                pubkey_str
+                "get_token_account_balance rpc request received: {pubkey_str:?}"
             );
             let pubkey = verify_pubkey(&pubkey_str)?;
             meta.get_token_account_balance(&pubkey, commitment)
@@ -3289,7 +3284,7 @@ pub mod rpc_accounts {
             mint_str: String,
             commitment: Option<CommitmentConfig>,
         ) -> Result<RpcResponse<UiTokenAmount>> {
-            debug!("get_token_supply rpc request received: {:?}", mint_str);
+            debug!("get_token_supply rpc request received: {mint_str:?}");
             let mint = verify_pubkey(&mint_str)?;
             meta.get_token_supply(&mint, commitment)
         }
@@ -3369,8 +3364,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcProgramAccountsConfig>,
         ) -> BoxFuture<Result<OptionalContext<Vec<RpcKeyedAccount>>>> {
             debug!(
-                "get_program_accounts rpc request received: {:?}",
-                program_id_str
+                "get_program_accounts rpc request received: {program_id_str:?}"
             );
             async move {
                 let program_id = verify_pubkey(&program_id_str)?;
@@ -3416,8 +3410,7 @@ pub mod rpc_accounts_scan {
             commitment: Option<CommitmentConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcTokenAccountBalance>>>> {
             debug!(
-                "get_token_largest_accounts rpc request received: {:?}",
-                mint_str
+                "get_token_largest_accounts rpc request received: {mint_str:?}"
             );
             async move {
                 let mint = verify_pubkey(&mint_str)?;
@@ -3434,8 +3427,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcAccountInfoConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcKeyedAccount>>>> {
             debug!(
-                "get_token_accounts_by_owner rpc request received: {:?}",
-                owner_str
+                "get_token_accounts_by_owner rpc request received: {owner_str:?}"
             );
             async move {
                 let owner = verify_pubkey(&owner_str)?;
@@ -3454,8 +3446,7 @@ pub mod rpc_accounts_scan {
             config: Option<RpcAccountInfoConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<RpcKeyedAccount>>>> {
             debug!(
-                "get_token_accounts_by_delegate rpc request received: {:?}",
-                delegate_str
+                "get_token_accounts_by_delegate rpc request received: {delegate_str:?}"
             );
             async move {
                 let delegate = verify_pubkey(&delegate_str)?;
@@ -3653,7 +3644,7 @@ pub mod rpc_full {
                 .blockstore
                 .get_recent_perf_samples(limit)
                 .map_err(|err| {
-                    warn!("get_recent_performance_samples failed: {:?}", err);
+                    warn!("get_recent_performance_samples failed: {err:?}");
                     Error::invalid_request()
                 })?
                 .into_iter()
@@ -3794,13 +3785,13 @@ pub mod rpc_full {
             let transaction =
                 request_airdrop_transaction(&faucet_addr, &pubkey, lamports, blockhash).map_err(
                     |err| {
-                        info!("request_airdrop_transaction failed: {:?}", err);
+                        info!("request_airdrop_transaction failed: {err:?}");
                         Error::internal_error()
                     },
                 )?;
 
             let wire_transaction = serialize(&transaction).map_err(|err| {
-                info!("request_airdrop: serialize error: {:?}", err);
+                info!("request_airdrop: serialize error: {err:?}");
                 Error::internal_error()
             })?;
 
@@ -4096,7 +4087,7 @@ pub mod rpc_full {
             slot: Slot,
             config: Option<RpcEncodingConfigWrapper<RpcBlockConfig>>,
         ) -> BoxFuture<Result<Option<UiConfirmedBlock>>> {
-            debug!("get_block rpc request received: {:?}", slot);
+            debug!("get_block rpc request received: {slot:?}");
             Box::pin(async move { meta.get_block(slot, config).await })
         }
 
@@ -4110,8 +4101,7 @@ pub mod rpc_full {
             let (end_slot, maybe_config) =
                 wrapper.map(|wrapper| wrapper.unzip()).unwrap_or_default();
             debug!(
-                "get_blocks rpc request received: {}-{:?}",
-                start_slot, end_slot
+                "get_blocks rpc request received: {start_slot}-{end_slot:?}"
             );
             Box::pin(async move {
                 meta.get_blocks(start_slot, end_slot, config.or(maybe_config))
@@ -4127,8 +4117,7 @@ pub mod rpc_full {
             config: Option<RpcContextConfig>,
         ) -> BoxFuture<Result<Vec<Slot>>> {
             debug!(
-                "get_blocks_with_limit rpc request received: {}-{}",
-                start_slot, limit,
+                "get_blocks_with_limit rpc request received: {start_slot}-{limit}",
             );
             Box::pin(async move { meta.get_blocks_with_limit(start_slot, limit, config).await })
         }
@@ -4147,7 +4136,7 @@ pub mod rpc_full {
             signature_str: String,
             config: Option<RpcEncodingConfigWrapper<RpcTransactionConfig>>,
         ) -> BoxFuture<Result<Option<EncodedConfirmedTransactionWithStatusMeta>>> {
-            debug!("get_transaction rpc request received: {:?}", signature_str);
+            debug!("get_transaction rpc request received: {signature_str:?}");
             let signature = verify_signature(&signature_str);
             if let Err(err) = signature {
                 return Box::pin(future::err(err));
@@ -6468,11 +6457,10 @@ pub mod tests {
                  "id":1,
                  "method":"simulateTransaction",
                  "params":[
-                   "{}",
+                   "{tx_serialized_encoded}",
                    {{ "encoding": "base64" }}
                  ]
             }}"#,
-            tx_serialized_encoded,
         );
         let res = io.handle_request_sync(&req, meta.clone());
         let expected = json!({
@@ -6512,11 +6500,10 @@ pub mod tests {
                  "id":1,
                  "method":"simulateTransaction",
                  "params":[
-                   "{}",
+                   "{tx_serialized_encoded}",
                    {{ "innerInstructions": false, "encoding": "base64" }}
                  ]
             }}"#,
-            tx_serialized_encoded,
         );
         let res = io.handle_request_sync(&req, meta.clone());
         let expected = json!({
@@ -6556,11 +6543,10 @@ pub mod tests {
                  "id":1,
                  "method":"simulateTransaction",
                  "params":[
-                   "{}",
+                   "{tx_serialized_encoded}",
                    {{ "innerInstructions": true, "encoding": "base64" }}
                  ]
             }}"#,
-            tx_serialized_encoded,
         );
         let res = io.handle_request_sync(&req, meta.clone());
         let expected = json!({

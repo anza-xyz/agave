@@ -1838,8 +1838,7 @@ pub fn process_show_stakes(
 
             if !pubkeys.is_empty() {
                 return Err(CliError::RpcRequestError(format!(
-                    "Failed to retrieve matching vote account for {:?}.",
-                    pubkeys
+                    "Failed to retrieve matching vote account for {pubkeys:?}."
                 ))
                 .into());
             }

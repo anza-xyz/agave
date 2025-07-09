@@ -143,9 +143,8 @@ impl ForkInfo {
         if let Some(latest_invalid_ancestor) = self.latest_invalid_ancestor {
             if latest_invalid_ancestor <= newly_valid_ancestor {
                 info!(
-                    "Fork choice for {:?} clearing latest invalid ancestor {:?} because {:?} was \
-                     duplicate confirmed",
-                    my_key, latest_invalid_ancestor, newly_valid_ancestor
+                    "Fork choice for {my_key:?} clearing latest invalid ancestor {latest_invalid_ancestor:?} because {newly_valid_ancestor:?} was \
+                     duplicate confirmed"
                 );
                 self.latest_invalid_ancestor = None;
             }
@@ -937,8 +936,7 @@ impl HeaviestSubtreeForkChoice {
         if is_duplicate_confirmed {
             if !fork_info.is_duplicate_confirmed {
                 info!(
-                    "Fork choice setting {:?} to duplicate confirmed",
-                    slot_hash_key
+                    "Fork choice setting {slot_hash_key:?} to duplicate confirmed"
                 );
             }
             fork_info.set_duplicate_confirmed();
@@ -1332,8 +1330,7 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
 
     fn mark_fork_invalid_candidate(&mut self, invalid_slot_hash_key: &SlotHashKey) {
         info!(
-            "marking fork starting at: {:?} invalid candidate",
-            invalid_slot_hash_key
+            "marking fork starting at: {invalid_slot_hash_key:?} invalid candidate"
         );
         let fork_info = self.fork_infos.get_mut(invalid_slot_hash_key);
         if let Some(fork_info) = fork_info {
@@ -1360,8 +1357,7 @@ impl ForkChoice for HeaviestSubtreeForkChoice {
 
     fn mark_fork_valid_candidate(&mut self, valid_slot_hash_key: &SlotHashKey) -> Vec<SlotHashKey> {
         info!(
-            "marking fork starting at: {:?} valid candidate",
-            valid_slot_hash_key
+            "marking fork starting at: {valid_slot_hash_key:?} valid candidate"
         );
         let mut newly_duplicate_confirmed_ancestors = vec![];
 

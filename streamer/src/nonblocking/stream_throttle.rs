@@ -102,8 +102,7 @@ impl StakedStreamLoadEMA {
 
         let Ok(updated_load_ema) = u64::try_from(updated_load_ema) else {
             error!(
-                "Failed to convert EMA {} to a u64. Not updating the load EMA",
-                updated_load_ema
+                "Failed to convert EMA {updated_load_ema} to a u64. Not updating the load EMA"
             );
             self.stats
                 .stream_load_ema_overflow
@@ -164,8 +163,7 @@ impl StakedStreamLoadEMA {
                     / u128::from(EMA_WINDOW_MS);
                 let calculated_capacity = u64::try_from(calculated_capacity).unwrap_or_else(|_| {
                     error!(
-                        "Failed to convert stream capacity {} to u64. Using minimum load capacity",
-                        calculated_capacity
+                        "Failed to convert stream capacity {calculated_capacity} to u64. Using minimum load capacity"
                     );
                     self.stats
                         .stream_load_capacity_overflow

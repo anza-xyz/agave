@@ -38,7 +38,7 @@ fn test_bad_bank_hash() {
         let ancestors = Ancestors::from(vec![some_slot]);
 
         if last_print.elapsed().as_millis() > 5000 {
-            info!("i: {}", i);
+            info!("i: {i}");
             last_print = Instant::now();
         }
         let num_accounts = thread_rng().gen_range(0..100);

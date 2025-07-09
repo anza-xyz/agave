@@ -1342,7 +1342,7 @@ mod tests {
             legacy: false,
         };
 
-        let signer_arg = format!("{}={}", pubkey, signature);
+        let signer_arg = format!("{pubkey}={signature}");
 
         let clap_app = Command::new("test").arg(
             Arg::new(SIGNER_ARG.name)
@@ -1383,7 +1383,7 @@ mod tests {
             legacy: false,
         };
 
-        let signer_arg = format!("{}={}", pubkey, signature);
+        let signer_arg = format!("{pubkey}={signature}");
 
         let clap_app = Command::new("test").arg(
             Arg::new(SIGNER_ARG.name)

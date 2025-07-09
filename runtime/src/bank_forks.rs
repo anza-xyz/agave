@@ -209,7 +209,7 @@ impl BankForks {
     }
 
     pub fn install_scheduler_pool(&mut self, pool: InstalledSchedulerPoolArc) {
-        info!("Installed new scheduler_pool into bank_forks: {:?}", pool);
+        info!("Installed new scheduler_pool into bank_forks: {pool:?}");
         assert!(
             self.scheduler_pool.replace(pool).is_none(),
             "Reinstalling scheduler pool isn't supported"

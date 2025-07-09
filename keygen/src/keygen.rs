@@ -83,7 +83,7 @@ fn grind_parser(grind_type: GrindType) -> ValueParser {
         };
         if v.matches(':').count() != required_div_count || (v.starts_with(':') || v.ends_with(':'))
         {
-            return Err(format!("Expected : between {} and COUNT", prefix_suffix));
+            return Err(format!("Expected : between {prefix_suffix} and COUNT"));
         }
         // `args` is guaranteed to have length at least 1 by the previous if statement
         let mut args: Vec<&str> = v.split(':').collect();

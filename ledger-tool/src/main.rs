@@ -476,7 +476,7 @@ fn compute_slot_cost(
                     &reserved_account_keys.active,
                 )
                 .map_err(|err| {
-                    warn!("Failed to compute cost of transaction: {:?}", err);
+                    warn!("Failed to compute cost of transaction: {err:?}");
                 })
                 .ok()
             })
@@ -2336,7 +2336,7 @@ fn main() {
                                 exit(1);
                             }
                         } else {
-                            warn!("Warping to slot {}", minimum_warp_slot);
+                            warn!("Warping to slot {minimum_warp_slot}");
                             warp_slot = Some(minimum_warp_slot);
                         }
                     }
@@ -2738,9 +2738,8 @@ fn main() {
                                 base_bank.set_capitalization(new_cap);
                                 warn!(
                                     "Skewing capitalization a bit to enable \
-                                         credits_auto_rewind as requested: increasing {} from {} \
-                                         to {}",
-                                    feature_account_balance, old_cap, new_cap,
+                                         credits_auto_rewind as requested: increasing {feature_account_balance} from {old_cap} \
+                                         to {new_cap}",
                                 );
                                 assert_eq!(
                                     old_cap + feature_account_balance * store_failed_count,
@@ -3100,7 +3099,7 @@ fn main() {
                                 }
                                 overall_delta += delta;
                             } else {
-                                error!("new account!?: {}", pubkey);
+                                error!("new account!?: {pubkey}");
                             }
                         }
                         if overall_delta > 0 {
@@ -3150,5 +3149,5 @@ fn main() {
         }
     };
     measure_total_execution_time.stop();
-    info!("{}", measure_total_execution_time);
+    info!("{measure_total_execution_time}");
 }

@@ -198,7 +198,7 @@ pub fn lamports_of_sol(matches: &ArgMatches<'_>, name: &str) -> Option<u64> {
             let lamports = if lamports.is_empty() {
                 0
             } else {
-                format!("{:0<9}", lamports)[..9].parse().ok()?
+                format!("{lamports:0<9}")[..9].parse().ok()?
             };
             Some(
                 LAMPORTS_PER_SOL

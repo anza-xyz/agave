@@ -254,8 +254,7 @@ impl ClientConnectionTracker {
         if open_connections >= max_concurrent_connections {
             stats.open_connections.fetch_sub(1, Ordering::Relaxed);
             debug!(
-                "There are too many concurrent connections opened already: open: {}, max: {}",
-                open_connections, max_concurrent_connections
+                "There are too many concurrent connections opened already: open: {open_connections}, max: {max_concurrent_connections}"
             );
             return Err(());
         }
@@ -365,8 +364,7 @@ async fn run_server(
             debug!("Got a connection {remote_address:?}");
             if !rate_limiter.is_allowed(&remote_address.ip()) {
                 debug!(
-                    "Reject connection from {:?} -- rate limiting exceeded",
-                    remote_address
+                    "Reject connection from {remote_address:?} -- rate limiting exceeded"
                 );
                 stats
                     .connection_rate_limited_per_ipaddr
@@ -421,7 +419,7 @@ async fn run_server(
                     ));
                 }
                 Err(err) => {
-                    debug!("Incoming::accept(): error {:?}", err);
+                    debug!("Incoming::accept(): error {err:?}");
                 }
             }
         } else {
@@ -478,8 +476,7 @@ pub fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stak
             // No checked math for f64 type. So let's explicitly check for 0 here
             if total_stake == 0 || peer_stake > total_stake {
                 warn!(
-                    "Invalid stake values: peer_stake: {:?}, total_stake: {:?}",
-                    peer_stake, total_stake,
+                    "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: {total_stake:?}",
                 );
 
                 QUIC_MIN_STAKED_CONCURRENT_STREAMS
@@ -837,7 +834,7 @@ async fn setup_connection(
 }
 
 fn handle_connection_error(e: quinn::ConnectionError, stats: &StreamerStats, from: SocketAddr) {
-    debug!("error: {:?} from: {:?}", e, from);
+    debug!("error: {e:?} from: {from:?}");
     stats.connection_setup_error.fetch_add(1, Ordering::Relaxed);
     match e {
         quinn::ConnectionError::TimedOut => {
@@ -912,7 +909,7 @@ fn packet_batch_sender(
                     stats
                         .total_packet_batch_send_err
                         .fetch_add(1, Ordering::Relaxed);
-                    trace!("Send error: {}", e);
+                    trace!("Send error: {e}");
 
                     // The downstream channel is disconnected, this error is not recoverable.
                     if matches!(e, TrySendError::Disconnected(_)) {
@@ -932,7 +929,7 @@ fn packet_batch_sender(
                         .total_bytes_sent_to_consumer
                         .fetch_add(total_bytes, Ordering::Relaxed);
 
-                    trace!("Sent {} packet batch", len);
+                    trace!("Sent {len} packet batch");
                 }
                 break;
             }
@@ -1060,7 +1057,7 @@ async fn handle_connection(
             stream = connection.accept_uni() => match stream {
                 Ok(stream) => stream,
                 Err(e) => {
-                    debug!("stream error: {:?}", e);
+                    debug!("stream error: {e:?}");
                     break;
                 }
             },
@@ -1079,10 +1076,9 @@ async fn handle_connection(
                 STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
 
             if !throttle_duration.is_zero() {
-                debug!("Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
+                debug!("Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total stake: {total_stake}, \
                                     max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
-                                    throttle_duration: {throttle_duration:?}",
-                                    peer_type, total_stake);
+                                    throttle_duration: {throttle_duration:?}");
                 stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
                 match peer_type {
                     ConnectionPeerType::Unstaked => {
@@ -1135,7 +1131,7 @@ async fn handle_connection(
                 Ok(Ok(chunk)) => chunk.unwrap_or(0),
                 // read_chunk returned error
                 Ok(Err(e)) => {
-                    debug!("Received stream error: {:?}", e);
+                    debug!("Received stream error: {e:?}");
                     stats
                         .total_stream_read_errors
                         .fetch_add(1, Ordering::Relaxed);
@@ -1277,7 +1273,7 @@ async fn handle_chunks(
                     .fetch_add(1, Ordering::Relaxed);
             }
         }
-        trace!("packet batch send error {:?}", err);
+        trace!("packet batch send error {err:?}");
     } else {
         stats
             .total_packets_sent_for_batching
@@ -1302,7 +1298,7 @@ async fn handle_chunks(
             }
         }
 
-        trace!("sent {} byte packet for batching", bytes_sent);
+        trace!("sent {bytes_sent} byte packet for batching");
     }
 
     Ok(StreamState::Finished)
@@ -1570,14 +1566,14 @@ pub mod test {
             let mut s1 = conn1.open_uni().await.unwrap();
             s1.write_all(&[0u8]).await.unwrap();
             s1.finish().unwrap();
-            info!("done {}", i);
+            info!("done {i}");
             sleep(Duration::from_millis(1000)).await;
         }
         let mut received = 0;
         loop {
             if let Ok(_x) = receiver.try_recv() {
                 received += 1;
-                info!("got {}", received);
+                info!("got {received}");
             } else {
                 sleep(Duration::from_millis(500)).await;
             }

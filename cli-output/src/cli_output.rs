@@ -117,9 +117,9 @@ impl VerboseDisplay for CliPrioritizationFeeStats {
     fn write_str(&self, f: &mut dyn std::fmt::Write) -> fmt::Result {
         writeln!(f, "{:<11} prioritization_fee", "slot")?;
         for fee in &self.fees {
-            write!(f, "{}", fee)?;
+            write!(f, "{fee}")?;
         }
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 

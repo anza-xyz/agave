@@ -242,8 +242,7 @@ impl PrioritizationFeeCache {
                     })
                     .unwrap_or_else(|err| {
                         warn!(
-                            "prioritization fee cache transaction updates failed: {:?}",
-                            err
+                            "prioritization fee cache transaction updates failed: {err:?}"
                         );
                     });
             }
@@ -260,8 +259,7 @@ impl PrioritizationFeeCache {
             .send(CacheServiceUpdate::BankFinalized { slot, bank_id })
             .unwrap_or_else(|err| {
                 warn!(
-                    "prioritization fee cache signalling bank frozen failed: {:?}",
-                    err
+                    "prioritization fee cache signalling bank frozen failed: {err:?}"
                 )
             });
     }
@@ -325,8 +323,7 @@ impl PrioritizationFeeCache {
             if let Some(prioritization_fee) = &mut prioritization_fee {
                 if let Err(err) = prioritization_fee.mark_block_completed() {
                     error!(
-                        "Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {:?}",
-                        err
+                        "Unsuccessful finalizing slot {slot}, bank ID {bank_id}: {err:?}"
                     );
                 }
                 prioritization_fee.report_metrics(slot);

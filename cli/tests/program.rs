@@ -1987,8 +1987,7 @@ fn test_cli_program_write_buffer() {
         &config,
         "It should not be possible to deploy a program into an account that is too small",
         &format!(
-            "Buffer account data size ({}) is smaller than the minimum size ({})",
-            buffer_account_len, min_buffer_account_len
+            "Buffer account data size ({buffer_account_len}) is smaller than the minimum size ({min_buffer_account_len})"
         ),
     );
 }

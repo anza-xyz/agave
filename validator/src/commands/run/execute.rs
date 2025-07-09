@@ -156,7 +156,7 @@ pub fn execute(
         match &staked_nodes_overrides_path {
             None => StakedNodesOverrides::default(),
             Some(p) => load_staked_nodes_overrides(p).unwrap_or_else(|err| {
-                error!("Failed to load stake-nodes-overrides from {}: {}", p, err);
+                error!("Failed to load stake-nodes-overrides from {p}: {err}");
                 clap::Error::with_description(
                     "Failed to load configuration of stake-nodes-overrides argument",
                     clap::ErrorKind::InvalidValue,
@@ -985,9 +985,8 @@ pub fn execute(
         let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
         if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
             warn!(
-                "The full snapshot interval is excessively large: {}! This will negatively \
+                "The full snapshot interval is excessively large: {full_snapshot_interval_slots}! This will negatively \
                 impact the background cleanup tasks in accounts-db. Consider a smaller value.",
-                full_snapshot_interval_slots,
             );
         }
     }
@@ -1108,8 +1107,7 @@ pub fn execute(
             .find_map(|i| {
                 let entrypoint_addr = &entrypoint_addrs[i];
                 info!(
-                    "Contacting {} to determine the validator's public IP address",
-                    entrypoint_addr
+                    "Contacting {entrypoint_addr} to determine the validator's public IP address"
                 );
                 solana_net_utils::get_public_ip_addr_with_binding(
                     entrypoint_addr,
@@ -1400,8 +1398,7 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
             Ok(0) => eprintln!("entrypoint {entrypoint} returned shred-version zero"),
             Ok(shred_version) => {
                 info!(
-                    "obtained shred-version {} from {}",
-                    shred_version, entrypoint
+                    "obtained shred-version {shred_version} from {entrypoint}"
                 );
                 return Some(shred_version);
             }

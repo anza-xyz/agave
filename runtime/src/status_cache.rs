@@ -152,7 +152,7 @@ impl<T: Serialize + Clone> StatusCache<T> {
         let keys: Vec<_> = self.cache.keys().copied().collect();
 
         for blockhash in keys.iter() {
-            trace!("get_status_any_blockhash: trying {}", blockhash);
+            trace!("get_status_any_blockhash: trying {blockhash}");
             let status = self.get_status(&key, blockhash, ancestors);
             if status.is_some() {
                 return status;

@@ -452,7 +452,7 @@ impl<O: BucketOccupied> BucketStorage<O> {
         let r = thread_rng().gen_range(0..drives.len());
         let drive = &drives[r];
         let file_random = thread_rng().gen_range(0..u128::MAX);
-        let pos = format!("{}", file_random,);
+        let pos = format!("{file_random}",);
         let file = drive.join(pos);
         let res = Self::map_open_file(file.clone(), true, bytes, stats).unwrap();
 

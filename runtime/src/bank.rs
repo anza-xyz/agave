@@ -2469,7 +2469,7 @@ impl Bank {
                 },
             )| {
                 if let Err(err) = vote_account.checked_add_lamports(vote_rewards) {
-                    debug!("reward redemption failed for {}: {:?}", vote_pubkey, err);
+                    debug!("reward redemption failed for {vote_pubkey}: {err:?}");
                     return;
                 }
 
@@ -3286,7 +3286,7 @@ impl Bank {
             },
         );
 
-        debug!("simulate_transaction: {:?}", timings);
+        debug!("simulate_transaction: {timings:?}");
 
         let processing_result = processing_results
             .pop()
@@ -3489,7 +3489,7 @@ impl Bank {
                 }
                 Err(err) => {
                     if err_count.0 == 0 {
-                        debug!("tx error: {:?} {:?}", err, tx);
+                        debug!("tx error: {err:?} {tx:?}");
                     }
                     *err_count += 1;
                 }
@@ -4145,18 +4145,14 @@ impl Bank {
                     std::cmp::Ordering::Greater => {
                         let increased = new_account.lamports() - old_account.lamports();
                         trace!(
-                            "store_account_and_update_capitalization: increased: {} {}",
-                            pubkey,
-                            increased
+                            "store_account_and_update_capitalization: increased: {pubkey} {increased}"
                         );
                         self.capitalization.fetch_add(increased, Relaxed);
                     }
                     std::cmp::Ordering::Less => {
                         let decreased = old_account.lamports() - new_account.lamports();
                         trace!(
-                            "store_account_and_update_capitalization: decreased: {} {}",
-                            pubkey,
-                            decreased
+                            "store_account_and_update_capitalization: decreased: {pubkey} {decreased}"
                         );
                         self.capitalization.fetch_sub(decreased, Relaxed);
                     }
@@ -5648,9 +5644,9 @@ impl Bank {
     }
 
     pub fn add_precompile(&mut self, program_id: &Pubkey) {
-        debug!("Adding precompiled program {}", program_id);
+        debug!("Adding precompiled program {program_id}");
         self.add_precompiled_account(program_id);
-        debug!("Added precompiled program {:?}", program_id);
+        debug!("Added precompiled program {program_id:?}");
     }
 
     // Call AccountsDb::clean_accounts()

@@ -320,7 +320,7 @@ impl VerboseDisplay for CliDuplicateSlotProof {
         write!(w, "    Shred2 ")?;
         VerboseDisplay::write_str(&self.shred2, w)?;
         if let Some(erasure_consistency) = self.erasure_consistency {
-            writeln!(w, "    Erasure consistency {}", erasure_consistency)?;
+            writeln!(w, "    Erasure consistency {erasure_consistency}")?;
         }
         Ok(())
     }
@@ -331,7 +331,7 @@ impl fmt::Display for CliDuplicateSlotProof {
         write!(f, "    Shred1 {}", self.shred1)?;
         write!(f, "    Shred2 {}", self.shred2)?;
         if let Some(erasure_consistency) = self.erasure_consistency {
-            writeln!(f, "    Erasure consistency {}", erasure_consistency)?;
+            writeln!(f, "    Erasure consistency {erasure_consistency}")?;
         }
         Ok(())
     }
@@ -440,8 +440,7 @@ impl EncodedConfirmedBlockWithEntries {
                 .transactions
                 .get(entry.starting_transaction_index..ending_transaction_index)
                 .ok_or(LedgerToolError::Generic(format!(
-                    "Mismatched entry data and transactions: entry {:?}",
-                    i
+                    "Mismatched entry data and transactions: entry {i:?}"
                 )))?;
             entries.push(CliPopulatedEntry {
                 num_hashes: entry.num_hashes,

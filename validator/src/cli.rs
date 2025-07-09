@@ -165,7 +165,7 @@ pub fn warn_for_deprecated_arguments(matches: &ArgMatches) {
                     msg.push('.');
                 }
             }
-            warn!("{}", msg);
+            warn!("{msg}");
         }
     }
 }

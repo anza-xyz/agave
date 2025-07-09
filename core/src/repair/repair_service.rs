@@ -171,7 +171,7 @@ impl RepairStats {
             .chain(self.orphan.slot_pubkeys.iter())
             .map(|(slot, slot_repairs)| (slot, slot_repairs.pubkey_repairs.values().sum::<u64>()))
             .collect();
-        info!("repair_stats: {:?}", slot_to_count);
+        info!("repair_stats: {slot_to_count:?}");
         if repair_total > 0 {
             let nonzero_num = |x| if x == 0 { None } else { Some(x) };
             datapoint_info!(
@@ -609,8 +609,7 @@ impl RepairService {
         });
         if !popular_pruned_forks.is_empty() {
             warn!(
-                "Notifying repair of popular pruned forks {:?}",
-                popular_pruned_forks
+                "Notifying repair of popular pruned forks {popular_pruned_forks:?}"
             );
             popular_pruned_forks_sender
                 .send(popular_pruned_forks)
@@ -1063,7 +1062,7 @@ impl RepairService {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }
             Err(SendPktsError::IoError(err, _num_failed)) => {
-                error!("batch_send failed to send packet - error = {:?}", err);
+                error!("batch_send failed to send packet - error = {err:?}");
             }
         }
     }
@@ -1179,8 +1178,7 @@ impl RepairService {
                             Ok(req) => {
                                 if let Err(e) = repair_socket.send_to(&req, repair_addr) {
                                     info!(
-                                        "repair req send_to {} ({}) error {:?}",
-                                        repair_pubkey, repair_addr, e
+                                        "repair req send_to {repair_pubkey} ({repair_addr}) error {e:?}"
                                     );
                                 }
                             }

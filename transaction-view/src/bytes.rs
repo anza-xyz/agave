@@ -301,13 +301,12 @@ mod tests {
             let read_value = read_compressed_u16(&buffer, &mut offset);
 
             // Assert that the read value matches the original value
-            assert_eq!(read_value, Ok(value), "Value mismatch for: {}", value);
+            assert_eq!(read_value, Ok(value), "Value mismatch for: {value}");
 
             // Assert that the offset matches the serialized length
             assert_eq!(
                 offset, serialized_len as usize,
-                "Offset mismatch for: {}",
-                value
+                "Offset mismatch for: {value}"
             );
         }
 
@@ -354,13 +353,12 @@ mod tests {
             let read_value = optimized_read_compressed_u16(&buffer, &mut offset);
 
             // Assert that the read value matches the original value
-            assert_eq!(read_value, Ok(value), "Value mismatch for: {}", value);
+            assert_eq!(read_value, Ok(value), "Value mismatch for: {value}");
 
             // Assert that the offset matches the serialized length
             assert_eq!(
                 offset, serialized_len as usize,
-                "Offset mismatch for: {}",
-                value
+                "Offset mismatch for: {value}"
             );
         }
 

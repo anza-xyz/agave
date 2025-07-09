@@ -398,8 +398,7 @@ impl StreamerSendStats {
             entries.truncate(MAX_REPORT_ENTRIES);
         }
         info!(
-            "streamer send {} hosts: count:{} {:?}",
-            name, num_entries, entries,
+            "streamer send {name} hosts: count:{num_entries} {entries:?}",
         );
     }
 
@@ -610,7 +609,7 @@ fn responder_loop<P: SocketProvider>(
         let now = timestamp();
         if now - last_print > 1000 && errors != 0 {
             datapoint_info!(name, ("errors", errors, i64),);
-            info!("{} last-error: {:?} count: {}", name, last_error, errors);
+            info!("{name} last-error: {last_error:?} count: {errors}");
             last_print = now;
             errors = 0;
         }

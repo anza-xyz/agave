@@ -3753,7 +3753,7 @@ fn test_banks_leak() {
     let pid = std::process::id();
     #[cfg(not(target_os = "linux"))]
     error!(
-        "\nYou can run this to watch RAM:\n   while read -p 'banks: '; do echo $(( $(ps -o vsize= -p {})/$REPLY));done", pid
+        "\nYou can run this to watch RAM:\n   while read -p 'banks: '; do echo $(( $(ps -o vsize= -p {pid})/$REPLY));done"
     );
     loop {
         num_banks += 1;
@@ -3777,7 +3777,7 @@ fn test_banks_leak() {
             }
             #[cfg(not(target_os = "linux"))]
             {
-                error!("{} banks, sleeping for 5 sec", num_banks);
+                error!("{num_banks} banks, sleeping for 5 sec");
                 std::thread::sleep(Duration::from_secs(5));
             }
         }
@@ -4226,11 +4226,11 @@ fn test_nonce_authority() {
     let bad_nonce_authority = bad_nonce_authority_keypair.pubkey();
     let custodian_account = bank.get_account(&custodian_pubkey).unwrap();
 
-    debug!("alice: {}", alice_pubkey);
-    debug!("custodian: {}", custodian_pubkey);
-    debug!("nonce: {}", nonce_pubkey);
+    debug!("alice: {alice_pubkey}");
+    debug!("custodian: {custodian_pubkey}");
+    debug!("nonce: {nonce_pubkey}");
     debug!("nonce account: {:?}", bank.get_account(&nonce_pubkey));
-    debug!("cust: {:?}", custodian_account);
+    debug!("cust: {custodian_account:?}");
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
 
     for _ in 0..MAX_RECENT_BLOCKHASHES + 1 {
@@ -4247,7 +4247,7 @@ fn test_nonce_authority() {
         &[&custodian_keypair, &bad_nonce_authority_keypair],
         nonce_hash,
     );
-    debug!("{:?}", nonce_tx);
+    debug!("{nonce_tx:?}");
     let initial_custodian_balance = custodian_account.lamports();
     assert_eq!(
         bank.process_transaction(&nonce_tx),
@@ -4285,9 +4285,9 @@ fn test_nonce_payer() {
     let custodian_pubkey = custodian_keypair.pubkey();
     let nonce_pubkey = nonce_keypair.pubkey();
 
-    debug!("alice: {}", alice_pubkey);
-    debug!("custodian: {}", custodian_pubkey);
-    debug!("nonce: {}", nonce_pubkey);
+    debug!("alice: {alice_pubkey}");
+    debug!("custodian: {custodian_pubkey}");
+    debug!("nonce: {nonce_pubkey}");
     debug!("nonce account: {:?}", bank.get_account(&nonce_pubkey));
     debug!("cust: {:?}", bank.get_account(&custodian_pubkey));
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
@@ -4306,7 +4306,7 @@ fn test_nonce_payer() {
         &[&custodian_keypair, &nonce_keypair],
         nonce_hash,
     );
-    debug!("{:?}", nonce_tx);
+    debug!("{nonce_tx:?}");
     assert_eq!(
         bank.process_transaction(&nonce_tx),
         Err(TransactionError::InstructionError(
@@ -4351,9 +4351,9 @@ fn test_nonce_payer_tx_wide_cap() {
     let custodian_pubkey = custodian_keypair.pubkey();
     let nonce_pubkey = nonce_keypair.pubkey();
 
-    debug!("alice: {}", alice_pubkey);
-    debug!("custodian: {}", custodian_pubkey);
-    debug!("nonce: {}", nonce_pubkey);
+    debug!("alice: {alice_pubkey}");
+    debug!("custodian: {custodian_pubkey}");
+    debug!("nonce: {nonce_pubkey}");
     debug!("nonce account: {:?}", bank.get_account(&nonce_pubkey));
     debug!("cust: {:?}", bank.get_account(&custodian_pubkey));
     let nonce_hash = get_nonce_blockhash(&bank, &nonce_pubkey).unwrap();
@@ -4372,7 +4372,7 @@ fn test_nonce_payer_tx_wide_cap() {
         &[&custodian_keypair, &nonce_keypair],
         nonce_hash,
     );
-    debug!("{:?}", nonce_tx);
+    debug!("{nonce_tx:?}");
 
     assert_eq!(
         bank.process_transaction(&nonce_tx),
@@ -4842,7 +4842,7 @@ fn test_account_ids_after_program_ids() {
     let result = bank.process_transaction(&tx);
     assert_eq!(result, Ok(()));
     let account = bank.get_account(&solana_vote_program::id()).unwrap();
-    info!("account: {:?}", account);
+    info!("account: {account:?}");
     assert!(account.executable());
 }
 
@@ -5177,11 +5177,11 @@ fn test_fuzz_instructions() {
             assert!(account.executable());
             assert_eq!(account.data(), name);
         }
-        info!("result: {:?}", result);
+        info!("result: {result:?}");
         let result_key = format!("{result:?}");
         *results.entry(result_key).or_insert(0) += 1;
     }
-    info!("results: {:?}", results);
+    info!("results: {results:?}");
 }
 
 // DEVELOPERS: This test is intended to ensure that the bank hash remains
@@ -5316,8 +5316,8 @@ fn test_clean_nonrooted() {
     let pubkey0 = Pubkey::from([0; 32]);
     let pubkey1 = Pubkey::from([1; 32]);
 
-    info!("pubkey0: {}", pubkey0);
-    info!("pubkey1: {}", pubkey1);
+    info!("pubkey0: {pubkey0}");
+    info!("pubkey1: {pubkey1}");
 
     // Set root for bank 0, with caching enabled
     let bank0 = Arc::new(Bank::new_with_config_for_tests(
@@ -6858,7 +6858,7 @@ fn min_rent_exempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u6
     sysvar_ids
         .iter()
         .map(|sysvar_id| {
-            trace!("min_rent_excempt_balance_for_sysvars: {}", sysvar_id);
+            trace!("min_rent_excempt_balance_for_sysvars: {sysvar_id}");
             bank.get_minimum_balance_for_rent_exemption(
                 bank.get_account(sysvar_id).unwrap().data().len(),
             )
@@ -11528,7 +11528,7 @@ fn test_deploy_last_epoch_slot() {
     let signers = &[&payer_keypair, &upgrade_authority_keypair];
     let transaction = Transaction::new(signers, message.clone(), bank.last_blockhash());
     let ret = bank.process_transaction(&transaction);
-    assert!(ret.is_ok(), "ret: {:?}", ret);
+    assert!(ret.is_ok(), "ret: {ret:?}");
     goto_end_of_slot(bank.clone());
 
     // go to the first slot in the new epoch
@@ -11845,7 +11845,7 @@ fn test_loader_v3_to_v4_migration(formalize_loaded_transaction_data_size: bool) 
         bank.store_account(&programdata_address, &programdata_account);
         bank.store_account(&payer_keypair.pubkey(), &payer_account);
         let result = bank.process_transaction(&transaction);
-        assert!(result.is_ok(), "result: {:?}", result);
+        assert!(result.is_ok(), "result: {result:?}");
 
         goto_end_of_slot(bank.clone());
         let bank =

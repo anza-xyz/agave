@@ -282,8 +282,8 @@ fn query_endpoint(
 
     match get_cluster_info(config, &endpoint.rpc_client) {
         Ok((transaction_count, recent_blockhash, vote_accounts, validator_balances)) => {
-            info!("Current transaction count: {}", transaction_count);
-            info!("Recent blockhash: {}", recent_blockhash);
+            info!("Current transaction count: {transaction_count}");
+            info!("Recent blockhash: {recent_blockhash}");
             info!("Current validator count: {}", vote_accounts.current.len());
             info!(
                 "Delinquent validator count: {}",
@@ -385,12 +385,12 @@ fn query_endpoint(
             if let client_error::ErrorKind::Reqwest(reqwest_err) = err.kind() {
                 if let Some(client_error::reqwest::StatusCode::BAD_GATEWAY) = reqwest_err.status() {
                     if config.ignore_http_bad_gateway {
-                        warn!("Error suppressed: {}", err);
+                        warn!("Error suppressed: {err}");
                         return Ok(None);
                     }
                 }
             }
-            warn!("rpc-error: {}", err);
+            warn!("rpc-error: {err}");
             Err(err)
         }
     }
@@ -413,8 +413,8 @@ fn validate_endpoints(
         let slot = endpoint.rpc_client.get_slot()?;
         let genesis_hash = endpoint.rpc_client.get_genesis_hash()?;
 
-        info!("Genesis hash: {}", genesis_hash);
-        info!("Current slot: {}", slot);
+        info!("Genesis hash: {genesis_hash}");
+        info!("Current slot: {slot}");
 
         max_slot = max_slot.max(slot);
         min_slot = min_slot.min(slot);
@@ -458,7 +458,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
         .collect();
 
     if let Err(err) = validate_endpoints(&config, &endpoints) {
-        error!("Endpoint validation failed: {}", err);
+        error!("Endpoint validation failed: {err}");
         std::process::exit(1);
     }
 
@@ -550,7 +550,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
                     "All clear after {}",
                     humantime::format_duration(alarm_duration)
                 );
-                info!("{}", all_clear_msg);
+                info!("{all_clear_msg}");
                 notifier.send(
                     &format!("agave-watchtower{}: {}", config.name_suffix, all_clear_msg),
                     &NotificationType::Resolve { incident },

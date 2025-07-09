@@ -204,7 +204,7 @@ impl Client {
         let port = value_t_or_exit!(matches, "port", u16);
 
         let server_url =
-            value_t!(matches, "server_url", String).unwrap_or(format!("http://0.0.0.0:{}", port));
+            value_t!(matches, "server_url", String).unwrap_or(format!("http://0.0.0.0:{port}"));
 
         let skip_preflight = matches.is_present("skip_preflight");
 

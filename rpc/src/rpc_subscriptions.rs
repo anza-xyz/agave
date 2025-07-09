@@ -525,7 +525,7 @@ pub struct RpcSubscriptions {
 impl Drop for RpcSubscriptions {
     fn drop(&mut self) {
         self.shutdown().unwrap_or_else(|err| {
-            warn!("RPC Notification - shutdown error: {:?}", err);
+            warn!("RPC Notification - shutdown error: {err:?}");
         });
     }
 }
@@ -748,8 +748,7 @@ impl RpcSubscriptions {
                 Ok(()) => (),
                 Err(SendError(notification)) => {
                     warn!(
-                        "Dropped RPC Notification - receiver disconnected : {:?}",
-                        notification
+                        "Dropped RPC Notification - receiver disconnected : {notification:?}"
                     );
                 }
             }
@@ -797,7 +796,7 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Slot)
                             {
-                                debug!("slot notify: {:?}", slot_info);
+                                debug!("slot notify: {slot_info:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-slot", 1);
                                 notifier.notify(slot_info, sub, false);
                             }
@@ -826,7 +825,7 @@ impl RpcSubscriptions {
                                     timestamp: vote_info.timestamp(),
                                     signature: signature.to_string(),
                                 };
-                                debug!("vote notify: {:?}", vote_info);
+                                debug!("vote notify: {vote_info:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-vote", 1);
                                 notifier.notify(&rpc_vote, sub, false);
                             }
@@ -836,7 +835,7 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Root)
                             {
-                                debug!("root notify: {:?}", root);
+                                debug!("root notify: {root:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-root", 1);
                                 notifier.notify(root, sub, false);
                             }
@@ -1015,7 +1014,7 @@ impl RpcSubscriptions {
                                 let block_update_result = blockstore
                                     .get_complete_block(s, false)
                                     .map_err(|e| {
-                                        error!("get_complete_block error: {}", e);
+                                        error!("get_complete_block error: {e}");
                                         RpcBlockUpdateError::BlockStoreError
                                     })
                                     .and_then(|block| filter_block_result_txs(block, s, params));

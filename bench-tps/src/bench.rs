@@ -267,13 +267,12 @@ where
 {
     if target_slots_per_epoch != 0 {
         info!(
-            "Waiting until epochs are {} slots long..",
-            target_slots_per_epoch
+            "Waiting until epochs are {target_slots_per_epoch} slots long.."
         );
         loop {
             if let Ok(epoch_info) = client.get_epoch_info() {
                 if epoch_info.slots_in_epoch >= target_slots_per_epoch {
-                    info!("Done epoch_info: {:?}", epoch_info);
+                    info!("Done epoch_info: {epoch_info:?}");
                     break;
                 }
                 info!(
@@ -295,7 +294,7 @@ fn create_sampler_thread<T>(
 where
     T: 'static + TpsClient + Send + Sync + ?Sized,
 {
-    info!("Sampling TPS every {} second...", sample_period);
+    info!("Sampling TPS every {sample_period} second...");
     let maxes = maxes.clone();
     let client = client.clone();
     Builder::new()
@@ -440,12 +439,12 @@ where
         match client.get_transaction_count() {
             Ok(count) => break count,
             Err(err) => {
-                info!("Couldn't get transaction count: {:?}", err);
+                info!("Couldn't get transaction count: {err:?}");
                 sleep(Duration::from_secs(1));
             }
         }
     };
-    info!("Initial transaction count {}", first_tx_count);
+    info!("Initial transaction count {first_tx_count}");
 
     let exit_signal = Arc::new(AtomicBool::new(false));
 
@@ -516,28 +515,28 @@ where
 
     info!("Waiting for sampler threads...");
     if let Err(err) = sample_thread.join() {
-        info!("  join() failed with: {:?}", err);
+        info!("  join() failed with: {err:?}");
     }
 
     // join the tx send threads
     info!("Waiting for transmit threads...");
     for t in sender_threads {
         if let Err(err) = t.join() {
-            info!("  join() failed with: {:?}", err);
+            info!("  join() failed with: {err:?}");
         }
     }
 
     if let Some(blockhash_thread) = blockhash_thread {
         info!("Waiting for blockhash thread...");
         if let Err(err) = blockhash_thread.join() {
-            info!("  join() failed with: {:?}", err);
+            info!("  join() failed with: {err:?}");
         }
     }
 
     if let Some(log_transaction_service) = log_transaction_service {
         info!("Waiting for log_transaction_service thread...");
         if let Err(err) = log_transaction_service.join() {
-            info!("  join() failed with: {:?}", err);
+            info!("  join() failed with: {err:?}");
         }
     }
 
@@ -560,7 +559,7 @@ where
 }
 
 fn metrics_submit_lamport_balance(lamport_balance: u64) {
-    info!("Token balance: {}", lamport_balance);
+    info!("Token balance: {lamport_balance}");
     datapoint_info!(
         "bench-tps-lamport_balance",
         ("balance", lamport_balance, i64)
@@ -700,7 +699,7 @@ fn get_nonce_accounts<T: 'static + TpsClient + Send + Sync + ?Sized>(
                 return nonce_accounts;
             }
             Err(err) => {
-                info!("Couldn't get durable nonce account: {:?}", err);
+                info!("Couldn't get durable nonce account: {err:?}");
                 sleep(Duration::from_secs(1));
             }
         }
@@ -883,7 +882,7 @@ fn get_new_latest_blockhash<T: TpsClient + ?Sized>(
                 return Some(new_blockhash);
             }
         }
-        debug!("Got same blockhash ({:?}), will retry...", blockhash);
+        debug!("Got same blockhash ({blockhash:?}), will retry...");
 
         // Retry ~twice during a slot
         sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT / 2));
@@ -962,7 +961,7 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
         if let Some(txs) = txs {
             shared_tx_thread_count.fetch_add(1, Ordering::Relaxed);
             let num_txs = txs.len();
-            info!("Transferring 1 unit {} times...", num_txs);
+            info!("Transferring 1 unit {num_txs} times...");
             let transfer_start = Instant::now();
             let mut old_transactions = false;
             let mut min_timestamp = u64::MAX;
@@ -1006,7 +1005,7 @@ fn do_tx_transfers<T: TpsClient + ?Sized>(
             }
 
             if let Err(error) = client.send_batch(transactions) {
-                warn!("send_batch_sync in do_tx_transfers failed: {}", error);
+                warn!("send_batch_sync in do_tx_transfers failed: {error}");
             }
 
             datapoint_info!(
@@ -1085,8 +1084,7 @@ fn compute_and_report_stats(
         let num_nodes_with_tps = maxes.read().unwrap().len() - nodes_with_zero_tps;
         let average_max = total_maxes / num_nodes_with_tps as f32;
         info!(
-            "\nAverage max TPS: {:.2}, {} nodes had 0 TPS",
-            average_max, nodes_with_zero_tps
+            "\nAverage max TPS: {average_max:.2}, {nodes_with_zero_tps} nodes had 0 TPS"
         );
     }
 
@@ -1121,7 +1119,7 @@ pub fn generate_and_fund_keypairs<T: 'static + TpsClient + Send + Sync + ?Sized>
     let rent = client.get_minimum_balance_for_rent_exemption(0)?;
     let lamports_per_account = lamports_per_account + rent;
 
-    info!("Creating {} keypairs...", keypair_count);
+    info!("Creating {keypair_count} keypairs...");
     let (mut keypairs, extra) = generate_keypairs(funding_key, keypair_count as u64);
     fund_keypairs(
         client,
@@ -1181,8 +1179,7 @@ pub fn fund_keypairs<T: 'static + TpsClient + Send + Sync + ?Sized>(
 
         let funding_key_balance = client.get_balance(&funding_key.pubkey()).unwrap_or(0);
         info!(
-            "Funding keypair balance: {} max_fee: {} lamports_per_account: {} extra: {} total: {}",
-            funding_key_balance, max_fee, lamports_per_account, extra, total
+            "Funding keypair balance: {funding_key_balance} max_fee: {max_fee} lamports_per_account: {lamports_per_account} extra: {extra} total: {total}"
         );
 
         if funding_key_balance < total + rent {

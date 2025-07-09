@@ -462,7 +462,7 @@ fn default_shared_object_dirs() -> Vec<PathBuf> {
     if let Ok(dir) = std::env::current_dir() {
         search_path.push(dir);
     }
-    trace!("SBF .so search path: {:?}", search_path);
+    trace!("SBF .so search path: {search_path:?}");
     search_path
 }
 
@@ -723,9 +723,8 @@ impl ProgramTest {
             }
 
             warn!(
-                "Possible bogus program name. Ensure the program name ({}) \
+                "Possible bogus program name. Ensure the program name ({program_name}) \
                 matches one of the following recognizable program names:",
-                program_name,
             );
             for name in valid_program_names {
                 warn!(" - {}", name.to_str().unwrap());
@@ -766,7 +765,7 @@ impl ProgramTest {
         program_id: Pubkey,
         builtin_function: BuiltinFunctionWithContext,
     ) {
-        info!("\"{}\" builtin program", program_name);
+        info!("\"{program_name}\" builtin program");
         self.builtin_programs.push((
             program_id,
             program_name,
@@ -829,16 +828,14 @@ impl ProgramTest {
         for deactivate_feature_pk in &self.deactivate_feature_set {
             if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
                 match genesis_config.accounts.remove(deactivate_feature_pk) {
-                    Some(_) => debug!("Feature for {:?} deactivated", deactivate_feature_pk),
+                    Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
                     None => warn!(
-                        "Feature {:?} set for deactivation not found in genesis_config account list, ignored.",
-                        deactivate_feature_pk
+                        "Feature {deactivate_feature_pk:?} set for deactivation not found in genesis_config account list, ignored."
                     ),
                 }
             } else {
                 warn!(
-                    "Feature {:?} set for deactivation is not a known Feature public key",
-                    deactivate_feature_pk
+                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known Feature public key"
                 );
             }
         }
@@ -846,7 +843,7 @@ impl ProgramTest {
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);
         debug!("Payer address: {}", mint_keypair.pubkey());
-        debug!("Genesis config: {}", genesis_config);
+        debug!("Genesis config: {genesis_config}");
 
         let bank = Bank::new_with_paths(
             &genesis_config,
@@ -893,7 +890,7 @@ impl ProgramTest {
 
         for (address, account) in self.accounts.iter() {
             if bank.get_account(address).is_some() {
-                info!("Overriding account at {}", address);
+                info!("Overriding account at {address}");
             }
             bank.store_account(address, account);
         }
@@ -1000,7 +997,7 @@ impl ProgramTestBanksClientExt for BanksClient {
             if new_blockhash != *blockhash {
                 return Ok(new_blockhash);
             }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
+            debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             tokio::time::sleep(Duration::from_millis(200)).await;
             num_retries += 1;

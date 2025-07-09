@@ -392,7 +392,7 @@ impl Blockstore {
 
         // Open the database
         let mut measure = Measure::start("blockstore open");
-        info!("Opening blockstore at {:?}", blockstore_path);
+        info!("Opening blockstore at {blockstore_path:?}");
         let db = Arc::new(Rocks::open(blockstore_path, options)?);
 
         let address_signatures_cf = db.column();
@@ -917,7 +917,7 @@ impl Blockstore {
                         }
                         Err(InsertDataShredError::BlockstoreError(err)) => {
                             metrics.num_data_shreds_blockstore_error += 1;
-                            error!("blockstore error: {}", err);
+                            error!("blockstore error: {err}");
                         }
                         Ok(()) => {
                             if is_repaired {
@@ -1383,10 +1383,9 @@ impl Blockstore {
         match self.purge_slot_cleanup_chaining(slot) {
             Ok(_) => {}
             Err(BlockstoreError::SlotUnavailable) => error!(
-                "clear_unconfirmed_slot() called on slot {} with no SlotMeta",
-                slot
+                "clear_unconfirmed_slot() called on slot {slot} with no SlotMeta"
             ),
-            Err(e) => panic!("Purge database operations failed {}", e),
+            Err(e) => panic!("Purge database operations failed {e}"),
         }
     }
 
@@ -2274,7 +2273,7 @@ impl Blockstore {
             Some(slot_meta),
         );
 
-        trace!("inserted shred into slot {:?} and index {:?}", slot, index);
+        trace!("inserted shred into slot {slot:?} and index {index:?}");
 
         Ok(newly_completed_data_sets)
     }
@@ -2738,8 +2737,7 @@ impl Blockstore {
                     .map(|transaction| {
                         if let Err(err) = transaction.sanitize() {
                             warn!(
-                                "Blockstore::get_block sanitize failed: {:?}, slot: {:?}, {:?}",
-                                err, slot, transaction,
+                                "Blockstore::get_block sanitize failed: {err:?}, slot: {slot:?}, {transaction:?}",
                             );
                         }
                         transaction
@@ -3240,9 +3238,8 @@ impl Blockstore {
             .map(|transaction| {
                 if let Err(err) = transaction.sanitize() {
                     warn!(
-                        "Blockstore::find_transaction_in_slot sanitize failed: {:?}, slot: {:?}, \
-                         {:?}",
-                        err, slot, transaction,
+                        "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: {slot:?}, \
+                         {transaction:?}",
                     );
                 }
                 transaction
@@ -4242,7 +4239,7 @@ impl Blockstore {
                 if exit.load(Ordering::Relaxed) {
                     return Ok(i * chunk_size);
                 }
-                trace!("{:?}", chunk);
+                trace!("{chunk:?}");
                 self.set_roots(chunk.iter())?;
             }
         } else {
@@ -4281,8 +4278,7 @@ impl Blockstore {
             return Ok(());
         }
         info!(
-            "Marking slot {} and any full children slots as connected",
-            root
+            "Marking slot {root} and any full children slots as connected"
         );
         let mut write_batch = self.get_write_batch()?;
 
@@ -5318,8 +5314,7 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
 
             if cfg!(target_os = "macos") {
                 error!(
-                    "On mac OS you may need to run |sudo launchctl limit maxfiles {} {}| first",
-                    desired_nofile, desired_nofile,
+                    "On mac OS you may need to run |sudo launchctl limit maxfiles {desired_nofile} {desired_nofile}| first",
                 );
             }
             if enforce_ulimit_nofile {
@@ -6517,7 +6512,7 @@ pub mod tests {
         let (shreds, _) = make_many_slot_entries(start_slot, num_slots, entries_per_slot);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         for slot in start_slot..start_slot + num_slots {
-            info!("Evaluating slot {}", slot);
+            info!("Evaluating slot {slot}");
             let meta = blockstore.meta(slot).unwrap().unwrap();
             assert!(meta.is_parent_connected());
             assert!(meta.is_connected());

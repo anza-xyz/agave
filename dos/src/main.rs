@@ -438,9 +438,9 @@ fn get_target(
     } else {
         info!("************ NODE ***********");
         for node in nodes {
-            info!("{:?}", node);
+            info!("{node:?}");
         }
-        info!("ADDR = {}", entrypoint_addr);
+        info!("ADDR = {entrypoint_addr}");
 
         for node in nodes {
             if node.gossip() == Some(entrypoint_addr) {
@@ -652,7 +652,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         && params.transaction_params.unique_transactions
     {
         let (_, target_addr) = target.expect("should have target");
-        info!("Targeting {}", target_addr);
+        info!("Targeting {target_addr}");
         run_dos_transactions(
             target_addr,
             iterations,
@@ -664,7 +664,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
         );
     } else {
         let (target_id, target_addr) = target.expect("should have target");
-        info!("Targeting {}", target_addr);
+        info!("Targeting {target_addr}");
         let mut data = match params.data_type {
             DataType::RepairHighest => {
                 let slot = 100;
@@ -700,7 +700,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
             }
             DataType::Transaction => {
                 let tp = params.transaction_params;
-                info!("{:?}", tp);
+                info!("{tp:?}");
 
                 let valid_blockhash = tp.valid_blockhash;
                 let payers: Vec<Option<Keypair>> =
@@ -720,7 +720,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
 
                 let mut transaction_generator = TransactionGenerator::new(tp);
                 let tx = transaction_generator.generate(payer, keypairs_chunk, client.as_ref());
-                info!("{:?}", tx);
+                info!("{tx:?}");
                 bincode::serialize(&tx).unwrap()
             }
             _ => panic!("Unsupported data_type detected"),
@@ -768,7 +768,7 @@ fn main() {
         cmd_params.shred_version = Some(
             solana_net_utils::get_cluster_shred_version(&cmd_params.entrypoint_addr)
                 .unwrap_or_else(|err| {
-                    eprintln!("Failed to get shred version: {}", err);
+                    eprintln!("Failed to get shred version: {err}");
                     exit(1);
                 }),
         );

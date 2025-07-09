@@ -361,8 +361,7 @@ impl AncestorRequestStatus {
                         );
                     }
                     (Some(decision), true) => panic!(
-                        "Programmer error, {:?} should not be set in decision loop",
-                        decision
+                        "Programmer error, {decision:?} should not be set in decision loop"
                     ),
                     (Some(_), false) => { /* Already found a mismatch, descendants continue to mismatch as well */
                     }

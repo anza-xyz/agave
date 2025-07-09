@@ -236,8 +236,7 @@ pub fn load_and_process_ledger(
             .join(LEDGER_TOOL_DIRECTORY)
             .join("accounts");
         info!(
-            "Default accounts path is switched aligning with Blockstore's secondary access: {:?}",
-            non_primary_accounts_path
+            "Default accounts path is switched aligning with Blockstore's secondary access: {non_primary_accounts_path:?}"
         );
         vec![non_primary_accounts_path]
     };
@@ -347,8 +346,7 @@ pub fn load_and_process_ledger(
         BlockVerificationMethod
     );
     info!(
-        "Using: block-verification-method: {}",
-        block_verification_method,
+        "Using: block-verification-method: {block_verification_method}",
     );
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
@@ -499,8 +497,7 @@ pub fn open_blockstore(
             )
             .unwrap_or_else(|err| {
                 eprintln!(
-                    "Failed to open blockstore (with --force-update-to-open) at {:?}: {:?}",
-                    ledger_path, err
+                    "Failed to open blockstore (with --force-update-to-open) at {ledger_path:?}: {err:?}"
                 );
                 exit(1);
             })
@@ -536,8 +533,7 @@ fn open_blockstore_with_temporary_primary_access(
     }
     // Now, attempt to open the blockstore with original AccessType
     info!(
-        "Blockstore forced open succeeded, retrying with original access: {:?}",
-        original_access_type
+        "Blockstore forced open succeeded, retrying with original access: {original_access_type:?}"
     );
     Blockstore::open_with_options(
         ledger_path,

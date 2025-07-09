@@ -213,7 +213,7 @@ impl SvmTestEnvironment<'_> {
                     Ok(ProcessedTransaction::FeesOnly(fee_only)) => {
                         format!("{} (fee-only): {:?}", i, fee_only.load_error)
                     }
-                    Err(e) => format!("{} (discarded): {:?}", i, e),
+                    Err(e) => format!("{i} (discarded): {e:?}"),
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
@@ -225,8 +225,7 @@ impl SvmTestEnvironment<'_> {
             assert_eq!(
                 Some(expected_account_data),
                 actual_account_data,
-                "mismatch on account {}",
-                pubkey
+                "mismatch on account {pubkey}"
             );
         }
 
@@ -2236,7 +2235,7 @@ fn simd83_account_reallocate(formalize_loaded_transaction_data_size: bool) -> Ve
         test_entry.transaction_batch[1]
             .asserts
             .logs
-            .push(format!("Program log: account size {}", new_target_size));
+            .push(format!("Program log: account size {new_target_size}"));
 
         test_entry.update_expected_account_data(target, &mk_target(new_target_size));
 

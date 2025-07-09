@@ -267,7 +267,7 @@ impl LedgerWallet {
         }
         let status =
             ((message[message.len() - 2] as usize) << 8) | (message[message.len() - 1] as usize);
-        trace!("Read status {:x}", status);
+        trace!("Read status {status:x}");
         Self::parse_status(status)?;
         let new_len = message.len() - 2;
         message.truncate(new_len);

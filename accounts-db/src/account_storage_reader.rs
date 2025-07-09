@@ -242,7 +242,7 @@ mod tests {
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
-        info!("Generated seed: {}", seed);
+        info!("Generated seed: {seed}");
 
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
@@ -343,7 +343,7 @@ mod tests {
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
-        info!("Generated seed: {}", seed);
+        info!("Generated seed: {seed}");
 
         // Use a seedable RNG with the generated seed for reproducibility
         let mut rng = StdRng::seed_from_u64(seed);
