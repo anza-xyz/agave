@@ -109,7 +109,8 @@ where
     let mut total_entries = 0;
     let mut open_dirs = Vec::new();
 
-    let mut files_creator = file_creator(UNPACK_WRITE_BUF_SIZE, file_path_processor)?;
+    let buf_size = UNPACK_WRITE_BUF_SIZE.min(actual_limit_size as usize);
+    let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {
         let entry = entry?;

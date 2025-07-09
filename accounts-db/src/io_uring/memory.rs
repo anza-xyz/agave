@@ -53,6 +53,7 @@ impl LargeBuffer {
     pub fn new(size: usize) -> Self {
         adjust_ulimit_memlock(true).unwrap();
         if size > PageAlignedMemory::page_size() {
+            let size = size.next_power_of_two();
             if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
                 log::info!("obtained hugetable io_uring buffer (len={size})");
                 return Self::HugeTable(alloc);

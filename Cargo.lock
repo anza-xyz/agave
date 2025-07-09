@@ -6826,6 +6826,7 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "dashmap",
+ "env_logger",
  "indexmap 2.10.0",
  "io-uring",
  "itertools 0.12.1",

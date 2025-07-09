@@ -100,7 +100,8 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         let fds = vec![-1; MAX_OPEN_FILES];
         ring.submitter().register_files(&fds)?;
 
-        let buffers = IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, write_capacity)?;
+        let buffers =
+            IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, write_capacity).unwrap();
         let state = FileCreatorState::new(buffers.collect(), file_complete);
 
         Ok(Self {
