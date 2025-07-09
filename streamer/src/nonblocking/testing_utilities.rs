@@ -1,21 +1,21 @@
 //! Contains utility functions to create server and client for test purposes.
 use {
-    super::quic::{spawn_server_multi, SpawnNonBlockingServerResult, ALPN_TPU_PROTOCOL_ID},
+    super::quic::{ALPN_TPU_PROTOCOL_ID, SpawnNonBlockingServerResult, spawn_server_multi},
     crate::{
         quic::{QuicServerParams, StreamerStats},
         streamer::StakedNodes,
     },
-    crossbeam_channel::{unbounded, Receiver},
+    crossbeam_channel::{Receiver, unbounded},
     quinn::{
-        crypto::rustls::QuicClientConfig, ClientConfig, Connection, EndpointConfig, IdleTimeout,
-        TokioRuntime, TransportConfig,
+        ClientConfig, Connection, EndpointConfig, IdleTimeout, TokioRuntime, TransportConfig,
+        crypto::rustls::QuicClientConfig,
     },
     solana_keypair::Keypair,
     solana_net_utils::{
         bind_to_localhost,
         sockets::{
-            localhost_port_range_for_tests, multi_bind_in_range_with_config,
-            SocketConfiguration as SocketConfig,
+            SocketConfiguration as SocketConfig, localhost_port_range_for_tests,
+            multi_bind_in_range_with_config,
         },
     },
     solana_perf::packet::PacketBatch,
@@ -23,7 +23,7 @@ use {
     solana_tls_utils::{new_dummy_x509_certificate, tls_client_config_builder},
     std::{
         net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{Arc, RwLock, atomic::AtomicBool},
         time::{Duration, Instant},
     },
     tokio::{task::JoinHandle, time::sleep},

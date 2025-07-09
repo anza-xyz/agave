@@ -3,7 +3,7 @@
 use {
     solana_net_utils::bind_to_localhost,
     solana_streamer::{
-        packet::{Meta, Packet, PACKET_DATA_SIZE},
+        packet::{Meta, PACKET_DATA_SIZE, Packet},
         recvmmsg::*,
     },
     std::time::Instant,

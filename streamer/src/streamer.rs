@@ -8,9 +8,9 @@ use {
             SocketProvider,
         },
         packet::{
-            self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
+            self, PACKETS_PER_BATCH, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch,
         },
-        sendmmsg::{batch_send, SendPktsError},
+        sendmmsg::{SendPktsError, batch_send},
         socket::SocketAddrSpace,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
@@ -24,10 +24,10 @@ use {
         collections::HashMap,
         net::{IpAddr, UdpSocket},
         sync::{
-            atomic::{AtomicBool, AtomicUsize, Ordering},
             Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
         },
-        thread::{sleep, Builder, JoinHandle},
+        thread::{Builder, JoinHandle, sleep},
         time::{Duration, Instant},
     },
     thiserror::Error,
@@ -239,7 +239,7 @@ fn recv_loop<P: SocketProvider>(
                             stats.num_packets_dropped.fetch_add(len, Ordering::Relaxed);
                         }
                         Err(TrySendError::Disconnected(err)) => {
-                            return Err(StreamerError::Send(SendError(err)))
+                            return Err(StreamerError::Send(SendError(err)));
                         }
                     }
                 }
@@ -629,7 +629,7 @@ mod test {
     use {
         super::*,
         crate::{
-            packet::{Packet, PinnedPacketBatch, PACKET_DATA_SIZE},
+            packet::{PACKET_DATA_SIZE, Packet, PinnedPacketBatch},
             streamer::{receiver, responder},
         },
         crossbeam_channel::unbounded,
@@ -639,8 +639,8 @@ mod test {
             io,
             io::Write,
             sync::{
-                atomic::{AtomicBool, Ordering},
                 Arc,
+                atomic::{AtomicBool, Ordering},
             },
             time::Duration,
         },

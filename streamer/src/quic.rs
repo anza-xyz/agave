@@ -6,8 +6,8 @@ use {
     crossbeam_channel::Sender,
     pem::Pem,
     quinn::{
-        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
         Endpoint, IdleTimeout, ServerConfig,
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     },
     rustls::KeyLogFile,
     solana_keypair::Keypair,
@@ -21,8 +21,8 @@ use {
         net::UdpSocket,
         num::NonZeroUsize,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
             Arc, Mutex, RwLock,
+            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         },
         thread,
         time::Duration,
