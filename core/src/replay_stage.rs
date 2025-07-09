@@ -36,7 +36,7 @@ use {
     rayon::{prelude::*, ThreadPool},
     solana_accounts_db::contains::Contains,
     solana_clock::{BankId, Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
-    solana_entry::entry::VerifyRecyclers,
+    solana_entry::entry::{Verifier, VerifyRecyclers},
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierArc,
     solana_gossip::cluster_info::ClusterInfo,
     solana_hash::Hash,
@@ -693,12 +693,14 @@ impl ReplayStage {
                     .expect("new rayon threadpool");
                 ForkReplayMode::Parallel(pool)
             };
+
             // Thread pool to replay multiple transactions within one block in parallel
             let replay_tx_thread_pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(replay_transactions_threads.get())
                 .thread_name(|i| format!("solReplayTx{i:02}"))
                 .build()
                 .expect("new rayon threadpool");
+            let verifier = Verifier::new(replay_tx_thread_pool, verify_recyclers.clone());
 
             Self::reset_poh_recorder(
                 &my_pubkey,
@@ -761,7 +763,7 @@ impl ReplayStage {
                     &mut replay_timing,
                     log_messages_bytes_limit,
                     &replay_mode,
-                    &replay_tx_thread_pool,
+                    &verifier,
                     &prioritization_fee_cache,
                     &mut purge_repair_slot_counter,
                 );
@@ -2236,7 +2238,7 @@ impl ReplayStage {
     fn replay_blockstore_into_bank(
         bank: &BankWithScheduler,
         blockstore: &Blockstore,
-        replay_tx_thread_pool: &ThreadPool,
+        verifier: &Verifier,
         replay_stats: &RwLock<ReplaySlotStats>,
         replay_progress: &RwLock<ConfirmationProgress>,
         transaction_status_sender: Option<&TransactionStatusSender>,
@@ -2255,7 +2257,7 @@ impl ReplayStage {
         blockstore_processor::confirm_slot(
             blockstore,
             bank,
-            replay_tx_thread_pool,
+            verifier,
             &mut w_replay_stats,
             &mut w_replay_progress,
             false,
@@ -2874,7 +2876,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
         fork_thread_pool: &ThreadPool,
-        replay_tx_thread_pool: &ThreadPool,
+        verifier: &Verifier,
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
@@ -2959,7 +2961,7 @@ impl ReplayStage {
                         let blockstore_result = Self::replay_blockstore_into_bank(
                             &bank,
                             blockstore,
-                            replay_tx_thread_pool,
+                            verifier,
                             &replay_stats,
                             &replay_progress,
                             transaction_status_sender,
@@ -2989,7 +2991,7 @@ impl ReplayStage {
     fn replay_active_bank(
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
-        replay_tx_thread_pool: &ThreadPool,
+        verifier: &Verifier,
         my_pubkey: &Pubkey,
         vote_account: &Pubkey,
         progress: &mut ProgressMap,
@@ -3048,7 +3050,7 @@ impl ReplayStage {
                 let blockstore_result = Self::replay_blockstore_into_bank(
                     &bank,
                     blockstore,
-                    replay_tx_thread_pool,
+                    verifier,
                     &bank_progress.replay_stats,
                     &bank_progress.replay_progress,
                     transaction_status_sender,
@@ -3393,7 +3395,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayLoopTiming,
         log_messages_bytes_limit: Option<usize>,
         replay_mode: &ForkReplayMode,
-        replay_tx_thread_pool: &ThreadPool,
+        verifier: &Verifier,
         prioritization_fee_cache: &PrioritizationFeeCache,
         purge_repair_slot_counter: &mut PurgeRepairSlotCounter,
     ) -> bool /* completed a bank */ {
@@ -3415,7 +3417,7 @@ impl ReplayStage {
                     blockstore,
                     bank_forks,
                     fork_thread_pool,
-                    replay_tx_thread_pool,
+                    verifier,
                     my_pubkey,
                     vote_account,
                     progress,
@@ -3435,7 +3437,7 @@ impl ReplayStage {
                     Self::replay_active_bank(
                         blockstore,
                         bank_forks,
-                        replay_tx_thread_pool,
+                        verifier,
                         my_pubkey,
                         vote_account,
                         progress,
@@ -5101,10 +5103,11 @@ pub(crate) mod tests {
                 .thread_name(|i| format!("solReplayTest{i:02}"))
                 .build()
                 .expect("new rayon threadpool");
+            let verifier = Verifier::new(replay_tx_thread_pool, VerifyRecyclers::default());
             let res = ReplayStage::replay_blockstore_into_bank(
                 &bank1,
                 &blockstore,
-                &replay_tx_thread_pool,
+                &verifier,
                 &bank1_progress.replay_stats,
                 &bank1_progress.replay_progress,
                 None,
@@ -9172,11 +9175,12 @@ pub(crate) mod tests {
             .thread_name(|i| format!("solReplayTx{i:02}"))
             .build()
             .expect("new rayon threadpool");
+        let verifier = Verifier::new(replay_tx_thread_pool, recyclers.clone());
 
         process_bank_0(
             &bank0,
             &blockstore,
-            &replay_tx_thread_pool,
+            &verifier,
             &ProcessOptions::default(),
             None,
             &recyclers,
@@ -9198,7 +9202,7 @@ pub(crate) mod tests {
         confirm_full_slot(
             &blockstore,
             &bank1,
-            &replay_tx_thread_pool,
+            &verifier,
             &ProcessOptions::default(),
             &recyclers,
             &mut ConfirmationProgress::new(bank0.last_blockhash()),

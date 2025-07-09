@@ -3,6 +3,7 @@
 /// All tests must start from an entry point and a funding keypair and
 /// discover the rest of the network.
 use log::*;
+use solana_entry::entry::VerifyEntries as _;
 use {
     crate::{cluster::QuicTpuClient, local_cluster::LocalCluster},
     rand::{thread_rng, Rng},
@@ -10,7 +11,7 @@ use {
     solana_client::connection_cache::ConnectionCache,
     solana_clock::{self as clock, Slot},
     solana_commitment_config::CommitmentConfig,
-    solana_entry::entry::{self, Entry, EntrySlice},
+    solana_entry::entry::{self, Entry},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
         cluster_info::{self, ClusterInfo},

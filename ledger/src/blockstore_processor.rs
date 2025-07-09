@@ -21,7 +21,8 @@ use {
     solana_clock::{Slot, MAX_PROCESSING_AGE},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::entry::{
-        self, create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers,
+        self, create_ticks, verify_tick_hash_count, Entry, EntrySignatures, EntryType, Verifier,
+        VerifyRecyclers,
     },
     solana_genesis_config::GenesisConfig,
     solana_hash::Hash,
@@ -969,6 +970,7 @@ pub(crate) fn process_blockstore_for_bank_0(
 
     info!("Processing ledger for slot 0...");
     let replay_tx_thread_pool = create_thread_pool(get_max_thread_count());
+    let verifier = Verifier::new(replay_tx_thread_pool, VerifyRecyclers::default());
     process_bank_0(
         &bank_forks
             .read()
@@ -976,7 +978,7 @@ pub(crate) fn process_blockstore_for_bank_0(
             .get_with_scheduler(bank0_slot)
             .unwrap(),
         blockstore,
-        &replay_tx_thread_pool,
+        &verifier,
         opts,
         transaction_status_sender,
         &VerifyRecyclers::default(),
@@ -1051,11 +1053,12 @@ pub fn process_blockstore_from_root(
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
         let replay_tx_thread_pool = create_thread_pool(get_max_thread_count());
+        let verifier = Verifier::new(replay_tx_thread_pool, VerifyRecyclers::default());
         load_frozen_forks(
             bank_forks,
             &start_slot_meta,
             blockstore,
-            &replay_tx_thread_pool,
+            &verifier,
             leader_schedule_cache,
             opts,
             transaction_status_sender,
@@ -1116,7 +1119,8 @@ fn verify_ticks(
     slot_full: bool,
     tick_hash_count: &mut u64,
 ) -> std::result::Result<(), BlockError> {
-    let next_bank_tick_height = bank.tick_height() + entries.tick_count();
+    let tick_count = entries.iter().filter(|e| e.is_tick()).count() as u64;
+    let next_bank_tick_height = bank.tick_height() + tick_count;
     let max_bank_tick_height = bank.max_tick_height();
 
     if next_bank_tick_height > max_bank_tick_height {
@@ -1143,7 +1147,7 @@ fn verify_ticks(
     }
 
     let hashes_per_tick = bank.hashes_per_tick().unwrap_or(0);
-    if !entries.verify_tick_hash_count(tick_hash_count, hashes_per_tick) {
+    if !verify_tick_hash_count(entries, tick_hash_count, hashes_per_tick) {
         warn!(
             "Tick with invalid number of hashes found in slot: {}",
             bank.slot()
@@ -1159,7 +1163,7 @@ fn verify_ticks(
 fn confirm_full_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
-    replay_tx_thread_pool: &ThreadPool,
+    verifier: &Verifier,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
@@ -1175,7 +1179,7 @@ fn confirm_full_slot(
     confirm_slot(
         blockstore,
         bank,
-        replay_tx_thread_pool,
+        verifier,
         &mut confirmation_timing,
         progress,
         skip_verification,
@@ -1514,7 +1518,7 @@ impl ConfirmationProgress {
 pub fn confirm_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
-    replay_tx_thread_pool: &ThreadPool,
+    verifier: &Verifier,
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
     skip_verification: bool,
@@ -1544,7 +1548,7 @@ pub fn confirm_slot(
 
     confirm_slot_entries(
         bank,
-        replay_tx_thread_pool,
+        verifier,
         slot_entries_load_result,
         timing,
         progress,
@@ -1561,7 +1565,7 @@ pub fn confirm_slot(
 #[allow(clippy::too_many_arguments)]
 fn confirm_slot_entries(
     bank: &BankWithScheduler,
-    replay_tx_thread_pool: &ThreadPool,
+    verifier: &Verifier,
     slot_entries_load_result: (Vec<Entry>, u64, bool),
     timing: &mut ConfirmationTiming,
     progress: &mut ConfirmationProgress,
@@ -1646,18 +1650,12 @@ fn confirm_slot_entries(
     }
 
     let last_entry_hash = entries.last().map(|e| e.hash);
-    let verifier = if !skip_verification {
+    let verification_state = if !skip_verification {
         datapoint_debug!("verify-batch-size", ("size", num_entries as i64, i64));
-        let entry_state = entries.start_verify(
+        Some(verifier.verify(
             &progress.last_entry,
-            replay_tx_thread_pool,
-            recyclers.clone(),
-        );
-        if entry_state.status() == EntryVerificationStatus::Failure {
-            warn!("Ledger proof of history failed at slot: {}", slot);
-            return Err(BlockError::InvalidEntryHash.into());
-        }
-        Some(entry_state)
+            entries.iter().map(EntrySignatures::from).collect(),
+        ))
     } else {
         None
     };
@@ -1675,7 +1673,7 @@ fn confirm_slot_entries(
     let transaction_verification_result = entry::start_verify_transactions(
         entries,
         skip_verification,
-        replay_tx_thread_pool,
+        verifier.thread_pool(),
         recyclers.clone(),
         Arc::new(verify_transaction),
     );
@@ -1707,7 +1705,7 @@ fn confirm_slot_entries(
         .collect();
     let process_result = process_entries(
         bank,
-        replay_tx_thread_pool,
+        verifier.thread_pool(),
         replay_entries,
         transaction_status_sender,
         replay_vote_sender,
@@ -1740,9 +1738,9 @@ fn confirm_slot_entries(
         }
     }
 
-    if let Some(mut verifier) = verifier {
-        let verified = verifier.finish_verify(replay_tx_thread_pool);
-        *poh_verify_elapsed += verifier.poh_duration_us();
+    if let Some(verifier) = verification_state {
+        let (verified, elapsed) = verifier.wait();
+        *poh_verify_elapsed += elapsed.as_micros() as u64;
         if !verified {
             warn!("Ledger proof of history failed at slot: {}", bank.slot());
             return Err(BlockError::InvalidEntryHash.into());
@@ -1766,7 +1764,7 @@ fn confirm_slot_entries(
 fn process_bank_0(
     bank0: &BankWithScheduler,
     blockstore: &Blockstore,
-    replay_tx_thread_pool: &ThreadPool,
+    verifier: &Verifier,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
     recyclers: &VerifyRecyclers,
@@ -1777,7 +1775,7 @@ fn process_bank_0(
     confirm_full_slot(
         blockstore,
         bank0,
-        replay_tx_thread_pool,
+        verifier,
         opts,
         recyclers,
         &mut progress,
@@ -1870,7 +1868,7 @@ fn load_frozen_forks(
     bank_forks: &RwLock<BankForks>,
     start_slot_meta: &SlotMeta,
     blockstore: &Blockstore,
-    replay_tx_thread_pool: &ThreadPool,
+    verifier: &Verifier,
     leader_schedule_cache: &LeaderScheduleCache,
     opts: &ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
@@ -1952,7 +1950,7 @@ fn load_frozen_forks(
             if let Err(error) = process_single_slot(
                 blockstore,
                 &bank,
-                replay_tx_thread_pool,
+                verifier,
                 opts,
                 &recyclers,
                 &mut progress,
@@ -2142,7 +2140,7 @@ fn supermajority_root_from_vote_accounts(
 pub fn process_single_slot(
     blockstore: &Blockstore,
     bank: &BankWithScheduler,
-    replay_tx_thread_pool: &ThreadPool,
+    verifier: &Verifier,
     opts: &ProcessOptions,
     recyclers: &VerifyRecyclers,
     progress: &mut ConfirmationProgress,
@@ -2157,7 +2155,7 @@ pub fn process_single_slot(
     confirm_full_slot(
         blockstore,
         bank,
-        replay_tx_thread_pool,
+        verifier,
         opts,
         recyclers,
         progress,
@@ -4229,10 +4227,11 @@ pub mod tests {
         };
         let recyclers = VerifyRecyclers::default();
         let replay_tx_thread_pool = create_thread_pool(1);
+        let verifier = Verifier::new(replay_tx_thread_pool, recyclers.clone());
         process_bank_0(
             &bank0,
             &blockstore,
-            &replay_tx_thread_pool,
+            &verifier,
             &opts,
             None,
             &recyclers,
@@ -4248,7 +4247,7 @@ pub mod tests {
         confirm_full_slot(
             &blockstore,
             &bank1,
-            &replay_tx_thread_pool,
+            &verifier,
             &opts,
             &recyclers,
             &mut ConfirmationProgress::new(bank0_last_blockhash),
@@ -4865,9 +4864,10 @@ pub mod tests {
         prev_entry_hash: Hash,
     ) -> result::Result<(), BlockstoreProcessorError> {
         let replay_tx_thread_pool = create_thread_pool(1);
+        let verifier = Verifier::new(replay_tx_thread_pool, VerifyRecyclers::default());
         confirm_slot_entries(
             &BankWithScheduler::new_without_scheduler(bank.clone()),
-            &replay_tx_thread_pool,
+            &verifier,
             (slot_entries, 0, slot_full),
             &mut ConfirmationTiming::default(),
             &mut ConfirmationProgress::new(prev_entry_hash),
@@ -4924,6 +4924,7 @@ pub mod tests {
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
         let bank = BankWithScheduler::new_without_scheduler(bank);
         let replay_tx_thread_pool = create_thread_pool(1);
+        let verifier = Verifier::new(replay_tx_thread_pool, VerifyRecyclers::default());
         let mut timing = ConfirmationTiming::default();
         let mut progress = ConfirmationProgress::new(genesis_hash);
         let amount = genesis_config.rent.minimum_balance(0);
@@ -4960,7 +4961,7 @@ pub mod tests {
 
         confirm_slot_entries(
             &bank,
-            &replay_tx_thread_pool,
+            &verifier,
             (vec![entry], 0, false),
             &mut timing,
             &mut progress,
@@ -5005,7 +5006,7 @@ pub mod tests {
 
         confirm_slot_entries(
             &bank,
-            &replay_tx_thread_pool,
+            &verifier,
             (vec![entry], 0, false),
             &mut timing,
             &mut progress,

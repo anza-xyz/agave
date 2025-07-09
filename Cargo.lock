@@ -8170,6 +8170,7 @@ dependencies = [
  "crossbeam-channel",
  "dlopen2",
  "log",
+ "qualifier_attr",
  "rand 0.8.5",
  "rayon",
  "serde",

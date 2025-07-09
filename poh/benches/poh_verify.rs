@@ -2,7 +2,7 @@
 extern crate test;
 
 use {
-    solana_entry::entry::{self, next_entry_mut, Entry, EntrySlice},
+    solana_entry::entry::{self, next_entry_mut, Entry, VerifyEntries as _},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_sha256_hasher::hash,
