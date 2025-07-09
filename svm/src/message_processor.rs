@@ -52,23 +52,22 @@ pub(crate) fn process_message(
 
         let mut compute_units_consumed = 0;
         let (result, process_instruction_us) = measure_us!({
-            // TODO: This should return an error.
-            invoke_context
-                .transaction_context
-                .get_next_instruction_context()
-                .map_err(|err| {
-                    TransactionError::InstructionError(top_level_instruction_index as u8, err)
-                })?
-                .configure(program_indices, instruction_accounts, instruction.data);
-
             if invoke_context.is_precompile(program_id) {
                 invoke_context.process_precompile(
                     program_id,
                     instruction.data,
+                    instruction_accounts,
+                    program_indices,
                     message.instructions_iter().map(|ix| ix.data),
                 )
             } else {
-                invoke_context.process_instruction(&mut compute_units_consumed, execute_timings)
+                invoke_context.process_instruction(
+                    instruction.data,
+                    instruction_accounts,
+                    program_indices,
+                    &mut compute_units_consumed,
+                    execute_timings,
+                )
             }
         });
 
