@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::{io, thread, time::Duration};
 use {
     crate::{
         admin_rpc_service,
@@ -7,8 +9,6 @@ use {
     solana_clap_utils::input_validators::{is_parsable, is_valid_percentage},
     std::path::Path,
 };
-#[cfg(target_os = "linux")]
-use {std::io, std::thread, std::time::Duration};
 
 const COMMAND: &str = "exit";
 
