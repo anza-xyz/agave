@@ -54,10 +54,7 @@ use {
         mem,
         ops::DerefMut,
         sync::{
-            atomic::{
-                AtomicU64, AtomicUsize,
-                Ordering::Relaxed,
-            },
+            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
             Arc, Mutex, MutexGuard, OnceLock, Weak,
         },
         thread::{self, sleep, JoinHandle},
