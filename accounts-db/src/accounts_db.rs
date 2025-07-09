@@ -8072,6 +8072,8 @@ impl AccountsDb {
                             pubkey: *account.pubkey,
                             lamports: account.lamports,
                             data_len,
+                            rent_epoch: account.rent_epoch,
+                            executable: account.executable,
                         },
                     };
                     itemizer(info);
