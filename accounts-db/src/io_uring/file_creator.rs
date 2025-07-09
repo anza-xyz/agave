@@ -43,31 +43,31 @@ pub struct IoUringFileCreator<'a, B = LargeBuffer> {
 }
 
 impl<'a> IoUringFileCreator<'a, LargeBuffer> {
-    /// Create a new `IoUringFileCreator` using `wrote_callback` to notify caller when
+    /// Create a new `IoUringFileCreator` using `file_complete` to notify caller when
     /// file contents are already persisted.
     ///
     /// See [IoUringFileCreator::with_buffer] for more information.
     #[allow(dead_code)]
-    pub fn new<F: FnMut(PathBuf) + 'a>(wrote_callback: F) -> Result<Self, (F, io::Error)> {
-        Self::with_capacity(DEFAULT_BUFFER_SIZE, wrote_callback)
+    pub fn new<F: FnMut(PathBuf) + 'a>(file_complete: F) -> io::Result<Self> {
+        Self::with_capacity(DEFAULT_BUFFER_SIZE, file_complete)
     }
 
     /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
     /// `buf_size` and default write size.
     pub fn with_capacity<F: FnMut(PathBuf) + 'a>(
         buf_size: usize,
-        wrote_callback: F,
-    ) -> Result<Self, (F, io::Error)> {
+        file_complete: F,
+    ) -> io::Result<Self> {
         Self::with_buffer(
             LargeBuffer::new(buf_size),
             DEFAULT_WRITE_SIZE,
-            wrote_callback,
+            file_complete,
         )
     }
 }
 
 impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
-    /// Create a new `IoUringFileCreator` using provided `buffer` and `wrote_callback`
+    /// Create a new `IoUringFileCreator` using provided `buffer` and `file_complete`
     /// to notify caller when file contents are already persisted.
     ///
     /// `buffer` is the internal buffer used for writing scheduled file contents.
@@ -76,43 +76,32 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
     pub fn with_buffer<F: FnMut(PathBuf) + 'a>(
         mut buffer: B,
         write_capacity: usize,
-        wrote_callback: F,
-    ) -> Result<Self, (F, io::Error)> {
+        file_complete: F,
+    ) -> io::Result<Self> {
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for writing.
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
-        match IoUring::builder()
-            .setup_coop_taskrun()
-            .build(ring_qsize)
-            .and_then(|ring| {
-                ring.submitter()
-                    .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 0])?;
-                Ok(ring)
-            }) {
-            Ok(ring) => Self::with_buffer_and_ring(ring, buffer, write_capacity, wrote_callback),
-            Err(e) => Err((wrote_callback, e)),
-        }
+        let ring = IoUring::builder().setup_coop_taskrun().build(ring_qsize)?;
+        ring.submitter()
+            .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 0])?;
+        Self::with_buffer_and_ring(ring, buffer, write_capacity, file_complete)
     }
 
     fn with_buffer_and_ring<F: FnMut(PathBuf) + 'a>(
         ring: IoUring,
         mut backing_buffer: B,
         write_capacity: usize,
-        file_complete_callback: F,
-    ) -> Result<Self, (F, io::Error)> {
+        file_complete: F,
+    ) -> io::Result<Self> {
         let buffer = backing_buffer.as_mut();
         assert!(buffer.len() % write_capacity == 0);
 
         // Those are fixed file descriptor slots - OpenAt will active them by index
         let fds = vec![-1; MAX_OPEN_FILES];
-        if let Err(error) = ring.submitter().register_files(&fds) {
-            return Err((file_complete_callback, error));
-        }
+        ring.submitter().register_files(&fds)?;
 
-        let state = match IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, write_capacity) {
-            Ok(buffers) => FileCreatorState::new(buffers.collect(), file_complete_callback),
-            Err(e) => return Err((file_complete_callback, e)),
-        };
+        let buffers = IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, write_capacity)?;
+        let state = FileCreatorState::new(buffers.collect(), file_complete);
 
         Ok(Self {
             ring: Ring::new(ring, state),
@@ -122,16 +111,6 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
 }
 
 impl<B> FileCreator for IoUringFileCreator<'_, B> {
-    fn schedule_create(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        contents: &mut dyn Read,
-    ) -> io::Result<()> {
-        let file_key = self.open(path, mode, None)?;
-        self.write_and_close(contents, file_key)
-    }
-
     fn schedule_create_at_dir(
         &mut self,
         path: PathBuf,
@@ -144,7 +123,7 @@ impl<B> FileCreator for IoUringFileCreator<'_, B> {
     }
 
     fn file_complete(&mut self, path: PathBuf) {
-        (self.ring.context_mut().file_complete_callback)(path)
+        (self.ring.context_mut().file_complete)(path)
     }
 
     fn drain(&mut self) -> io::Result<()> {
@@ -204,7 +183,7 @@ impl<B> IoUringFileCreator<'_, B> {
 
                 state.buffers.push_front(buf);
                 if file.is_completed() {
-                    (state.file_complete_callback)(mem::take(&mut file.path));
+                    (state.file_complete)(mem::take(&mut file.path));
                     self.ring
                         .push(FileCreatorOp::Close(CloseOp::new(file_key)))?;
                 }
@@ -251,7 +230,7 @@ struct FileCreatorState<'a> {
     files: Slab<PendingFile>,
     buffers: VecDeque<IoFixedBuffer>,
     /// Externally provided callback to be called on paths of files that were written
-    file_complete_callback: Box<dyn FnMut(PathBuf) + 'a>,
+    file_complete: Box<dyn FnMut(PathBuf) + 'a>,
     open_fds: usize,
     /// Total write length of submitted writes
     submitted_writes_size: usize,
@@ -266,14 +245,11 @@ struct FileCreatorState<'a> {
 }
 
 impl<'a> FileCreatorState<'a> {
-    fn new(
-        buffers: VecDeque<IoFixedBuffer>,
-        file_complete_callback: impl FnMut(PathBuf) + 'a,
-    ) -> Self {
+    fn new(buffers: VecDeque<IoFixedBuffer>, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
         Self {
             files: Slab::with_capacity(MAX_OPEN_FILES),
             buffers,
-            file_complete_callback: Box::new(file_complete_callback),
+            file_complete: Box::new(file_complete),
             open_fds: 0,
             submitted_writes_size: 0,
             stats_no_buf_count: 0,
@@ -306,7 +282,7 @@ impl<'a> FileCreatorState<'a> {
         let file = &mut self.files[file_key];
         file.writes_completed += 1;
         if file.is_completed() {
-            (self.file_complete_callback)(mem::take(&mut file.path));
+            (self.file_complete)(mem::take(&mut file.path));
             return true;
         }
         false

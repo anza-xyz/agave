@@ -6,10 +6,13 @@ use {
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
     std::{
-        fs::File,
+        fs::{File, OpenOptions},
         io::{self, BufRead, Cursor, Read},
         mem,
-        os::fd::{AsRawFd as _, RawFd},
+        os::{
+            fd::{AsRawFd as _, RawFd},
+            unix::fs::OpenOptionsExt,
+        },
         path::Path,
     },
 };
@@ -100,11 +103,10 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             .map(ReadBufState::Uninit)
             .collect();
 
-        let file = std::os::unix::fs::OpenOptionsExt::custom_flags(
-            std::fs::OpenOptions::new().read(true),
-            libc::O_NOATIME,
-        )
-        .open(path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOATIME)
+            .open(path)?;
 
         let ring = Ring::new(
             ring,
@@ -391,7 +393,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
             completion.push(op);
         } else {
             reader_state.buffers[*reader_buf_index] =
-                ReadBufState::Full(Cursor::new(buf.sub_buf_to(total_read_len)));
+                ReadBufState::Full(Cursor::new(buf.into_shrinked(total_read_len)));
         }
 
         Ok(())

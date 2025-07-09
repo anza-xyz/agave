@@ -1,5 +1,5 @@
 use {
-    crate::file_io::FileCreator,
+    crate::file_io::{file_creator, FileCreator},
     bzip2::bufread::BzDecoder,
     crossbeam_channel::Sender,
     log::*,
@@ -73,9 +73,11 @@ fn checked_total_count_increment(total_count: u64, limit_count: u64) -> Result<u
     Ok(total_count)
 }
 
-fn check_unpack_result(unpack_result: bool, path: String) -> Result<()> {
-    if !unpack_result {
-        return Err(UnpackError::Archive(format!("failed to unpack: {path:?}")));
+fn check_unpack_result(unpack_result: Result<()>, path: String) -> Result<()> {
+    if let Err(err) = unpack_result {
+        return Err(UnpackError::Archive(format!(
+            "failed to unpack {path:?}: {err}"
+        )));
     }
     Ok(())
 }
@@ -107,8 +109,7 @@ where
     let mut total_entries = 0;
     let mut open_dirs = Vec::new();
 
-    let mut files_creator =
-        crate::file_io::file_creator(file_path_processor, UNPACK_WRITE_BUF_SIZE)?;
+    let mut files_creator = file_creator(UNPACK_WRITE_BUF_SIZE, file_path_processor)?;
 
     for entry in archive.entries()? {
         let entry = entry?;
@@ -183,7 +184,7 @@ where
         };
 
         let unpack = unpack_entry(&mut files_creator, entry, entry_path, open_dir);
-        check_unpack_result(unpack.map(|_unpack| true)?, path_str).unwrap();
+        check_unpack_result(unpack, path_str)?;
 
         total_entries += 1;
     }
@@ -200,7 +201,7 @@ fn unpack_entry<'a, R: Read>(
     mut entry: tar::Entry<'_, R>,
     dst: PathBuf,
     dst_open_dir: Arc<File>,
-) -> Result<tar::Unpacked> {
+) -> Result<()> {
     let mode = match entry.header().entry_type() {
         GNUSparse | Regular => 0o644,
         _ => 0o755,
@@ -211,7 +212,7 @@ fn unpack_entry<'a, R: Read>(
         | tar::EntryType::Symlink
         | tar::EntryType::GNULongName
         | tar::EntryType::GNULongLink => {
-            let unpacked = entry.unpack(&dst)?;
+            entry.unpack(&dst)?;
             // Sanitize permissions.
             set_perms(&dst, mode)?;
 
@@ -220,14 +221,14 @@ fn unpack_entry<'a, R: Read>(
                 files_creator.file_complete(dst);
             }
 
-            return Ok(unpacked);
+            return Ok(());
         }
         _ => (),
     }
 
     files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
 
-    return Ok(tar::Unpacked::__Nonexhaustive);
+    return Ok(());
 
     #[cfg(unix)]
     fn set_perms(dst: &Path, mode: u32) -> io::Result<()> {
@@ -795,7 +796,7 @@ mod tests {
     {
         let data = archive.into_inner().unwrap();
         let reader = BufReader::new(&data[..]);
-        let archive: Archive<BufReader<&[u8]>> = Archive::new(reader);
+        let archive = Archive::new(reader);
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         checker(archive, temp_dir.path())?;
@@ -1013,8 +1014,11 @@ mod tests {
 
     #[test]
     fn test_archive_unpack_snapshot_bad_unpack() {
-        let result = check_unpack_result(false, "abc".to_string());
-        assert_matches!(result, Err(UnpackError::Archive(ref message)) if message == "failed to unpack: \"abc\"");
+        let result = check_unpack_result(
+            Err(UnpackError::Io(io::ErrorKind::FileTooLarge.into())),
+            "abc".to_string(),
+        );
+        assert_matches!(result, Err(UnpackError::Archive(ref message)) if message == "failed to unpack \"abc\": IO error: file too large");
     }
 
     #[test]

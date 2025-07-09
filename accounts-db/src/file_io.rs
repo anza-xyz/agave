@@ -1,7 +1,7 @@
 //! File i/o helper functions.
 use std::{
     fs::{File, OpenOptions},
-    io::{self, Write},
+    io::{self, BufWriter, Write},
     ops::Range,
     path::PathBuf,
     sync::Arc,
@@ -91,14 +91,6 @@ pub fn read_into_buffer(
 
 /// An asynchronous queue for file creation.
 pub trait FileCreator {
-    #[allow(unused)]
-    fn schedule_create(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        contents: &mut dyn io::Read,
-    ) -> io::Result<()>;
-
     /// Schedule creating a file at `path` with `mode` permissions and bytes read from `contents`.
     ///
     /// `parent_dir_handle` is assumed to be a parent directory of `path` such that file may be
@@ -119,58 +111,28 @@ pub trait FileCreator {
 }
 
 pub fn file_creator<'a>(
-    wrote_callback: impl FnMut(PathBuf) + 'a,
     buf_size: usize,
+    file_complete: impl FnMut(PathBuf) + 'a,
 ) -> io::Result<Box<dyn FileCreator + 'a>> {
     #[cfg(target_os = "linux")]
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::IoUringFileCreator;
 
-        let io_uring_creator = IoUringFileCreator::with_capacity(buf_size, wrote_callback);
-        match io_uring_creator {
-            Ok(creator) => return Ok(Box::new(creator)),
-            Err((callback, error)) => {
-                log::warn!("unable to create io_uring files creator: {error}");
-                return Ok(Box::new(SyncIoFilesCreator::new(callback, buf_size)));
-            }
-        }
+        let io_uring_creator = IoUringFileCreator::with_capacity(buf_size, file_complete)?;
+        return Ok(Box::new(io_uring_creator));
     }
-    Ok(Box::new(SyncIoFilesCreator::new(wrote_callback, buf_size)))
+    Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
 }
 
-pub struct SyncIoFilesCreator<'a> {
+pub struct SyncIoFileCreator<'a> {
     file_complete: Box<dyn FnMut(PathBuf) + 'a>,
 }
 
-impl<'a> SyncIoFilesCreator<'a> {
-    fn new(callback: impl FnMut(PathBuf) + 'a, _buf_size: usize) -> Self {
+impl<'a> SyncIoFileCreator<'a> {
+    fn new(_buf_size: usize, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
         Self {
-            file_complete: Box::new(callback),
+            file_complete: Box::new(file_complete),
         }
-    }
-
-    fn do_create(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        contents: &mut dyn io::Read,
-    ) -> io::Result<()> {
-        // Open for writing (also allows overwrite) and apply `mode`
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
-
-        let mut file = options.open(&path)?;
-        io::copy(contents, &mut file)?;
-        file.flush()?;
-
-        #[cfg(windows)]
-        set_file_readonly(&path, mode & 0o200 == 0)?;
-
-        self.file_complete(path);
-        Ok(())
     }
 }
 
@@ -181,16 +143,7 @@ pub(super) fn set_file_readonly(path: &std::path::Path, readonly: bool) -> io::R
     std::fs::set_permissions(path, perm)
 }
 
-impl FileCreator for SyncIoFilesCreator<'_> {
-    fn schedule_create(
-        &mut self,
-        path: PathBuf,
-        mode: u32,
-        contents: &mut dyn io::Read,
-    ) -> io::Result<()> {
-        self.do_create(path, mode, contents)
-    }
-
+impl FileCreator for SyncIoFileCreator<'_> {
     fn schedule_create_at_dir(
         &mut self,
         path: PathBuf,
@@ -198,7 +151,22 @@ impl FileCreator for SyncIoFilesCreator<'_> {
         _parent_dir_handle: Arc<File>,
         contents: &mut dyn io::Read,
     ) -> io::Result<()> {
-        self.do_create(path, mode, contents)
+        // Open for writing (also allows overwrite) and apply `mode`
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
+
+        let mut file_buf = BufWriter::new(options.open(&path)?);
+        io::copy(contents, &mut file_buf)?;
+        file_buf.flush()?;
+
+        #[cfg(windows)]
+        set_file_readonly(&path, mode & 0o200 == 0)?;
+
+        self.file_complete(path);
+        Ok(())
     }
 
     fn file_complete(&mut self, path: PathBuf) {
@@ -342,14 +310,17 @@ mod tests {
         let mut callback_invoked_path: Option<PathBuf> = None;
 
         // Instantiate FileCreator
-        let mut creator = file_creator(
-            |path| {
-                callback_invoked_path.replace(path);
-            },
-            2 << 20,
-        )?;
+        let mut creator = file_creator(2 << 20, |path| {
+            callback_invoked_path.replace(path);
+        })?;
 
-        creator.schedule_create(file_path.clone(), 0o644, &mut Cursor::new(contents))?;
+        let dir = Arc::new(File::open(temp_dir.path())?);
+        creator.schedule_create_at_dir(
+            file_path.clone(),
+            0o644,
+            dir,
+            &mut Cursor::new(contents),
+        )?;
         creator.drain()?;
         drop(creator);
 
@@ -360,43 +331,26 @@ mod tests {
     }
 
     #[test]
-    fn test_create_at_dir_writes_contents() -> io::Result<()> {
-        let temp_dir = tempfile::tempdir()?;
-        let file_path = temp_dir.path().join("test.txt");
-        let contents = "Hello, world!";
-        let mut creator = file_creator(|_| {}, 2 << 20)?;
-
-        let dir = Arc::new(File::open(temp_dir.path())?);
-        creator.schedule_create_at_dir(
-            file_path.clone(),
-            0o644,
-            dir,
-            &mut Cursor::new(contents),
-        )?;
-        creator.drain()?;
-
-        assert_eq!(read_file_to_string(&file_path), contents);
-        Ok(())
-    }
-
-    #[test]
     fn test_multiple_file_creations() -> io::Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let mut callback_counter = 0;
 
-        let mut creator = file_creator(
-            |path: PathBuf| {
-                let contents = read_file_to_string(&path);
-                assert!(contents.starts_with("File "));
-                callback_counter += 1;
-            },
-            2 << 20,
-        )?;
+        let mut creator = file_creator(2 << 20, |path: PathBuf| {
+            let contents = read_file_to_string(&path);
+            assert!(contents.starts_with("File "));
+            callback_counter += 1;
+        })?;
 
+        let dir = Arc::new(File::open(temp_dir.path())?);
         for i in 0..5 {
             let file_path = temp_dir.path().join(format!("file_{}.txt", i));
             let data = format!("File {}", i);
-            creator.schedule_create(file_path, 0o600, &mut Cursor::new(data))?;
+            creator.schedule_create_at_dir(
+                file_path,
+                0o600,
+                dir.clone(),
+                &mut Cursor::new(data),
+            )?;
         }
         creator.drain()?;
         drop(creator);
