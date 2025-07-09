@@ -44,7 +44,6 @@ bytemuck = { workspace = true }
 bytemuck_derive = { workspace = true }
 bzip2 = { workspace = true }
 crossbeam-channel = { workspace = true }
-env_logger = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
 indexmap = { workspace = true }
 itertools = { workspace = true }
