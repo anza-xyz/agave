@@ -81,7 +81,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         // Let submission queue hold half of buffers before we explicitly syscall
         // to submit them for writing.
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
-        let ring = IoUring::builder().setup_coop_taskrun().build(ring_qsize)?;
+        let ring = IoUring::builder().build(ring_qsize)?;
         ring.submitter()
             .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 0])?;
         Self::with_buffer_and_ring(ring, buffer, write_capacity, file_complete)
