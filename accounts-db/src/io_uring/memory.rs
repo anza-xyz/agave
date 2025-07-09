@@ -1,6 +1,7 @@
 use {
     io_uring::IoUring,
     std::{
+        io,
         ops::{Deref, DerefMut},
         ptr::{self, NonNull},
         slice,
@@ -50,6 +51,7 @@ impl LargeBuffer {
     /// Allocare memory buffer optimized for io_uring operations, i.e.
     /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
+        adjust_ulimit_memlock(true).unwrap();
         if size > PageAlignedMemory::page_size() {
             if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
                 log::info!("obtained hugetable io_uring buffer (len={size})");
@@ -176,7 +178,7 @@ impl IoFixedBuffer {
         ring: &IoUring,
         buffer: &'a mut [u8],
         chunk_size: usize,
-    ) -> std::io::Result<impl Iterator<Item = Self> + use<'a>> {
+    ) -> io::Result<impl Iterator<Item = Self> + use<'a>> {
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
             .map(|buf| libc::iovec {
@@ -187,8 +189,8 @@ impl IoFixedBuffer {
         unsafe { ring.submitter().register_buffers(&iovecs)? };
 
         if buffer.len() / FIXED_BUFFER_LEN > u16::MAX as usize {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::QuotaExceeded,
+            return Err(io::Error::new(
+                io::ErrorKind::QuotaExceeded,
                 "buffer too large to register in io_uring",
             ));
         }
@@ -223,4 +225,50 @@ impl AsMut<[u8]> for IoFixedBuffer {
     fn as_mut(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.size) }
     }
+}
+
+pub fn adjust_ulimit_memlock(enforce_ulimit_memlock: bool) -> io::Result<()> {
+    let desired_memlock = 2_000_000_000;
+
+    fn get_memlock() -> libc::rlimit {
+        let mut memlock = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut memlock) } != 0 {
+            log::warn!("getrlimit(RLIMIT_MEMLOCK) failed");
+        }
+        memlock
+    }
+
+    let mut memlock = get_memlock();
+    let current = memlock.rlim_cur;
+    if current < desired_memlock {
+        memlock.rlim_cur = desired_memlock;
+        if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
+            log::error!(
+                "Unable to increase the maximum memory lock limit to {} from {}",
+                memlock.rlim_cur,
+                current,
+            );
+
+            if cfg!(target_os = "macos") {
+                log::error!(
+                    "On mac OS you may need to run |sudo launchctl limit maxfiles {} {}| first",
+                    desired_memlock,
+                    desired_memlock,
+                );
+            }
+            if enforce_ulimit_memlock {
+                return Err(io::Error::new(
+                    io::ErrorKind::OutOfMemory,
+                    "unable to set memory lock limit",
+                ));
+            }
+        }
+
+        memlock = get_memlock();
+    }
+    log::info!("Maximum memory lock limit: {}", memlock.rlim_cur);
+    Ok(())
 }
