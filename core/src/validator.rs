@@ -16,7 +16,7 @@ use {
         repair::{
             self,
             quic_endpoint::{RepairQuicAsyncSenders, RepairQuicSenders, RepairQuicSockets},
-            serve_repair::ServeRepair,
+            repair_handler::RepairHandlerType,
             serve_repair_service::ServeRepairService,
         },
         sample_performance_service::SamplePerformanceService,
@@ -293,6 +293,7 @@ pub struct ValidatorConfig {
     pub delay_leader_block_for_pending_fork: bool,
     pub use_tpu_client_next: bool,
     pub retransmit_xdp: Option<XdpConfig>,
+    pub repair_handler_type: RepairHandlerType,
 }
 
 impl Default for ValidatorConfig {
@@ -368,6 +369,7 @@ impl Default for ValidatorConfig {
             delay_leader_block_for_pending_fork: false,
             use_tpu_client_next: true,
             retransmit_xdp: None,
+            repair_handler_type: RepairHandlerType::default(),
         }
     }
 }
@@ -1326,7 +1328,8 @@ impl Validator {
             Some(stats_reporter_sender.clone()),
             exit.clone(),
         );
-        let serve_repair = ServeRepair::new(
+        let serve_repair = config.repair_handler_type.create_serve_repair(
+            blockstore.clone(),
             cluster_info.clone(),
             bank_forks.clone(),
             config.repair_whitelist.clone(),
@@ -1455,7 +1458,6 @@ impl Validator {
             repair_request_quic_sender,
             repair_request_quic_receiver,
             repair_quic_async_senders.repair_response_quic_sender,
-            blockstore.clone(),
             node.sockets.serve_repair,
             socket_addr_space,
             stats_reporter_sender,
