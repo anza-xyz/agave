@@ -5153,7 +5153,6 @@ mod tests {
 
         // Re-take a brand-new one only after solScCleaner did its job...
         sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
-
         let scheduler = pool.do_take_scheduler(context);
         scheduler.unpause_after_taken();
         let respawned_new_scheduler_id = scheduler.id();
