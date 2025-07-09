@@ -1321,7 +1321,7 @@ mod test {
         solana_packet::PACKET_DATA_SIZE,
         solana_signer::Signer,
         std::{cmp::Ordering, collections::HashMap, iter::repeat_with},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     // Total size of a data shred including headers and merkle proof.
@@ -1623,22 +1623,11 @@ mod test {
         }
     }
 
-    #[test_case(0, false, false)]
-    #[test_case(0, false, true)]
-    #[test_case(0, true, false)]
-    #[test_case(0, true, true)]
-    #[test_case(15600, false, false)]
-    #[test_case(15600, false, true)]
-    #[test_case(15600, true, false)]
-    #[test_case(15600, true, true)]
-    #[test_case(31200, false, false)]
-    #[test_case(31200, false, true)]
-    #[test_case(31200, true, false)]
-    #[test_case(31200, true, true)]
-    #[test_case(46800, false, false)]
-    #[test_case(46800, false, true)]
-    #[test_case(46800, true, false)]
-    #[test_case(46800, true, true)]
+    #[test_matrix(
+        [0, 15600, 31200, 46800],
+        [true, false],
+        [true, false]
+    )]
     fn test_make_shreds_from_data(data_size: usize, chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let data_size = data_size.saturating_sub(16);
@@ -1654,10 +1643,10 @@ mod test {
         }
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_make_shreds_from_data_rand(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let reed_solomon_cache = ReedSolomonCache::default();
@@ -1674,10 +1663,10 @@ mod test {
     }
 
     #[ignore]
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_make_shreds_from_data_paranoid(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let reed_solomon_cache = ReedSolomonCache::default();

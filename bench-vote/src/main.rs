@@ -9,12 +9,18 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,
-    solana_net_utils::{bind_to_unspecified, SocketConfig},
+    solana_net_utils::{
+        bind_to_unspecified,
+        sockets::{multi_bind_in_range_with_config, SocketConfiguration as SocketConfig},
+    },
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_streamer::{
         packet::PacketBatchRecycler,
-        quic::{spawn_server_multi, QuicServerParams},
+        quic::{
+            spawn_server_multi, QuicServerParams, DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER,
+            DEFAULT_MAX_STAKED_CONNECTIONS,
+        },
         streamer::{receiver, PacketBatchReceiver, StakedNodes, StreamerReceiveStats},
     },
     solana_transaction::Transaction,
@@ -31,6 +37,10 @@ use {
         time::{Duration, Instant, SystemTime},
     },
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 const SINK_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SINK_RECEIVE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -90,6 +100,34 @@ fn main() -> Result<()> {
                 .help("Use this many producer threads."),
         )
         .arg(
+            Arg::with_name("max-connections")
+                .long("max-connections")
+                .value_name("NUM")
+                .takes_value(true)
+                .help("Maximum concurrent client connections allowed on the server side."),
+        )
+        .arg(
+            Arg::with_name("max-connections-per-peer")
+                .long("max-connections-per-peer")
+                .value_name("NUM")
+                .takes_value(true)
+                .help("Maximum concurrent client connections per peer allowed on the server side."),
+        )
+        .arg(
+            Arg::with_name("max-connections-per-ipaddr-per-min")
+                .long("max-connections-per-ipaddr-per-min")
+                .value_name("NUM")
+                .takes_value(true)
+                .help("Maximum client connections per ipaddr per minute allowed on the server side."),
+        )
+        .arg(
+            Arg::with_name("connection-pool-size")
+                .long("connection-pool-size")
+                .value_name("NUM")
+                .takes_value(true)
+                .help("Maximum concurrent client connections on the client side."),
+        )
+        .arg(
             Arg::with_name("server-only")
                 .long("server-only")
                 .takes_value(false)
@@ -142,6 +180,16 @@ fn main() -> Result<()> {
 
     let vote_use_quic = value_t_or_exit!(matches, "use-quic", bool);
     let num_producers: u64 = value_t!(matches, "num-producers", u64).unwrap_or(4);
+
+    let max_connections: usize =
+        value_t!(matches, "max-connections", usize).unwrap_or(DEFAULT_MAX_STAKED_CONNECTIONS);
+    let max_connections_per_peer: usize = value_t!(matches, "max-connections-per-peer", usize)
+        .unwrap_or(DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER);
+    let max_connections_per_ipaddr_per_min: usize =
+        value_t!(matches, "max-connections-per-ipaddr-per-min", usize).unwrap_or(1024); // Default value for max connections per ipaddr per minute
+    let connection_pool_size: usize =
+        value_t!(matches, "connection-pool-size", usize).unwrap_or(256);
+
     let use_connection_cache = matches.is_present("use-connection-cache");
     let server_only = matches.is_present("server-only");
     let client_only = matches.is_present("client-only");
@@ -177,7 +225,8 @@ fn main() -> Result<()> {
 
         QuicParams {
             identity_keypair,
-            staked_nodes
+            staked_nodes,
+            connection_pool_size
         }
     });
 
@@ -187,8 +236,8 @@ fn main() -> Result<()> {
         let mut read_channels = Vec::new();
         let mut read_threads = Vec::new();
         let recycler = PacketBatchRecycler::default();
-        let config = SocketConfig::default().reuseport(true);
-        let (port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
+        let config = SocketConfig::default();
+        let (port, read_sockets) = multi_bind_in_range_with_config(
             ip_addr,
             (port, port + num_sockets as u16),
             config,
@@ -199,8 +248,12 @@ fn main() -> Result<()> {
 
         if let Some(quic_params) = &quic_params {
             let quic_server_params = QuicServerParams {
-                max_connections_per_ipaddr_per_min: 1024,
-                max_connections_per_peer: 1024,
+                max_connections_per_ipaddr_per_min: max_connections_per_ipaddr_per_min
+                    .try_into()
+                    .unwrap(),
+                max_connections_per_peer,
+                max_staked_connections: max_connections,
+                max_unstaked_connections: 0,
                 ..Default::default()
             };
             let (s_reader, r_reader) = unbounded();
@@ -313,6 +366,7 @@ enum Transporter {
 struct QuicParams {
     identity_keypair: Keypair,
     staked_nodes: Arc<RwLock<StakedNodes>>,
+    connection_pool_size: usize,
 }
 
 fn producer(
@@ -327,7 +381,7 @@ fn producer(
         if let Some(quic_params) = &quic_params {
             Transporter::Cache(Arc::new(ConnectionCache::new_with_client_options(
                 "connection_cache_vote_quic",
-                256,  // connection_pool_size
+                quic_params.connection_pool_size,
                 None, // client_endpoint
                 Some((
                     &quic_params.identity_keypair,

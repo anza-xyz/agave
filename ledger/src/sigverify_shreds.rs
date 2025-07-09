@@ -544,7 +544,7 @@ mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         std::iter::{once, repeat_with},
-        test_case::test_case,
+        test_case::test_matrix,
     };
 
     fn run_test_sigverify_shred_cpu(slot: Slot) {
@@ -815,10 +815,10 @@ mod tests {
         packets
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_verify_shreds_fuzz(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
@@ -867,10 +867,10 @@ mod tests {
         );
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_sign_shreds_gpu(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));

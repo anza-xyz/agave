@@ -51,6 +51,9 @@ solana-sha256-hasher = { workspace = true }
 solana-signer = { workspace = true }
 solana-system-transaction = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
+
 [[bench]]
 name = "poh"
 

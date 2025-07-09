@@ -338,7 +338,7 @@ impl SnapshotRequestHandler {
                         use_bg_thread_pool: true,
                         ancestors: None,
                         epoch_schedule: snapshot_root_bank.epoch_schedule(),
-                        rent_collector: snapshot_root_bank.rent_collector(),
+                        epoch: snapshot_root_bank.epoch(),
                         store_detailed_debug_info_on_failure: false,
                     },
                 );

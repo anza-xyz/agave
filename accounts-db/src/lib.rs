@@ -41,7 +41,6 @@ pub mod read_only_accounts_cache;
 #[cfg(not(feature = "dev-context-only-utils"))]
 mod read_only_accounts_cache;
 mod rolling_bit_field;
-pub mod shared_buffer_reader;
 pub mod sorted_storages;
 pub mod stake_rewards;
 pub mod storable_accounts;
@@ -50,6 +49,7 @@ pub mod utils;
 mod verify_accounts_hash_in_background;
 pub mod waitable_condvar;
 
+pub use buffered_reader::large_file_buf_reader;
 // the accounts-hash-cache-tool needs access to these types
 pub use {
     accounts_hash::CalculateHashIntermediate as CacheHashDataFileEntry,

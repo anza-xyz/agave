@@ -24,10 +24,10 @@ use {
         snapshot_utils,
     },
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{atomic_udp_socket::AtomicUdpSocket, socket::SocketAddrSpace},
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
-        net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
+        net::{SocketAddr, TcpListener, TcpStream},
         path::Path,
         process::exit,
         sync::{
@@ -77,7 +77,9 @@ fn verify_reachable_ports(
             .map(|addr| socket_addr_space.check(addr))
             .unwrap_or_default()
     };
-    let mut udp_sockets = vec![&node.sockets.gossip, &node.sockets.repair];
+
+    let gossip_socket = node.sockets.gossip.load();
+    let mut udp_sockets = vec![&gossip_socket, &node.sockets.repair];
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
@@ -141,7 +143,7 @@ fn start_gossip_node(
     cluster_entrypoints: &[ContactInfo],
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_socket: UdpSocket,
+    gossip_socket: AtomicUdpSocket,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
@@ -611,7 +613,7 @@ pub fn rpc_bootstrap(
                     .info
                     .gossip()
                     .expect("Operator must spin up node with valid gossip address"),
-                node.sockets.gossip.try_clone().unwrap(),
+                node.sockets.gossip.clone(),
                 validator_config
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),

@@ -203,9 +203,7 @@ impl LastFECSetCheckResults {
         &self,
         feature_set: &FeatureSet,
     ) -> std::result::Result<Option<Hash>, BlockstoreProcessorError> {
-        if feature_set.is_active(&agave_feature_set::vote_only_full_fec_sets::id())
-            && self.last_fec_set_merkle_root.is_none()
-        {
+        if self.last_fec_set_merkle_root.is_none() {
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         } else if feature_set
             .is_active(&agave_feature_set::vote_only_retransmitter_signed_fec_sets::id())
@@ -3787,10 +3785,7 @@ impl Blockstore {
                 "Unable to check the last fec set for slot {slot} {bank_hash}, \
                  marking as dead: {results:?}",
             );
-            if feature_set.is_active(&agave_feature_set::vote_only_full_fec_sets::id()) {
-                return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
-            }
-            return Ok(None);
+            return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         };
         // Update metrics
         if results.last_fec_set_merkle_root.is_none() {
@@ -4123,14 +4118,6 @@ impl Blockstore {
     /// Returns the max root or 0 if it does not exist
     pub fn max_root(&self) -> Slot {
         self.max_root.load(Ordering::Relaxed)
-    }
-
-    #[deprecated(
-        since = "1.18.0",
-        note = "Please use `solana_ledger::blockstore::Blockstore::max_root()` instead"
-    )]
-    pub fn last_root(&self) -> Slot {
-        self.max_root()
     }
 
     // find the first available slot in blockstore that has some data in it
@@ -5355,7 +5342,6 @@ pub mod tests {
             leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule},
             shred::{max_ticks_per_n_shreds, ShredFlags, LEGACY_SHRED_DATA_CAPACITY},
         },
-        agave_feature_set::{vote_only_full_fec_sets, vote_only_retransmitter_signed_fec_sets},
         assert_matches::assert_matches,
         bincode::{serialize, Options},
         crossbeam_channel::unbounded,
@@ -11867,11 +11853,7 @@ pub mod tests {
     #[test]
     fn test_last_fec_set_check_results() {
         let enabled_feature_set = FeatureSet::all_enabled();
-        let disabled_feature_set = FeatureSet::default();
-        let mut full_only = FeatureSet::default();
-        full_only.activate(&vote_only_full_fec_sets::id(), 0);
-        let mut retransmitter_only = FeatureSet::default();
-        retransmitter_only.activate(&vote_only_retransmitter_signed_fec_sets::id(), 0);
+        let full_only = FeatureSet::default();
 
         let results = LastFECSetCheckResults {
             last_fec_set_merkle_root: None,
@@ -11885,14 +11867,6 @@ pub mod tests {
             results.get_last_fec_set_merkle_root(&full_only),
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&retransmitter_only),
-            Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
-        );
-        assert!(results
-            .get_last_fec_set_merkle_root(&disabled_feature_set)
-            .unwrap()
-            .is_none());
 
         let block_id = Hash::new_unique();
         let results = LastFECSetCheckResults {
@@ -11907,16 +11881,6 @@ pub mod tests {
             results.get_last_fec_set_merkle_root(&full_only).unwrap(),
             Some(block_id)
         );
-        assert_matches!(
-            results.get_last_fec_set_merkle_root(&retransmitter_only),
-            Err(BlockstoreProcessorError::InvalidRetransmitterSignatureFinalFecSet)
-        );
-        assert_eq!(
-            results
-                .get_last_fec_set_merkle_root(&disabled_feature_set)
-                .unwrap(),
-            Some(block_id)
-        );
 
         let results = LastFECSetCheckResults {
             last_fec_set_merkle_root: None,
@@ -11930,26 +11894,13 @@ pub mod tests {
             results.get_last_fec_set_merkle_root(&full_only),
             Err(BlockstoreProcessorError::IncompleteFinalFecSet)
         );
-        assert!(results
-            .get_last_fec_set_merkle_root(&retransmitter_only)
-            .unwrap()
-            .is_none());
-        assert!(results
-            .get_last_fec_set_merkle_root(&disabled_feature_set)
-            .unwrap()
-            .is_none());
 
         let block_id = Hash::new_unique();
         let results = LastFECSetCheckResults {
             last_fec_set_merkle_root: Some(block_id),
             is_retransmitter_signed: true,
         };
-        for feature_set in [
-            enabled_feature_set,
-            disabled_feature_set,
-            full_only,
-            retransmitter_only,
-        ] {
+        for feature_set in [enabled_feature_set, full_only] {
             assert_eq!(
                 results.get_last_fec_set_merkle_root(&feature_set).unwrap(),
                 Some(block_id)

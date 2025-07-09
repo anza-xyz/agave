@@ -3,18 +3,12 @@
 
 use {
     crate::svm_rent_collector::SVMRentCollector,
-    solana_account::AccountSharedData,
     solana_clock::Epoch,
-    solana_pubkey::Pubkey,
     solana_rent::{Rent, RentDue},
-    solana_rent_collector::{CollectedInfo, RentCollector},
+    solana_rent_collector::RentCollector,
 };
 
 impl SVMRentCollector for RentCollector {
-    fn collect_rent(&self, address: &Pubkey, account: &mut AccountSharedData) -> CollectedInfo {
-        self.collect_from_existing_account(address, account)
-    }
-
     fn get_rent(&self) -> &Rent {
         &self.rent
     }
@@ -29,7 +23,7 @@ mod tests {
     use {
         super::*,
         crate::rent_state::RentState,
-        solana_account::ReadableAccount,
+        solana_account::{AccountSharedData, ReadableAccount},
         solana_clock::Epoch,
         solana_epoch_schedule::EpochSchedule,
         solana_pubkey::Pubkey,

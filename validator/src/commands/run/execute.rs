@@ -3,6 +3,7 @@ use {
         admin_rpc_service::{self, load_staked_nodes_overrides, StakedNodesOverrides},
         bootstrap,
         cli::{self},
+        commands::{run::args::RunArgs, FromClapArgMatches},
         ledger_lockfile, lock_ledger,
     },
     clap::{crate_name, value_t, value_t_or_exit, values_t, values_t_or_exit, ArgMatches},
@@ -37,7 +38,7 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{Node, NodeConfig},
+        cluster_info::{BindIpAddrs, Node, NodeConfig},
         contact_info::ContactInfo,
     },
     solana_hash::Hash,
@@ -99,6 +100,8 @@ pub fn execute(
     ledger_path: &Path,
     operation: Operation,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let run_args = RunArgs::from_clap_arg_match(matches)?;
+
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
@@ -110,31 +113,22 @@ pub fn execute(
         replay_transactions_threads,
         rocksdb_compaction_threads,
         rocksdb_flush_threads,
+        tpu_transaction_forward_receive_threads,
+        tpu_transaction_receive_threads,
+        tpu_vote_transaction_receive_threads,
         tvu_receive_threads,
         tvu_retransmit_threads,
         tvu_sigverify_threads,
     } = cli::thread_args::parse_num_threads_args(matches);
 
-    let identity_keypair = keypair_of(matches, "identity").unwrap_or_else(|| {
-        clap::Error::with_description(
-            "The --identity <KEYPAIR> argument is required",
-            clap::ErrorKind::ArgumentNotFound,
-        )
-        .exit();
-    });
+    let identity_keypair = Arc::new(run_args.identity_keypair);
 
-    let logfile = {
-        let logfile = matches
-            .value_of("logfile")
-            .map(|s| s.into())
-            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
-
-        if logfile == "-" {
-            None
-        } else {
-            println!("log file: {logfile}");
-            Some(logfile)
-        }
+    let logfile = run_args.logfile;
+    let logfile = if logfile == "-" {
+        None
+    } else {
+        println!("log file: {logfile}");
+        Some(logfile)
     };
     let use_progress_bar = logfile.is_none();
     let _logger_thread = redirect_stderr_to_file(logfile);
@@ -302,15 +296,22 @@ pub fn execute(
         "--gossip-validator",
     )?;
 
-    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
-        .expect("invalid bind_address");
+    let bind_addresses = {
+        let parsed = matches
+            .values_of("bind_address")
+            .expect("bind_address should always be present due to default")
+            .map(solana_net_utils::parse_host)
+            .collect::<Result<Vec<_>, _>>()?;
+        BindIpAddrs::new(parsed).map_err(|err| format!("invalid bind_addresses: {err}"))?
+    };
+
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
     } else if private_rpc {
         solana_net_utils::parse_host("127.0.0.1").unwrap()
     } else {
-        bind_address
+        bind_addresses.primary()
     };
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
@@ -365,7 +366,7 @@ pub fn execute(
     // version can then be deleted from gossip and get_rpc_node above.
     let expected_shred_version = value_t!(matches, "expected_shred_version", u16)
         .ok()
-        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_address));
+        .or_else(|| get_cluster_shred_version(&entrypoint_addrs, bind_addresses.primary()));
 
     let tower_path = value_t!(matches, "tower", PathBuf)
         .ok()
@@ -494,7 +495,6 @@ pub fn execute(
         )
         .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
-        test_skip_rewrites_but_include_in_bank_hash: false,
         storage_access,
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: !matches
@@ -1003,6 +1003,17 @@ pub fn execute(
         "block_verification_method",
         BlockVerificationMethod
     );
+    match validator_config.block_verification_method {
+        BlockVerificationMethod::BlockstoreProcessor => {
+            warn!(
+                "The value \"blockstore-processor\" for --block-verification-method has been \
+                deprecated. The value \"blockstore-processor\" is still allowed for now, but \
+                is planned for removal in the near future. To update, either set the value \
+                \"unified-scheduler\" or remove the --block-verification-method argument"
+            );
+        }
+        BlockVerificationMethod::UnifiedScheduler => {}
+    }
     validator_config.block_production_method = value_t_or_exit!(
         matches, // comment to align formatting...
         "block_production_method",
@@ -1092,8 +1103,9 @@ pub fn execute(
 
     let advertised_ip = if let Some(ip) = gossip_host {
         ip
-    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
-        bind_address
+    } else if !bind_addresses.primary().is_unspecified() && !bind_addresses.primary().is_loopback()
+    {
+        bind_addresses.primary()
     } else if !entrypoint_addrs.is_empty() {
         let mut order: Vec<_> = (0..entrypoint_addrs.len()).collect();
         order.shuffle(&mut thread_rng());
@@ -1106,24 +1118,26 @@ pub fn execute(
                     "Contacting {} to determine the validator's public IP address",
                     entrypoint_addr
                 );
-                solana_net_utils::get_public_ip_addr_with_binding(entrypoint_addr, bind_address)
-                    .map_or_else(
-                        |err| {
-                            warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-                            None
-                        },
-                        Some,
-                    )
+                solana_net_utils::get_public_ip_addr_with_binding(
+                    entrypoint_addr,
+                    bind_addresses.primary(),
+                )
+                .map_or_else(
+                    |err| {
+                        warn!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
+                        None
+                    },
+                    Some,
+                )
             })
             .ok_or_else(|| "unable to determine the validator's public IP address".to_string())?
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     };
     let gossip_port = value_t!(matches, "gossip_port", u16).or_else(|_| {
-        solana_net_utils::find_available_port_in_range(bind_address, (0, 1))
+        solana_net_utils::find_available_port_in_range(bind_addresses.primary(), (0, 1))
             .map_err(|err| format!("unable to find an available gossip port: {err}"))
     })?;
-    let gossip_addr = SocketAddr::new(advertised_ip, gossip_port);
 
     let public_tpu_addr = matches
         .value_of("public_tpu_addr")
@@ -1141,6 +1155,19 @@ pub fn execute(
         })
         .transpose()?;
 
+    let tpu_vortexor_receiver_address =
+        matches
+            .value_of("tpu_vortexor_receiver_address")
+            .map(|tpu_vortexor_receiver_address| {
+                solana_net_utils::parse_host_port(tpu_vortexor_receiver_address).unwrap_or_else(
+                    |err| {
+                        eprintln!("Failed to parse --tpu-vortexor-receiver-address: {err}");
+                        exit(1);
+                    },
+                )
+            });
+
+    info!("tpu_vortexor_receiver_address is {tpu_vortexor_receiver_address:?}");
     let num_quic_endpoints = value_t_or_exit!(matches, "num_quic_endpoints", NonZeroUsize);
 
     let tpu_max_connections_per_peer =
@@ -1159,14 +1186,16 @@ pub fn execute(
     let max_streams_per_ms = value_t_or_exit!(matches, "tpu_max_streams_per_ms", u64);
 
     let node_config = NodeConfig {
-        gossip_addr,
+        advertised_ip,
+        gossip_port,
         port_range: dynamic_port_range,
-        bind_ip_addr: bind_address,
+        bind_ip_addrs: bind_addresses,
         public_tpu_addr,
         public_tpu_forwards_addr,
         num_tvu_receive_sockets: tvu_receive_threads,
         num_tvu_retransmit_sockets: tvu_retransmit_threads,
         num_quic_endpoints,
+        vortexor_receiver_addr: tpu_vortexor_receiver_address,
     };
 
     let cluster_entrypoints = entrypoint_addrs
@@ -1222,8 +1251,6 @@ pub fn execute(
     snapshot_utils::remove_tmp_snapshot_archives(&full_snapshot_archives_dir);
     snapshot_utils::remove_tmp_snapshot_archives(&incremental_snapshot_archives_dir);
 
-    let identity_keypair = Arc::new(identity_keypair);
-
     let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
         bootstrap::rpc_bootstrap(
@@ -1268,6 +1295,7 @@ pub fn execute(
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
+        num_threads: tpu_transaction_receive_threads,
         ..Default::default()
     };
 
@@ -1278,6 +1306,7 @@ pub fn execute(
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min: tpu_max_connections_per_ipaddr_per_minute,
         coalesce: tpu_coalesce,
+        num_threads: tpu_transaction_forward_receive_threads,
         ..Default::default()
     };
 
@@ -1286,6 +1315,7 @@ pub fn execute(
     let mut vote_quic_server_config = tpu_fwd_quic_server_config.clone();
     vote_quic_server_config.max_connections_per_peer = 1;
     vote_quic_server_config.max_unstaked_connections = 0;
+    vote_quic_server_config.num_threads = tpu_vote_transaction_receive_threads;
 
     let validator = match Validator::new(
         node,

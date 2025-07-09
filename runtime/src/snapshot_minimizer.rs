@@ -128,7 +128,7 @@ impl<'a> SnapshotMinimizer<'a> {
     }
 
     /// Used to get rent collection accounts in `minimize`
-    /// Add all pubkeys we would collect rent from or rewrite to `minimized_account_set`.
+    /// Add all pubkeys we would collect rent from to `minimized_account_set`.
     /// related to Bank::rent_collection_partitions
     fn get_rent_collection_accounts(&self) {
         let partitions = if !self.bank.use_fixed_collection_cycle() {
@@ -659,9 +659,12 @@ mod tests {
 
         let mut account_count = 0;
         snapshot_storages.into_iter().for_each(|storage| {
-            storage.accounts.scan_pubkeys(|_| {
-                account_count += 1;
-            });
+            storage
+                .accounts
+                .scan_pubkeys(|_| {
+                    account_count += 1;
+                })
+                .expect("must scan accounts storage");
         });
 
         assert_eq!(

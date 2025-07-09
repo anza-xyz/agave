@@ -18,9 +18,9 @@ use {
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
+    solana_clock::Epoch,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
         collections::{HashMap, HashSet},
@@ -30,6 +30,10 @@ use {
     },
     test::Bencher,
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
     AccountsDb::new_with_config(
@@ -64,7 +68,7 @@ fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
                     ancestors: &ancestors,
                     test_hash_calculation: false,
                     epoch_schedule: &EpochSchedule::default(),
-                    rent_collector: &RentCollector::default(),
+                    epoch: Epoch::default(),
                     ignore_mismatch: false,
                     store_detailed_debug_info: false,
                     use_bg_thread_pool: false,

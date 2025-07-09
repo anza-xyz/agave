@@ -742,7 +742,7 @@ fn process_instruction<'a>(
                 &create_instruction(
                     *invoked_program_id,
                     &[
-                        (accounts[ARGUMENT_INDEX].key, true, false),
+                        (accounts[ARGUMENT_INDEX].key, false, false),
                         (invoked_program_id, false, false),
                     ],
                     vec![RETURN_OK],

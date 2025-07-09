@@ -8,12 +8,11 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     log::*,
     rayon::prelude::*,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_hash::{Hash, HASH_BYTES},
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_sha256_hasher::Hasher,
     solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
@@ -97,9 +96,10 @@ pub struct CalcAccountsHashConfig<'a> {
     /// does hash calc need to consider account data that exists in the write cache?
     /// if so, 'ancestors' will be used for this purpose as well as storages.
     pub epoch_schedule: &'a EpochSchedule,
-    pub rent_collector: &'a RentCollector,
     /// used for tracking down hash mismatches after the fact
     pub store_detailed_debug_info_on_failure: bool,
+    /// used to calculate the number of slots in the given epoch
+    pub epoch: Epoch,
 }
 
 // smallest, 3 quartiles, largest, average

@@ -65,7 +65,6 @@ solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
-solana-rent-debits = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }
@@ -75,7 +74,7 @@ solana-svm-transaction = { workspace = true }
 solana-system-interface = { workspace = true }
 solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
-solana-transaction-context = { workspace = true, features = ["debug-signature"] }
+solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
 spl-generic-token = { workspace = true }
@@ -105,12 +104,12 @@ solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-pubkey = { workspace = true, features = [ "rand" ] }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
-solana-signature = { workspace = true, features = [ "rand" ] }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }

@@ -7,6 +7,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 const N: usize = 1_000_000;
 
 // test bench_reset1 ... bench:     436,240 ns/iter (+/- 176,714)

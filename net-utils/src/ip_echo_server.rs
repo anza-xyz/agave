@@ -111,7 +111,9 @@ async fn process_connection(
         Ok(udp_socket) => {
             for udp_port in &msg.udp_ports {
                 if *udp_port != 0 {
-                    match udp_socket.send_to(&[0], SocketAddr::from((peer_addr.ip(), *udp_port))) {
+                    let result =
+                        udp_socket.send_to(&[0], SocketAddr::from((peer_addr.ip(), *udp_port)));
+                    match result {
                         Ok(_) => debug!("Successful send_to udp/{}", udp_port),
                         Err(err) => info!("Failed to send_to udp/{}: {}", udp_port, err),
                     }
@@ -156,7 +158,8 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
         TcpListener::from_std(tcp_listener).expect("Failed to convert std::TcpListener");
 
     loop {
-        match tcp_listener.accept().await {
+        let connection = tcp_listener.accept().await;
+        match connection {
             Ok((socket, peer_addr)) => {
                 runtime::Handle::current().spawn(async move {
                     if let Err(err) = process_connection(socket, peer_addr, shred_version).await {

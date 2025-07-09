@@ -202,8 +202,8 @@ impl BlockProductionMethod {
 #[derive(Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum TransactionStructure {
-    #[default]
     Sdk,
+    #[default]
     View,
 }
 
@@ -766,25 +766,23 @@ impl Validator {
                 .register_exit(Box::new(move || cancel_tpu_client_next.cancel()));
         }
 
-        let accounts_update_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_accounts_update_notifier());
-
-        let transaction_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_transaction_notifier());
-
-        let entry_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_entry_notifier());
-
-        let block_metadata_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_block_metadata_notifier());
-
-        let slot_status_notifier = geyser_plugin_service
-            .as_ref()
-            .and_then(|geyser_plugin_service| geyser_plugin_service.get_slot_status_notifier());
+        let (
+            accounts_update_notifier,
+            transaction_notifier,
+            entry_notifier,
+            block_metadata_notifier,
+            slot_status_notifier,
+        ) = if let Some(service) = &geyser_plugin_service {
+            (
+                service.get_accounts_update_notifier(),
+                service.get_transaction_notifier(),
+                service.get_entry_notifier(),
+                service.get_block_metadata_notifier(),
+                service.get_slot_status_notifier(),
+            )
+        } else {
+            (None, None, None, None, None)
+        };
 
         info!(
             "Geyser plugin: accounts_update_notifier: {}, transaction_notifier: {}, \
@@ -958,7 +956,7 @@ impl Validator {
 
         let leader_schedule_cache = Arc::new(leader_schedule_cache);
         let startup_verification_complete;
-        let (poh_recorder, entry_receiver) = {
+        let (mut poh_recorder, entry_receiver) = {
             let bank = &bank_forks.read().unwrap().working_bank();
             startup_verification_complete = Arc::clone(bank.get_startup_verification_complete());
             PohRecorder::new_with_clear_signal(
@@ -975,6 +973,9 @@ impl Validator {
                 exit.clone(),
             )
         };
+        if transaction_status_sender.is_some() {
+            poh_recorder.track_transaction_indexes();
+        }
         let (record_sender, record_receiver) = unbounded();
         let transaction_recorder =
             TransactionRecorder::new(record_sender, poh_recorder.is_exited.clone());
@@ -1357,7 +1358,7 @@ impl Validator {
         let gossip_service = GossipService::new(
             &cluster_info,
             Some(bank_forks.clone()),
-            node.sockets.gossip,
+            node.sockets.gossip.clone(),
             config.gossip_validators.clone(),
             should_check_duplicate_instance,
             Some(stats_reporter_sender.clone()),
@@ -1649,6 +1650,7 @@ impl Validator {
                 transactions_forwards_quic: node.sockets.tpu_forwards_quic,
                 vote_quic: node.sockets.tpu_vote_quic,
                 vote_forwarding_client: node.sockets.tpu_vote_forwarding_client,
+                vortexor_receivers: node.sockets.vortexor_receivers,
             },
             &rpc_subscriptions,
             transaction_status_sender,
@@ -1717,6 +1719,7 @@ impl Validator {
             repair_socket: Arc::new(node.sockets.repair),
             outstanding_repair_requests,
             cluster_slots,
+            gossip_socket: Some(node.sockets.gossip.clone()),
         });
 
         Ok(Self {

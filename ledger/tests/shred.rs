@@ -7,7 +7,6 @@ use {
     solana_ledger::shred::{
         max_entries_per_n_shred, recover, verify_test_data_shred, ProcessShredsStats,
         ReedSolomonCache, Shred, ShredData, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
-        LEGACY_SHRED_DATA_CAPACITY,
     },
     solana_signer::Signer,
     solana_system_transaction as system_transaction,
@@ -197,17 +196,14 @@ fn setup_different_sized_fec_blocks(
     let keypair1 = Keypair::new();
     let tx0 = system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
     let entry = Entry::new(&Hash::default(), 1, vec![tx0]);
+    let merkle_capacity = ShredData::capacity(Some((6, true, true))).unwrap();
+    let chained_merkle_root = Some(Hash::default());
 
-    // Make enough entries for `DATA_SHREDS_PER_FEC_BLOCK + 2` shreds so one
-    // fec set will have `DATA_SHREDS_PER_FEC_BLOCK` shreds and the next
-    // will have 2 shreds.
     assert!(DATA_SHREDS_PER_FEC_BLOCK > 2);
-    let num_shreds_per_iter = DATA_SHREDS_PER_FEC_BLOCK + 2;
-    let num_entries = max_entries_per_n_shred(
-        &entry,
-        num_shreds_per_iter as u64,
-        Some(LEGACY_SHRED_DATA_CAPACITY),
-    );
+    let num_shreds_per_iter = DATA_SHREDS_PER_FEC_BLOCK;
+    let num_entries =
+        max_entries_per_n_shred(&entry, num_shreds_per_iter as u64, Some(merkle_capacity));
+
     let entries: Vec<_> = (0..num_entries)
         .map(|_| {
             let keypair0 = Keypair::new();
@@ -234,10 +230,10 @@ fn setup_different_sized_fec_blocks(
             &keypair,
             &entries,
             is_last,
-            None, // chained_merkle_root
+            chained_merkle_root,
             next_shred_index,
             next_code_index,
-            false, // merkle_variant
+            true, // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );

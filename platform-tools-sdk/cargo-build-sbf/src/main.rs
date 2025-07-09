@@ -23,7 +23,7 @@ use {
     tar::Archive,
 };
 
-const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.48";
+const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.49";
 
 #[derive(Debug)]
 pub struct Config<'a> {
@@ -876,7 +876,7 @@ fn main() {
         .arg(
             Arg::new("arch")
                 .long("arch")
-                .possible_values(["v0", "v1", "v2", "v3"])
+                .possible_values(["v0", "v1", "v2", "v3", "v4"])
                 .default_value("v0")
                 .help("Build for the given target architecture"),
         )

@@ -153,7 +153,12 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
         num_accounts += 1;
         stored_accounts_size += account.stored_size();
         lamports += account.lamports();
-    });
+    }).map_err(|err| {
+        format!(
+            "failed to scan accounts in file '{}': {err}",
+            file.as_ref().display(),
+        )
+    })?;
 
     println!(
         "number of accounts: {}, stored accounts size: {}, file size: {}, lamports: {}",
@@ -229,7 +234,8 @@ fn do_search(
                     );
                 }
             }
-        });
+        }).unwrap_or_else(|err| eprintln!("failed to scan accounts in file '{}': {err}",
+                         file.display()));
     });
 
     Ok(())

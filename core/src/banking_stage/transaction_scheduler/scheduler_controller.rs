@@ -18,11 +18,14 @@ use {
         transaction_scheduler::transaction_state_container::StateContainer,
         TOTAL_BUFFERED_PACKETS,
     },
+    solana_clock::MAX_PROCESSING_AGE,
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_clock::MAX_PROCESSING_AGE,
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
-    std::{num::Saturating, sync::{Arc, RwLock}},
+    std::{
+        num::Saturating,
+        sync::{Arc, RwLock},
+    },
 };
 
 /// Controls packet and transaction flow into scheduler, and scheduling execution.
@@ -152,14 +155,15 @@ where
 
                 self.count_metrics.update(|count_metrics| {
                     count_metrics.num_scheduled += scheduling_summary.num_scheduled;
-                    count_metrics.num_unschedulable_conflicts += scheduling_summary.num_unschedulable_conflicts;
-                    count_metrics.num_unschedulable_threads += scheduling_summary.num_unschedulable_threads;
+                    count_metrics.num_unschedulable_conflicts +=
+                        scheduling_summary.num_unschedulable_conflicts;
+                    count_metrics.num_unschedulable_threads +=
+                        scheduling_summary.num_unschedulable_threads;
                     count_metrics.num_schedule_filtered_out += scheduling_summary.num_filtered_out;
                 });
 
                 self.timing_metrics.update(|timing_metrics| {
-                    timing_metrics.schedule_filter_time_us +=
-                        scheduling_summary.filter_time_us;
+                    timing_metrics.schedule_filter_time_us += scheduling_summary.filter_time_us;
                     timing_metrics.schedule_time_us += schedule_time_us;
                 });
                 self.scheduling_details.update(&scheduling_summary);
@@ -233,7 +237,7 @@ where
 
         while transaction_ids.len() < MAX_TRANSACTION_CHECKS {
             let Some(id) = self.container.pop() else {
-                break
+                break;
             };
             transaction_ids.push(id);
         }
@@ -332,21 +336,21 @@ mod tests {
         agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
         crossbeam_channel::{unbounded, Receiver, Sender},
         itertools::Itertools,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_fee_calculator::FeeRateGovernor,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore, genesis_utils::GenesisConfigInfo,
             get_tmp_ledger_path_auto_delete, leader_schedule_cache::LeaderScheduleCache,
         },
+        solana_message::Message,
         solana_perf::packet::{to_packet_batches, PacketBatch, NUM_PACKETS},
         solana_poh::poh_recorder::PohRecorder,
-        solana_runtime::bank::Bank,
-        solana_runtime_transaction::transaction_meta::StaticMeta,
-        solana_compute_budget_interface::ComputeBudgetInstruction,
-        solana_fee_calculator::FeeRateGovernor,
-        solana_hash::Hash,
-        solana_message::Message,
         solana_poh_config::PohConfig,
         solana_pubkey::Pubkey,
-        solana_keypair::Keypair,
+        solana_runtime::bank::Bank,
+        solana_runtime_transaction::transaction_meta::StaticMeta,
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
         solana_transaction::Transaction,

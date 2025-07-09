@@ -5,7 +5,6 @@ use {
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
         epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
-        serde_snapshot::storage::SerializableAccountStorageEntry,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
         stake_account::StakeAccount,
         stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
@@ -50,6 +49,7 @@ use {
             Arc,
         },
         thread::Builder,
+        time::Instant,
     },
     storage::SerializableStorage,
     types::SerdeAccountsLtHash,
@@ -64,7 +64,7 @@ pub(crate) use {
     solana_accounts_db::accounts_hash::{
         SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
     },
-    storage::SerializedAccountsFileId,
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -152,7 +152,7 @@ struct DeserializableVersionedBank {
     collector_fees: u64,
     _fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
-    collected_rent: u64,
+    _collected_rent: u64,
     rent_collector: RentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
@@ -189,7 +189,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             collector_id: dvb.collector_id,
             collector_fees: dvb.collector_fees,
             fee_rate_governor: dvb.fee_rate_governor,
-            collected_rent: dvb.collected_rent,
             rent_collector: dvb.rent_collector,
             epoch_schedule: dvb.epoch_schedule,
             inflation: dvb.inflation,
@@ -270,7 +269,7 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             collector_fees: rhs.collector_fees,
             fee_calculator: FeeCalculator::default(),
             fee_rate_governor: rhs.fee_rate_governor,
-            collected_rent: rhs.collected_rent,
+            collected_rent: u64::default(),
             rent_collector: rhs.rent_collector,
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
@@ -301,6 +300,13 @@ pub struct SnapshotBankFields {
 }
 
 impl SnapshotBankFields {
+    pub fn new(
+        full: BankFieldsToDeserialize,
+        incremental: Option<BankFieldsToDeserialize>,
+    ) -> Self {
+        Self { full, incremental }
+    }
+
     /// Collapse the SnapshotBankFields into a single (the latest) BankFieldsToDeserialize.
     pub fn collapse_into(self) -> BankFieldsToDeserialize {
         self.incremental.unwrap_or(self.full)
@@ -316,11 +322,21 @@ pub struct SnapshotAccountsDbFields<T> {
 }
 
 impl<T> SnapshotAccountsDbFields<T> {
+    pub fn new(
+        full_snapshot_accounts_db_fields: AccountsDbFields<T>,
+        incremental_snapshot_accounts_db_fields: Option<AccountsDbFields<T>>,
+    ) -> Self {
+        Self {
+            full_snapshot_accounts_db_fields,
+            incremental_snapshot_accounts_db_fields,
+        }
+    }
+
     /// Collapse the SnapshotAccountsDbFields into a single AccountsDbFields.  If there is no
     /// incremental snapshot, this returns the AccountsDbFields from the full snapshot.
     /// Otherwise, use the AccountsDbFields from the incremental snapshot, and a combination
     /// of the storages from both the full and incremental snapshots.
-    fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
+    pub fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
         match self.incremental_snapshot_accounts_db_fields {
             None => Ok(self.full_snapshot_accounts_db_fields),
             Some(AccountsDbFields(
@@ -513,6 +529,7 @@ pub(crate) fn fields_from_stream<R: Read>(
     deserialize_bank_fields(snapshot_stream)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub(crate) fn fields_from_streams(
     snapshot_streams: &mut SnapshotStreams<impl Read>,
 ) -> std::result::Result<
@@ -550,6 +567,7 @@ pub struct BankFromStreamsInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn bank_from_streams<R>(
     snapshot_streams: &mut SnapshotStreams<R>,
     account_paths: &[PathBuf],
@@ -836,12 +854,12 @@ impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccount
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]
-struct ReconstructedBankInfo {
-    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+pub(crate) struct ReconstructedBankInfo {
+    pub(crate) duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reconstruct_bank_from_fields<E>(
+pub(crate) fn reconstruct_bank_from_fields<E>(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     genesis_config: &GenesisConfig,
@@ -871,7 +889,6 @@ where
         snapshot_accounts_db_fields,
         account_paths,
         storage_and_next_append_vec_id,
-        genesis_config,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -1037,7 +1054,6 @@ fn reconstruct_accountsdb_from_fields<E>(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-    genesis_config: &GenesisConfig,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -1229,21 +1245,17 @@ where
     // This means, either when the cli arg is set, or when the snapshot has an accounts lt hash.
     let is_accounts_lt_hash_enabled =
         accounts_db.is_experimental_accumulator_hash_enabled() || has_accounts_lt_hash;
+    info!("Building accounts index...");
+    let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
-        rent_paying_accounts_by_partition,
         duplicates_lt_hash,
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
         verify_index,
-        genesis_config,
         is_accounts_lt_hash_enabled,
     );
-    accounts_db
-        .accounts_index
-        .rent_paying_accounts_by_partition
-        .set(rent_paying_accounts_by_partition)
-        .unwrap();
+    info!("Building accounts index... Done in {:?}", start.elapsed());
 
     handle.join().unwrap();
     measure_notify.stop();

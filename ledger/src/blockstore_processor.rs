@@ -2368,7 +2368,7 @@ pub mod tests {
     // Convenience wrapper to optionally process blockstore with Secondary access.
     //
     // Setting up the ledger for a test requires Primary access as items will need to be inserted.
-    // However, once a Secondary access has been opened, it won't automaticaly see updates made by
+    // However, once a Secondary access has been opened, it won't automatically see updates made by
     // the Primary access. So, open (and close) the Secondary access within this function to ensure
     // that "stale" Secondary accesses don't propagate.
     fn test_process_blockstore_with_custom_options(
@@ -3438,9 +3438,9 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
     }
 
-    #[test_case(true, true; "rent_collected")]
-    #[test_case(false, true; "rent_not_collected")]
-    #[test_case(true, false; "rent_not-collected_part_rent_disabled")]
+    #[test_case(true, true; "fee_payer_in_rent_partition")]
+    #[test_case(false, true; "fee_payer_not_in_rent_partition")]
+    #[test_case(true, false; "fee_payer_in_rent_partition-partitioned_rent_disabled")]
     fn test_transaction_result_does_not_affect_bankhash(
         fee_payer_in_rent_partition: bool,
         should_run_partitioned_rent_collection: bool,

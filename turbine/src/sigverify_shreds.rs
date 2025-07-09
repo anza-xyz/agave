@@ -17,13 +17,9 @@ use {
     },
     solana_perf::{self, deduper::Deduper, packet::PacketBatch, recycler_cache::RecyclerCache},
     solana_pubkey::Pubkey,
-    solana_runtime::{
-        bank::{Bank, MAX_LEADER_SCHEDULE_STAKES},
-        bank_forks::BankForks,
-    },
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
     solana_streamer::{evicting_sender::EvictingSender, streamer::ChannelSend},
-    static_assertions::const_assert_eq,
     std::{
         collections::HashMap,
         num::NonZeroUsize,
@@ -45,10 +41,8 @@ const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
 
 // Num epochs capacity should be at least 2 because near the epoch boundary we
 // may receive shreds from the other side of the epoch boundary. Because of the
-// TTL based eviction it does not make sense to cache more than
-// MAX_LEADER_SCHEDULE_STAKES epochs.
-const_assert_eq!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP, 5);
-const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
+// TTL based eviction it is extremely unlikely that we will ever store > 2 epochs anyway
+const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = 2;
 // Because for ClusterNodes::get_retransmit_parent only pubkeys of staked nodes
 // are needed, we can use longer durations for cache TTL.
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(30);

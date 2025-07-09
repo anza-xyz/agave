@@ -9,9 +9,10 @@ use {
     solana_signer::Signer,
     solana_streamer::{
         nonblocking::testing_utilities::{
-            make_client_endpoint, setup_quic_server, SpawnTestServerResult, TestServerConfig,
+            make_client_endpoint, setup_quic_server, SpawnTestServerResult,
         },
         packet::PacketBatch,
+        quic::QuicServerParams,
         streamer::StakedNodes,
     },
     solana_tpu_client_next::{
@@ -195,7 +196,7 @@ async fn test_basic_transactions_sending() {
         receiver,
         server_address,
         stats: _stats,
-    } = setup_quic_server(None, TestServerConfig::default());
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // Setup sending txs
     let tx_size = 1;
@@ -287,7 +288,7 @@ async fn test_connection_denied_until_allowed() {
         receiver,
         server_address,
         stats: _stats,
-    } = setup_quic_server(None, TestServerConfig::default());
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // To prevent server from accepting a new connection, we use the following observation.
     // Since max_connections_per_peer == 1 (< max_unstaked_connections == 500), if we create a first
@@ -349,10 +350,10 @@ async fn test_connection_pruned_and_reopened() {
         stats: _stats,
     } = setup_quic_server(
         None,
-        TestServerConfig {
+        QuicServerParams {
             max_connections_per_peer: 100,
             max_unstaked_connections: 1,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
@@ -408,13 +409,13 @@ async fn test_staked_connection() {
         stats: _stats,
     } = setup_quic_server(
         Some(staked_nodes),
-        TestServerConfig {
+        QuicServerParams {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             max_unstaked_connections: 0,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
@@ -461,7 +462,7 @@ async fn test_connection_throttling() {
         receiver,
         server_address,
         stats: _stats,
-    } = setup_quic_server(None, TestServerConfig::default());
+    } = setup_quic_server(None, QuicServerParams::default_for_tests());
 
     // Setup sending txs
     let tx_size = 1;
@@ -550,10 +551,10 @@ async fn test_rate_limiting() {
         stats: _stats,
     } = setup_quic_server(
         None,
-        TestServerConfig {
+        QuicServerParams {
             max_connections_per_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
@@ -608,10 +609,10 @@ async fn test_rate_limiting_establish_connection() {
         stats: _stats,
     } = setup_quic_server(
         None,
-        TestServerConfig {
+        QuicServerParams {
             max_connections_per_peer: 100,
             max_connections_per_ipaddr_per_min: 1,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 
@@ -691,14 +692,14 @@ async fn test_update_identity() {
         stats: _stats,
     } = setup_quic_server(
         Some(staked_nodes),
-        TestServerConfig {
+        QuicServerParams {
             // Must use at least the number of endpoints (10) because
             // `max_staked_connections` and `max_unstaked_connections` are
             // cumulative for all the endpoints.
             max_staked_connections: 10,
             // Deny all unstaked connections.
             max_unstaked_connections: 0,
-            ..Default::default()
+            ..QuicServerParams::default_for_tests()
         },
     );
 

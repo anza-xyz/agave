@@ -514,7 +514,9 @@ mod tests {
         async_trait::async_trait,
         rand::{Rng, SeedableRng},
         rand_chacha::ChaChaRng,
-        solana_net_utils::SocketConfig,
+        solana_net_utils::sockets::{
+            bind_with_any_port_with_config, SocketConfiguration as SocketConfig,
+        },
         solana_transaction_error::TransportResult,
         std::{
             net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
@@ -572,7 +574,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 udp_socket: Arc::new(
-                    solana_net_utils::bind_with_any_port_with_config(
+                    bind_with_any_port_with_config(
                         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                         SocketConfig::default(),
                     )
@@ -586,7 +588,7 @@ mod tests {
         fn new() -> Result<Self, ClientError> {
             Ok(Self {
                 udp_socket: Arc::new(
-                    solana_net_utils::bind_with_any_port_with_config(
+                    bind_with_any_port_with_config(
                         IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                         SocketConfig::default(),
                     )

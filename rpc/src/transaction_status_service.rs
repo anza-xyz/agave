@@ -164,7 +164,6 @@ impl TransactionStatusService {
                         return_data,
                         executed_units,
                         fee_details,
-                        rent_debits,
                         ..
                     } = committed_tx;
 
@@ -175,18 +174,7 @@ impl TransactionStatusService {
 
                     let pre_token_balances = Some(pre_token_balances);
                     let post_token_balances = Some(post_token_balances);
-                    let rewards = Some(
-                        rent_debits
-                            .into_unordered_rewards_iter()
-                            .map(|(pubkey, reward_info)| Reward {
-                                pubkey: pubkey.to_string(),
-                                lamports: reward_info.lamports,
-                                post_balance: reward_info.post_balance,
-                                reward_type: Some(reward_info.reward_type),
-                                commission: reward_info.commission,
-                            })
-                            .collect(),
-                    );
+                    let rewards = Some(vec![]);
                     let loaded_addresses = transaction.get_loaded_addresses();
                     let mut transaction_status_meta = TransactionStatusMeta {
                         status,
@@ -346,7 +334,6 @@ pub(crate) mod tests {
         solana_nonce::{self as nonce, state::DurableNonce},
         solana_nonce_account as nonce_account,
         solana_pubkey::Pubkey,
-        solana_rent_debits::RentDebits,
         solana_runtime::bank::{Bank, TransactionBalancesSet},
         solana_signature::Signature,
         solana_signer::Signer,
@@ -443,7 +430,6 @@ pub(crate) mod tests {
         .unwrap();
 
         let expected_transaction = transaction.clone();
-        let pubkey = Pubkey::new_unique();
 
         let mut nonce_account = nonce_account::create_account(1).into_inner();
         let durable_nonce = DurableNonce::from_blockhash(&Hash::new_from_array([42u8; 32]));
@@ -454,9 +440,6 @@ pub(crate) mod tests {
             ))
             .unwrap();
 
-        let mut rent_debits = RentDebits::default();
-        rent_debits.insert(&pubkey, 123, 456);
-
         let commit_result = Ok(CommittedTransaction {
             status: Ok(()),
             log_messages: None,
@@ -464,7 +447,6 @@ pub(crate) mod tests {
             return_data: None,
             executed_units: 0,
             fee_details: FeeDetails::default(),
-            rent_debits,
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
         });
 
@@ -591,7 +573,6 @@ pub(crate) mod tests {
             return_data: None,
             executed_units: 0,
             fee_details: FeeDetails::default(),
-            rent_debits: RentDebits::default(),
             loaded_account_stats: TransactionLoadedAccountsStats::default(),
         });
 

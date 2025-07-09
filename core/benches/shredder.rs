@@ -10,8 +10,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred, max_ticks_per_n_shreds,
-        ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags, Shredder,
-        DATA_SHREDS_PER_FEC_BLOCK,
+        ProcessShredsStats, ReedSolomonCache, Shred, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::test_tx,
     test::{black_box, Bencher},
@@ -121,9 +120,25 @@ fn bench_deshredder(bencher: &mut Bencher) {
 
 #[bench]
 fn bench_deserialize_hdr(bencher: &mut Bencher) {
-    let data = vec![0; SHRED_SIZE_TYPICAL];
-
-    let shred = Shred::new_from_data(2, 1, 1, &data, ShredFlags::LAST_SHRED_IN_SLOT, 0, 0, 1);
+    let keypair = Keypair::new();
+    let shredder = Shredder::new(2, 1, 0, 0).unwrap();
+    let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
+    let mut stats = ProcessShredsStats::default();
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut shreds = shredder
+        .make_merkle_shreds_from_entries(
+            &keypair,
+            &[],
+            true, // is_last_in_slot
+            merkle_root,
+            1, // next_shred_index
+            0, // next_code_index
+            &reed_solomon_cache,
+            &mut stats,
+        )
+        .filter(Shred::is_data)
+        .collect::<Vec<_>>();
+    let shred = shreds.remove(0);
 
     bencher.iter(|| {
         let payload = shred.payload().clone();

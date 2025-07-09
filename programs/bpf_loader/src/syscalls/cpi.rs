@@ -881,11 +881,12 @@ where
                 direct_mapping,
             )?;
 
-            let caller_account = if instruction_account.is_writable || update_caller {
-                Some(caller_account)
-            } else {
-                None
-            };
+            let caller_account =
+                if instruction_account.is_writable || (direct_mapping && update_caller) {
+                    Some(caller_account)
+                } else {
+                    None
+                };
             accounts.push((instruction_account.index_in_caller, caller_account));
         } else {
             ic_msg!(
@@ -1184,6 +1185,8 @@ fn update_callee_account(
     // Change the owner at the end so that we are allowed to change the lamports and data before
     if callee_account.get_owner() != caller_account.owner {
         callee_account.set_owner(caller_account.owner.as_ref())?;
+        // caller gave ownership and thus write access away, so caller must be updated
+        must_update_caller = true;
     }
 
     Ok(must_update_caller)

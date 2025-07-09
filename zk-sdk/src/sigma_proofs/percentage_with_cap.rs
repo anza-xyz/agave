@@ -52,7 +52,7 @@ const PERCENTAGE_WITH_CAP_PROOF_LEN: usize = UNIT_LEN * 8;
 /// The proof consists of two main components: `percentage_max_proof` and
 /// `percentage_equality_proof`. If the committed amount is greater than the maximum cap value,
 /// then the `percentage_max_proof` is properly generated and `percentage_equality_proof` is
-/// simulated. If the encrypted amount is smaller than the maximum cap bound, the
+/// simulated. If the committed amount is smaller than the maximum cap bound, the
 /// `percentage_equality_proof` is properly generated and `percentage_max_proof` is simulated.
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Clone)]
@@ -254,6 +254,7 @@ impl PercentageWithCapProof {
     /// * `percentage_commitment` - The Pedersen commitment to a percentage amount
     /// * `delta_opening` - The Pedersen opening of a delta amount
     /// * `delta_amount` - The delta amount
+    /// * `claimed_opening` - The Pedersen opening of a claimed amount
     /// * `max_value` - The maximum cap bound
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
     fn create_proof_percentage_below_max(
@@ -331,12 +332,6 @@ impl PercentageWithCapProof {
     /// * `percentage_commitment` - The Pedersen commitment of the value being proved
     /// * `delta_commitment` - The Pedersen commitment of the "real" delta value
     /// * `claimed_commitment` - The Pedersen commitment of the "claimed" delta value
-    /// * `max_value` - The maximum cap bound
-    /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
-    ///
-    /// * `percentage_commitment` - The Pedersen commitment to a percentage amount
-    /// * `delta_commitment` - The Pedersen commitment to a delta amount
-    /// * `claimed_commitment` - The Pedersen commitment to a claimed amount
     /// * `max_value` - The maximum cap bound
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
     pub fn verify(
@@ -624,9 +619,9 @@ mod test {
         let transfer_amount: u64 = 1;
         let max_value: u64 = 3;
 
-        let percentage_rate: u16 = 400; // 5.55%
+        let percentage_rate: u16 = 400; // 4.00%
         let percentage_amount: u64 = 1;
-        let delta: u64 = 9600; // 4*10000 - 55*555
+        let delta: u64 = 9600; // 1*10000 - 1*400
 
         let (transfer_commitment, transfer_opening) = Pedersen::new(transfer_amount);
         let (percentage_commitment, percentage_opening) = Pedersen::new(percentage_amount);

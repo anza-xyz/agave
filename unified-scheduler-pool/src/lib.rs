@@ -4063,7 +4063,7 @@ mod tests {
         poh_recorder
             .write()
             .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
+            .set_bank(bank.clone_with_scheduler());
         bank.schedule_transaction_executions([(tx, ORIGINAL_TRANSACTION_INDEX)].into_iter())
             .unwrap();
         bank.unpause_new_block_production_scheduler();
@@ -4099,7 +4099,7 @@ mod tests {
         poh_recorder
             .write()
             .unwrap()
-            .set_bank(bank.clone_with_scheduler(), true);
+            .set_bank(bank.clone_with_scheduler());
         bank.unpause_new_block_production_scheduler();
 
         // Calling wait_for_completed_scheduler() for block production scheduler causes it to be

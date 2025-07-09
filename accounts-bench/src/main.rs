@@ -16,7 +16,6 @@ use {
     solana_epoch_schedule::EpochSchedule,
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     std::{env, fs, path::PathBuf, sync::Arc},
 };
 
@@ -131,7 +130,6 @@ fn main() {
                 &ancestors,
                 None,
                 &EpochSchedule::default(),
-                &RentCollector::default(),
                 true,
             );
             time_store.stop();

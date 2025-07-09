@@ -156,11 +156,11 @@ where
             let (offset, &node) = unsafe { self.tree.get_unchecked(index) }
                 .iter()
                 .enumerate()
-                .find(|(_, &node)| {
-                    if val < node {
+                .find(|&(_, node)| {
+                    if val < *node {
                         true
                     } else {
-                        val -= node;
+                        val -= *node;
                         false
                     }
                 })

@@ -2,11 +2,11 @@
 use crate::append_vec::StoredAccountMeta;
 use {
     crate::{
-        account_info::AccountInfo,
+        account_info::{AccountInfo, Offset},
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_db::AccountsFileId,
         accounts_update_notifier_interface::AccountForGeyser,
-        append_vec::{AppendVec, AppendVecError, IndexInfo},
+        append_vec::{AppendVec, AppendVecError},
         storable_accounts::StorableAccounts,
         tiered_storage::{
             error::TieredStorageError, hot::HOT_FORMAT, index::IndexOffset, TieredStorage,
@@ -293,32 +293,45 @@ impl AccountsFile {
 
     /// Iterate over all accounts and call `callback` with each account.
     ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfoWithoutData: the account itself, without account data
+    ///
     /// Note that account data is not read/passed to the callback.
     pub fn scan_accounts_without_data(
         &self,
-        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
-    ) {
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_without_data(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts_without_data(callback);
+                    reader.scan_accounts_without_data(callback)?;
                 }
+                Ok(())
             }
         }
     }
 
     /// Iterate over all accounts and call `callback` with each account.
     ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfo: the account itself, with account data
+    ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
-    pub fn scan_accounts(&self, callback: impl for<'local> FnMut(StoredAccountInfo<'local>)) {
+    pub fn scan_accounts(
+        &self,
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_accounts(callback);
+                    reader.scan_accounts(callback)?;
                 }
+                Ok(())
             }
         }
     }
@@ -331,7 +344,7 @@ impl AccountsFile {
     pub fn scan_accounts_stored_meta(
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
-    ) {
+    ) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
             Self::TieredStorage(_) => {
@@ -345,8 +358,8 @@ impl AccountsFile {
     pub fn scan_accounts_for_geyser(
         &self,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
-    ) {
-        self.scan_accounts(|account| {
+    ) -> Result<()> {
+        self.scan_accounts(|_offset, account| {
             let account_for_geyser = AccountForGeyser {
                 pubkey: account.pubkey(),
                 lamports: account.lamports(),
@@ -366,7 +379,7 @@ impl AccountsFile {
             Self::AppendVec(av) => av.calculate_stored_size(data_len),
             Self::TieredStorage(ts) => ts
                 .reader()
-                .expect("Reader must be initalized as stored size is specific to format")
+                .expect("Reader must be initialized as stored size is specific to format")
                 .calculate_stored_size(data_len),
         }
     }
@@ -382,26 +395,15 @@ impl AccountsFile {
         }
     }
 
-    /// iterate over all entries to put in index
-    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) {
-        match self {
-            Self::AppendVec(av) => av.scan_index(callback),
-            Self::TieredStorage(ts) => {
-                if let Some(reader) = ts.reader() {
-                    _ = reader.scan_index(callback);
-                }
-            }
-        }
-    }
-
     /// iterate over all pubkeys
-    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) {
+    pub fn scan_pubkeys(&self, callback: impl FnMut(&Pubkey)) -> Result<()> {
         match self {
             Self::AppendVec(av) => av.scan_pubkeys(callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
-                    _ = reader.scan_pubkeys(callback);
+                    reader.scan_pubkeys(callback)?;
                 }
+                Ok(())
             }
         }
     }

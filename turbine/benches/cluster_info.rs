@@ -4,14 +4,16 @@ extern crate test;
 
 use {
     rand::{thread_rng, Rng},
+    solana_entry::entry::Entry,
     solana_gossip::{
         cluster_info::{ClusterInfo, Node},
         contact_info::ContactInfo,
     },
+    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
-        shred::{Shred, ShredFlags},
+        shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
     },
     solana_net_utils::bind_to_unspecified,
     solana_pubkey as pubkey,
@@ -38,17 +40,38 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
     let leader_info = Node::new_localhost_with_pubkey(&leader_keypair.pubkey());
     let cluster_info = ClusterInfo::new(
         leader_info.info,
-        leader_keypair,
+        leader_keypair.clone(),
         SocketAddrSpace::Unspecified,
     );
     let socket = bind_to_unspecified().unwrap();
     let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
     let bank = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
+    let root_bank = bank_forks.read().unwrap().root_bank();
 
     const NUM_SHREDS: usize = 32;
-    let shred = Shred::new_from_data(0, 0, 0, &[], ShredFlags::empty(), 0, 0, 0);
-    let shreds = vec![shred; NUM_SHREDS];
+
+    let shredder = Shredder::new(
+        root_bank.slot(),
+        root_bank.parent_slot(),
+        0, // reference_tick
+        0, // version
+    )
+    .unwrap();
+
+    let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
+    let data_shreds = shredder.make_merkle_shreds_from_entries(
+        &leader_keypair,
+        &entries,
+        true, // is_last_in_slot
+        None, // chained_merkle_root
+        0,    // next_shred_index
+        0,    // next_code_index
+        &ReedSolomonCache::default(),
+        &mut ProcessShredsStats::default(),
+    );
+    let shreds: Vec<_> = data_shreds.take(NUM_SHREDS).collect();
+
     let mut stakes = HashMap::new();
     const NUM_PEERS: usize = 200;
     for _ in 0..NUM_PEERS {

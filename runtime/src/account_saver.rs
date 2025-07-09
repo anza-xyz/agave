@@ -83,7 +83,6 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                     collect_accounts_for_failed_tx(
                         &mut accounts,
                         &mut transactions,
-                        transaction,
                         transaction_ref,
                         &executed_tx.loaded_transaction.rollback_accounts,
                     );
@@ -93,7 +92,6 @@ pub fn collect_accounts_to_store<'a, T: SVMMessage>(
                 collect_accounts_for_failed_tx(
                     &mut accounts,
                     &mut transactions,
-                    transaction,
                     transaction_ref,
                     &fees_only_tx.rollback_accounts,
                 );
@@ -131,44 +129,17 @@ fn collect_accounts_for_successful_tx<'a, T: SVMMessage>(
     }
 }
 
-fn collect_accounts_for_failed_tx<'a, T: SVMMessage>(
+fn collect_accounts_for_failed_tx<'a>(
     collected_accounts: &mut Vec<(&'a Pubkey, &'a AccountSharedData)>,
     collected_account_transactions: &mut Option<Vec<&'a SanitizedTransaction>>,
-    transaction: &'a T,
     transaction_ref: Option<&'a SanitizedTransaction>,
     rollback_accounts: &'a RollbackAccounts,
 ) {
-    let fee_payer_address = transaction.fee_payer();
-    match rollback_accounts {
-        RollbackAccounts::FeePayerOnly { fee_payer_account } => {
-            collected_accounts.push((fee_payer_address, fee_payer_account));
-            if let Some(collected_account_transactions) = collected_account_transactions {
-                collected_account_transactions
-                    .push(transaction_ref.expect("transaction ref must exist if collecting"));
-            }
-        }
-        RollbackAccounts::SameNonceAndFeePayer { nonce } => {
-            collected_accounts.push((nonce.address(), nonce.account()));
-            if let Some(collected_account_transactions) = collected_account_transactions {
-                collected_account_transactions
-                    .push(transaction_ref.expect("transaction ref must exist if collecting"));
-            }
-        }
-        RollbackAccounts::SeparateNonceAndFeePayer {
-            nonce,
-            fee_payer_account,
-        } => {
-            collected_accounts.push((fee_payer_address, fee_payer_account));
-            if let Some(collected_account_transactions) = collected_account_transactions {
-                collected_account_transactions
-                    .push(transaction_ref.expect("transaction ref must exist if collecting"));
-            }
-
-            collected_accounts.push((nonce.address(), nonce.account()));
-            if let Some(collected_account_transactions) = collected_account_transactions {
-                collected_account_transactions
-                    .push(transaction_ref.expect("transaction ref must exist if collecting"));
-            }
+    for (address, account) in rollback_accounts {
+        collected_accounts.push((address, account));
+        if let Some(collected_account_transactions) = collected_account_transactions {
+            collected_account_transactions
+                .push(transaction_ref.expect("transaction ref must exist if collecting"));
         }
     }
 }
@@ -189,12 +160,10 @@ mod tests {
         },
         solana_nonce_account as nonce_account,
         solana_program_runtime::execution_budget::SVMTransactionExecutionBudget,
-        solana_rent_debits::RentDebits,
         solana_sdk_ids::native_loader,
         solana_signer::{signers::Signers, Signer},
         solana_svm::{
             account_loader::{FeesOnlyTransaction, LoadedTransaction},
-            nonce_info::NonceInfo,
             transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         },
         solana_system_interface::{instruction as system_instruction, program as system_program},
@@ -280,8 +249,6 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -291,8 +258,6 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -351,11 +316,9 @@ mod tests {
             program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
-                fee_payer_account: from_account_pre.clone(),
+                fee_payer: (from_address, from_account_pre.clone()),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -439,18 +402,15 @@ mod tests {
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
         let from_account_pre = AccountSharedData::new(4242, 0, &Pubkey::default());
 
-        let nonce = NonceInfo::new(nonce_address, nonce_account_pre.clone());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
             program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
-                nonce: nonce.clone(),
-                fee_payer_account: from_account_pre.clone(),
+                nonce: (nonce_address, nonce_account_pre.clone()),
+                fee_payer: (from_address, from_account_pre.clone()),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -548,17 +508,14 @@ mod tests {
         let nonce_account_pre =
             AccountSharedData::new_data(42, &nonce_state, &system_program::id()).unwrap();
 
-        let nonce = NonceInfo::new(nonce_address, nonce_account_pre.clone());
         let loaded = LoadedTransaction {
             accounts: transaction_accounts,
             program_indices: vec![],
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
-                nonce: nonce.clone(),
+                nonce: (nonce_address, nonce_account_pre.clone()),
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -622,7 +579,7 @@ mod tests {
                 load_error: TransactionError::InvalidProgramForExecution,
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
-                    fee_payer_account: from_account_pre.clone(),
+                    fee_payer: (from_address, from_account_pre.clone()),
                 },
             },
         )))];

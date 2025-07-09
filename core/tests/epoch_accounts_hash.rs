@@ -321,7 +321,7 @@ fn test_epoch_accounts_hash_basic(test_environment: TestEnvironment) {
                         use_bg_thread_pool: false,
                         ancestors: Some(&bank.ancestors),
                         epoch_schedule: bank.epoch_schedule(),
-                        rent_collector: bank.rent_collector(),
+                        epoch: bank.epoch(),
                         store_detailed_debug_info_on_failure: false,
                     },
                 );

@@ -50,7 +50,7 @@ pub struct PubkeyValidityProof {
 impl PubkeyValidityProof {
     /// Creates a public key validity proof.
     ///
-    /// The function does *not* hash the public key and ciphertext into the transcript. For
+    /// The function does *not* hash the public key into the transcript. For
     /// security, the caller (the main protocol) should hash these public key components prior to
     /// invoking this constructor.
     ///

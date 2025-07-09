@@ -220,6 +220,18 @@ fn test_sbpfv3() {
 
 #[test]
 #[serial]
+fn test_sbpfv4() {
+    let assert_v1 = build_noop_and_readelf("v4");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x4",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
 fn test_package_metadata_tools_version() {
     run_cargo_build("package-metadata", &[], false);
     clean_target("package-metadata");

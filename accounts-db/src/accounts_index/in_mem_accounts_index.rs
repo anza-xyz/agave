@@ -100,7 +100,7 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
     // backing store
     map_internal: RwLock<HashMap<Pubkey, Arc<AccountMapEntry<T>>, ahash::RandomState>>,
     storage: Arc<BucketMapHolder<T, U>>,
-    bin: usize,
+    _bin: usize,
     pub(crate) lowest_pubkey: Pubkey,
     pub(crate) highest_pubkey: Pubkey,
 
@@ -140,9 +140,21 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Debug for InMemAccoun
     }
 }
 
+/// An entry was inserted into the index; did it already exist in the index?
+#[derive(Debug)]
 pub enum InsertNewEntryResults {
     DidNotExist,
-    Existed(Option<Slot>),
+    Existed {
+        other_slot: Option<Slot>,
+        location: ExistedLocation,
+    },
+}
+
+/// An entry was inserted into the index that previously existed; where did it previously exist?
+#[derive(Debug)]
+pub enum ExistedLocation {
+    InMem,
+    OnDisk,
 }
 
 #[derive(Default, Debug)]
@@ -185,7 +197,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self {
             map_internal: RwLock::default(),
             storage: Arc::clone(storage),
-            bin,
+            _bin: bin,
             lowest_pubkey,
             highest_pubkey,
             bucket: storage
@@ -430,7 +442,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // This pubkey is not in the in-memory map.
                         // If the entry is now dirty, then it must be put in the cache or the modifications will be lost.
                         if add_to_cache || disk_entry.dirty() {
-                            stats.inc_mem_count(self.bin);
+                            stats.inc_mem_count();
                             vacant.insert(disk_entry);
                         }
                         rt
@@ -474,7 +486,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     //  the arc, but someone may already have retrieved a clone of it.
                     // account index in_mem flushing is one such possibility
                     self.delete_disk_key(occupied.key());
-                    self.stats().dec_mem_count(self.bin);
+                    self.stats().dec_mem_count();
                     occupied.remove();
                 }
                 result
@@ -603,7 +615,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         };
                         assert!(new_value.dirty());
                         vacant.insert(new_value);
-                        self.stats().inc_mem_count(self.bin);
+                        self.stats().inc_mem_count();
                     }
                 };
 
@@ -709,7 +721,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     };
                     match reclaim {
                         UpsertReclaim::PopulateReclaims => {
-                            reclaims.push(reclaim_item);
+                            // Reclaims are used to reclaim other versions of accounts when they are
+                            // rewritten elsewhere. Cached accounts are not in storage, so there is
+                            // no reason to store the reclaim.
+                            if !is_cur_account_cached {
+                                reclaims.push(reclaim_item);
+                            }
                         }
                         UpsertReclaim::PreviousSlotEntryWasCached => {
                             assert!(is_cur_account_cached);
@@ -753,21 +770,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         ))
     }
 
-    pub fn len_for_stats(&self) -> usize {
-        self.stats().count_in_bucket(self.bin)
-    }
-
     /// Queue up these insertions for when the flush thread is dealing with this bin.
     /// This is very fast and requires no lookups or disk access.
-    pub fn startup_insert_only(&self, items: impl Iterator<Item = (Pubkey, (Slot, T))>) {
+    pub fn startup_insert_only(
+        &self,
+        slot: Slot,
+        items: impl ExactSizeIterator<Item = (Pubkey, T)>,
+    ) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_some());
 
         let mut insert = self.startup_info.insert.lock().unwrap();
         let m = Measure::start("copy");
-        items
-            .into_iter()
-            .for_each(|(k, (slot, v))| insert.push((k, (slot, v.into()))));
+        insert.extend(items.map(|(k, v)| (k, (slot, v.into()))));
         self.startup_stats
             .copy_data_us
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
@@ -781,15 +796,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         duplicates.duplicates_from_in_memory_only.extend(items);
     }
 
+    /// Upsert `new_entry` for `pubkey` into the primary index
+    ///
+    /// Returns info about existing entries for `pubkey`.
+    ///
+    /// This fn is only called at startup. The return information is used by the callers to
+    /// batch-update accounts index stats.
     pub fn insert_new_entry_if_missing_with_lock(
         &self,
         pubkey: Pubkey,
         new_entry: PreAllocatedAccountMapEntry<T>,
     ) -> InsertNewEntryResults {
-        let mut m = Measure::start("entry");
         let mut map = self.map_internal.write().unwrap();
         let entry = map.entry(pubkey);
-        m.stop();
         let mut other_slot = None;
         let (found_in_mem, already_existed) = match entry {
             Entry::Occupied(occupied) => {
@@ -836,7 +855,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             Entry::Vacant(vacant) => {
                 // not in cache, look on disk
                 let disk_entry = self.load_account_entry_from_disk(vacant.key());
-                self.stats().inc_mem_count(self.bin);
                 if let Some(disk_entry) = disk_entry {
                     let (slot, account_info) = new_entry.into();
                     InMemAccountsIndex::<T, U>::lock_and_update_slot_list(
@@ -858,18 +876,26 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     let new_entry = new_entry.into_account_map_entry(&self.storage);
                     assert!(new_entry.dirty());
                     vacant.insert(new_entry);
-                    (false, false)
+                    (
+                        false, /* found in mem */
+                        false, /* already existed */
+                    )
                 }
             }
         };
         drop(map);
-        self.update_entry_stats(m, found_in_mem);
-        let stats = self.stats();
+
         if already_existed {
-            Self::update_stat(&stats.updates_in_mem, 1);
-            InsertNewEntryResults::Existed(other_slot)
+            let location = if found_in_mem {
+                ExistedLocation::InMem
+            } else {
+                ExistedLocation::OnDisk
+            };
+            InsertNewEntryResults::Existed {
+                other_slot,
+                location,
+            }
         } else {
-            stats.inc_insert();
             InsertNewEntryResults::DidNotExist
         }
     }
@@ -1024,7 +1050,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 }
             }
         }
-        self.stats().add_mem_count(self.bin, added_to_mem);
+        self.stats().add_mem_count(added_to_mem);
 
         Self::update_time_stat(&self.stats().get_range_us, m);
     }
@@ -1500,7 +1526,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 map.shrink_to_fit();
             }
         }
-        self.stats().sub_mem_count(self.bin, evicted);
+        self.stats().sub_mem_count(evicted);
         Self::update_stat(&self.stats().flush_entries_evicted_from_mem, evicted as u64);
         Self::update_stat(&self.stats().failed_to_evict, failed as u64);
     }

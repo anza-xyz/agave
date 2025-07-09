@@ -98,19 +98,7 @@ filter = 'package(solana-core) & test(/^banking_stage::consumer::tests::test_ban
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^test_slots_to_snapshot::v1_2_0_development_expects/)'
-slow-timeout = { period = "60s", terminate-after = 2 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^test_slots_to_snapshot::v1_2_0_testnet_expects/)'
-slow-timeout = { period = "60s", terminate-after = 2 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^test_slots_to_snapshot::v1_2_0_devnet_expects/)'
-slow-timeout = { period = "60s", terminate-after = 2 }
-
-[[profile.ci.overrides]]
-filter = 'package(solana-core) & test(/^test_slots_to_snapshot::v1_2_0_mainnetbeta_expects/)'
+filter = 'package(solana-core) & test(/^test_slots_to_snapshot/)'
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.ci.overrides]]

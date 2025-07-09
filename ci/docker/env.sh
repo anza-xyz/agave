@@ -3,7 +3,7 @@
 ci_docker_env_sh_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck disable=SC1091
-source "${ci_docker_env_sh_here}/../rust-version.sh"
+NO_INSTALL=1 source "${ci_docker_env_sh_here}/../rust-version.sh"
 
 if [[ -z "${rust_stable}" || -z "${rust_nightly}" ]]; then
   echo "Error: rust_stable or rust_nightly is empty. Please check rust-version.sh." >&2

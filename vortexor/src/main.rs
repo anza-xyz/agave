@@ -5,7 +5,7 @@ use {
     solana_core::banking_trace::BankingTracer,
     solana_keypair::read_keypair_file,
     solana_logger::redirect_stderr_to_file,
-    solana_net_utils::{bind_in_range_with_config, SocketConfig},
+    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
     solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
@@ -100,7 +100,7 @@ pub fn main() {
     )
     .unwrap();
 
-    let config = SocketConfig::default().reuseport(false);
+    let config = SocketConfig::default();
 
     let sender_socket =
         bind_in_range_with_config(*bind_address, dynamic_port_range, config).unwrap();

@@ -133,6 +133,7 @@ members = [
     "unified-scheduler-pool",
     "upload-perf",
     "validator",
+    "verified-packet-receiver",
     "version",
     "vortexor",
     "vote",
@@ -185,11 +186,13 @@ agave-precompiles = { path = "precompiles", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "reserved-account-keys", version = "=3.0.0" }
 agave-thread-manager = { path = "thread-manager", version = "=3.0.0" }
 agave-transaction-view = { path = "transaction-view", version = "=3.0.0" }
+agave-verified-packet-receiver = { path = "verified-packet-receiver", version = "=3.0.0" }
 agave-xdp = { path = "xdp", version = "=3.0.0" }
 ahash = "0.8.11"
 anyhow = "1.0.98"
 aquamarine = "0.6.0"
 arbitrary = "1.4.1"
+arc-swap = "1.7.1"
 ark-bn254 = "0.4.0"
 ark-ec = "0.4.0"
 ark-ff = "0.4.0"
@@ -228,7 +231,7 @@ chrono-humanize = "0.2.3"
 clap = "2.33.1"
 # Remove this dependency when procedural macros will support non-inline modules.
 conditional-mod = "0.1.0"
-console = "0.15.11"
+console = "0.16.0"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.2"
 const_format = "0.2.34"
@@ -277,9 +280,9 @@ humantime = "2.2.0"
 hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
-indexmap = "2.9.0"
-indicatif = "0.17.11"
-io-uring = "0.7.4"
+indexmap = "2.10.0"
+indicatif = "0.17.12"
+io-uring = "0.7.8"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
@@ -314,7 +317,7 @@ num-bigint = "0.4.6"
 num-derive = "0.4"
 num-traits = "0.2"
 num_cpus = "1.17.0"
-num_enum = "0.7.3"
+num_enum = "0.7.4"
 openssl = "0.10"
 parking_lot = "0.12"
 pbkdf2 = { version = "0.11.0", default-features = false }
@@ -342,7 +345,7 @@ rand_chacha0-2 = { package = "rand_chacha", version = "0.2.2" }
 rayon = "1.10.0"
 reed-solomon-erasure = "6.0.0"
 regex = "1.11.1"
-reqwest = { version = "0.12.20", default-features = false }
+reqwest = { version = "0.12.22", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
@@ -355,7 +358,7 @@ serde-big-array = "0.5.1"
 serde_bytes = "0.11.17"
 serde_derive = "1.0.219" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
 serde_json = "1.0.140"
-serde_with = { version = "3.13.0", default-features = false }
+serde_with = { version = "3.14.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
 sha2 = "0.10.9"
@@ -363,7 +366,7 @@ sha3 = "0.10.8"
 shuttle = "0.7.1"
 signal-hook = "0.3.18"
 siphasher = "1.0.1"
-slab = "0.4.9"
+slab = "0.4.10"
 smallvec = "1.15.1"
 smpl_jwt = "0.7.1"
 socket2 = "0.5.10"
@@ -471,7 +474,7 @@ solana-poseidon = { path = "poseidon", version = "=3.0.0" }
 solana-precompile-error = "2.2.2"
 solana-presigner = "2.2.1"
 solana-program = { version = "2.3.0", default-features = false }
-solana-program-entrypoint = "2.2.1"
+solana-program-entrypoint = "2.3.0"
 solana-program-error = "2.2.2"
 solana-program-memory = "2.3.1"
 solana-program-option = "2.2.1"
@@ -486,7 +489,6 @@ solana-rayon-threadlimit = { path = "rayon-threadlimit", version = "=3.0.0" }
 solana-remote-wallet = { path = "remote-wallet", version = "=3.0.0", default-features = false }
 solana-rent = "2.2.1"
 solana-rent-collector = "2.2.1"
-solana-rent-debits = "2.2.1"
 solana-reward-info = "2.2.1"
 solana-rpc = { path = "rpc", version = "=3.0.0" }
 solana-rpc-client = { path = "rpc-client", version = "=3.0.0", default-features = false }
@@ -540,7 +542,7 @@ solana-tps-client = { path = "tps-client", version = "=3.0.0" }
 solana-tpu-client = { path = "tpu-client", version = "=3.0.0", default-features = false }
 solana-tpu-client-next = { path = "tpu-client-next", version = "=3.0.0" }
 solana-transaction = "2.2.3"
-solana-transaction-context = { path = "transaction-context", version = "=3.0.0", features = ["bincode", "debug-signature"] }
+solana-transaction-context = { path = "transaction-context", version = "=3.0.0", features = ["bincode"] }
 solana-transaction-error = "2.2.1"
 solana-transaction-metrics-tracker = { path = "transaction-metrics-tracker", version = "=3.0.0" }
 solana-transaction-status = { path = "transaction-status", version = "=3.0.0" }
@@ -588,7 +590,7 @@ test-case = "3.3.1"
 thiserror = "2.0.12"
 thread-priority = "1.2.0"
 tiny-bip39 = "0.8.2"
-tokio = "1.45.1"
+tokio = "1.46.1"
 tokio-serde = "0.8"
 tokio-stream = "0.1.17"
 tokio-tungstenite = "0.20.1"

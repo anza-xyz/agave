@@ -18,6 +18,7 @@ use {
     solana_runtime::bank_forks::BankForks,
     solana_signer::Signer,
     solana_streamer::{
+        atomic_udp_socket::AtomicUdpSocket,
         evicting_sender::EvictingSender,
         socket::SocketAddrSpace,
         streamer::{self, StreamerReceiveStats},
@@ -25,7 +26,7 @@ use {
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{
         collections::HashSet,
-        net::{SocketAddr, TcpListener, UdpSocket},
+        net::{SocketAddr, TcpListener},
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, RwLock,
@@ -45,7 +46,7 @@ impl GossipService {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
-        gossip_socket: UdpSocket,
+        gossip_socket: AtomicUdpSocket,
         gossip_validators: Option<HashSet<Pubkey>>,
         should_check_duplicate_instance: bool,
         stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -61,7 +62,7 @@ impl GossipService {
         );
         let socket_addr_space = *cluster_info.socket_addr_space();
         let gossip_receiver_stats = Arc::new(StreamerReceiveStats::new("gossip_receiver"));
-        let t_receiver = streamer::receiver(
+        let t_receiver = streamer::receiver_atomic(
             "solRcvrGossip".to_string(),
             gossip_socket.clone(),
             exit.clone(),
@@ -96,9 +97,9 @@ impl GossipService {
             gossip_validators,
             exit.clone(),
         );
-        let t_responder = streamer::responder(
+        let t_responder = streamer::responder_atomic(
             "Gossip",
-            gossip_socket,
+            gossip_socket.clone(),
             response_receiver,
             socket_addr_space,
             stats_reporter_sender,
@@ -371,6 +372,7 @@ pub fn make_gossip_node(
     if let Some(entrypoint) = entrypoint {
         cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
     }
+    let gossip_socket = AtomicUdpSocket::new(gossip_socket);
     let cluster_info = Arc::new(cluster_info);
     let gossip_service = GossipService::new(
         &cluster_info,
