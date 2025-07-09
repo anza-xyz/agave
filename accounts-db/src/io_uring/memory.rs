@@ -157,7 +157,7 @@ impl IoFixedBuffer {
         chunk_size: usize,
     ) -> impl Iterator<Item = Self> + use<'a> {
         assert!(
-            buffer.len() / FIXED_BUFFER_LEN >= u16::MAX as usize,
+            buffer.len() / FIXED_BUFFER_LEN <= u16::MAX as usize,
             "buffer too large to register in io_uring"
         );
         let buf_start = buffer.as_ptr() as usize;
