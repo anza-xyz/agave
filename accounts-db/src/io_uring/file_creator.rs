@@ -98,7 +98,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
 
         // Those are fixed file descriptor slots - OpenAt will active them by index
         let fds = vec![-1; MAX_OPEN_FILES];
-        ring.submitter().register_files(&fds)?;
+        ring.submitter().register_files(&fds).unwrap();
 
         let buffers =
             IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, write_capacity).unwrap();
