@@ -41,6 +41,9 @@ jobs:
         run: |
           source .github/scripts/downstream-project-spl-install-deps.sh
 
+      - name: Debug
+        run: ulimit -a
+
       - name: Run build
         run: |
           cd svm/examples
