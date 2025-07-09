@@ -423,6 +423,7 @@ impl AppendVec {
         self.file_size
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_from_file(
         path: impl Into<PathBuf>,
         current_len: usize,
