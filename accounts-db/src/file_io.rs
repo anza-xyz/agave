@@ -118,7 +118,7 @@ pub fn file_creator<'a>(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::IoUringFileCreator;
 
-        let io_uring_creator = IoUringFileCreator::with_capacity(buf_size, file_complete).unwrap();
+        let io_uring_creator = IoUringFileCreator::with_capacity(buf_size, file_complete)?;
         return Ok(Box::new(io_uring_creator));
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))

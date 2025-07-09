@@ -99,15 +99,13 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             "buffer size must be a multiple of read_capacity"
         );
 
-        let buffers = IoFixedBuffer::register_and_chunk_buffer(&ring, buffer, read_capacity)?
-            .map(ReadBufState::Uninit)
-            .collect();
-
         let file = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOATIME)
             .open(path)?;
-
+        let buffers = IoFixedBuffer::split_buffer_chunks(buffer, read_capacity)
+            .map(ReadBufState::Uninit)
+            .collect();
         let ring = Ring::new(
             ring,
             SequentialFileReaderState {
@@ -119,6 +117,8 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
                 current_buf: 0,
             },
         );
+
+        IoFixedBuffer::register_buffer(&ring, buffer)?;
 
         let mut reader = Self {
             inner: ring,

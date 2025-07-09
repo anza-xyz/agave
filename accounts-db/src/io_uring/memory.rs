@@ -1,5 +1,5 @@
 use {
-    io_uring::IoUring,
+    agave_io_uring::{Ring, RingOp},
     std::{
         io,
         ops::{Deref, DerefMut},
@@ -11,7 +11,7 @@ use {
 // We register fixed buffers in chunks of up to 1GB as this is faster than registering many
 // `read_capacity` buffers. Registering fixed buffers saves the kernel some work in
 // checking/mapping/unmapping buffers for each read operation.
-pub(super) const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
+const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
 pub enum LargeBuffer {
     Vec(Vec<u8>),
@@ -150,6 +150,28 @@ impl IoFixedBuffer {
         }
     }
 
+    /// Split buffer into `chunk_size` sized `IoFixedBuffer` buffers for use as registered
+    /// buffer in io_uring operations.
+    pub fn split_buffer_chunks<'a>(
+        buffer: &'a mut [u8],
+        chunk_size: usize,
+    ) -> impl Iterator<Item = Self> + use<'a> {
+        assert!(
+            buffer.len() / FIXED_BUFFER_LEN >= u16::MAX as usize,
+            "buffer too large to register in io_uring"
+        );
+        let buf_start = buffer.as_ptr() as usize;
+
+        buffer.chunks_exact_mut(chunk_size).map(move |buf| {
+            let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
+            Self {
+                ptr: buf.as_mut_ptr(),
+                size: buf.len(),
+                io_buf_index: Some(io_buf_index as u16),
+            }
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.size
     }
@@ -173,13 +195,11 @@ impl IoFixedBuffer {
         }
     }
 
-    /// Registed provided buffers as fixed buffer in `io_uring` and split it into
-    /// `chunk_size` sized `IoFixedBuffer` buffers for use in operations.
-    pub fn register_and_chunk_buffer<'a>(
-        ring: &IoUring,
+    /// Registed provided buffer as fixed buffer in `io_uring`.
+    pub fn register_buffer<'a, S, E: RingOp<S>>(
+        ring: &Ring<S, E>,
         buffer: &'a mut [u8],
-        chunk_size: usize,
-    ) -> io::Result<impl Iterator<Item = Self> + use<'a>> {
+    ) -> io::Result<()> {
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
             .map(|buf| libc::iovec {
@@ -187,24 +207,7 @@ impl IoFixedBuffer {
                 iov_len: buf.len(),
             })
             .collect::<Vec<_>>();
-        unsafe { ring.submitter().register_buffers(&iovecs)? };
-
-        if buffer.len() / FIXED_BUFFER_LEN > u16::MAX as usize {
-            return Err(io::Error::new(
-                io::ErrorKind::QuotaExceeded,
-                "buffer too large to register in io_uring",
-            ));
-        }
-
-        let buf_start = buffer.as_ptr() as usize;
-        Ok(buffer.chunks_exact_mut(chunk_size).map(move |buf| {
-            let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
-            Self {
-                ptr: buf.as_mut_ptr(),
-                size: buf.len(),
-                io_buf_index: Some(io_buf_index as u16),
-            }
-        }))
+        unsafe { ring.register_buffers(&iovecs) }
     }
 }
 
