@@ -56,7 +56,7 @@ use {
         sync::{
             atomic::{
                 AtomicU64, AtomicUsize,
-                Ordering::{Relaxed, SeqCst},
+                Ordering::Relaxed,
             },
             Arc, Mutex, MutexGuard, OnceLock, Weak,
         },
@@ -84,11 +84,12 @@ enum CheckPoint<'a> {
     SessionFinished(Option<Slot>),
     SchedulerThreadAborted,
     IdleSchedulerCleaned(usize),
+    IdlingSchedulerTrashed,
+    ReturningSchedulerTrashed,
     TrashedSchedulerCleaned(usize),
     TimeoutListenerTriggered(usize),
     DiscardRequested,
     Discarded(usize),
-    IdlingSchedulerTrashed,
 }
 
 type CountOrDefault = Option<usize>;
@@ -255,10 +256,10 @@ impl HandlerContext {
     fn usage_queue_loader_for_newly_spawned(&self) -> UsageQueueLoader {
         match self.banking_stage_helper.clone() {
             None => UsageQueueLoader::OwnedBySelf {
-                usage_queue_loader: UsageQueueLoaderInner::default(),
+                usage_queue_loader_inner: UsageQueueLoaderInner::default(),
             },
-            Some(banking_stage_helper) => UsageQueueLoader::SharedWithBankingStage {
-                banking_stage_helper,
+            Some(helper) => UsageQueueLoader::SharedWithBankingStage {
+                banking_stage_helper: helper,
             },
         }
     }
@@ -323,15 +324,37 @@ trait_set! {
 // Make this `Clone`-able so that it can easily propagated to all the handler threads.
 clone_trait_object!(BankingPacketHandler);
 
+/// A helper struct for the banking stage integration, primarily used for task creation.
+///
+/// This block-production struct is expected to be shared across the scheduler thread and its
+/// handler threads because all of them needs to handle task creation unlike block verification.
+///
+/// Particularly, usage_queue_loader is desired to be shared across hanlders so that task creation
+/// can be processed in the multi-threaded way. For more details, see
+/// solana_core::banking_stage::unified_scheduler module doc.
 #[derive(Debug)]
 pub struct BankingStageHelper {
     usage_queue_loader: UsageQueueLoaderInner,
+    // Supplemental identification for tasks of identical priority, alloted according to FIFO of
+    // batch granularity, resulting in the total order over the set of available tasks,
+    // collectively.
     next_task_id: AtomicUsize,
     new_task_sender: Sender<NewTaskPayload>,
 }
 
-// bla bla somewhat arbitrary...
-const MAX_TASK_ID: usize = usize::MAX / 2;
+// AtomicUsize's fetch_add entails the wrapping semantics. So, address such an overflowing, under
+// the constraint of not compromising performance at all (i.e. no limit check on hot path and no
+// d-cache pressure): use a hard-coded unconditional number.
+// Note that this concern is of theoretical matter. As such, we introduce rather a naive limit with
+// great safety margin, considering relatively frequent check interval (a single session, usually a
+// slot). Regardless the aforementioned interval precondition, it's exceedingly hard to conceive
+// task id is alloted more than half of usize. That's because we'd still need to be running for
+// almost 300 years continuously to index BANKING_STAGE_MAX_TASK_ID txs at the rate of
+// 1_000_000_000/secs ingestion.
+// For the completeness of discussion, the existence of this check will alleviate the concern of
+// being part of more elaborated attacks with combination of unforeseen vulnerability like internal
+// amplification of banking packets.
+const BANKING_STAGE_MAX_TASK_ID: usize = usize::MAX / 2;
 
 impl BankingStageHelper {
     fn new(new_task_sender: Sender<NewTaskPayload>) -> Self {
@@ -342,17 +365,24 @@ impl BankingStageHelper {
         }
     }
 
+    /// Generate batched task ids for the given number of tasks
+    ///
+    /// We assign task ids for the entire batch at once in the hope of alleviating cache-line
+    /// bouncing on self.next_task_id, slightly compromising strict FIFO semantics. In other words,
+    /// batched sequencing is slightly skewed from the strict FIFO adherence, which would be
+    /// sequencing at the observation of given task at the very instance of handling it in some
+    /// kind of loop iterations.
     pub fn generate_task_ids(&self, count: usize) -> usize {
         self.next_task_id.fetch_add(count, Relaxed)
     }
 
     fn is_task_id_overgrown(&self) -> bool {
-        self.next_task_id.load(SeqCst) > MAX_TASK_ID
+        self.next_task_id.load(Relaxed) > BANKING_STAGE_MAX_TASK_ID
     }
 
     #[cfg(test)]
-    fn change_next_task_id(&self, next_task_id: usize) {
-        self.next_task_id.store(next_task_id, SeqCst);
+    fn set_next_task_id(&self, next_task_id: usize) {
+        self.next_task_id.store(next_task_id, Relaxed);
     }
 
     pub fn create_new_task(
@@ -561,9 +591,31 @@ where
 
                     if let Some(pooled) = inner.peek_pooled() {
                         if pooled.is_overgrown() {
-                            // These steps are closely matched to the normal bp respawingin out of
-                            // abundance of caution...
-                            // this is very unlikely code path; add test... bla bla...
+                            // This code path will be touched sometimes when a given inactive
+                            // idling scheduler becomes overgrown due to buffering, which
+                            // previously passed the overgrown check at the last scheduler
+                            // returning.
+                            //
+                            // At the same time, this code path addresses a theoretically-possible
+                            // attack vector of unbounded mem consumption, which is very unlikely
+                            // to mount a successful one as explained below:
+                            //
+                            // To make that happen, banking stage would need to be tricked into
+                            // returning BankingStageStatus::Active to start buffering on idling,
+                            // which also indicates imminent leader slots to the replay stage.
+                            // Contrary to that, the replay stage needs to be tricked into NOT
+                            // taking that idling-yet-buffering bp scheduler out of SchedulerPool
+                            // at all for the tpu bank at the upcoming leader slots, for quite
+                            // extended duration of time. In this way, it's possible to bypass the
+                            // overgrown check on scheduler returning altogether, resulting in no
+                            // discarding of buffered tasks at all.
+                            //
+                            // This code-path mitigates that possibility. That's because it's not
+                            // possible to see BankingStageStatus::Active at the every iteration of
+                            // cleaner_main_loop, unless the attacker controls near 100% stake.
+
+                            // The following steps are tightly in sync with the normal bp
+                            // spawning out of abundance of caution.
                             let pooled = inner.take_and_trash_pooled();
                             info!("idling BP scheduler ({}) is overgrown", pooled.id());
                             scheduler_pool.spawn_block_production_scheduler(&mut inner);
@@ -689,6 +741,9 @@ where
             self.block_production_scheduler_inner.lock().unwrap();
 
         if should_trash {
+            // Note that the following steps are tightly in sync with the bp
+            // spawning in cleaner_main_loop.
+
             // Maintain the runtime invariant established in register_banking_stage() about
             // the availability of pooled block production scheduler by re-spawning one.
             if block_production_scheduler_inner.can_put(&scheduler) {
@@ -716,6 +771,7 @@ where
                 .lock()
                 .expect("not poisoned")
                 .push(scheduler);
+            sleepless_testing::at(CheckPoint::ReturningSchedulerTrashed);
         } else if block_production_scheduler_inner.can_put(&scheduler) {
             block_production_scheduler_inner.put_returned(scheduler);
         } else {
@@ -895,11 +951,11 @@ where
     }
 
     #[cfg(test)]
-    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize) {
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
         (*self.block_production_scheduler_inner.lock().unwrap())
             .peek_pooled()
             .unwrap()
-            .change_block_producing_scheduler_next_task_id(next_task_id);
+            .set_next_task_id_for_block_production(next_task_id);
     }
 
     pub fn default_handler_count() -> usize {
@@ -1305,6 +1361,10 @@ mod chained_channel {
 
 /// The primary owner of all [`UsageQueue`]s used for particular [`PooledScheduler`].
 ///
+/// Its `load` method provides `Pubkey`-based multi-thread-friendly `UsageQueue` lookup
+/// with automatic population on initial entry misses, fulfilling the Pubkey-UsageQueue 1-to-1
+/// mapping responsibility as documented by `UsageQueue`.
+///
 /// Currently, the simplest implementation. This grows memory usage in unbounded way. Overgrown
 /// instance destruction is managed via `solScCleaner`. This struct is here to be put outside
 /// `solana-unified-scheduler-logic` for the crate's original intent (separation of concerns from
@@ -1324,11 +1384,19 @@ impl UsageQueueLoaderInner {
     }
 }
 
+/// Thin wrapper to encapsulate ownership variation of UsageQueueLoaderInner across block
+/// verification and production. This is needed to provide a uniform interface for the overgrown
+/// check.
 #[derive(Debug)]
 enum UsageQueueLoader {
+    // UsageQueueLoader is owned by this wrapper itself; used by block verification.
     OwnedBySelf {
-        usage_queue_loader: UsageQueueLoaderInner,
+        usage_queue_loader_inner: UsageQueueLoaderInner,
     },
+    // As documented at BankingStageHelper and solana_core::banking_stage::unified_scheduler,
+    // UsageQueueLoaderInner is placed behind BankingStageHelper for block production performance.
+    // Barely expose that to the cleaner thread by holding its Arc here as well; used by block
+    // production.
     SharedWithBankingStage {
         banking_stage_helper: Arc<BankingStageHelper>,
     },
@@ -1337,7 +1405,9 @@ enum UsageQueueLoader {
 impl UsageQueueLoader {
     fn usage_queue_loader(&self) -> &UsageQueueLoaderInner {
         match self {
-            Self::OwnedBySelf { usage_queue_loader } => usage_queue_loader,
+            Self::OwnedBySelf {
+                usage_queue_loader_inner,
+            } => usage_queue_loader_inner,
             Self::SharedWithBankingStage {
                 banking_stage_helper,
             } => &banking_stage_helper.usage_queue_loader,
@@ -1355,7 +1425,7 @@ impl UsageQueueLoader {
 
         match self {
             Self::OwnedBySelf {
-                usage_queue_loader: _,
+                usage_queue_loader_inner: _,
             } => false,
             Self::SharedWithBankingStage {
                 banking_stage_helper,
@@ -1364,14 +1434,14 @@ impl UsageQueueLoader {
     }
 
     #[cfg(test)]
-    fn change_banking_stage_next_task_id(&self, next_task_id: usize) {
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
         let Self::SharedWithBankingStage {
             banking_stage_helper,
         } = self
         else {
             panic!()
         };
-        banking_stage_helper.change_next_task_id(next_task_id);
+        banking_stage_helper.set_next_task_id(next_task_id);
     }
 }
 
@@ -1489,9 +1559,16 @@ where
         assert_matches!(self.session_result_with_timings, None);
 
         // Ensure to initiate thread shutdown by disconnecting new_task_receiver
-        self.disconnect_new_task_sender();
+        let abort_detected = self.disconnect_new_task_sender();
 
-        self.ensure_join_threads(true);
+        if abort_detected {
+            self.ensure_join_threads_after_abort(true);
+        } else {
+            self.ensure_join_threads(true);
+        }
+        // This assert will always be triggered if abort_detected. This is intentional to propagate
+        // a fatal condition of existence of error in response to a graceful thread shutdown
+        // request just above.
         assert_matches!(self.session_result_with_timings, Some((Ok(_), _)));
     }
 }
@@ -2215,12 +2292,13 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 continue;
                             }
                         },
+                        // See solana_core::banking_stage::unified_scheduler module doc as to
+                        // justification of this additional kind of work at the lowest precedence
+                        // of select!
                         recv(handler_context.banking_packet_receiver) -> banking_packet => {
                             let HandlerContext {banking_packet_handler, banking_stage_helper, ..} = &mut handler_context;
                             let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
-                            // See solana_core::banking_stage::unified_scheduler module doc as to
-                            // justification of this additional work in the handler thread.
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
                                 banking_stage_helper.abort_scheduler();
@@ -2426,17 +2504,16 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         }
     }
 
-    fn disconnect_new_task_sender(&mut self) {
-        if self
-            .new_task_sender
+    #[must_use]
+    fn disconnect_new_task_sender(&mut self) -> bool {
+        // Currently, crossbeam doesn't provide a way to indicate channel disconnection other than
+        // dropping all of the senders. However, dropping this self.new_task_sender isn't enough
+        // for block production, because the same new_task_sender can be shared with
+        // BankingStageHelper as well. So, always send our own disconnection message instead,
+        // regardless of block verification and block production for consistency.
+        self.new_task_sender
             .send(NewTaskPayload::Disconnect)
-            .is_ok()
-        {
-            info!("notified a disconnect from {:?}", thread::current());
-        } else {
-            // It seems that the scheduler thread has been aborted already...
-            warn!("failed to notify a disconnect from {:?}", thread::current());
-        }
+            .is_err()
     }
 }
 
@@ -2444,10 +2521,11 @@ pub trait SchedulerInner {
     fn id(&self) -> SchedulerId;
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
-    #[cfg(test)]
-    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize);
     fn discard_buffer(&self);
     fn ensure_abort(&mut self);
+
+    #[cfg(test)]
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize);
 }
 
 pub trait SpawnableScheduler<TH: TaskHandler>: InstalledScheduler {
@@ -2605,12 +2683,6 @@ where
             .is_overgrown(self.thread_manager.pool.max_usage_queue_count)
     }
 
-    #[cfg(test)]
-    fn change_block_producing_scheduler_next_task_id(&self, next_task_id: usize) {
-        self.usage_queue_loader
-            .change_banking_stage_next_task_id(next_task_id);
-    }
-
     fn discard_buffer(&self) {
         self.thread_manager.discard_buffered_tasks();
     }
@@ -2619,7 +2691,14 @@ where
         if self.thread_manager.are_threads_joined() {
             return;
         }
-        self.thread_manager.disconnect_new_task_sender()
+        // todo
+        let _ = self.thread_manager.disconnect_new_task_sender();
+    }
+
+    #[cfg(test)]
+    fn set_next_task_id_for_block_production(&self, next_task_id: usize) {
+        self.usage_queue_loader
+            .set_next_task_id_for_block_production(next_task_id);
     }
 }
 
@@ -4299,15 +4378,15 @@ mod tests {
             unimplemented!()
         }
 
-        fn change_block_producing_scheduler_next_task_id(&self, _next_task_id: usize) {
-            unimplemented!()
-        }
-
         fn discard_buffer(&self) {
             unimplemented!()
         }
 
         fn ensure_abort(&mut self) {
+            unimplemented!()
+        }
+
+        fn set_next_task_id_for_block_production(&self, _next_task_id: usize) {
             unimplemented!()
         }
     }
@@ -4934,6 +5013,13 @@ mod tests {
 
         let GenesisConfigInfo { genesis_config, .. } =
             create_genesis_config_for_block_production(10_000);
+
+        let _progress = sleepless_testing::setup(&[
+            &CheckPoint::ReturningSchedulerTrashed,
+            &CheckPoint::TrashedSchedulerCleaned(1),
+            &TestCheckPoint::AfterTrashedSchedulerCleaned,
+        ]);
+
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
@@ -4995,6 +5081,9 @@ mod tests {
 
         exit.store(true, Ordering::Relaxed);
         poh_service.join().unwrap();
+
+        // Ensure the actual async trashing by solScCleaner
+        sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);
     }
 
     #[test]
@@ -5063,7 +5152,7 @@ mod tests {
         scheduler.unpause_after_taken();
         Box::new(scheduler.into_inner().1).return_to_pool();
 
-        pool.change_block_producing_scheduler_next_task_id(MAX_TASK_ID + 1);
+        pool.set_next_task_id_for_block_production(BANKING_STAGE_MAX_TASK_ID + 1);
 
         // Re-take a brand-new one only after solScCleaner did its job...
         sleepless_testing::at(&TestCheckPoint::AfterTrashedSchedulerCleaned);

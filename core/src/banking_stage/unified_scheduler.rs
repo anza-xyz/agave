@@ -2,12 +2,13 @@
 //! banking stage, starting from `BankingPacketBatch` ingestion from the sig verify stage and to
 //! `Task` submission to the unified scheduler.
 //!
-//! These preprocessing for task creation can be multi-threaded trivially. At the same time, the
-//! maximum cpu core utilization needs to be constrained among this processing and the actual task
-//! handling of unified scheduler. Thus, it's desired to share a single thread pool for the two
-//! kinds of work. Towards that end, the integration was implemented as a callback-style, which is
-//! invoked (via `select!` on `banking_packet_receiver`) at each of unified scheduler handler
-//! threads.
+//! These preprocessing for task creation can be multi-threaded trivially, including
+//! unified-scheduler specific task of UsageQueue lookups with BankingStageHelper. At the same
+//! time, the maximum cpu core utilization needs to be constrained among this processing and the
+//! actual task handling of unified scheduler. Thus, it's desired to share a single thread pool for
+//! the two kinds of work. Towards that end, the integration was implemented as a callback-style,
+//! which is invoked (via `select!` on `banking_packet_receiver`) at each of unified scheduler
+//! handler threads.
 //!
 //! Aside from some limited abstraction leakage to make `select!` work at the
 //! solana-unified-scheduler-pool crate, almost all of these preprocessing are intentionally
@@ -20,7 +21,8 @@
 //! 2. Do various sanitization on them
 //! 3. Calculate priorities
 //! 4. Convert them to tasks with the help of provided BankingStageHelper (remember that pubkey
-//!    lookup for UsageQueue is also performed here; thus multi-threaded and off-loaded from the
+//!    lookup for UsageQueue is also performed at this step by UsageQueueLoaderInner
+//!    internally; thus multi-threaded and off-loaded from the single-threaded-by-design
 //!    scheduler thread)
 //! 5. Submit the tasks.
 
