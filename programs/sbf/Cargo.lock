@@ -7359,6 +7359,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytes",
+ "dashmap",
  "itertools 0.12.1",
  "log",
  "nix",
