@@ -198,7 +198,7 @@ pub fn load_bank_forks(
                 .read()
                 .unwrap()
                 .root_bank()
-                .set_startup_verification_complete();
+                .set_initial_accounts_hash_verification_completed();
 
             (bank_forks, None)
         };

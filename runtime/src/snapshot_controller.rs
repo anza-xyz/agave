@@ -113,7 +113,7 @@ impl SnapshotController {
                 is_root_bank_squashed = bank_slot == root;
 
                 let mut snapshot_time = Measure::start("squash::snapshot_time");
-                if bank.is_startup_verification_complete() {
+                if bank.has_initial_accounts_hash_verification_completed() {
                     // Save off the status cache because these may get pruned if another
                     // `set_root()` is called before the snapshots package can be generated
                     let status_cache_slot_deltas =

@@ -91,7 +91,7 @@ impl SnapshotTestConfig {
             vec![accounts_dir.clone()],
         );
         bank0.freeze();
-        bank0.set_startup_verification_complete();
+        bank0.set_initial_accounts_hash_verification_completed();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
 
         let snapshot_config = SnapshotConfig {

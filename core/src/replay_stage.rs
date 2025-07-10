@@ -2124,7 +2124,7 @@ impl ReplayStage {
 
         assert!(parent.is_frozen());
 
-        if !parent.is_startup_verification_complete() {
+        if !parent.has_initial_accounts_hash_verification_completed() {
             info!("startup verification incomplete, so skipping my leader slot");
             return false;
         }
@@ -2494,7 +2494,7 @@ impl ReplayStage {
         has_new_vote_been_rooted: bool,
         wait_to_vote_slot: Option<Slot>,
     ) -> GenerateVoteTxResult {
-        if !bank.is_startup_verification_complete() {
+        if !bank.has_initial_accounts_hash_verification_completed() {
             info!("startup verification incomplete, so unable to vote");
             return GenerateVoteTxResult::Failed;
         }
@@ -9272,7 +9272,7 @@ pub(crate) mod tests {
         assert!(working_bank.is_complete());
         assert!(working_bank.is_frozen());
         // Mark startup verification as complete to avoid skipping leader slots
-        working_bank.set_startup_verification_complete();
+        working_bank.set_initial_accounts_hash_verification_completed();
 
         // Insert a block two slots greater than current bank. This slot does
         // not have a corresponding Bank in BankForks; this emulates a scenario

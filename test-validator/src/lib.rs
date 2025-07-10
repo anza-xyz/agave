@@ -847,7 +847,7 @@ impl TestValidator {
             .read()
             .unwrap()
             .root_bank()
-            .set_startup_verification_complete();
+            .set_initial_accounts_hash_verification_completed();
     }
 
     /// Initialize the ledger directory

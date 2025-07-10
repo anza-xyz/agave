@@ -144,7 +144,7 @@ impl TestEnvironment {
         let bank = bank_forks.read().unwrap().working_bank();
         assert!(epoch_accounts_hash_utils::is_enabled_this_epoch(&bank));
 
-        bank.set_startup_verification_complete();
+        bank.set_initial_accounts_hash_verification_completed();
 
         TestEnvironment {
             bank_forks,

@@ -2908,19 +2908,6 @@ impl Bank {
             .verified
     }
 
-    /// return true if bg hash verification is complete
-    /// return false if bg hash verification has not completed yet
-    /// if hash verification failed, a panic will occur
-    pub fn is_startup_verification_complete(&self) -> bool {
-        self.has_initial_accounts_hash_verification_completed()
-    }
-
-    /// This can occur because it completed in the background
-    /// or if the verification was run in the foreground.
-    pub fn set_startup_verification_complete(&self) {
-        self.set_initial_accounts_hash_verification_completed();
-    }
-
     pub fn get_fee_for_message_with_lamports_per_signature(
         &self,
         message: &impl SVMMessage,
@@ -5303,11 +5290,7 @@ impl Bank {
                 verified
             } else {
                 info!("Verifying accounts... Skipped.");
-                self.rc
-                    .accounts
-                    .accounts_db
-                    .verify_accounts_hash_in_bg
-                    .verification_complete();
+                self.set_initial_accounts_hash_verification_completed();
                 true
             }
         });
