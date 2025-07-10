@@ -447,7 +447,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                                 programdata_address,
                             }) = account.state()
                             {
-                                debug!("Program data address {}", programdata_address);
+                                debug!("Program data address {programdata_address}");
                                 if bank
                                     .get_account_with_fixed_root(&programdata_address)
                                     .is_some()
@@ -523,7 +523,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             bank.load_program(&key, false, bank.epoch())
                 .expect("Couldn't find program account"),
         );
-        debug!("Loaded program {}", key);
+        debug!("Loaded program {key}");
     }
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 
