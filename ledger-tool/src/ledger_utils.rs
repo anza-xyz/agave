@@ -345,9 +345,7 @@ pub fn load_and_process_ledger(
         "block_verification_method",
         BlockVerificationMethod
     );
-    info!(
-        "Using: block-verification-method: {block_verification_method}",
-    );
+    info!("Using: block-verification-method: {block_verification_method}");
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     match block_verification_method {

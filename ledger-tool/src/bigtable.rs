@@ -773,32 +773,32 @@ async fn copy(args: CopyArgs) -> Result<(), Box<dyn std::error::Error>> {
                             }
                         };
                     } else {
-                        let confirmed_block =
-                            match source_bigtable_clone.get_confirmed_block(slot).await {
-                                Ok(block) => match VersionedConfirmedBlock::try_from(block) {
-                                    Ok(block) => block,
-                                    Err(err) => {
-                                        error!(
-                                            "failed to convert confirmed block to versioned \
-                                             confirmed block, slot: {slot}, err: {err}"
-                                        );
-                                        failed_slots_clone.lock().unwrap().push(slot);
-                                        continue;
-                                    }
-                                },
-                                Err(solana_storage_bigtable::Error::BlockNotFound(slot)) => {
-                                    debug!("block not found, slot: {slot}");
-                                    block_not_found_slots_clone.lock().unwrap().push(slot);
-                                    continue;
-                                }
+                        let confirmed_block = match source_bigtable_clone
+                            .get_confirmed_block(slot)
+                            .await
+                        {
+                            Ok(block) => match VersionedConfirmedBlock::try_from(block) {
+                                Ok(block) => block,
                                 Err(err) => {
                                     error!(
-                                        "failed to get confirmed block, slot: {slot}, err: {err}"
+                                        "failed to convert confirmed block to versioned \
+                                             confirmed block, slot: {slot}, err: {err}"
                                     );
                                     failed_slots_clone.lock().unwrap().push(slot);
                                     continue;
                                 }
-                            };
+                            },
+                            Err(solana_storage_bigtable::Error::BlockNotFound(slot)) => {
+                                debug!("block not found, slot: {slot}");
+                                block_not_found_slots_clone.lock().unwrap().push(slot);
+                                continue;
+                            }
+                            Err(err) => {
+                                error!("failed to get confirmed block, slot: {slot}, err: {err}");
+                                failed_slots_clone.lock().unwrap().push(slot);
+                                continue;
+                            }
+                        };
 
                         match destination_bigtable_clone
                             .upload_confirmed_block(slot, confirmed_block)
