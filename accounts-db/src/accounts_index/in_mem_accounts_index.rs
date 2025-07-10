@@ -275,22 +275,41 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         let m = Measure::start("items");
 
-        // For simplicity, we check the range for every pubkey in the map. This
-        // can be further optimized for case, such as the range contains lowest
-        // and highest pubkey for this bin. In such case, we can return all
-        // items in the map without range check on item's pubkey. Since the
-        // check is cheap when compared with the cost of reading from disk, we
-        // are not optimizing it for now.
-        self.hold_range_in_memory(range, true);
-        let result = self
-            .map_internal
-            .read()
-            .unwrap()
+        // We need to hold the flushing_active lock first before gathering the items from the index.
+        #[allow(unused_assignments)]
+        let mut flush_guard = None;
+        loop {
+            flush_guard = FlushGuard::lock(&self.flushing_active);
+            if flush_guard.is_some() {
+                break;
+            }
+        }
+
+        // Collect items from the in-memory map that are within the range.
+        // We hold a write lock to the in-memory map to ensure that no other thread is modifying it while we are reading.
+        let map = self.map_internal.write().unwrap();
+        let mut index_items: HashMap<_, _> = map
             .iter()
             .filter(|&(k, _v)| range.contains(k))
             .map(|(k, v)| (*k, Arc::clone(v)))
             .collect();
-        self.hold_range_in_memory(range, false);
+
+        // Collect items from the disk if they are not in-memory.
+        if let Some(disk) = self.bucket.as_ref() {
+            let items = disk.items_in_range(&Some(range));
+            for item in items {
+                if !map.contains_key(&item.pubkey) {
+                    index_items.insert(
+                        item.pubkey,
+                        self.disk_to_cache_entry(item.slot_list, item.ref_count),
+                    );
+                }
+            }
+        }
+        drop(map);
+        drop(flush_guard);
+
+        let result = index_items.into_iter().collect();
         Self::update_stat(&self.stats().items, 1);
         Self::update_time_stat(&self.stats().items_us, m);
         result
