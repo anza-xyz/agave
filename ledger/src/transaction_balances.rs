@@ -142,6 +142,7 @@ mod tests {
             native_post,
             token_pre,
             token_post,
+            record_for_unloaded: true,
         };
 
         let (actual_native, actual_token) = compile_collected_balances(balance_collector);

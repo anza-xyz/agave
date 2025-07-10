@@ -103,7 +103,7 @@ impl SvmTestEnvironment<'_> {
                 enable_log_recording: true,
                 enable_return_data_recording: true,
                 enable_cpi_recording: false,
-                enable_transaction_balance_recording: false,
+                enable_transaction_balance_recording: false.into(),
             },
             ..Default::default()
         };
@@ -2933,10 +2933,11 @@ mod balance_collector {
             }
 
             // turn on balance recording and run the batch
+            // HANA TODO test the new mode
             let mut env = SvmTestEnvironment::create(test_entry);
             env.processing_config
                 .recording_config
-                .enable_transaction_balance_recording = true;
+                .enable_transaction_balance_recording = true.into();
             let batch_output = env.execute();
 
             // thanks to execute() we know user_balances is correct
