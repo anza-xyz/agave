@@ -70,6 +70,10 @@ pub(crate) trait ContiguousBufFileRead: BufRead {
     /// will be consumed from.
     fn get_file_offset(&self) -> usize;
 
+    /// Returns the maximum number of contiguous bytes that can be provided in the buffer
+    /// returned by `fill_buf`. Value depends on used sizing of internal buffers.
+    fn max_supported_contiguous_buf_len(&self) -> usize;
+
     /// Sets the default minimum number of bytes that must be available in the buffer
     /// returned by each call to `fill_buf`.
     ///
@@ -88,6 +92,7 @@ pub(crate) trait ContiguousBufFileRead: BufRead {
     ///
     /// If the end of the file is reached before this amount of data can be provided,
     /// an `Err(UnexpectedEof)` is returned.
+    /// This value must be less than or equal to `max_supported_contiguous_buf_len()`.
     ///
     /// This override applies only to the next call to `fill_buf`. After that,
     /// the default requirement (set by `set_default_required_fill_buf_len`) is restored.
@@ -140,6 +145,10 @@ impl<'a, T: Backing> ContiguousBufFileRead for BufferedReader<'a, T> {
         } else {
             self.file_last_offset + self.buf_valid_bytes.start
         }
+    }
+
+    fn max_supported_contiguous_buf_len(&self) -> usize {
+        unsafe { self.buf.as_slice() }.len()
     }
 
     fn set_default_required_fill_buf_len(&mut self, len: usize) {
@@ -249,12 +258,9 @@ pub fn large_file_buf_reader(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::sequential_file_reader::SequentialFileReader;
 
-        let io_uring_reader = SequentialFileReader::with_capacity(buf_size);
+        let io_uring_reader = SequentialFileReader::with_capacity(buf_size, &path);
         match io_uring_reader {
-            Ok(mut reader) => {
-                reader.add_path(path)?;
-                return Ok(Box::new(reader));
-            }
+            Ok(reader) => return Ok(Box::new(reader)),
             Err(error) => {
                 log::warn!("unable to create io_uring reader: {error}");
             }
