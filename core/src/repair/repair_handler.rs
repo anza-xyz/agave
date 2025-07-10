@@ -62,6 +62,15 @@ pub enum RepairHandlerType {
 }
 
 impl RepairHandlerType {
+    pub fn to_handler(&self, blockstore: Arc<Blockstore>) -> Box<dyn RepairHandler + Send + Sync> {
+        match self {
+            RepairHandlerType::Standard => Box::new(StandardRepairHandler::new(blockstore)),
+            RepairHandlerType::Malicious(config) => {
+                Box::new(MaliciousRepairHandler::new(blockstore, *config))
+            }
+        }
+    }
+
     pub fn create_serve_repair(
         &self,
         blockstore: Arc<Blockstore>,
@@ -69,19 +78,11 @@ impl RepairHandlerType {
         bank_forks: Arc<RwLock<BankForks>>,
         serve_repair_whitelist: Arc<RwLock<HashSet<Pubkey>>>,
     ) -> ServeRepair {
-        match self {
-            RepairHandlerType::Standard => ServeRepair::new(
-                cluster_info,
-                bank_forks,
-                serve_repair_whitelist,
-                StandardRepairHandler::new(blockstore),
-            ),
-            RepairHandlerType::Malicious(config) => ServeRepair::new(
-                cluster_info,
-                bank_forks,
-                serve_repair_whitelist,
-                MaliciousRepairHandler::new(blockstore, *config),
-            ),
-        }
+        ServeRepair::new(
+            cluster_info,
+            bank_forks,
+            serve_repair_whitelist,
+            self.to_handler(blockstore),
+        )
     }
 }

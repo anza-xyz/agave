@@ -608,7 +608,7 @@ impl AncestorHashesService {
                 repair_info.cluster_info.clone(),
                 repair_info.bank_forks.clone(),
                 repair_info.repair_whitelist.clone(),
-                StandardRepairHandler::new(blockstore),
+                Box::new(StandardRepairHandler::new(blockstore)),
             )
         };
         let mut repair_stats = AncestorRepairRequestsStats::default();
@@ -1273,7 +1273,7 @@ mod test {
                     Arc::new(cluster_info),
                     vote_simulator.bank_forks,
                     Arc::<RwLock<HashSet<_>>>::default(), // repair whitelist
-                    StandardRepairHandler::new(blockstore.clone()),
+                    Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
             };
 
@@ -1379,7 +1379,7 @@ mod test {
                     requester_cluster_info.clone(),
                     bank_forks.clone(),
                     repair_whitelist.clone(),
-                    StandardRepairHandler::new(blockstore),
+                    Box::new(StandardRepairHandler::new(blockstore)),
                 )
             };
             let (ancestor_duplicate_slots_sender, _ancestor_duplicate_slots_receiver) = unbounded();

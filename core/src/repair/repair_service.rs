@@ -759,7 +759,7 @@ impl RepairService {
                     repair_info.cluster_info.clone(),
                     repair_info.bank_forks.clone(),
                     repair_info.repair_whitelist.clone(),
-                    StandardRepairHandler::new(blockstore.clone()),
+                    Box::new(StandardRepairHandler::new(blockstore.clone())),
                 )
             },
             repair_metrics: RepairMetrics::default(),
@@ -1650,7 +1650,7 @@ mod test {
                 cluster_info,
                 bank_forks,
                 Arc::new(RwLock::new(HashSet::default())),
-                StandardRepairHandler::new(blockstore.clone()),
+                Box::new(StandardRepairHandler::new(blockstore.clone())),
             )
         };
         let mut duplicate_slot_repair_statuses = HashMap::new();
@@ -1754,7 +1754,7 @@ mod test {
                 cluster_info.clone(),
                 bank_forks,
                 Arc::new(RwLock::new(HashSet::default())),
-                StandardRepairHandler::new(blockstore),
+                Box::new(StandardRepairHandler::new(blockstore)),
             )
         };
         let valid_repair_peer = Node::new_localhost().info;
