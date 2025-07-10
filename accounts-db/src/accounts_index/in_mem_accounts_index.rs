@@ -250,7 +250,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    pub fn items<R>(&self, range: &R) -> Vec<(Pubkey, Arc<AccountMapEntry<T>>)>
+    pub fn items<R>(&self, range: &R) -> Vec<(Pubkey, SlotList<T>)>
     where
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
@@ -288,7 +288,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             .unwrap()
             .iter()
             .filter(|&(k, _v)| range.contains(k))
-            .map(|(k, v)| (*k, Arc::clone(v)))
+            .map(|(k, v)| (*k, v.slot_list.read().unwrap().clone()))
             .collect();
         self.hold_range_in_memory(range, false);
         Self::update_stat(&self.stats().items, 1);
@@ -296,7 +296,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         result
     }
 
-    // only called in debug code paths
+    /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);
         // easiest implementation is to load everything from disk into cache and return the keys

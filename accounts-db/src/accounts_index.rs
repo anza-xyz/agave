@@ -730,21 +730,27 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         for pubkey_list in self.iter(range.as_ref(), returns_items) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
-            for (pubkey, list) in pubkey_list {
+            for pubkey in pubkey_list {
                 num_keys_iterated += 1;
-                let mut read_lock_timer = Measure::start("read_lock");
-                let list_r = &list.slot_list.read().unwrap();
-                read_lock_timer.stop();
-                read_lock_elapsed += read_lock_timer.as_us();
-                let mut latest_slot_timer = Measure::start("latest_slot");
-                if let Some(index) = self.latest_slot(Some(ancestors), list_r, max_root) {
-                    latest_slot_timer.stop();
-                    latest_slot_elapsed += latest_slot_timer.as_us();
-                    let mut load_account_timer = Measure::start("load_account");
-                    func(&pubkey, (&list_r[index].1, list_r[index].0));
-                    load_account_timer.stop();
-                    load_account_elapsed += load_account_timer.as_us();
-                }
+                self.get_and_then(&pubkey, |entry| {
+                    if let Some(list) = entry {
+                        let mut read_lock_timer = Measure::start("read_lock");
+                        let list_r = &list.slot_list.read().unwrap();
+                        read_lock_timer.stop();
+                        read_lock_elapsed += read_lock_timer.as_us();
+                        let mut latest_slot_timer = Measure::start("latest_slot");
+                        if let Some(index) = self.latest_slot(Some(ancestors), list_r, max_root) {
+                            latest_slot_timer.stop();
+                            latest_slot_elapsed += latest_slot_timer.as_us();
+                            let mut load_account_timer = Measure::start("load_account");
+                            func(&pubkey, (&list_r[index].1, list_r[index].0));
+                            load_account_timer.stop();
+                            load_account_elapsed += load_account_timer.as_us();
+                        }
+                    }
+                    let add_to_in_mem_cache = false;
+                    (add_to_in_mem_cache, ())
+                });
                 if config.is_aborted() {
                     return;
                 }

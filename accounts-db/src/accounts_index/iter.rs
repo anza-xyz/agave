@@ -1,8 +1,5 @@
 use {
-    super::{
-        account_map_entry::AccountMapEntry, in_mem_accounts_index::InMemAccountsIndex,
-        AccountsIndex, DiskIndexValue, IndexValue,
-    },
+    super::{in_mem_accounts_index::InMemAccountsIndex, AccountsIndex, DiskIndexValue, IndexValue},
     solana_pubkey::Pubkey,
     std::{
         ops::{Bound, RangeBounds},
@@ -18,7 +15,7 @@ pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> 
     end_bound: Bound<&'a Pubkey>,
     start_bin: usize,
     end_bin_inclusive: usize,
-    items: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
+    items: Vec<Pubkey>,
     returns_items: AccountsIndexIteratorReturnsItems,
 }
 
@@ -61,8 +58,9 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
     for AccountsIndexIterator<'_, T, U>
 {
-    type Item = Vec<(Pubkey, Arc<AccountMapEntry<T>>)>;
+    type Item = Vec<Pubkey>;
     fn next(&mut self) -> Option<Self::Item> {
+        let range = (self.start_bound, self.end_bound);
         while self.items.len() < ITER_BATCH_SIZE {
             if self.start_bin > self.end_bin_inclusive {
                 break;
@@ -70,9 +68,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 
             let bin = self.start_bin;
             let map = &self.account_maps[bin];
-            let mut items = map.items(&(self.start_bound, self.end_bound));
+            let mut items = map
+                .keys()
+                .into_iter()
+                .filter(|k| range.contains(&k))
+                .collect::<Vec<_>>();
             if self.returns_items == AccountsIndexIteratorReturnsItems::Sorted {
-                items.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                items.sort_unstable();
             }
             self.items.append(&mut items);
             self.start_bin += 1;
@@ -141,7 +143,7 @@ mod tests {
             let x = iter.next().unwrap();
             assert_eq!(x.len(), 2 * ITER_BATCH_SIZE);
             assert_eq!(
-                x.is_sorted_by(|a, b| a.0 < b.0),
+                x.is_sorted(),
                 returns_items == AccountsIndexIteratorReturnsItems::Sorted
             );
             assert_eq!(iter.items.len(), 0); // should be empty.

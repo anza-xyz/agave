@@ -169,7 +169,6 @@ enum AppendVecFileBacking {
     /// A file-backed block of memory that is used to store the data for each appended item.
     Mmap(MmapMut),
     /// This was opened as a read only file
-    #[cfg_attr(not(unix), allow(dead_code))]
     File(File),
 }
 
@@ -368,13 +367,7 @@ impl AppendVec {
 
     /// when we can use file i/o as opposed to mmap, this is the trigger to tell us
     /// that no more appending will occur and we can close the initial mmap.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        #[cfg(not(unix))]
-        // must open as mmmap on non-unix
-        return None;
-
-        #[cfg(unix)]
         match &self.backing {
             AppendVecFileBacking::File(_file) => {
                 // already a file, so already read-only
@@ -477,7 +470,6 @@ impl AppendVec {
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
-    #[cfg_attr(not(unix), allow(unused_variables))]
     pub fn new_from_file_unchecked(
         path: impl Into<PathBuf>,
         current_len: usize,
@@ -493,8 +485,6 @@ impl AppendVec {
             .create(false)
             .open(&path)?;
 
-        #[cfg(unix)]
-        // we must use mmap on non-linux
         if storage_access == StorageAccess::File {
             APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 

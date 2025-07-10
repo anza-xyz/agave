@@ -8527,12 +8527,9 @@ impl AccountsDb {
         let full_pubkey_range = Pubkey::from([0; 32])..=Pubkey::from([0xff; 32]);
 
         self.accounts_index.account_maps.iter().for_each(|map| {
-            for (pubkey, account_entry) in map.items(&full_pubkey_range) {
-                info!("  key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
-                info!(
-                    "      slots: {:?}",
-                    *account_entry.slot_list.read().unwrap()
-                );
+            for (pubkey, slot_list) in map.items(&full_pubkey_range) {
+                info!("  key: {}", pubkey);
+                info!("      slots: {:?}", slot_list);
             }
         });
     }
