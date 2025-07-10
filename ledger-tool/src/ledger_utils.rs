@@ -68,9 +68,9 @@ pub struct LoadAndProcessLedgerOutput {
 
 const PROCESS_SLOTS_HELP_STRING: &str =
     "The starting slot is either the latest found snapshot slot, or genesis (slot 0) if the \
-     --no-snapshot flag was specified or if no snapshots were found. \
-     The ending slot is the snapshot creation slot for create-snapshot, the value for \
-     --halt-at-slot if specified, or the highest slot in the blockstore.";
+     --no-snapshot flag was specified or if no snapshots were found. The ending slot is the \
+     snapshot creation slot for create-snapshot, the value for --halt-at-slot if specified, or \
+     the highest slot in the blockstore.";
 
 #[derive(Error, Debug)]
 pub(crate) enum LoadAndProcessLedgerError {
@@ -236,7 +236,8 @@ pub fn load_and_process_ledger(
             .join(LEDGER_TOOL_DIRECTORY)
             .join("accounts");
         info!(
-            "Default accounts path is switched aligning with Blockstore's secondary access: {non_primary_accounts_path:?}"
+            "Default accounts path is switched aligning with Blockstore's secondary access: \
+             {non_primary_accounts_path:?}"
         );
         vec![non_primary_accounts_path]
     };
@@ -495,7 +496,8 @@ pub fn open_blockstore(
             )
             .unwrap_or_else(|err| {
                 eprintln!(
-                    "Failed to open blockstore (with --force-update-to-open) at {ledger_path:?}: {err:?}"
+                    "Failed to open blockstore (with --force-update-to-open) at {ledger_path:?}: \
+                     {err:?}"
                 );
                 exit(1);
             })
