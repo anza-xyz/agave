@@ -1,7 +1,13 @@
 use {
     governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter},
     lazy_lru::LruCache,
-    std::{borrow::Borrow, net::IpAddr, num::NonZeroU32, sync::Mutex, time::Instant},
+    std::{
+        borrow::Borrow,
+        net::IpAddr,
+        num::NonZeroU32,
+        sync::{Mutex, RwLock},
+        time::Instant,
+    },
 };
 
 pub struct ConnectionRateLimiter {
@@ -79,8 +85,8 @@ struct TokenBucketState {
     last_access: u64,
 }
 
-/// Enforces a rate limit on the number of requests
-/// over a period of time.
+/// Enforces a rate limit on the volume of requests
+/// per unit time.
 pub struct TokenBucket {
     tokens_per_second: f64,
     max_tokens: u64,
@@ -100,6 +106,7 @@ impl Clone for TokenBucket {
 }
 
 impl TokenBucket {
+    /// Allocate a new TokenBucket
     pub fn new(initial_tokens: u64, max_tokens: u64, tokens_per_second: f64) -> Self {
         assert!(
             tokens_per_second > 0.0,
@@ -122,15 +129,18 @@ impl TokenBucket {
     }
 
     pub fn current_tokens(&self) -> u64 {
-        let now = self.time_us();
         let mut state = self.state.lock().unwrap();
+        let now = self.time_us();
         self.update_state(now, &mut state);
         state.tokens
     }
 
+    /// Attempts to consume tokens from bucket.
+    /// On success, returns Ok(amount of tokens left in the bucket)
+    /// On failure, returns Err(amount of tokens missing to fill request)
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
-        let now = self.time_us();
         let mut state = self.state.lock().unwrap();
+        let now = self.time_us();
         self.update_state(now, &mut state);
         if state.tokens >= request_size {
             state.tokens -= request_size;
@@ -140,12 +150,16 @@ impl TokenBucket {
         }
     }
 
+    /// Retrieves monotonic time since bucket
+    /// creation
     fn time_us(&self) -> u64 {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.base_time);
         elapsed.as_micros() as u64
     }
 
+    /// Updates internal state of the bucket by
+    /// depositing new tokens (if appropriate)
     fn update_state(&self, now: u64, state: &mut TokenBucketState) {
         debug_assert!(now >= state.last_access);
         let elapsed = (now - state.last_access) as f64;
@@ -165,37 +179,41 @@ impl TokenBucket {
 /// Provides rate limiting for multiple source IP addresses
 /// on demand. Uses LazyLru under the hood.
 pub struct KeyedRateLimiter {
-    data: LruCache<IpAddr, TokenBucket>,
+    data: RwLock<LruCache<IpAddr, TokenBucket>>,
     prototype_bucket: TokenBucket,
 }
 
 impl KeyedRateLimiter {
     pub fn new(capacity: usize, prototype_bucket: TokenBucket) -> Self {
         Self {
-            data: LruCache::new(capacity),
+            data: RwLock::new(LruCache::new(capacity)),
             prototype_bucket,
         }
     }
     pub fn current_tokens(&self, key: impl Borrow<IpAddr>) -> Option<u64> {
-        let bucket = self.data.get(key.borrow())?;
+        let readguard = self.data.read().unwrap();
+        let bucket = readguard.get(key.borrow())?;
         Some(bucket.current_tokens())
     }
 
-    pub fn consume_tokens(
-        &mut self,
-        key: impl Borrow<IpAddr>,
-        request_size: u64,
-    ) -> Result<u64, u64> {
-        let bucket = self.data.get(key.borrow());
-        match bucket {
-            Some(bucket) => bucket.consume_tokens(request_size),
-            None => {
-                let bucket = self.prototype_bucket.clone();
-                let res = bucket.consume_tokens(request_size);
-                self.data.put(*key.borrow(), bucket);
-                res
+    pub fn consume_tokens(&self, key: impl Borrow<IpAddr>, request_size: u64) -> Result<u64, u64> {
+        // try to take read locks only (works for keys we have in the LRU)
+        {
+            let readguard = self.data.read().unwrap();
+            let bucket = readguard.get(key.borrow());
+            if let Some(bucket) = bucket {
+                return bucket.consume_tokens(request_size);
             }
         }
+        // if the key is not in the LRU, we need to allocate a new bucket
+        let bucket = self.prototype_bucket.clone();
+        let res = bucket.consume_tokens(request_size);
+        // place the new bucket into the LRU
+        {
+            let mut writeguard = self.data.write().unwrap();
+            writeguard.put(*key.borrow(), bucket);
+        }
+        res
     }
 }
 
@@ -203,7 +221,14 @@ impl KeyedRateLimiter {
 pub mod test {
     use {
         super::*,
-        std::{net::Ipv4Addr, time::Duration},
+        std::{
+            net::Ipv4Addr,
+            sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            },
+            time::Duration,
+        },
     };
 
     #[tokio::test]
@@ -260,7 +285,7 @@ pub mod test {
     #[test]
     fn test_token_buckets() {
         let prototype_bucket = TokenBucket::new(100, 100, 1000.0);
-        let mut rl = KeyedRateLimiter::new(8, prototype_bucket);
+        let rl = KeyedRateLimiter::new(8, prototype_bucket);
         let ip1 = IpAddr::V4(Ipv4Addr::from_bits(1234));
         let ip2 = IpAddr::V4(Ipv4Addr::from_bits(4321));
         assert_eq!(rl.current_tokens(ip1), None, "Initially no buckets exist");
@@ -311,5 +336,85 @@ pub mod test {
         );
         rl.consume_tokens(ip2, 100)
             .expect("New bucket should have been made for ip2");
+    }
+
+    #[test]
+    fn bench_token_bucket() {
+        let run_duration = Duration::from_secs(10);
+        let tb = TokenBucket::new(1, 60, 100.0);
+        let limiter = KeyedRateLimiter::new(1024 * 2, tb);
+
+        let accepted = AtomicUsize::new(0);
+        let rejected = AtomicUsize::new(0);
+
+        let start = Instant::now();
+        let ip_pool = 1024;
+        let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
+        let workers = 8;
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    for i in 1.. {
+                        if Instant::now() > start + run_duration {
+                            break;
+                        }
+                        let ip = IpAddr::V4(Ipv4Addr::from_bits(i % ip_pool as u32));
+                        if limiter.consume_tokens(ip, 1).is_ok() {
+                            accepted.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            rejected.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+
+        let acc = accepted.load(Ordering::Relaxed);
+        let rej = rejected.load(Ordering::Relaxed);
+        println!("Run complete over {:?} seconds", run_duration.as_secs());
+        println!("Accepted: {acc} (target {expected_total_accepts})");
+        println!("Rejected: {rej}");
+        assert!(((acc as i64) - expected_total_accepts).abs() < expected_total_accepts / 10);
+    }
+
+    #[test]
+    #[ignore = "does not pass"]
+    fn bench_governor() {
+        let run_duration = Duration::from_secs(10);
+        let limiter = Arc::new(ConnectionRateLimiter::new(60 * 100));
+
+        let accepted = AtomicUsize::new(0);
+        let rejected = AtomicUsize::new(0);
+
+        let start = Instant::now();
+        let ip_pool = 1024;
+        let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
+        let workers = 8;
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    for i in 1.. {
+                        if Instant::now() > start + run_duration {
+                            break;
+                        }
+                        let ip = IpAddr::V4(Ipv4Addr::from_bits(i % ip_pool as u32));
+                        if limiter.is_allowed(&ip) {
+                            accepted.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            rejected.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+
+        let acc = accepted.load(Ordering::Relaxed);
+        let rej = rejected.load(Ordering::Relaxed);
+        println!("Run complete over {:?} seconds", run_duration.as_secs());
+        println!("Accepted: {acc} (target {expected_total_accepts})");
+        println!("Rejected: {rej}");
+        assert!(((acc as i64) - expected_total_accepts).abs() < expected_total_accepts / 10);
     }
 }
