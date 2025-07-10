@@ -32,7 +32,7 @@ pub(crate) trait BalanceCollectionRoutines {
     );
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 #[cfg_attr(
     feature = "dev-context-only-utils",
     field_qualifiers(native_pre(pub), native_post(pub), token_pre(pub), token_post(pub),)
@@ -163,7 +163,7 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
 
 // this contains all the information we can provide to construct TransactionTokenBalance
 // that type, in ledger, depends on UiTokenAmount from account-decoder, so we cannot build it here
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SvmTokenInfo {
     pub account_index: u8,
     pub mint: Pubkey,
