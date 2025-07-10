@@ -28,7 +28,8 @@ use {
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
-        ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        ExecutionRecord, IndexOfAccount, InstructionAccountView, InstructionAccountViewVector,
+        TransactionAccount, TransactionContext,
     },
     std::{
         collections::{hash_map::Entry, HashMap},
@@ -367,8 +368,9 @@ fn execute_fixture_as_instr(
         SVMTransactionExecutionCost::default(),
     );
 
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len());
+    let mut instruction_accounts = InstructionAccountViewVector::with_capacity(
+        sanitized_message.instructions()[0].accounts.len(),
+    );
 
     for (instruction_acct_idx, index_txn) in sanitized_message.instructions()[0]
         .accounts
@@ -383,20 +385,20 @@ fn execute_fixture_as_instr(
             .position(|idx| *idx == *index_txn)
             .unwrap_or(instruction_acct_idx);
 
-        instruction_accounts.push(InstructionAccount {
-            index_in_transaction: *index_txn as IndexOfAccount,
-            index_in_caller: *index_txn as IndexOfAccount,
-            index_in_callee: index_in_callee as IndexOfAccount,
-            is_signer: sanitized_message.is_signer(*index_txn as usize),
-            is_writable: sanitized_message.is_writable(*index_txn as usize),
-        });
+        instruction_accounts.push(InstructionAccountView::new(
+            *index_txn as IndexOfAccount,
+            *index_txn as IndexOfAccount,
+            index_in_callee as IndexOfAccount,
+            sanitized_message.is_signer(*index_txn as usize),
+            sanitized_message.is_writable(*index_txn as usize),
+        ));
     }
 
     let mut compute_units_consumed = 0u64;
     let mut timings = ExecuteTimings::default();
     let result = invoke_context.process_instruction(
         &sanitized_message.instructions()[0].data,
-        &instruction_accounts,
+        instruction_accounts,
         &[program_idx as IndexOfAccount],
         &mut compute_units_consumed,
         &mut timings,

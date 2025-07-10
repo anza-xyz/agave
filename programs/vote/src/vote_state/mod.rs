@@ -1063,7 +1063,7 @@ mod tests {
         solana_account::{state_traits::StateMut, AccountSharedData},
         solana_clock::DEFAULT_SLOTS_PER_EPOCH,
         solana_sha256_hasher::hash,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::{InstructionAccountView, InstructionAccountViewVector},
         std::cell::RefCell,
         test_case::test_case,
     };
@@ -1158,17 +1158,11 @@ mod tests {
             0,
         );
         let mut instruction_context = InstructionContext::default();
-        instruction_context.configure(
-            &[0],
-            &[InstructionAccount {
-                index_in_transaction: 1,
-                index_in_caller: 1,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            }],
-            &[],
-        );
+        let instruction_accounts =
+            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+                1, 1, 0, false, true,
+            )]);
+        instruction_context.configure(&[0], instruction_accounts, &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
@@ -1313,17 +1307,12 @@ mod tests {
             0,
         );
         let mut instruction_context = InstructionContext::default();
-        instruction_context.configure(
-            &[0],
-            &[InstructionAccount {
-                index_in_transaction: 1,
-                index_in_caller: 1,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            }],
-            &[],
-        );
+
+        let instruction_accounts =
+            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+                1, 1, 0, false, true,
+            )]);
+        instruction_context.configure(&[0], instruction_accounts, &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
         // state
