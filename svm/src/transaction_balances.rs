@@ -23,12 +23,14 @@ pub(crate) trait BalanceCollectionRoutines {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        load_succeeded: bool,
     );
 
     fn collect_post_balances<CB: TransactionProcessingCallback>(
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        load_succeeded: bool,
     );
 }
 
@@ -42,16 +44,23 @@ pub struct BalanceCollector {
     native_post: BatchNativeBalances,
     token_pre: BatchTokenBalances,
     token_post: BatchTokenBalances,
+    // when false, we only collect balances for executable transactions
+    // when true, we include fee-only and discarded transactions as well
+    record_for_unloaded: bool,
 }
 
 impl BalanceCollector {
     // we always provide one vec for every transaction, even if the vecs are empty
-    pub(crate) fn new_with_transaction_count(transaction_count: usize) -> Self {
+    pub(crate) fn new_with_transaction_count(
+        transaction_count: usize,
+        record_for_unloaded: bool,
+    ) -> Self {
         Self {
             native_pre: Vec::with_capacity(transaction_count),
             native_post: Vec::with_capacity(transaction_count),
             token_pre: Vec::with_capacity(transaction_count),
             token_post: Vec::with_capacity(transaction_count),
+            record_for_unloaded,
         }
     }
 
@@ -122,8 +131,14 @@ impl BalanceCollectionRoutines for BalanceCollector {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        load_succeeded: bool,
     ) {
-        let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
+        let (native_balances, token_balances) = if load_succeeded || self.record_for_unloaded {
+            self.collect_balances(account_loader, transaction)
+        } else {
+            (vec![], vec![])
+        };
+
         self.native_pre.push(native_balances);
         self.token_pre.push(token_balances);
     }
@@ -132,8 +147,14 @@ impl BalanceCollectionRoutines for BalanceCollector {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        load_succeeded: bool,
     ) {
-        let (native_balances, token_balances) = self.collect_balances(account_loader, transaction);
+        let (native_balances, token_balances) = if load_succeeded || self.record_for_unloaded {
+            self.collect_balances(account_loader, transaction)
+        } else {
+            (vec![], vec![])
+        };
+
         self.native_post.push(native_balances);
         self.token_post.push(token_balances);
     }
@@ -144,9 +165,10 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        load_succeeded: bool,
     ) {
         if let Some(inner) = self {
-            inner.collect_pre_balances(account_loader, transaction)
+            inner.collect_pre_balances(account_loader, transaction, load_succeeded)
         }
     }
 
@@ -154,9 +176,10 @@ impl BalanceCollectionRoutines for Option<BalanceCollector> {
         &mut self,
         account_loader: &mut AccountLoader<CB>,
         transaction: &impl SVMTransaction,
+        load_succeeded: bool,
     ) {
         if let Some(inner) = self {
-            inner.collect_post_balances(account_loader, transaction)
+            inner.collect_post_balances(account_loader, transaction, load_succeeded)
         }
     }
 }

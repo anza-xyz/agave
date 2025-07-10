@@ -88,7 +88,7 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
-    pub enable_transaction_balance_recording: bool,
+    pub enable_transaction_balance_recording: TransactionBalanceRecordingMode,
 }
 
 impl ExecutionRecordingConfig {
@@ -97,7 +97,24 @@ impl ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
-            enable_transaction_balance_recording: option,
+            enable_transaction_balance_recording: option.into(),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Default, PartialEq, Eq)]
+pub enum TransactionBalanceRecordingMode {
+    #[default]
+    Disabled,
+    OnlyExecuted,
+    Enabled,
+}
+
+impl From<bool> for TransactionBalanceRecordingMode {
+    fn from(option: bool) -> Self {
+        match option {
+            false => Self::Disabled,
+            true => Self::Enabled,
         }
     }
 }
@@ -391,10 +408,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         // Create the transaction balance collector if recording is enabled.
-        let mut balance_collector = config
-            .recording_config
-            .enable_transaction_balance_recording
-            .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
+        let mut balance_collector =
+            match config.recording_config.enable_transaction_balance_recording {
+                TransactionBalanceRecordingMode::Disabled => None,
+                TransactionBalanceRecordingMode::OnlyExecuted => Some(
+                    BalanceCollector::new_with_transaction_count(sanitized_txs.len(), false),
+                ),
+                TransactionBalanceRecordingMode::Enabled => Some(
+                    BalanceCollector::new_with_transaction_count(sanitized_txs.len(), true),
+                ),
+            };
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
@@ -430,8 +453,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let ((), collect_balances_us) =
-                measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+            let load_succeeded = matches!(load_result, TransactionLoadResult::Loaded(_));
+
+            let ((), collect_balances_us) = measure_us!(balance_collector.collect_pre_balances(
+                &mut account_loader,
+                tx,
+                load_succeeded
+            ));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
@@ -468,8 +496,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
-            let ((), collect_balances_us) =
-                measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+            let ((), collect_balances_us) = measure_us!(balance_collector.collect_post_balances(
+                &mut account_loader,
+                tx,
+                load_succeeded
+            ));
             execute_timings
                 .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
 
