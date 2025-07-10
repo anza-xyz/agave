@@ -45,10 +45,6 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
-        blockstore_options::{
-            AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
-            LedgerColumnOptions,
-        },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_logger::redirect_stderr_to_file,
@@ -111,8 +107,6 @@ pub fn execute(
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
-        rocksdb_compaction_threads,
-        rocksdb_flush_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
         tpu_vote_transaction_receive_threads,
@@ -183,10 +177,6 @@ pub fn execute(
         )
     })?;
 
-    let recovery_mode = matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
-
     let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
         let limit_ledger_size = match matches.value_of("limit_ledger_size") {
             Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
@@ -203,35 +193,7 @@ pub fn execute(
         None
     };
 
-    let column_options = LedgerColumnOptions {
-        compression_type: match matches.value_of("rocksdb_ledger_compression") {
-            None => BlockstoreCompressionType::default(),
-            Some(ledger_compression_string) => match ledger_compression_string {
-                "none" => BlockstoreCompressionType::None,
-                "snappy" => BlockstoreCompressionType::Snappy,
-                "lz4" => BlockstoreCompressionType::Lz4,
-                "zlib" => BlockstoreCompressionType::Zlib,
-                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
-            },
-        },
-        rocks_perf_sample_interval: value_t_or_exit!(
-            matches,
-            "rocksdb_perf_sample_interval",
-            usize
-        ),
-    };
-
-    let blockstore_options = BlockstoreOptions {
-        recovery_mode,
-        column_options,
-        // The validator needs to open many files, check that the process has
-        // permission to do so in order to fail quickly and give a direct error
-        enforce_ulimit_nofile: true,
-        // The validator needs primary (read/write)
-        access_type: AccessType::Primary,
-        num_rocksdb_compaction_threads: rocksdb_compaction_threads,
-        num_rocksdb_flush_threads: rocksdb_flush_threads,
-    };
+    let blockstore_options = run_args.blockstore_options;
 
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")

@@ -21,7 +21,7 @@ use {
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_keypair::Keypair,
-    solana_ledger::use_snapshot_archives_at_startup,
+    solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
@@ -35,6 +35,7 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+pub mod blockstore_options;
 pub mod rpc_bootstrap_config;
 
 #[derive(Debug, PartialEq)]
@@ -44,6 +45,7 @@ pub struct RunArgs {
     pub entrypoints: Vec<SocketAddr>,
     pub known_validators: Option<HashSet<Pubkey>>,
     pub rpc_bootstrap_config: RpcBootstrapConfig,
+    pub blockstore_options: BlockstoreOptions,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -87,6 +89,7 @@ impl FromClapArgMatches for RunArgs {
             entrypoints,
             known_validators,
             rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
+            blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
         })
     }
 }
@@ -1764,7 +1767,11 @@ fn validators_set(
 mod tests {
     use {
         super::*,
-        std::net::{IpAddr, Ipv4Addr},
+        crate::cli::thread_args::thread_args,
+        std::{
+            net::{IpAddr, Ipv4Addr},
+            num::NonZeroUsize,
+        },
     };
 
     impl Default for RunArgs {
@@ -1780,6 +1787,7 @@ mod tests {
                 entrypoints,
                 known_validators,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
+                blockstore_options: BlockstoreOptions::default(),
             }
         }
     }
@@ -1792,6 +1800,7 @@ mod tests {
                 entrypoints: self.entrypoints.clone(),
                 known_validators: self.known_validators.clone(),
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
+                blockstore_options: self.blockstore_options.clone(),
             }
         }
     }
@@ -1801,8 +1810,11 @@ mod tests {
         args: Vec<&str>,
         expected_args: RunArgs,
     ) {
+        let app = add_args(App::new("run_command"), default_args)
+            .args(&thread_args(&default_args.thread_args));
+
         crate::commands::tests::verify_args_struct_by_command::<RunArgs>(
-            add_args(App::new("run_command"), default_args),
+            app,
             [&["run_command"], &args[..]].concat(),
             expected_args,
         );
@@ -1843,7 +1855,7 @@ mod tests {
         }
     }
 
-    fn verify_args_struct_by_command_run_with_identity_setup(
+    pub fn verify_args_struct_by_command_run_with_identity_setup(
         default_run_args: RunArgs,
         args: Vec<&str>,
         expected_args: RunArgs,
@@ -2277,6 +2289,46 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--no-incremental-snapshots"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_rocksdb_compaction_threads() {
+        // long arg
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                blockstore_options: BlockstoreOptions {
+                    num_rocksdb_compaction_threads: NonZeroUsize::new(1).unwrap(),
+                    ..default_run_args.blockstore_options.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--rocksdb-compaction-threads", "1"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_rocksdb_flush_threads() {
+        // long arg
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                blockstore_options: BlockstoreOptions {
+                    num_rocksdb_flush_threads: NonZeroUsize::new(1).unwrap(),
+                    ..default_run_args.blockstore_options.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--rocksdb-flush-threads", "1"],
                 expected_args,
             );
         }
