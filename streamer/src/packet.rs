@@ -340,12 +340,11 @@ mod tests {
     pub fn packet_send_recv() {
         solana_logger::setup();
         let port_range = localhost_port_range_for_tests();
-        let mut port_range = port_range.0..port_range.1;
-        let recv_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
-            .expect("should bind receiver");
+        let recv_socket =
+            bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0).expect("should bind receiver");
         let addr = recv_socket.local_addr().unwrap();
-        let send_socket = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
-            .expect("should bind sender");
+        let send_socket =
+            bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.1).expect("should bind sender");
         let saddr = send_socket.local_addr().unwrap();
 
         let mut batch = PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH);
