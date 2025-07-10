@@ -12,18 +12,11 @@ use {
 #[test]
 pub fn test_recv_mmsg_batch_size() {
     let port_range = localhost_port_range_for_tests();
-    let mut port_range = port_range.0..port_range.1;
-    let reader_socket = bind_to(
-        std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port_range.next().unwrap(),
-    )
-    .expect("should bind reader");
+    let reader_socket = bind_to(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0)
+        .expect("should bind reader");
     let addr = reader_socket.local_addr().unwrap();
-    let sender_socket = bind_to(
-        std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port_range.next().unwrap(),
-    )
-    .expect("should bind sender");
+    let sender_socket = bind_to(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.1)
+        .expect("should bind sender");
 
     const TEST_BATCH_SIZE: usize = 64;
     let sent = TEST_BATCH_SIZE;
