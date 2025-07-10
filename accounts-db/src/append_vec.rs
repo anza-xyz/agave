@@ -10,12 +10,10 @@ pub mod test_utils;
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
-use crate::buffered_reader::ContiguousBufFileRead;
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
 use meta::{AccountMeta, StoredMeta};
-
 use {
     crate::{
         account_info::Offset,
@@ -25,7 +23,7 @@ use {
             StoredAccountsInfo,
         },
         accounts_hash::AccountHash,
-        buffered_reader::{BufferedReader, Stack},
+        buffered_reader::{BufferedReader, ContiguousBufFileRead, Stack},
         file_io::read_into_buffer,
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
