@@ -145,7 +145,7 @@ fn prepare_environment(
     };
 
     env::set_current_dir(root_dir).unwrap_or_else(|err| {
-        error!("Unable to set current directory to {}: {}", root_dir, err);
+        error!("Unable to set current directory to {root_dir}: {err}");
         exit(1);
     });
 
@@ -189,8 +189,7 @@ fn invoke_cargo(config: &Config) {
     let rustflags = env::var("RUSTFLAGS").ok().unwrap_or_default();
     if env::var("RUSTFLAGS").is_ok() {
         warn!(
-            "Removed RUSTFLAGS from cargo environment, because it overrides {}.",
-            cargo_target,
+            "Removed RUSTFLAGS from cargo environment, because it overrides {cargo_target}.",
         );
         env::remove_var("RUSTFLAGS")
     }
@@ -256,7 +255,7 @@ fn invoke_cargo(config: &Config) {
     );
 
     if config.verbose {
-        debug!("{}", output);
+        debug!("{output}");
     }
 }
 
@@ -311,7 +310,7 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
     }
 
     let metadata = metadata_command.exec().unwrap_or_else(|err| {
-        error!("Failed to obtain package metadata: {}", err);
+        error!("Failed to obtain package metadata: {err}");
         exit(1);
     });
 
@@ -605,8 +604,8 @@ fn main() {
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {
-        debug!("{:?}", config);
-        debug!("manifest_path: {:?}", manifest_path);
+        debug!("{config:?}");
+        debug!("manifest_path: {manifest_path:?}");
     }
     build_solana(config, manifest_path);
 }
