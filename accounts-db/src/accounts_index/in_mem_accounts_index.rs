@@ -1228,14 +1228,59 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let duplicates_put_on_disk = std::mem::take(&mut duplicate_items.duplicates_put_on_disk);
         drop(duplicate_items);
 
-        duplicates_put_on_disk
+        // accumulated stats after inserting pubkeys into the index
+        let mut num_did_not_exist = 0;
+        let mut num_existed_in_mem = 0;
+        let mut num_existed_on_disk = 0;
+
+        let duplicates = duplicates_put_on_disk
             .into_iter()
             .chain(duplicates.into_iter().map(|(slot, key, info)| {
                 let entry = PreAllocatedAccountMapEntry::new(slot, info, &self.storage, true);
-                self.insert_new_entry_if_missing_with_lock(key, entry);
+                match self.insert_new_entry_if_missing_with_lock(key, entry) {
+                    InsertNewEntryResults::DidNotExist => {
+                        num_did_not_exist += 1;
+                    }
+                    InsertNewEntryResults::Existed {
+                        other_slot: _,
+                        location,
+                    } => match location {
+                        ExistedLocation::InMem => {
+                            num_existed_in_mem += 1;
+                        }
+                        ExistedLocation::OnDisk => {
+                            num_existed_on_disk += 1;
+                        }
+                    },
+                };
                 (slot, key)
             }))
-            .collect()
+            .collect();
+
+        let stats = self.stats();
+
+        // stats for inserted entries that previously did *not* exist
+        stats.inc_insert_count(num_did_not_exist);
+        stats.add_mem_count(num_did_not_exist as usize);
+
+        // stats for inserted entries that previous did exist *in-mem*
+        stats
+            .entries_from_mem
+            .fetch_add(num_existed_in_mem, Ordering::Relaxed);
+        stats
+            .updates_in_mem
+            .fetch_add(num_existed_in_mem, Ordering::Relaxed);
+
+        // stats for inserted entries that previously did exist *on-disk*
+        stats.add_mem_count(num_existed_on_disk as usize);
+        stats
+            .entries_missing
+            .fetch_add(num_existed_on_disk, Ordering::Relaxed);
+        stats
+            .updates_in_mem
+            .fetch_add(num_existed_on_disk, Ordering::Relaxed);
+
+        duplicates
     }
 
     pub fn startup_take_duplicates_from_in_memory_only(&self) -> Vec<(Slot, Pubkey)> {
