@@ -43,7 +43,7 @@ use {
     solana_unified_scheduler_logic::{SchedulingMode, Task},
     solana_unified_scheduler_pool::{
         DefaultSchedulerPool, DefaultTaskHandler, HandlerContext, PooledScheduler, SchedulerPool,
-        TaskHandler,
+        SupportedSchedulingMode, TaskHandler,
     },
     std::{
         collections::HashMap,
@@ -89,7 +89,7 @@ fn test_scheduler_waited_by_drop_bank_service() {
     let genesis_bank = Bank::new_for_tests(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(genesis_bank);
     let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+    let pool_raw = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_verification(
         None,
         None,
         None,
@@ -232,10 +232,17 @@ fn test_scheduler_producing_blocks() {
             None,
             Some(leader_schedule_cache),
         );
-    let pool = DefaultSchedulerPool::new(None, None, None, None, ignored_prioritization_fee_cache);
+    let pool = DefaultSchedulerPool::new(
+        SupportedSchedulingMode::Either(SchedulingMode::BlockProduction),
+        None,
+        None,
+        None,
+        None,
+        ignored_prioritization_fee_cache,
+    );
     let channels = {
         let banking_tracer = BankingTracer::new_disabled();
-        banking_tracer.create_channels(true)
+        banking_tracer.create_channels_for_scheduler_pool(&pool)
     };
     let cluster_info = {
         let keypair = Arc::new(Keypair::new());

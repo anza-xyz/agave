@@ -53,6 +53,10 @@ pub(crate) fn ensure_banking_stage_setup(
     transaction_recorder: TransactionRecorder,
     num_threads: u32,
 ) {
+    if !pool.block_production_supported() {
+        return;
+    }
+
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
     let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
