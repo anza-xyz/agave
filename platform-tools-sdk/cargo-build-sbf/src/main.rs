@@ -88,7 +88,11 @@ pub fn is_version_string(arg: &str) -> Result<(), String> {
     if semver_re.is_match(arg) {
         return Ok(());
     }
-    Err("a version string may start with 'v' and contains major and minor version numbers separated by a dot, e.g. v1.32 or 1.32".to_string())
+    Err(
+        "a version string may start with 'v' and contains major and minor version numbers \
+         separated by a dot, e.g. v1.32 or 1.32"
+            .to_string(),
+    )
 }
 
 fn home_dir() -> PathBuf {
@@ -166,7 +170,7 @@ fn invoke_cargo(config: &Config) {
     if corrupted_toolchain(config) {
         error!(
             "The Solana toolchain is corrupted. Please, run cargo-build-sbf with the \
-        --force-tools-install argument to fix it."
+             --force-tools-install argument to fix it."
         );
         exit(1);
     }
@@ -272,10 +276,13 @@ fn generate_program_name(package: &cargo_metadata::Package) -> Option<String> {
                 };
 
                 if let Some(other_crate) = other_crate_type {
-                    warn!("Package '{}' has two crate types defined: cdylib and {}. \
-                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
-                        to be deployed and rlib for packages to be imported by other programs as libraries.",
-                        package.name, other_crate);
+                    warn!(
+                        "Package '{}' has two crate types defined: cdylib and {}. This setting \
+                         precludes link-time optimizations (LTO). Use cdylib for programs to be \
+                         deployed and rlib for packages to be imported by other programs as \
+                         libraries.",
+                        package.name, other_crate
+                    );
                 }
 
                 Some(&target.name)
@@ -440,14 +447,21 @@ fn main() {
                 .long("skip-tools-install")
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
-                .help("Skip downloading and installing platform-tools, assuming they are properly mounted"),
-            )
-            .arg(
-                Arg::new("no_rustup_override")
+                .help(
+                    "Skip downloading and installing platform-tools, assuming they are properly \
+                     mounted",
+                ),
+        )
+        .arg(
+            Arg::new("no_rustup_override")
                 .long("no-rustup-override")
                 .takes_value(false)
                 .conflicts_with("force_tools_install")
-                .help("Do not use rustup to manage the toolchain. By default, cargo-build-sbf invokes rustup to find the Solana rustc using a `+solana` toolchain override. This flag disables that behavior."),
+                .help(
+                    "Do not use rustup to manage the toolchain. By default, cargo-build-sbf \
+                     invokes rustup to find the Solana rustc using a `+solana` toolchain \
+                     override. This flag disables that behavior.",
+                ),
         )
         .arg(
             Arg::new("generate_child_script_on_failure")
@@ -518,16 +532,16 @@ fn main() {
             Arg::new("optimize_size")
                 .long("optimize-size")
                 .takes_value(false)
-                .help("Optimize program for size. This option may reduce program size, potentially increasing CU consumption.")
+                .help(
+                    "Optimize program for size. This option may reduce program size, potentially \
+                     increasing CU consumption.",
+                ),
         )
-        .arg(
-            Arg::new("lto")
-                .long("lto")
-                .takes_value(false)
-                .help("Enable Link-Time Optimization (LTO) for all crates being built. \
-                This option may decrease program size and CU consumption. The default option is LTO \
-                disabled, as one may get mixed results with it.")
-        )
+        .arg(Arg::new("lto").long("lto").takes_value(false).help(
+            "Enable Link-Time Optimization (LTO) for all crates being built. This option may \
+             decrease program size and CU consumption. The default option is LTO disabled, as one \
+             may get mixed results with it.",
+        ))
         .get_matches_from(args);
 
     let sbf_sdk: PathBuf = matches.value_of_t_or_exit("sbf_sdk");

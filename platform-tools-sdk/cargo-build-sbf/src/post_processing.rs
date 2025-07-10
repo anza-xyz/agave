@@ -93,12 +93,17 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
             #[cfg(windows)]
             {
-                error!("Using Bash scripts from within a program is not supported on Windows, skipping `--dump`.");
                 error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this command to see the processed program dump.",
+                    "Using Bash scripts from within a program is not supported on Windows, \
+                     skipping `--dump`."
+                );
+                error!(
+                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this \
+                     command to see the processed program dump.",
                     &dump_script.display(),
                     &program_unstripped_so.display(),
-                    &program_dump.display());
+                    &program_dump.display()
+                );
             }
             #[cfg(not(windows))]
             {
