@@ -18,7 +18,6 @@ use {
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::Debug,
-        ops::RangeInclusive,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -105,12 +104,6 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
-    // pubkey ranges that this bin must hold in the cache while the range is present in this vec
-    pub cache_ranges_held: RwLock<Vec<RangeInclusive<Pubkey>>>,
-    // incremented each time stop_evictions is changed
-    stop_evictions_changes: AtomicU64,
-    // true while ranges are being manipulated. Used to keep an async flush from removing things while a range is being held.
-    stop_evictions: AtomicU64,
     // set to true while this bin is being actively flushed
     flushing_active: AtomicBool,
 
@@ -204,9 +197,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .as_ref()
                 .map(|disk| disk.get_bucket_from_index(bin))
                 .cloned(),
-            cache_ranges_held: RwLock::new(Vec::default()),
-            stop_evictions_changes: AtomicU64::default(),
-            stop_evictions: AtomicU64::default(),
             flushing_active: AtomicBool::default(),
             // initialize this to max, to make it clear we have not flushed at age 0, the starting age
             last_age_flushed: AtomicAge::new(Age::MAX),
@@ -893,16 +883,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// returns true if there are active requests to stop evictions
-    fn get_stop_evictions(&self) -> bool {
-        self.stop_evictions.load(Ordering::Acquire) > 0
-    }
-
-    /// return count of calls to 'start_stop_evictions', indicating changes could have been made to eviction strategy
-    fn get_stop_evictions_changes(&self) -> u64 {
-        self.stop_evictions_changes.load(Ordering::Acquire)
-    }
-
     pub fn flush(&self, can_advance_age: bool) {
         if let Some(flush_guard) = FlushGuard::lock(&self.flushing_active) {
             self.flush_internal(&flush_guard, can_advance_age)
@@ -1311,20 +1291,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// for each key in 'keys', look up in map, set age to the future
-    fn move_ages_to_future(&self, next_age: Age, current_age: Age, keys: &[Pubkey]) {
-        let map = self.map_internal.read().unwrap();
-        keys.iter().for_each(|key| {
-            if let Some(entry) = map.get(key) {
-                entry.try_exchange_age(next_age, current_age);
-            }
-        });
-    }
-
     // evict keys in 'evictions' from in-mem cache, likely due to age
     fn evict_from_cache(
         &self,
-        mut evictions: Vec<Pubkey>,
+        evictions: Vec<Pubkey>,
         current_age: Age,
         startup: bool,
         randomly_evicted: bool,
@@ -1334,35 +1304,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return;
         }
 
-        let stop_evictions_changes_at_start = self.get_stop_evictions_changes();
         let next_age_on_failure = self.storage.future_age_to_flush(false);
-        if self.get_stop_evictions() {
-            // ranges were changed
-            self.move_ages_to_future(next_age_on_failure, current_age, &evictions);
-            return;
-        }
-
         let mut failed = 0;
-
-        // skip any keys that are held in memory because of ranges being held
-        let ranges = self.cache_ranges_held.read().unwrap().clone();
-        if !ranges.is_empty() {
-            let mut move_age = Vec::default();
-            evictions.retain(|k| {
-                if ranges.iter().any(|range| range.contains(k)) {
-                    // this item is held in mem by range, so don't evict
-                    move_age.push(*k);
-                    false
-                } else {
-                    true
-                }
-            });
-            if !move_age.is_empty() {
-                failed += move_age.len();
-                self.move_ages_to_future(next_age_on_failure, current_age, &move_age);
-            }
-        }
-
         let mut evicted = 0;
         // chunk these so we don't hold the write lock too long
         for evictions in evictions.chunks(50) {
@@ -1390,13 +1333,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // these evictions will be handled in later passes (at later ages)
                         // but, at startup, everything is ready to age out if it isn't dirty
                         failed += 1;
-                        continue;
-                    }
-
-                    if stop_evictions_changes_at_start != self.get_stop_evictions_changes() {
-                        // ranges were changed
-                        failed += 1;
-                        v.try_exchange_age(next_age_on_failure, current_age);
                         continue;
                     }
 
