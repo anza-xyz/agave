@@ -6,13 +6,13 @@ pagination_label: "Best Practices: Validator Monitoring"
 
 It is essential that you have monitoring in place on your validator. In the event that your validator is delinquent (behind the rest of the network) you want to respond immediately to fix the issue. One very useful tool to monitor your validator is [`agave-watchtower`](#agave-watchtower).
 
-## Solana Watchtower
+## Agave Watchtower
 
-Solana Watchtower is an extremely useful monitoring tool that will regularly monitor the health of your validator. It can monitor your validator for delinquency then notify you on your application of choice: Slack, Discord, Telegram or Twilio. Additionally, `agave-watchtower` has the ability to monitor the health of the entire cluster so that you can be aware of any cluster wide problems.
+Agave Watchtower is an extremely useful monitoring tool that will regularly monitor the health of your validator. It can monitor your validator for delinquency then notify you on your application of choice: Slack, Discord, Telegram or Twilio. Additionally, `agave-watchtower` has the ability to monitor the health of the entire cluster so that you can be aware of any cluster wide problems.
 
 ### Getting Started
 
-To get started with Solana Watchtower, run `agave-watchtower --help`. From the help menu, you can see the optional flags and an explanation of the command.
+To get started with Agave Watchtower, run `agave-watchtower --help`. From the help menu, you can see the optional flags and an explanation of the command.
 
 Here is a sample command that will monitor a validator node with an identity public key of `2uTk98rqqwENevkPH2AHHzGHXgeGc1h6ku8hQUqWeXZp`:
 
@@ -45,7 +45,7 @@ To send validator health notifications to your Telegram account, we are going to
 
 #### Create a Bot Using BotFather
 
-In Telegram, search for `@BotFather`. Send the following message to _@BotFather_: `/newbot`.
+In Telegram, search for `@BotFather` or open [`t.me/botfather`](t.me/botfather). Send the following message to _@BotFather_: `/newbot`.
 
 Now you will have to come up with a name for the bot. The only requirement is that it cannot have dashes or spaces, and it **must** end in the word `bot`. Many names have already been taken, so you may have to try a few. Once you find an available name, you will get a response from _@BotFather_ that includes a link to chat with the bot as well as a token for the bot. Take note of the token. You will need it when you setup your environment variables.
 
@@ -67,7 +67,7 @@ First, recall the chat message that you got from _@BotFather_. In the message, t
 export TELEGRAM_BOT_TOKEN=<HTTP API Token>
 ```
 
-Next, you need the chat id for your group so that `solana-watcher` knows where to send the message. First, send a message to your bot in the chat group that you created. Something like `@newvalidatorbot hello`.
+Next, you need the chat id for your group so that `agave-watcher` knows where to send the message. First, send a message to your bot in the chat group that you created. Something like `@newvalidatorbot hello`.
 
 Next, in your browser, go to `https://api.telegram.org/bot<HTTP API Token>/getUpdates`. Make sure to replace `<HTTP API TOKEN>` with your API token that you got in the _@BotFather_ message. Also make sure that you include the word `bot` in the URL before the API token. Make the request in the browser.
 
