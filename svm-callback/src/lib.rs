@@ -44,7 +44,8 @@ pub trait TransactionProcessingCallback: InvokeContextCallback {
 
     #[deprecated(
         since = "2.3.0",
-        note = "Use `get_epoch_stake_for_vote_account` on the `InvokeContextCallback` trait instead"
+        note = "Use `get_epoch_stake_for_vote_account` on the `InvokeContextCallback` trait \
+                instead"
     )]
     fn get_current_epoch_vote_account_stake(&self, vote_address: &Pubkey) -> u64 {
         Self::get_epoch_stake_for_vote_account(self, vote_address)
