@@ -3300,7 +3300,7 @@ impl Bank {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
-                    enable_transaction_balance_recording: false,
+                    enable_transaction_balance_recording: false.into(),
                 },
             },
         );
@@ -4435,7 +4435,7 @@ impl Bank {
                 enable_cpi_recording: false,
                 enable_log_recording: true,
                 enable_return_data_recording: true,
-                enable_transaction_balance_recording: false,
+                enable_transaction_balance_recording: false.into(),
             },
             &mut ExecuteTimings::default(),
             Some(1000 * 1000),

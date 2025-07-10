@@ -255,7 +255,7 @@ fn svm_concurrent() {
                     enable_log_recording: true,
                     enable_return_data_recording: false,
                     enable_cpi_recording: false,
-                    enable_transaction_balance_recording: false,
+                    enable_transaction_balance_recording: false.into(),
                 },
                 ..Default::default()
             };
