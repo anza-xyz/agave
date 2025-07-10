@@ -3805,7 +3805,7 @@ mod tests {
         solana_account_decoder_client_types::UiAccountEncoding,
         solana_instruction::error::InstructionError,
         solana_keypair::Keypair,
-        solana_rpc_client_api::client_error::ErrorKind,
+        solana_rpc_client_api::{client_error::ErrorKind, request::RpcError},
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
         solana_transaction_error::TransactionError,
@@ -3902,6 +3902,45 @@ mod tests {
         let rpc_client = RpcClient::new_mock("malicious".to_string());
         let signature = rpc_client.send_transaction(&tx);
         assert!(signature.is_err());
+    }
+
+    #[test]
+    fn test_get_account_with_config_missing_account_error() {
+        let pubkey = Pubkey::from_str("BgvYtJEfmZYdVKiptmMjxGzv8iQoo4MWjsP3QsTkhhxa").unwrap();
+        
+        // Create a mock response with a null value inside the result
+        let mock_response = json!({
+            "context": {
+            "slot": 352365894,
+            "apiVersion": "2.2.7"
+            },
+            "value": null
+        });
+        
+        // Create a client with our mocked response
+        let mut mocks = std::collections::HashMap::new();
+        mocks.insert(
+            RpcRequest::GetAccountInfo,
+            mock_response,
+        );
+        
+        let rpc_client = RpcClient::new_mock_with_mocks("".to_string(), mocks);
+        
+        // Try to get the account - should return an error
+        let result = rpc_client.get_account_with_config(
+            &pubkey,
+            RpcAccountInfoConfig::default(),
+        );
+        
+        assert!(result.is_err());
+        if let Err(err) = result {
+            if let ErrorKind::RpcError(RpcError::ForUser(message)) = err.kind() {
+                assert!(message.contains("AccountNotFound"));
+                assert!(message.contains(&pubkey.to_string()));
+            } else {
+                panic!("Expected RpcError::ForUser, got {:?}", err);
+            }
+        }
     }
 
     #[test]
