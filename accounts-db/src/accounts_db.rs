@@ -800,10 +800,13 @@ impl LoadedAccountAccessor<'_> {
                 // was still in the storage map. This means even if the storage entry is removed
                 // from the storage map after we grabbed the storage entry, the recycler should not
                 // reset the storage entry until we drop the reference to the storage entry.
-                maybe_storage_entry.accounts.get_account_shared_data(*offset).expect(
-                    "If a storage entry was found in the storage map, it must not have been reset \
-                     yet",
-                )
+                maybe_storage_entry
+                    .accounts
+                    .get_account_shared_data(*offset)
+                    .expect(
+                        "If a storage entry was found in the storage map, it must not have been \
+                         reset yet",
+                    )
             }
             _ => self.check_and_get_loaded_account(|loaded_account| loaded_account.take_account()),
         }
@@ -2098,8 +2101,8 @@ impl AccountsDb {
                 } else {
                     // a pubkey we were planning to remove is not removing all stores that contain the account
                     debug!(
-                        "calc_delete_dependencies(), pubkey: {pubkey}, slot list len: {}, \
-                         ref count: {ref_count}, slot list: {slot_list:?}",
+                        "calc_delete_dependencies(), pubkey: {pubkey}, slot list len: {}, ref \
+                         count: {ref_count}, slot list: {slot_list:?}",
                         slot_list.len(),
                     );
                 }
@@ -3671,9 +3674,9 @@ impl AccountsDb {
                         // entry for `pubkey`. Log a warning for now. In future,
                         // we will panic when this happens.
                         warn!(
-                        "pubkey {pubkey} in slot {slot} was NOT found in accounts index during \
-                         shrink"
-                    );
+                            "pubkey {pubkey} in slot {slot} was NOT found in accounts index \
+                             during shrink"
+                        );
                         datapoint_warn!(
                             "accounts_db-shink_pubkey_missing_from_index",
                             ("store_slot", slot, i64),
@@ -7941,9 +7944,13 @@ impl AccountsDb {
 
             // sanity check that stored_size is not larger than the u64 aligned size of the accounts files.
             // Note that the stored_size is aligned, so it can be larger than the size of the accounts file.
-            assert!(info.stored_size <= u64_align!(storage.accounts.len()),
-                "Stored size ({}) is larger than the size of the accounts file ({}) for store_id: {}",
-                info.stored_size, storage.accounts.len(), store_id
+            assert!(
+                info.stored_size <= u64_align!(storage.accounts.len()),
+                "Stored size ({}) is larger than the size of the accounts file ({}) for store_id: \
+                 {}",
+                info.stored_size,
+                storage.accounts.len(),
+                store_id
             );
         }
         // zero_lamport_pubkeys are candidates for cleaning. So add them to uncleaned_pubkeys

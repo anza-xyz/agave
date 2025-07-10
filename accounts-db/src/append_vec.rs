@@ -294,8 +294,8 @@ impl AppendVec {
         let mmap = unsafe { MmapMut::map_mut(&data) };
         let mmap = mmap.unwrap_or_else(|err| {
             panic!(
-                "Failed to map the data file (size: {size}): {err}. \
-                 Please increase sysctl vm.max_map_count or equivalent for your platform.",
+                "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
+                 vm.max_map_count or equivalent for your platform.",
             );
         });
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
@@ -463,8 +463,7 @@ impl AppendVec {
             // fallback to the old/slow impl that does the full sanitization.
             // [^1]: https://github.com/anza-xyz/agave/issues/6797
             info!(
-                "Could not optimistically create new AppendVec, \
-                 falling back to pessimistic impl: \
+                "Could not optimistically create new AppendVec, falling back to pessimistic impl: \
                  file size ({}) and current length ({}) do not match for '{}'",
                 new.file_size,
                 current_len,
@@ -516,7 +515,11 @@ impl AppendVec {
             let result = MmapMut::map_mut(&data);
             if result.is_err() {
                 // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
-                info!("memory map error: {:?}. This may be because vm.max_map_count is not set correctly.", result);
+                info!(
+                    "memory map error: {:?}. This may be because vm.max_map_count is not set \
+                     correctly.",
+                    result
+                );
             }
             result?
         };
