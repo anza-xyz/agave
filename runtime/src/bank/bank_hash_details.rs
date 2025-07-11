@@ -118,10 +118,7 @@ pub struct BankHashComponents {
     pub accounts_delta_hash: Option<String>,
     pub signature_count: u64,
     pub last_blockhash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub epoch_accounts_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accounts_lt_hash_checksum: Option<String>,
+    pub accounts_lt_hash_checksum: String,
     pub accounts: AccountsDetails,
 }
 
@@ -156,21 +153,13 @@ impl SlotDetails {
                 accounts_delta_hash,
                 signature_count: bank.signature_count(),
                 last_blockhash: bank.last_blockhash().to_string(),
-                // The bank is already frozen so this should not have to wait
-                epoch_accounts_hash: bank
-                    .wait_get_epoch_accounts_hash()
-                    .map(|hash| hash.as_ref().to_string()),
                 accounts_lt_hash_checksum: bank
-                    .feature_set
-                    .is_active(&feature_set::accounts_lt_hash::id())
-                    .then(|| {
-                        bank.accounts_lt_hash
-                            .lock()
-                            .unwrap()
-                            .0
-                            .checksum()
-                            .to_string()
-                    }),
+                    .accounts_lt_hash
+                    .lock()
+                    .unwrap()
+                    .0
+                    .checksum()
+                    .to_string(),
                 accounts: AccountsDetails { accounts },
             })
         } else {
@@ -353,16 +342,7 @@ pub mod tests {
                         },
                         signature_count: slot + 10,
                         last_blockhash: "last_blockhash".into(),
-                        epoch_accounts_hash: if slot % 2 == 0 {
-                            Some("epoch_accounts_hash".into())
-                        } else {
-                            None
-                        },
-                        accounts_lt_hash_checksum: if slot % 3 == 0 {
-                            None
-                        } else {
-                            Some("accounts_lt_hash_checksum".into())
-                        },
+                        accounts_lt_hash_checksum: "accounts_lt_hash_checksum".into(),
                         accounts,
                     }),
                     transactions: vec![],

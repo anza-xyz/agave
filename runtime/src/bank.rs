@@ -1836,7 +1836,11 @@ impl Bank {
             fee_structure: FeeStructure::default(),
             #[cfg(feature = "dev-context-only-utils")]
             hash_overrides: Arc::new(Mutex::new(HashOverrides::default())),
-            accounts_lt_hash: Mutex::new(AccountsLtHash(LtHash([0xBAD1; LtHash::NUM_ELEMENTS]))),
+            accounts_lt_hash: Mutex::new(
+                fields
+                    .accounts_lt_hash
+                    .expect("accounts_lt_hash must exist in snapshot"),
+            ),
             cache_for_accounts_lt_hash: DashMap::default(),
             stats_for_accounts_lt_hash: AccountsLtHashStats::default(),
             block_id: RwLock::new(None),
@@ -1867,60 +1871,6 @@ impl Bank {
         );
         bank.transaction_processor
             .fill_missing_sysvar_cache_entries(&bank);
-
-        let mut calculate_accounts_lt_hash_duration = None;
-        if let Some(accounts_lt_hash) = fields.accounts_lt_hash {
-            *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
-        } else {
-            // Use the accounts lt hash from the snapshot, if present, otherwise calculate it.
-            // When the feature gate is enabled, the snapshot *must* contain an accounts lt hash.
-            assert!(
-                !bank
-                    .feature_set
-                    .is_active(&feature_set::accounts_lt_hash::id()),
-                "snapshot must have an accounts lt hash if the feature is enabled",
-            );
-            if bank.is_accounts_lt_hash_enabled() {
-                info!(
-                    "Calculating the accounts lt hash for slot {}...",
-                    bank.slot(),
-                );
-                let (ancestors, slot) = if bank.is_frozen() {
-                    // Loading from a snapshot necessarily means this slot was rooted, and thus
-                    // the bank has been frozen.  So when calculating the accounts lt hash,
-                    // do it based on *this slot*, not our parent, since
-                    // update_accounts_lt_hash() will not be called on us again.
-                    (bank.ancestors.clone(), bank.slot())
-                } else {
-                    // If the bank is not frozen (e.g. if called from tests), then when this bank
-                    // is frozen later it will call `update_accounts_lt_hash()`.  Therefore, we
-                    // must calculate the accounts lt hash *here* based on *our parent*, so that
-                    // the accounts lt hash is correct after freezing.
-                    let parent_ancestors = {
-                        let mut ancestors = bank.ancestors.clone();
-                        ancestors.remove(&bank.slot());
-                        ancestors
-                    };
-                    (parent_ancestors, bank.parent_slot)
-                };
-                let (accounts_lt_hash, duration) = meas_dur!({
-                    thread_pool.install(|| {
-                        bank.rc
-                            .accounts
-                            .accounts_db
-                            .calculate_accounts_lt_hash_at_startup_from_index(&ancestors, slot)
-                    })
-                });
-                calculate_accounts_lt_hash_duration = Some(duration);
-                *bank.accounts_lt_hash.get_mut().unwrap() = accounts_lt_hash;
-                info!(
-                    "Calculating the accounts lt hash for slot {}... \
-                     Done in {duration:?}, accounts_lt_hash checksum: {}",
-                    bank.slot(),
-                    bank.accounts_lt_hash.get_mut().unwrap().0.checksum(),
-                );
-            }
-        }
 
         // Sanity assertions between bank snapshot and genesis config
         // Consider removing from serializable bank state
@@ -1965,11 +1915,6 @@ impl Bank {
                 "stakes_accounts_load_duration_us",
                 stakes_accounts_load_duration.as_micros(),
                 i64
-            ),
-            (
-                "calculate_accounts_lt_hash_us",
-                calculate_accounts_lt_hash_duration.as_ref().map(Duration::as_micros),
-                Option<i64>
             ),
         );
         bank
@@ -4611,21 +4556,11 @@ impl Bank {
             ])
         };
 
-        let accounts_hash_info = if self
-            .feature_set
-            .is_active(&feature_set::accounts_lt_hash::id())
-        {
+        let accounts_lt_hash_checksum = {
             let accounts_lt_hash = &*self.accounts_lt_hash.lock().unwrap();
             let lt_hash_bytes = bytemuck::must_cast_slice(&accounts_lt_hash.0 .0);
             hash = hashv(&[hash.as_ref(), lt_hash_bytes]);
-            let checksum = accounts_lt_hash.0.checksum();
-            Some(format!(", accounts_lt_hash checksum: {checksum}"))
-        } else {
-            let epoch_accounts_hash = self.wait_get_epoch_accounts_hash();
-            epoch_accounts_hash.map(|epoch_accounts_hash| {
-                hash = hashv(&[hash.as_ref(), epoch_accounts_hash.as_ref().as_ref()]);
-                format!(", epoch_accounts_hash: {:?}", epoch_accounts_hash.as_ref())
-            })
+            accounts_lt_hash.0.checksum()
         };
 
         let buf = self
@@ -4676,51 +4611,18 @@ impl Bank {
             ("accounts_delta_hash_us", accounts_delta_hash_us, Option<i64>),
         );
         info!(
-            "bank frozen: {slot} hash: {hash}{} signature_count: {} last_blockhash: {} capitalization: {}{}, stats: {bank_hash_stats:?}",
+            "bank frozen: {slot} hash: {hash}{} signature_count: {} last_blockhash: {} capitalization: {}, accounts_lt_hash checksum: {}, stats: {bank_hash_stats:?}",
             accounts_delta_hash_log.unwrap_or_default(),
             self.signature_count(),
             self.last_blockhash(),
             self.capitalization(),
-            accounts_hash_info.unwrap_or_default(),
+            accounts_lt_hash_checksum,
         );
         hash
     }
 
     pub fn collector_fees(&self) -> u64 {
         self.collector_fees.load(Relaxed)
-    }
-
-    /// The epoch accounts hash is hashed into the bank's hash once per epoch at a predefined slot.
-    /// Should it be included in *this* bank?
-    fn should_include_epoch_accounts_hash(&self) -> bool {
-        if !epoch_accounts_hash_utils::is_enabled_this_epoch(self) {
-            return false;
-        }
-
-        let stop_slot = epoch_accounts_hash_utils::calculation_stop(self);
-        self.parent_slot() < stop_slot && self.slot() >= stop_slot
-    }
-
-    /// If the epoch accounts hash should be included in this Bank, then fetch it. If the EAH
-    /// calculation has not completed yet, this fn will block until it does complete.
-    fn wait_get_epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
-        if !self.should_include_epoch_accounts_hash() {
-            return None;
-        }
-
-        let (epoch_accounts_hash, waiting_time_us) = measure_us!(self
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .wait_get_epoch_accounts_hash());
-
-        datapoint_info!(
-            "bank-wait_get_epoch_accounts_hash",
-            ("slot", self.slot(), i64),
-            ("waiting-time-us", waiting_time_us, i64),
-        );
-        Some(epoch_accounts_hash)
     }
 
     /// Used by ledger tool to run a final hash calculation once all ledger replay has completed.
@@ -5779,51 +5681,6 @@ impl Bank {
                 allow_new_activations,
                 &new_feature_activations,
             );
-        }
-
-        if new_feature_activations.contains(&feature_set::accounts_lt_hash::id()) {
-            // Activating the accounts lt hash feature means we need to have an accounts lt hash
-            // value at the end of this if-block.  If the cli arg has been used, that means we
-            // already have an accounts lt hash and do not need to recalculate it.
-            if self
-                .rc
-                .accounts
-                .accounts_db
-                .is_experimental_accumulator_hash_enabled()
-            {
-                // We already have an accounts lt hash value, so no need to recalculate it.
-                // Nothing else to do here.
-            } else {
-                let parent_slot = self.parent_slot;
-                info!(
-                    "Calculating the accounts lt hash for slot {parent_slot} \
-                     as part of feature activation; this may take some time...",
-                );
-                // We must calculate the accounts lt hash now as part of feature activation.
-                // Note, this bank is *not* frozen yet, which means it will later call
-                // `update_accounts_lt_hash()`.  Therefore, we calculate the accounts lt hash based
-                // on *our parent*, not us!
-                let parent_ancestors = {
-                    let mut ancestors = self.ancestors.clone();
-                    ancestors.remove(&self.slot());
-                    ancestors
-                };
-                let (parent_accounts_lt_hash, duration) = meas_dur!({
-                    self.rc
-                        .accounts
-                        .accounts_db
-                        .calculate_accounts_lt_hash_at_startup_from_index(
-                            &parent_ancestors,
-                            parent_slot,
-                        )
-                });
-                *self.accounts_lt_hash.get_mut().unwrap() = parent_accounts_lt_hash;
-                info!(
-                    "Calculating the accounts lt hash for slot {parent_slot} \
-                     completed in {duration:?}, accounts_lt_hash checksum: {}",
-                    self.accounts_lt_hash.get_mut().unwrap().0.checksum(),
-                );
-            }
         }
 
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_60m::id()) {

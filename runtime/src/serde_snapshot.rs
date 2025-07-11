@@ -627,24 +627,6 @@ where
     )
 }
 
-#[cfg(test)]
-pub(crate) fn bank_to_stream_no_extra_fields<W>(
-    stream: &mut BufWriter<W>,
-    bank: &Bank,
-    snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
-) -> Result<(), Error>
-where
-    W: Write,
-{
-    bincode::serialize_into(
-        stream,
-        &SerializableBankAndStorageNoExtra {
-            bank,
-            snapshot_storages,
-        },
-    )
-}
-
 /// Serializes bank snapshot into `stream` with bincode
 pub fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,

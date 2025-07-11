@@ -449,7 +449,7 @@ pub fn bank_from_snapshot_dir(
     };
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
-    let ((bank, info), measure_rebuild_bank) = measure_time!(
+    let ((bank, _info), measure_rebuild_bank) = measure_time!(
         reconstruct_bank_from_fields(
             snapshot_bank_fields,
             snapshot_accounts_db_fields,
@@ -480,27 +480,8 @@ pub fn bank_from_snapshot_dir(
 
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
-    if bank
-        .feature_set
-        .is_active(&feature_set::accounts_lt_hash::id())
-    {
-        // Skip bank.verify_snapshot_bank.  Subsequent snapshot requests/accounts hash verification requests
-        // will calculate and check the accounts hash, so we will still have safety/correctness there.
-        bank.set_initial_accounts_hash_verification_completed();
-    } else {
-        // Until the accounts lattice hash feature is enabled, always do accounts verification
-        if !bank.verify_snapshot_bank(
-            false,     // do not test hash calculation
-            true,      // do not shrink
-            false,     // do not clean
-            Slot::MIN, // doesn't matter, only used for calling clean (which we are skipping)
-            None,      // not used for lt hash
-            info.duplicates_lt_hash,
-        ) && limit_load_slot_count_from_snapshot.is_none()
-        {
-            panic!("Snapshot bank for slot {} failed to verify", bank.slot());
-        }
-    }
+    // We trust our local state, so skip the startup accounts verification.
+    bank.set_initial_accounts_hash_verification_completed();
 
     let timings = BankFromDirTimings {
         rebuild_storages_us: measure_rebuild_storages.as_us(),
@@ -2041,13 +2022,6 @@ mod tests {
             .genesis_config
             .accounts
             .remove(&feature_set::snapshots_lt_hash::id())
-            .unwrap();
-        // Additionally, remove the accounts lt hash feature, since it would cause startup
-        // verification to use the accounts lt hash and not the IAH.
-        genesis_config_info
-            .genesis_config
-            .accounts
-            .remove(&feature_set::accounts_lt_hash::id())
             .unwrap();
 
         let do_transfers = |bank: &Bank| {

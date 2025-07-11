@@ -589,11 +589,6 @@ fn restore_from_snapshots_and_check_banks_are_equal(
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum VerifyAccountsKind {
-    Merkle,
-    Lattice,
-}
-#[derive(Debug, Eq, PartialEq)]
 enum VerifySnapshotHashKind {
     Merkle,
     Lattice,
@@ -601,13 +596,9 @@ enum VerifySnapshotHashKind {
 
 /// Spin up the background services fully then test taking & verifying snapshots
 #[test_matrix(
-    [VerifyAccountsKind::Merkle, VerifyAccountsKind::Lattice],
     [VerifySnapshotHashKind::Merkle, VerifySnapshotHashKind::Lattice]
 )]
-fn test_snapshots_with_background_services(
-    verify_accounts_kind: VerifyAccountsKind,
-    verify_snapshot_hash_kind: VerifySnapshotHashKind,
-) {
+fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnapshotHashKind) {
     solana_logger::setup();
 
     const SET_ROOT_INTERVAL_SLOTS: Slot = 2;
@@ -789,7 +780,6 @@ fn test_snapshots_with_background_services(
     // Load the snapshot and ensure it matches what's in BankForks
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
     let accounts_db_config = AccountsDbConfig {
-        enable_experimental_accumulator_hash: verify_accounts_kind == VerifyAccountsKind::Lattice,
         snapshots_use_experimental_accumulator_hash: verify_snapshot_hash_kind
             == VerifySnapshotHashKind::Lattice,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING
