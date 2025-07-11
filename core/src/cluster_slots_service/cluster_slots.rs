@@ -293,7 +293,10 @@ impl ClusterSlots {
                 .get_epoch_for_slot(slot)
                 .expect("Epoch should be defined for all slots in the window");
             let Some(stake_info) = epoch_metadata.get(&epoch) else {
-                warn!("Epoch slots can not reuse slot entry for slot {slot} since stakes for epoch {epoch} are not available");
+                warn!(
+                    "Epoch slots can not reuse slot entry for slot {slot} since stakes for epoch \
+                     {epoch} are not available"
+                );
                 cluster_slots.push_back(RowContent {
                     slot,
                     supporters: Arc::new(SlotSupporters::new_blank()),

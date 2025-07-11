@@ -396,8 +396,10 @@ fn test_bank_forks_incremental_snapshot() {
     const LAST_SLOT: Slot = FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 2 - 1;
 
     info!(
-        "Running bank forks incremental snapshot test, full snapshot interval: {FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, \
-         incremental snapshot interval: {INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, last slot: {LAST_SLOT}, set root interval: {SET_ROOT_INTERVAL} slots"
+        "Running bank forks incremental snapshot test, full snapshot interval: \
+         {FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, incremental snapshot interval: \
+         {INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, last slot: {LAST_SLOT}, set root \
+         interval: {SET_ROOT_INTERVAL} slots"
     );
 
     let snapshot_test_config = SnapshotTestConfig::new(

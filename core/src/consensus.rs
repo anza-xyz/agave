@@ -578,8 +578,8 @@ impl Tower {
         if let Some(last_voted_slot) = self.last_vote.last_voted_slot() {
             if heaviest_slot_on_same_fork <= last_voted_slot {
                 warn!(
-                    "Trying to refresh timestamp for vote on {last_voted_slot} \
-                     using smaller heaviest bank {heaviest_slot_on_same_fork}"
+                    "Trying to refresh timestamp for vote on {last_voted_slot} using smaller \
+                     heaviest bank {heaviest_slot_on_same_fork}"
                 );
                 return;
             }
@@ -1116,8 +1116,8 @@ impl Tower {
                             last_vote_ancestors,
                         )
                         .expect(
-                            "candidate_slot and switch_slot exist in descendants map, \
-                             so they must exist in ancestors map",
+                            "candidate_slot and switch_slot exist in descendants map, so they \
+                             must exist in ancestors map",
                         )
                 }
             {
@@ -1255,9 +1255,7 @@ impl Tower {
         );
         let new_check = Some((switch_slot, decision.clone()));
         if new_check != self.last_switch_threshold_check {
-            trace!(
-                "new switch threshold check: slot {switch_slot}: {decision:?}",
-            );
+            trace!("new switch threshold check: slot {switch_slot}: {decision:?}",);
             self.last_switch_threshold_check = new_check;
         }
         decision
@@ -1735,8 +1733,8 @@ pub fn reconcile_blockstore_roots_with_external_source(
             .collect();
         if !new_roots.is_empty() {
             info!(
-                "Reconciling slots as root based on external root: {new_roots:?} (external: {external_source:?}, \
-                 blockstore: {last_blockstore_root})"
+                "Reconciling slots as root based on external root: {new_roots:?} (external: \
+                 {external_source:?}, blockstore: {last_blockstore_root})"
             );
 
             // Unfortunately, we can't supply duplicate-confirmed hashes,
@@ -1758,9 +1756,9 @@ pub fn reconcile_blockstore_roots_with_external_source(
             // That's because we might have a chance of recovering properly with
             // newer snapshot.
             warn!(
-                "Couldn't find any ancestor slots from external source ({external_source:?}) towards blockstore \
-                 root ({last_blockstore_root}); blockstore pruned or only tower moved into new ledger or just hard \
-                 fork?",
+                "Couldn't find any ancestor slots from external source ({external_source:?}) \
+                 towards blockstore root ({last_blockstore_root}); blockstore pruned or only \
+                 tower moved into new ledger or just hard fork?",
             );
         }
     }

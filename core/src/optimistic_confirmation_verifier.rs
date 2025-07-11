@@ -109,15 +109,9 @@ impl OptimisticConfirmationVerifier {
                     .unwrap_or(0);
 
                 error!(
-                    "{}, \
-                     hash: {hash}, \
-                     epoch: {epoch}, \
-                     voted keys: {:?}, \
-                     root: {root}, \
-                     root bank hash: {}, \
-                     voted stake: {voted_stake}, \
-                     total epoch stake: {total_epoch_stake}, \
-                     pct: {}",
+                    "{}, hash: {hash}, epoch: {epoch}, voted keys: {:?}, root: {root}, root bank \
+                     hash: {}, voted stake: {voted_stake}, total epoch stake: \
+                     {total_epoch_stake}, pct: {}",
                     Self::format_optimistic_confirmed_slot_violation_log(*optimistic_slot),
                     r_slot_tracker
                         .as_ref()

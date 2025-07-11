@@ -1248,7 +1248,8 @@ impl ServeRepair {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(err, num_failed)) => {
                     warn!(
-                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: {err:?}"
+                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: \
+                         {err:?}"
                     );
                 }
             }

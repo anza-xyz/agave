@@ -402,13 +402,8 @@ impl ProgressMap {
     pub fn log_propagated_stats(&self, slot: Slot, bank_forks: &RwLock<BankForks>) {
         if let Some(stats) = self.get_propagated_stats(slot) {
             info!(
-                "Propagated stats: \
-                 total staked: {}, \
-                 observed staked: {}, \
-                 vote pubkeys: {:?}, \
-                 node_pubkeys: {:?}, \
-                 slot: {slot}, \
-                 epoch: {:?}",
+                "Propagated stats: total staked: {}, observed staked: {}, vote pubkeys: {:?}, \
+                 node_pubkeys: {:?}, slot: {slot}, epoch: {:?}",
                 stats.total_epoch_stake,
                 stats.propagated_validators_stake,
                 stats.propagated_validators,

@@ -817,9 +817,7 @@ impl Validator {
             (root_bank.slot(), root_bank.hard_forks())
         };
         let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
-        info!(
-            "shred version: {shred_version}, hard forks: {hard_forks:?}"
-        );
+        info!("shred version: {shred_version}, hard forks: {hard_forks:?}");
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if expected_shred_version != shred_version {
@@ -921,8 +919,11 @@ impl Validator {
             config.accounts_db_test_hash_calculation,
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}, transaction-structure: {}",
-            config.block_verification_method, config.block_production_method, config.transaction_struct
+            "Using: block-verification-method: {}, block-production-method: {}, \
+             transaction-structure: {}",
+            config.block_verification_method,
+            config.block_production_method,
+            config.transaction_struct
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -1473,9 +1474,7 @@ impl Validator {
                 tower
             }
             Err(e) => {
-                warn!(
-                    "Unable to retrieve tower: {e:?} creating default tower...."
-                );
+                warn!("Unable to retrieve tower: {e:?} creating default tower....");
                 Tower::default()
             }
         };
@@ -2380,7 +2379,7 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
     let blockstore_min_slot = blockstore.lowest_slot();
     info!(
         "Blockstore contains data from slot {blockstore_min_slot} to {blockstore_max_slot}, the \
-        latest hard fork is {latest_hard_fork}"
+         latest hard fork is {latest_hard_fork}"
     );
 
     if latest_hard_fork < blockstore_min_slot {
@@ -2553,8 +2552,8 @@ pub enum ValidatorError {
     GenesisHashMismatch(Hash, Hash),
 
     #[error(
-        "ledger does not have enough data to wait for supermajority: \
-        current slot={0}, needed slot={1}"
+        "ledger does not have enough data to wait for supermajority: current slot={0}, needed \
+         slot={1}"
     )]
     NotEnoughLedgerData(Slot, Slot),
 
@@ -2644,7 +2643,8 @@ fn wait_for_supermajority(
 
                 if gossip_stake_percent >= WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT {
                     info!(
-                        "Supermajority reached, {gossip_stake_percent}% active stake detected, starting up now.",
+                        "Supermajority reached, {gossip_stake_percent}% active stake detected, \
+                         starting up now.",
                     );
                     break;
                 }
@@ -2698,7 +2698,8 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         if let Some(peer) = peers.get(&vote_state_node_pubkey) {
             if peer.shred_version() == my_shred_version {
                 trace!(
-                    "observed {vote_state_node_pubkey} in gossip, (activated_stake={activated_stake})"
+                    "observed {vote_state_node_pubkey} in gossip, \
+                     (activated_stake={activated_stake})"
                 );
                 online_stake += activated_stake;
             } else {
@@ -2715,9 +2716,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
 
     let online_stake_percentage = (online_stake as f64 / total_activated_stake as f64) * 100.;
     if log {
-        info!(
-            "{online_stake_percentage:.3}% of active stake visible in gossip"
-        );
+        info!("{online_stake_percentage:.3}% of active stake visible in gossip");
 
         if !wrong_shred_nodes.is_empty() {
             info!(

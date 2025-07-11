@@ -608,9 +608,7 @@ impl RepairService {
             }
         });
         if !popular_pruned_forks.is_empty() {
-            warn!(
-                "Notifying repair of popular pruned forks {popular_pruned_forks:?}"
-            );
+            warn!("Notifying repair of popular pruned forks {popular_pruned_forks:?}");
             popular_pruned_forks_sender
                 .send(popular_pruned_forks)
                 .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
@@ -663,7 +661,9 @@ impl RepairService {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(err, num_failed)) => {
                     error!(
-                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}", repair_info.cluster_info.id()
+                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error \
+                         {err:?}",
+                        repair_info.cluster_info.id()
                     );
                 }
             }
@@ -1178,7 +1178,8 @@ impl RepairService {
                             Ok(req) => {
                                 if let Err(e) = repair_socket.send_to(&req, repair_addr) {
                                     info!(
-                                        "repair req send_to {repair_pubkey} ({repair_addr}) error {e:?}"
+                                        "repair req send_to {repair_pubkey} ({repair_addr}) error \
+                                         {e:?}"
                                     );
                                 }
                             }

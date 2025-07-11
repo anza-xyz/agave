@@ -279,8 +279,8 @@ impl<VoteClient: ForwardingClient, NonVoteClient: ForwardingClient>
             {
                 let Some(packet_data) = packet.data(..) else {
                     unreachable!(
-                        "packet.meta().discard() was already checked. \
-                         If not discarded, packet MUST have data"
+                        "packet.meta().discard() was already checked. If not discarded, packet \
+                         MUST have data"
                     );
                 };
 

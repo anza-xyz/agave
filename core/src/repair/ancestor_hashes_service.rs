@@ -741,8 +741,8 @@ impl AncestorHashesService {
 
         for (slot, request_type) in potential_slot_requests.take(number_of_allowed_requests) {
             warn!(
-                "Cluster froze slot: {slot}, but we marked it as {}. \
-                 Initiating protocol to sample cluster for dead slot ancestors.",
+                "Cluster froze slot: {slot}, but we marked it as {}. Initiating protocol to \
+                 sample cluster for dead slot ancestors.",
                 if request_type.is_pruned() {
                     "pruned"
                 } else {

@@ -212,8 +212,8 @@ impl PartitionInfo {
     ) {
         if self.partition_start_time.is_none() && partition_detected {
             warn!(
-                "PARTITION DETECTED waiting to join heaviest fork: {heaviest_slot} last vote: {last_voted_slot:?}, reset \
-                 slot: {reset_bank_slot}",
+                "PARTITION DETECTED waiting to join heaviest fork: {heaviest_slot} last vote: \
+                 {last_voted_slot:?}, reset slot: {reset_bank_slot}",
             );
             datapoint_info!(
                 "replay_stage-partition-start",
@@ -234,7 +234,8 @@ impl PartitionInfo {
             self.partition_start_time = Some(Instant::now());
         } else if self.partition_start_time.is_some() && !partition_detected {
             warn!(
-                "PARTITION resolved heaviest fork: {heaviest_slot} last vote: {last_voted_slot:?}, reset slot: {reset_bank_slot}"
+                "PARTITION resolved heaviest fork: {heaviest_slot} last vote: \
+                 {last_voted_slot:?}, reset slot: {reset_bank_slot}"
             );
             datapoint_info!(
                 "replay_stage-partition-resolved",
@@ -629,16 +630,14 @@ impl ReplayStage {
                     Ok(tower) => tower,
                     Err(err) => {
                         error!(
-                            "Unable to load new tower when attempting to change identity from {my_old_pubkey} \
-                             to {my_pubkey} on ReplayStage startup, Exiting: {err}"
+                            "Unable to load new tower when attempting to change identity from \
+                             {my_old_pubkey} to {my_pubkey} on ReplayStage startup, Exiting: {err}"
                         );
                         // drop(_exit) will set the exit flag, eventually tearing down the entire process
                         return;
                     }
                 };
-                warn!(
-                    "Identity changed during startup from {my_old_pubkey} to {my_pubkey}"
-                );
+                warn!("Identity changed during startup from {my_old_pubkey} to {my_pubkey}");
             }
             let (mut progress, mut heaviest_subtree_fork_choice) =
                 Self::initialize_progress_and_fork_choice_with_locked_bank_forks(
@@ -1074,7 +1073,8 @@ impl ReplayStage {
                                 Err(err) => {
                                     error!(
                                         "Unable to load new tower when attempting to change \
-                                         identity from {my_old_pubkey} to {my_pubkey} on set-identity, Exiting: {err}"
+                                         identity from {my_old_pubkey} to {my_pubkey} on \
+                                         set-identity, Exiting: {err}"
                                     );
                                     // drop(_exit) will set the exit flag, eventually tearing down the entire process
                                     return;
@@ -1368,7 +1368,8 @@ impl ReplayStage {
             progress.get_leader_propagation_slot_must_exist(start_slot)
         {
             debug!(
-                "Slot not propagated: start_slot={start_slot} latest_leader_slot={latest_leader_slot}"
+                "Slot not propagated: start_slot={start_slot} \
+                 latest_leader_slot={latest_leader_slot}"
             );
             Self::maybe_retransmit_unpropagated_slots(
                 "replay_stage-retransmit-timing-based",
@@ -1757,7 +1758,8 @@ impl ReplayStage {
                 // also be a duplicate. In this case we *need* to repair it, so we clear from
                 // blockstore.
                 warn!(
-                    "purging duplicate descendant: {slot} with slot_id {slot_id} and bank hash {bank_hash}, of slot {duplicate_slot}"
+                    "purging duplicate descendant: {slot} with slot_id {slot_id} and bank hash \
+                     {bank_hash}, of slot {duplicate_slot}"
                 );
                 // Clear the slot-related data in blockstore. This will:
                 // 1) Clear old shreds allowing new ones to be inserted
@@ -2002,9 +2004,7 @@ impl ReplayStage {
                 } else {
                     ""
                 };
-                info!(
-                    "LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}"
-                );
+                info!("LEADER CHANGE at slot: {bank_slot} leader: {new_leader}{msg}");
             }
         }
         current_leader.replace(new_leader.to_owned());
@@ -2125,9 +2125,7 @@ impl ReplayStage {
             warn!("{my_pubkey} already have bank in forks at {poh_slot}?");
             return false;
         }
-        trace!(
-            "{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}"
-        );
+        trace!("{my_pubkey} poh_slot {poh_slot} parent_slot {parent_slot}");
 
         if let Some(next_leader) = leader_schedule_cache.slot_leader_at(poh_slot, Some(&parent)) {
             if !has_new_vote_been_rooted {
@@ -2135,9 +2133,7 @@ impl ReplayStage {
                 return false;
             }
 
-            trace!(
-                "{my_pubkey} leader {next_leader} at poh slot: {poh_slot}"
-            );
+            trace!("{my_pubkey} leader {next_leader} at poh slot: {poh_slot}");
 
             // I guess I missed my slot
             if next_leader != *my_pubkey {
@@ -2184,9 +2180,7 @@ impl ReplayStage {
 
             let root_slot = bank_forks.read().unwrap().root();
             datapoint_info!("replay_stage-my_leader_slot", ("slot", poh_slot, i64),);
-            info!(
-                "new fork:{poh_slot} parent:{parent_slot} (leader) root:{root_slot}"
-            );
+            info!("new fork:{poh_slot} parent:{parent_slot} (leader) root:{root_slot}");
 
             let root_distance = poh_slot - root_slot;
             let vote_only_bank = if root_distance > MAX_ROOT_DISTANCE_FOR_VOTE_ONLY {
@@ -2494,9 +2488,7 @@ impl ReplayStage {
         }
         let vote_account = match bank.get_vote_account(vote_account_pubkey) {
             None => {
-                warn!(
-                    "Vote account {vote_account_pubkey} does not exist.  Unable to vote",
-                );
+                warn!("Vote account {vote_account_pubkey} does not exist.  Unable to vote",);
                 return GenerateVoteTxResult::Failed;
             }
             Some(vote_account) => vote_account,
@@ -2626,7 +2618,8 @@ impl ReplayStage {
             last_vote_refresh_time.last_print_time = Instant::now();
             warn!(
                 "Last landed vote for slot {} in bank {} is greater than the current last vote \
-                 for slot: {} tracked by tower. This indicates a bug in the on chain adoption logic",
+                 for slot: {} tracked by tower. This indicates a bug in the on chain adoption \
+                 logic",
                 latest_landed_vote_slot,
                 heaviest_bank_on_same_fork.slot(),
                 last_voted_slot
@@ -3383,9 +3376,7 @@ impl ReplayStage {
     ) -> bool /* completed a bank */ {
         let active_bank_slots = bank_forks.read().unwrap().active_bank_slots();
         let num_active_banks = active_bank_slots.len();
-        trace!(
-            "{num_active_banks} active bank(s) to replay: {active_bank_slots:?}"
-        );
+        trace!("{num_active_banks} active bank(s) to replay: {active_bank_slots:?}");
         if active_bank_slots.is_empty() {
             return false;
         }
@@ -3576,11 +3567,9 @@ impl ReplayStage {
             return;
         }
         info!(
-            "Frozen bank vote state slot {:?} \
-             is newer than our local vote state slot {:?}, \
-             adopting the bank vote state as our own. \
-             Bank votes: {:?}, root: {:?}, \
-             Local votes: {:?}, root: {:?}",
+            "Frozen bank vote state slot {:?} is newer than our local vote state slot {:?}, \
+             adopting the bank vote state as our own. Bank votes: {:?}, root: {:?}, Local votes: \
+             {:?}, root: {:?}",
             bank_vote_state.last_voted_slot(),
             tower.vote_state.last_voted_slot(),
             bank_vote_state.votes,
@@ -3603,8 +3592,8 @@ impl ReplayStage {
                     .votes
                     .retain(|lockout| lockout.slot() > local_root);
                 info!(
-                    "Local root is larger than on chain root, \
-                     overwrote bank root {:?} and updated votes {:?}",
+                    "Local root is larger than on chain root, overwrote bank root {:?} and \
+                     updated votes {:?}",
                     bank_vote_state.root_slot, bank_vote_state.votes
                 );
 
@@ -4438,7 +4427,9 @@ pub(crate) mod tests {
         } = vote_simulator;
 
         let blockstore = Arc::new(blockstore);
-        let validator_node_to_vote_keys: HashMap<Pubkey, Pubkey> = validator_keypairs.values().map(|keypairs| {
+        let validator_node_to_vote_keys: HashMap<Pubkey, Pubkey> = validator_keypairs
+            .values()
+            .map(|keypairs| {
                 (
                     keypairs.node_keypair.pubkey(),
                     keypairs.vote_keypair.pubkey(),
