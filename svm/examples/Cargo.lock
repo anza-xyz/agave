@@ -2469,7 +2469,7 @@ dependencies = [
  "http 1.2.0",
  "hyper 1.6.0",
  "hyper-util",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.2",
@@ -4222,7 +4222,7 @@ dependencies = [
  "quinn-proto",
  "quinn-udp",
  "rustc-hash 2.1.0",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "socket2",
  "thiserror 2.0.12",
  "tokio",
@@ -4243,7 +4243,7 @@ dependencies = [
  "rand 0.9.0",
  "ring",
  "rustc-hash 2.1.0",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "slab",
@@ -4551,7 +4551,7 @@ dependencies = [
  "percent-encoding 2.3.1",
  "pin-project-lite",
  "quinn",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "rustls-pki-types",
  "serde",
  "serde_json",
@@ -4715,14 +4715,14 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.28"
+version = "0.23.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7160e3e10bf4535308537f3c4e1641468cd0e485175d6163087c0393c7d46643"
+checksum = "2491382039b29b9b11ff08b76ff6c97cf287671dbb74f0be44bda389fffe9bd1"
 dependencies = [
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.2",
+ "rustls-webpki 0.103.4",
  "subtle",
  "zeroize",
 ]
@@ -4750,11 +4750,12 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
+checksum = "229a4a4c221013e7e1f1a043678c5cc39fe5171437c88fb47151a21e6f5b5c79"
 dependencies = [
  "web-time",
+ "zeroize",
 ]
 
 [[package]]
@@ -4768,10 +4769,10 @@ dependencies = [
  "jni",
  "log",
  "once_cell",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "rustls-native-certs",
  "rustls-platform-verifier-android",
- "rustls-webpki 0.103.2",
+ "rustls-webpki 0.103.4",
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
@@ -4796,9 +4797,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.2"
+version = "0.103.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7149975849f1abb3832b246010ef62ccc80d3a76169517ada7188252b9cfb437"
+checksum = "0a17884ae0c1b773f1ccd2bd4a8c72f16da897310a98b0e84bf349ad5ead92fc"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -5930,7 +5931,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rayon",
  "rolling-file",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "serde",
  "serde_bytes",
  "serde_derive",
@@ -7306,7 +7307,7 @@ dependencies = [
  "log",
  "quinn",
  "quinn-proto",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "solana-connection-cache",
  "solana-keypair",
  "solana-measure",
@@ -8124,7 +8125,7 @@ dependencies = [
  "quinn",
  "quinn-proto",
  "rand 0.8.5",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "smallvec",
  "socket2",
  "solana-keypair",
@@ -8466,7 +8467,7 @@ dependencies = [
 name = "solana-tls-utils"
 version = "3.0.0"
 dependencies = [
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "solana-keypair",
  "solana-pubkey",
  "solana-signer",
@@ -8513,7 +8514,7 @@ dependencies = [
  "log",
  "lru",
  "quinn",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "solana-clock",
  "solana-connection-cache",
  "solana-keypair",
@@ -8680,7 +8681,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "solana-clock",
  "solana-cluster-type",
  "solana-entry",
@@ -9897,7 +9898,7 @@ version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
 dependencies = [
- "rustls 0.23.28",
+ "rustls 0.23.29",
  "tokio",
 ]
 
