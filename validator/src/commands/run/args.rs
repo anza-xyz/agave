@@ -1756,7 +1756,7 @@ mod tests {
                     health_check_slot_distance: 128,
                     max_multiple_accounts: Some(100),
                     rpc_threads: num_cpus::get(),
-                    rpc_blocking_threads: 4,
+                    rpc_blocking_threads: 1.max(num_cpus::get() / 4),
                     ..JsonRpcConfig::default()
                 },
             }
