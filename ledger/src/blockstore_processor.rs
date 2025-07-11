@@ -849,7 +849,6 @@ pub struct ProcessOptions {
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub limit_load_slot_count_from_snapshot: Option<usize>,
     pub allow_dead_slots: bool,
-    pub accounts_db_test_hash_calculation: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
     pub accounts_db_config: Option<AccountsDbConfig>,
@@ -2581,7 +2580,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -2646,7 +2644,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -2664,7 +2661,6 @@ pub mod tests {
         */
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 0, blockhash);
@@ -2733,7 +2729,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -2813,7 +2808,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3027,7 +3021,6 @@ pub mod tests {
         // Check that we can properly restart the ledger / leader scheduler doesn't fail
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3172,7 +3165,6 @@ pub mod tests {
             .unwrap();
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3203,7 +3195,6 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3223,7 +3214,6 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let opts = ProcessOptions {
             full_leader_cache: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (_bank_forks, leader_schedule) =
@@ -4171,7 +4161,6 @@ pub mod tests {
         let opts = ProcessOptions {
             run_verification: true,
             halt_at_slot: Some(0),
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -4224,7 +4213,6 @@ pub mod tests {
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let recyclers = VerifyRecyclers::default();
@@ -4685,7 +4673,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
 

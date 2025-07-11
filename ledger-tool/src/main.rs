@@ -832,7 +832,7 @@ fn main() {
 
     let accounts_db_test_hash_calculation_arg = Arg::with_name("accounts_db_test_hash_calculation")
         .long("accounts-db-test-hash-calculation")
-        .help("Enable hash calculation test");
+        .help("DEPRECATED");
     let halt_at_slot_arg = Arg::with_name("halt_at_slot")
         .long("halt-at-slot")
         .value_name("SLOT")

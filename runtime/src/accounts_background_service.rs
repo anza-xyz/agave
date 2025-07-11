@@ -536,7 +536,6 @@ impl AccountsBackgroundService {
         bank_forks: Arc<RwLock<BankForks>>,
         exit: Arc<AtomicBool>,
         request_handlers: AbsRequestHandlers,
-        test_hash_calculation: bool,
     ) -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let stop = Arc::new(AtomicBool::new(false));
@@ -608,7 +607,7 @@ impl AccountsBackgroundService {
                             .has_initial_accounts_hash_verification_completed()
                             .then(|| {
                                 request_handlers.handle_snapshot_requests(
-                                    test_hash_calculation,
+                                    false, // test_hash_calculation. Will be removed soon.
                                     non_snapshot_time,
                                     &exit,
                                 )

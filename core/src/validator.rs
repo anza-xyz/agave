@@ -265,7 +265,6 @@ pub struct ValidatorConfig {
     pub process_ledger_before_services: bool,
     pub accounts_db_config: Option<AccountsDbConfig>,
     pub warp_slot: Option<Slot>,
-    pub accounts_db_test_hash_calculation: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
     pub tpu_coalesce: Duration,
@@ -340,7 +339,6 @@ impl Default for ValidatorConfig {
             poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
             process_ledger_before_services: false,
             warp_slot: None,
-            accounts_db_test_hash_calculation: false,
             accounts_db_skip_shrink: false,
             accounts_db_force_initial_clean: false,
             tpu_coalesce: DEFAULT_TPU_COALESCE,
@@ -921,7 +919,6 @@ impl Validator {
                 snapshot_request_handler,
                 pruned_banks_request_handler,
             },
-            config.accounts_db_test_hash_calculation,
         );
         info!(
             "Using: block-verification-method: {}, block-production-method: {}, transaction-structure: {}",
@@ -2084,7 +2081,6 @@ fn load_blockstore(
         new_hard_forks: config.new_hard_forks.clone(),
         debug_keys: config.debug_keys.clone(),
         accounts_db_config: config.accounts_db_config.clone(),
-        accounts_db_test_hash_calculation: config.accounts_db_test_hash_calculation,
         accounts_db_skip_shrink: config.accounts_db_skip_shrink,
         accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
         runtime_config: config.runtime_config.clone(),

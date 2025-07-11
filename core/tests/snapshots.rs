@@ -711,7 +711,6 @@ fn test_snapshots_with_background_services(
         bank_forks.clone(),
         exit.clone(),
         abs_request_handler,
-        false,
     );
 
     let mut latest_full_snapshot_slot = None;

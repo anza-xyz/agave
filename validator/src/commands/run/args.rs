@@ -1527,8 +1527,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
         Arg::with_name("accounts_db_test_hash_calculation")
             .long("accounts-db-test-hash-calculation")
             .help(
-                "Enables testing of hash calculation using stores in AccountsHashVerifier. \
-                 This has a computational cost.",
+                "DEPRECATED",
             ),
     )
     .arg(

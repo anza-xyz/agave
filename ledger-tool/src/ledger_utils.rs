@@ -408,7 +408,6 @@ pub fn load_and_process_ledger(
         bank_forks.clone(),
         exit.clone(),
         abs_request_handler,
-        process_options.accounts_db_test_hash_calculation,
     );
 
     let result = blockstore_processor::process_blockstore_from_root(
