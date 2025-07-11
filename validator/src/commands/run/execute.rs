@@ -51,7 +51,7 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
+    solana_rpc::rpc_pubsub_service::PubSubConfig,
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -532,25 +532,7 @@ pub fn execute(
             .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
-        rpc_config: JsonRpcConfig {
-            enable_rpc_transaction_history: run_args.json_rpc_config.enable_rpc_transaction_history,
-            enable_extended_tx_metadata_storage: run_args
-                .json_rpc_config
-                .enable_extended_tx_metadata_storage,
-            rpc_bigtable_config: run_args.json_rpc_config.rpc_bigtable_config,
-            faucet_addr: run_args.json_rpc_config.faucet_addr,
-            full_api: run_args.json_rpc_config.full_api,
-            max_multiple_accounts: run_args.json_rpc_config.max_multiple_accounts,
-            health_check_slot_distance: run_args.json_rpc_config.health_check_slot_distance,
-            disable_health_check: run_args.json_rpc_config.disable_health_check,
-            rpc_threads: run_args.json_rpc_config.rpc_threads,
-            rpc_blocking_threads: run_args.json_rpc_config.rpc_blocking_threads,
-            rpc_niceness_adj: run_args.json_rpc_config.rpc_niceness_adj,
-            account_indexes: run_args.json_rpc_config.account_indexes,
-            rpc_scan_and_fix_roots: run_args.json_rpc_config.rpc_scan_and_fix_roots,
-            max_request_body_size: run_args.json_rpc_config.max_request_body_size,
-            skip_preflight_health_check: run_args.json_rpc_config.skip_preflight_health_check,
-        },
+        rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
