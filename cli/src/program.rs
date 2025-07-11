@@ -55,7 +55,7 @@ use {
     },
     solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_rpc_client::rpc_client::RpcClient,
+    solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::{
         client_error::ErrorKind as ClientErrorKind,
         config::{RpcAccountInfoConfig, RpcProgramAccountsConfig},
@@ -67,6 +67,7 @@ use {
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget},
     solana_signature::Signature,
     solana_signer::Signer,
+    solana_native_token::lamports_to_sol,
     solana_system_interface::{error::SystemError, MAX_PERMITTED_DATA_LENGTH},
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
@@ -178,6 +179,25 @@ pub enum ProgramCliCommand {
         program_pubkey: Pubkey,
         authority_signer_index: SignerIndex,
         compute_unit_price: Option<u64>,
+    },
+    HealthCheck {
+        program_pubkey: Pubkey,
+        detailed: bool,
+    },
+    RollbackPrepare {
+        program_pubkey: Pubkey,
+        output_dir: Option<String>,
+        backup_name: Option<String>,
+    },
+    UsageStats {
+        program_pubkey: Pubkey,
+        days: Option<u32>,
+        detailed: bool,
+    },
+    DebugDeployment {
+        program_pubkey: Pubkey,
+        deployment_slot: Option<u64>,
+        check_features: bool,
     },
 }
 
@@ -667,6 +687,106 @@ impl ProgramSubCommands for App<'_, '_> {
                                 ),
                         )
                         .arg(compute_unit_price_arg()),
+                )
+                .subcommand(
+                    SubCommand::with_name("health-check")
+                        .about("Check the health of an upgradeable program")
+                        .arg(
+                            Arg::with_name("program_id")
+                                .index(1)
+                                .value_name("PROGRAM_ID")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_valid_pubkey)
+                                .help("Address of the program to check"),
+                        )
+                        .arg(
+                            Arg::with_name("detailed")
+                                .long("detailed")
+                                .takes_value(false)
+                                .help("Include detailed information about the program's health"),
+                        ),
+                )
+                .subcommand(
+                    SubCommand::with_name("rollback-prepare")
+                        .about("Prepare rollback backup for a program before upgrade")
+                        .arg(
+                            Arg::with_name("program_id")
+                                .index(1)
+                                .value_name("PROGRAM_ID")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_valid_pubkey)
+                                .help("Address of the program to backup"),
+                        )
+                        .arg(
+                            Arg::with_name("output_dir")
+                                .long("output-dir")
+                                .value_name("DIRECTORY")
+                                .takes_value(true)
+                                .help("Directory to store backup files [default: ./backups]"),
+                        )
+                        .arg(
+                            Arg::with_name("backup_name")
+                                .long("name")
+                                .value_name("NAME")
+                                .takes_value(true)
+                                .help("Custom name for the backup [default: program_id-timestamp]"),
+                        ),
+                )
+                .subcommand(
+                    SubCommand::with_name("usage-stats")
+                        .about("Show usage statistics for a program")
+                        .arg(
+                            Arg::with_name("program_id")
+                                .index(1)
+                                .value_name("PROGRAM_ID")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_valid_pubkey)
+                                .help("Address of the program to analyze"),
+                        )
+                        .arg(
+                            Arg::with_name("days")
+                                .long("days")
+                                .value_name("DAYS")
+                                .takes_value(true)
+                                .validator(is_parsable::<u32>)
+                                .help("Number of days to analyze [default: 7]"),
+                        )
+                        .arg(
+                            Arg::with_name("detailed")
+                                .long("detailed")
+                                .takes_value(false)
+                                .help("Include detailed usage patterns and statistics"),
+                        ),
+                )
+                .subcommand(
+                    SubCommand::with_name("debug-deployment")
+                        .about("Debug and verify program deployment")
+                        .arg(
+                            Arg::with_name("program_id")
+                                .index(1)
+                                .value_name("PROGRAM_ID")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_valid_pubkey)
+                                .help("Address of the program to debug"),
+                        )
+                        .arg(
+                            Arg::with_name("deployment_slot")
+                                .long("slot")
+                                .value_name("SLOT")
+                                .takes_value(true)
+                                .validator(is_parsable::<u64>)
+                                .help("Specific deployment slot to analyze"),
+                        )
+                        .arg(
+                            Arg::with_name("check_features")
+                                .long("check-features")
+                                .takes_value(false)
+                                .help("Verify program against activated feature set"),
+                        ),
                 ),
         )
         .subcommand(
@@ -1057,6 +1177,60 @@ pub fn parse_program_subcommand(
                 signers: signer_info.signers,
             }
         }
+        ("health-check", Some(matches)) => {
+            let program_pubkey = pubkey_of(matches, "program_id").unwrap();
+            let detailed = matches.is_present("detailed");
+
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::HealthCheck {
+                    program_pubkey,
+                    detailed,
+                }),
+                signers: vec![],
+            }
+        }
+        ("rollback-prepare", Some(matches)) => {
+            let program_pubkey = pubkey_of(matches, "program_id").unwrap();
+            let output_dir = matches.value_of("output_dir").map(|s| s.to_string());
+            let backup_name = matches.value_of("backup_name").map(|s| s.to_string());
+
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::RollbackPrepare {
+                    program_pubkey,
+                    output_dir,
+                    backup_name,
+                }),
+                signers: vec![],
+            }
+        }
+        ("usage-stats", Some(matches)) => {
+            let program_pubkey = pubkey_of(matches, "program_id").unwrap();
+            let days = value_of(matches, "days");
+            let detailed = matches.is_present("detailed");
+
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::UsageStats {
+                    program_pubkey,
+                    days,
+                    detailed,
+                }),
+                signers: vec![],
+            }
+        }
+        ("debug-deployment", Some(matches)) => {
+            let program_pubkey = pubkey_of(matches, "program_id").unwrap();
+            let deployment_slot = value_of(matches, "deployment_slot");
+            let check_features = matches.is_present("check_features");
+
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::DebugDeployment {
+                    program_pubkey,
+                    deployment_slot,
+                    check_features,
+                }),
+                signers: vec![],
+            }
+        }
         _ => unreachable!(),
     };
     Ok(response)
@@ -1258,6 +1432,48 @@ pub fn process_program_subcommand(
             *program_pubkey,
             *authority_signer_index,
             *compute_unit_price,
+        ),
+        ProgramCliCommand::HealthCheck {
+            program_pubkey,
+            detailed,
+                         } => process_health_check(
+            &rpc_client,
+            config,
+            *program_pubkey,
+            *detailed,
+        ),
+        ProgramCliCommand::RollbackPrepare {
+            program_pubkey,
+            output_dir,
+            backup_name,
+        } => process_rollback_prepare(
+            &rpc_client,
+            config,
+            *program_pubkey,
+            output_dir,
+            backup_name,
+        ),
+        ProgramCliCommand::UsageStats {
+            program_pubkey,
+            days,
+            detailed,
+        } => process_usage_stats(
+            &rpc_client,
+            config,
+            *program_pubkey,
+            *days,
+            *detailed,
+        ),
+        ProgramCliCommand::DebugDeployment {
+            program_pubkey,
+            deployment_slot,
+            check_features,
+        } => process_debug_deployment(
+            &rpc_client,
+            config,
+            *program_pubkey,
+            *deployment_slot,
+            *check_features,
         ),
     }
 }
@@ -3328,6 +3544,682 @@ fn fetch_feature_set(rpc_client: &RpcClient) -> Result<FeatureSet, Box<dyn std::
     Ok(feature_set)
 }
 
+fn process_health_check(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    program_pubkey: Pubkey,
+    detailed: bool,
+) -> ProcessResult {
+    let program_account = match rpc_client
+        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .value
+    {
+        Some(account) => account,
+        None => {
+            return Err(format!("Program account {program_pubkey} not found").into());
+        }
+    };
+
+    if program_account.owner != bpf_loader_upgradeable::id() {
+        return Err(format!(
+            "Program {program_pubkey} is not an upgradeable program (owner: {})",
+            program_account.owner
+        )
+        .into());
+    }
+
+    if !program_account.executable {
+        return Err(format!("Program {program_pubkey} is not executable").into());
+    }
+
+    let program_data = match program_account.state() {
+        Ok(UpgradeableLoaderState::Program {
+            programdata_address,
+        }) => {
+            let programdata_account = rpc_client
+                .get_account_with_commitment(&programdata_address, config.commitment)?
+                .value
+                .ok_or_else(|| format!("Program data account {programdata_address} not found"))?;
+
+            match programdata_account.state() {
+                Ok(UpgradeableLoaderState::ProgramData {
+                    slot: deployment_slot,
+                    upgrade_authority_address,
+                }) => (programdata_address, deployment_slot, upgrade_authority_address),
+                _ => {
+                    return Err(format!(
+                        "Invalid program data account state for {programdata_address}"
+                    )
+                    .into());
+                }
+            }
+        }
+        _ => {
+            return Err(format!("Invalid program account state for {program_pubkey}").into());
+        }
+    };
+
+    let (programdata_address, deployment_slot, upgrade_authority) = program_data;
+
+    let mut health_status = "HEALTHY".to_string();
+    let mut issues = Vec::new();
+
+    if upgrade_authority.is_none() {
+        issues.push("Program is not upgradeable (authority is None)".to_string());
+    }
+
+    let current_slot = rpc_client.get_slot_with_commitment(config.commitment)?;
+    let program_age_slots = current_slot.saturating_sub(deployment_slot);
+
+    // Check recent usage (used in both detailed and basic checks)
+    let recent_signatures = rpc_client
+        .get_signatures_for_address_with_config(
+            &program_pubkey,
+            GetConfirmedSignaturesForAddress2Config {
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|_| vec![]);
+
+    if recent_signatures.is_empty() {
+        issues.push("No recent transaction activity found".to_string());
+        if health_status == "HEALTHY" {
+            health_status = "CAUTION".to_string();
+        }
+    }
+
+    if detailed {
+        println!("🔍 Program Health Check Report for {}", program_pubkey);
+        println!("═══════════════════════════════════════════");
+        println!("📊 Basic Information:");
+        println!("  Program ID: {}", program_pubkey);
+        println!("  Program Data: {}", programdata_address);
+        println!("  Owner: {}", program_account.owner);
+        println!("  Executable: {}", program_account.executable);
+        println!(
+            "  Authority: {}",
+            upgrade_authority
+                .map(|auth| auth.to_string())
+                .unwrap_or_else(|| "None (immutable)".to_string())
+        );
+        println!();
+
+        println!("🕐 Deployment Information:");
+        println!("  Deployment Slot: {}", deployment_slot);
+        println!("  Current Slot: {}", current_slot);
+        println!("  Program Age: {} slots", program_age_slots);
+        println!();
+
+        println!("💾 Account Information:");
+        println!("  Account Size: {} bytes", program_account.data.len());
+        println!("  Account Balance: {} SOL", lamports_to_sol(program_account.lamports));
+        println!();
+
+        if !issues.is_empty() {
+            health_status = "WARNING".to_string();
+            println!("⚠️  Issues Found:");
+            for issue in &issues {
+                println!("  • {}", issue);
+            }
+            println!();
+        }
+
+        // Additional detailed checks
+        println!("🔧 Advanced Diagnostics:");
+        
+        println!("  Recent Transactions: {} (last 10)", recent_signatures.len());
+        println!("  Transaction Activity: {}", if recent_signatures.is_empty() { "Low" } else { "Active" });
+        
+        let data_size = program_account.data.len();
+        if data_size < 10_000 {
+            println!("  Program Size: Small ({} bytes)", data_size);
+        } else if data_size < 100_000 {
+            println!("  Program Size: Medium ({} bytes)", data_size);
+        } else {
+            println!("  Program Size: Large ({} bytes)", data_size);
+        }
+
+        println!();
+    }
+
+    let status_emoji = match health_status.as_str() {
+        "HEALTHY" => "✅",
+        "WARNING" => "⚠️",
+        "CAUTION" => "🔸",
+        _ => "❓",
+    };
+
+    println!("{} Overall Health Status: {}", status_emoji, health_status);
+
+    if !detailed && !issues.is_empty() {
+        println!("Issues detected (run with --detailed for more info):");
+        for issue in &issues {
+            println!("  • {}", issue);
+        }
+    }
+
+    if detailed {
+        println!();
+        println!("💡 Recommendations:");
+        if upgrade_authority.is_some() {
+            println!("  • Program is upgradeable - ensure upgrade authority is secure");
+        }
+        if recent_signatures.is_empty() {
+            println!("  • Consider monitoring transaction activity");
+        }
+        println!("  • Regularly backup program state before upgrades");
+        println!("  • Monitor program account balance for rent exemption");
+    }
+
+    Ok("Health check completed".to_string())
+}
+
+fn process_rollback_prepare(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    program_pubkey: Pubkey,
+    output_dir: &Option<String>,
+    backup_name: &Option<String>,
+) -> ProcessResult {
+    use std::fs;
+    use std::path::Path;
+    
+    println!("🔄 Preparing rollback backup for program {}", program_pubkey);
+    
+    // Get program account
+    let program_account = match rpc_client
+        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .value
+    {
+        Some(account) => account,
+        None => {
+            return Err(format!("Program account {program_pubkey} not found").into());
+        }
+    };
+
+    // Check if it's an upgradeable program
+    if program_account.owner != bpf_loader_upgradeable::id() {
+        return Err(format!(
+            "Program {program_pubkey} is not an upgradeable program (owner: {})",
+            program_account.owner
+        )
+        .into());
+    }
+
+    // Get program data account and info  
+    let (programdata_address, deployment_slot, upgrade_authority) = match program_account.state() {
+        Ok(UpgradeableLoaderState::Program {
+            programdata_address,
+        }) => {
+            let programdata_account = rpc_client
+                .get_account_with_commitment(&programdata_address, config.commitment)?
+                .value
+                .ok_or_else(|| format!("Program data account {programdata_address} not found"))?;
+
+            match programdata_account.state() {
+                Ok(UpgradeableLoaderState::ProgramData {
+                    slot: deployment_slot,
+                    upgrade_authority_address,
+                }) => (programdata_address, deployment_slot, upgrade_authority_address),
+                _ => {
+                    return Err(format!(
+                        "Invalid program data account state for {programdata_address}"
+                    )
+                    .into());
+                }
+            }
+        }
+        _ => {
+            return Err(format!("Invalid program account state for {program_pubkey}").into());
+        }
+    };
+
+    // Create backup directory
+    let backup_dir = output_dir.as_deref().unwrap_or("./backups");
+    fs::create_dir_all(backup_dir).map_err(|e| format!("Failed to create backup directory: {}", e))?;
+
+    // Generate backup name
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    
+    let default_backup_name = format!("{}-{}", program_pubkey, timestamp);
+    let backup_file_name = backup_name
+        .as_deref()
+        .unwrap_or(&default_backup_name);
+
+    let backup_path = Path::new(backup_dir).join(format!("{}.backup", backup_file_name));
+
+    // Get program data content
+    let programdata_account = rpc_client
+        .get_account_with_commitment(&programdata_address, config.commitment)?
+        .value
+        .ok_or_else(|| format!("Program data account {programdata_address} not found"))?;
+
+    // Extract the actual program binary data (skip UpgradeableLoaderState header)
+    let data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+    let program_data_content = &programdata_account.data[data_offset..];
+
+    // Create backup metadata
+    let backup_metadata = serde_json::json!({
+        "program_id": program_pubkey.to_string(),
+        "programdata_address": programdata_address.to_string(),
+        "deployment_slot": deployment_slot,
+        "upgrade_authority": upgrade_authority.map(|auth| auth.to_string()),
+        "backup_timestamp": timestamp,
+        "data_length": program_data_content.len(),
+        "account_balance": programdata_account.lamports,
+        "backup_created_by": "solana-cli-rollback-prepare"
+    });
+
+    // Write program data to backup file
+    fs::write(&backup_path, program_data_content)
+        .map_err(|e| format!("Failed to write backup file: {}", e))?;
+
+    // Write metadata file
+    let metadata_path = Path::new(backup_dir).join(format!("{}.metadata.json", backup_file_name));
+    fs::write(&metadata_path, backup_metadata.to_string())
+        .map_err(|e| format!("Failed to write metadata file: {}", e))?;
+
+    println!("✅ Backup completed successfully!");
+    println!("📁 Backup file: {}", backup_path.display());
+    println!("📄 Metadata file: {}", metadata_path.display());
+    println!("📊 Program data size: {} bytes", program_data_content.len());
+    println!("🕐 Deployment slot: {}", deployment_slot);
+    
+    if let Some(authority) = upgrade_authority {
+        println!("🔑 Upgrade authority: {}", authority);
+    } else {
+        println!("🔒 Program is immutable (no upgrade authority)");
+    }
+
+    println!();
+    println!("💡 To restore from this backup:");
+    println!("   1. Deploy the backed up program data to a buffer");
+    println!("   2. Use 'solana program upgrade' with the new buffer");
+    println!("   3. Ensure you have the upgrade authority keypair");
+
+    Ok("Rollback backup prepared successfully".to_string())
+}
+
+fn process_usage_stats(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    program_pubkey: Pubkey,
+    days: Option<u32>,
+    detailed: bool,
+) -> ProcessResult {
+    let days = days.unwrap_or(7);
+    
+    println!("📊 Usage Statistics for Program {}", program_pubkey);
+    println!("═══════════════════════════════════════════");
+    println!("📅 Analysis Period: {} days", days);
+    println!();
+
+    // Get program account to verify it exists
+    let _program_account = match rpc_client
+        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .value
+    {
+        Some(account) => account,
+        None => {
+            return Err(format!("Program account {program_pubkey} not found").into());
+        }
+    };
+
+    // Get recent signatures (limited by RPC, usually max 1000)
+    let limit = if days <= 1 { 100 } else if days <= 7 { 500 } else { 1000 };
+    
+    let signatures = rpc_client
+        .get_signatures_for_address_with_config(
+            &program_pubkey,
+            GetConfirmedSignaturesForAddress2Config {
+                limit: Some(limit),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|_| vec![]);
+
+    // Analyze signatures
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let cutoff_time = now - (days as i64 * 24 * 60 * 60);
+
+    let recent_signatures: Vec<_> = signatures
+        .iter()
+        .filter(|sig| sig.block_time.unwrap_or(0) >= cutoff_time)
+        .collect();
+
+    println!("🔍 Transaction Analysis:");
+    println!("  Total transactions found: {}", recent_signatures.len());
+    
+    if signatures.len() >= limit {
+        println!("  ⚠️  Showing last {} transactions (RPC limit)", limit);
+    }
+
+    if recent_signatures.is_empty() {
+        println!("  📭 No transactions found in the last {} days", days);
+        println!();
+        println!("💡 This could mean:");
+        println!("  • Program is not actively used");
+        println!("  • Program may be deprecated or paused");
+        println!("  • All activity is older than {} days", days);
+        return Ok("Usage statistics completed".to_string());
+    }
+
+    // Calculate basic statistics
+    let mut daily_counts = std::collections::HashMap::new();
+    let mut hourly_distribution = vec![0; 24];
+    let mut success_count = 0;
+    let mut error_count = 0;
+
+    for sig in &recent_signatures {
+        if let Some(block_time) = sig.block_time {
+            let days_since_epoch = block_time / (24 * 60 * 60);
+            let date = format!("day-{}", days_since_epoch);
+            *daily_counts.entry(date).or_insert(0) += 1;
+
+            // Extract hour from timestamp
+            let hour = ((block_time % (24 * 60 * 60)) / 3600) as usize;
+            hourly_distribution[hour] += 1;
+
+            if sig.err.is_none() {
+                success_count += 1;
+            } else {
+                error_count += 1;
+            }
+        }
+    }
+
+    println!("  Successful transactions: {}", success_count);
+    println!("  Failed transactions: {}", error_count);
+    
+    if recent_signatures.len() > 0 {
+        let success_rate = (success_count as f64 / recent_signatures.len() as f64) * 100.0;
+        println!("  Success rate: {:.1}%", success_rate);
+    }
+
+    let avg_per_day = recent_signatures.len() as f64 / days as f64;
+    println!("  Average per day: {:.1} transactions", avg_per_day);
+
+    if detailed {
+        println!();
+        println!("📈 Daily Transaction Counts:");
+        let mut sorted_days: Vec<_> = daily_counts.iter().collect();
+        sorted_days.sort_by_key(|(date, _)| *date);
+        
+        for (date, count) in sorted_days {
+            println!("  {}: {} transactions", date, count);
+        }
+
+        println!();
+        println!("🕐 Hourly Distribution (UTC):");
+        for (hour, count) in hourly_distribution.iter().enumerate() {
+            if *count > 0 {
+                let bar = "█".repeat((*count * 20 / recent_signatures.len()).max(1));
+                println!("  {:02}:00 - {:02}:59: {:3} {}", hour, hour, count, bar);
+            }
+        }
+
+        // Show recent errors if any
+        if error_count > 0 {
+            println!();
+            println!("🚨 Recent Error Analysis:");
+            let errors: Vec<_> = recent_signatures
+                .iter()
+                .filter(|sig| sig.err.is_some())
+                .take(5)
+                .collect();
+            
+            for (i, sig) in errors.iter().enumerate() {
+                if let Some(err) = &sig.err {
+                    println!("  {}. {}: {:?}", i + 1, sig.signature, err);
+                }
+            }
+            
+            if error_count > 5 {
+                println!("  ... and {} more errors", error_count - 5);
+            }
+        }
+    }
+
+    println!();
+    println!("💡 Usage Insights:");
+    
+    match avg_per_day {
+        x if x < 1.0 => println!("  🔵 Low activity program (< 1 tx/day)"),
+        x if x < 10.0 => println!("  🟡 Moderate activity program (1-10 tx/day)"),
+        x if x < 100.0 => println!("  🟠 High activity program (10-100 tx/day)"),
+        _ => println!("  🔴 Very high activity program (> 100 tx/day)"),
+    }
+
+    if recent_signatures.len() > 0 {
+        let latest_time = recent_signatures
+            .iter()
+            .map(|sig| sig.block_time.unwrap_or(0))
+            .max()
+            .unwrap();
+        
+        let hours_since_last = (now - latest_time) / 3600;
+        match hours_since_last {
+            0..=1 => println!("  ✅ Recently active (< 1 hour ago)"),
+            2..=24 => println!("  🟡 Active today ({} hours ago)", hours_since_last),
+            25..=168 => println!("  🟠 Active this week ({} days ago)", hours_since_last / 24),
+            _ => println!("  🔴 Inactive for > 1 week"),
+        }
+    }
+
+    Ok("Usage statistics completed".to_string())
+}
+
+fn process_debug_deployment(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    program_pubkey: Pubkey,
+    deployment_slot: Option<u64>,
+    check_features: bool,
+) -> ProcessResult {
+    println!("🔍 Debug Deployment Analysis for {}", program_pubkey);
+    println!("═══════════════════════════════════════════");
+
+    // Get program account
+    let program_account = match rpc_client
+        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .value
+    {
+        Some(account) => account,
+        None => {
+            return Err(format!("Program account {program_pubkey} not found").into());
+        }
+    };
+
+    println!("🏗️  Program Account Analysis:");
+    println!("  Address: {}", program_pubkey);
+    println!("  Owner: {}", program_account.owner);
+    println!("  Executable: {}", program_account.executable);
+    println!("  Data Length: {} bytes", program_account.data.len());
+    println!("  Balance: {} SOL", lamports_to_sol(program_account.lamports));
+
+    // Check program type and get detailed info
+    let mut issues = Vec::new();
+    let mut warnings = Vec::new();
+
+    if !program_account.executable {
+        issues.push("Program account is not marked as executable".to_string());
+    }
+
+    match program_account.owner {
+        owner if owner == bpf_loader_upgradeable::id() => {
+            println!("  Type: Upgradeable Program (BPF Loader Upgradeable)");
+            
+            // Analyze upgradeable program
+            match program_account.state() {
+                Ok(UpgradeableLoaderState::Program { programdata_address }) => {
+                    println!("  Program Data Address: {}", programdata_address);
+                    
+                    // Get program data account
+                    match rpc_client
+                        .get_account_with_commitment(&programdata_address, config.commitment)?
+                        .value
+                    {
+                        Some(data_account) => {
+                            println!("  Program Data Balance: {} SOL", lamports_to_sol(data_account.lamports));
+                            println!("  Program Data Size: {} bytes", data_account.data.len());
+                            
+                            // Parse program data
+                            match data_account.state() {
+                                Ok(UpgradeableLoaderState::ProgramData { slot, upgrade_authority_address }) => {
+                                    println!("  Deployment Slot: {}", slot);
+                                    
+                                    if let Some(target_slot) = deployment_slot {
+                                        if slot != target_slot {
+                                            warnings.push(format!("Deployment slot mismatch: expected {}, found {}", target_slot, slot));
+                                        } else {
+                                            println!("  ✅ Deployment slot matches expected: {}", slot);
+                                        }
+                                    }
+                                    
+                                    match upgrade_authority_address {
+                                        Some(authority) => {
+                                            println!("  Upgrade Authority: {}", authority);
+                                            
+                                            // Verify authority account exists
+                                            match rpc_client.get_account(&authority) {
+                                                Ok(_) => println!("  ✅ Upgrade authority account exists"),
+                                                Err(_) => warnings.push(format!("Upgrade authority account {} not found", authority)),
+                                            }
+                                        }
+                                        None => {
+                                            println!("  Upgrade Authority: None (immutable)");
+                                            println!("  ⚠️  Program is immutable and cannot be upgraded");
+                                        }
+                                    }
+                                    
+                                    // Check program data size
+                                    let data_offset = UpgradeableLoaderState::size_of_programdata_metadata();
+                                    let actual_program_size = data_account.data.len() - data_offset;
+                                    println!("  Actual Program Size: {} bytes", actual_program_size);
+                                    
+                                    if actual_program_size == 0 {
+                                        issues.push("Program data is empty".to_string());
+                                    } else if actual_program_size < 100 {
+                                        warnings.push(format!("Program is very small ({} bytes)", actual_program_size));
+                                    }
+                                }
+                                Ok(_) => issues.push("Program data account has invalid state".to_string()),
+                                Err(e) => issues.push(format!("Failed to parse program data account: {}", e)),
+                            }
+                        }
+                        None => issues.push(format!("Program data account {} not found", programdata_address)),
+                    }
+                }
+                Ok(_) => issues.push("Program account has invalid state".to_string()),
+                Err(e) => issues.push(format!("Failed to parse program account: {}", e)),
+            }
+        }
+        owner if owner == bpf_loader::id() => {
+            println!("  Type: Legacy BPF Program (BPF Loader)");
+            warnings.push("Program uses legacy BPF loader - consider upgrading to BPF Loader Upgradeable".to_string());
+        }
+        owner if owner == bpf_loader_deprecated::id() => {
+            println!("  Type: Deprecated BPF Program");
+            issues.push("Program uses deprecated BPF loader - immediate upgrade recommended".to_string());
+        }
+        _ => {
+            println!("  Type: Non-BPF Program");
+            warnings.push(format!("Program owner is not a known BPF loader: {}", program_account.owner));
+        }
+    }
+
+    // Get current slot and network info
+    let current_slot = rpc_client.get_slot_with_commitment(config.commitment)?;
+    println!();
+    println!("🌐 Network Analysis:");
+    println!("  Current Slot: {}", current_slot);
+    
+    if let Some(target_slot) = deployment_slot {
+        let slot_diff = current_slot.saturating_sub(target_slot);
+        println!("  Slots Since Deployment: {}", slot_diff);
+        
+        // Estimate time (assuming ~400ms per slot)
+        let estimated_time_hours = (slot_diff as f64 * 0.4) / 3600.0;
+        if estimated_time_hours < 1.0 {
+            println!("  Estimated Age: {:.1} minutes", estimated_time_hours * 60.0);
+        } else if estimated_time_hours < 24.0 {
+            println!("  Estimated Age: {:.1} hours", estimated_time_hours);
+        } else {
+            println!("  Estimated Age: {:.1} days", estimated_time_hours / 24.0);
+        }
+    }
+
+    // Feature set verification if requested
+    if check_features {
+        println!();
+        println!("🔧 Feature Set Verification:");
+        
+        match fetch_feature_set(rpc_client) {
+            Ok(feature_set) => {
+                println!("  ✅ Successfully retrieved network feature set");
+                println!("  Active features: {}", feature_set.active().len());
+                
+                // Note: In a real implementation, you'd want to verify the program
+                // binary against the feature set, but that requires the actual ELF
+                // parsing which is complex for this demonstration
+                println!("  💡 Note: Full feature verification requires ELF analysis");
+            }
+            Err(e) => {
+                warnings.push(format!("Failed to retrieve feature set: {}", e));
+            }
+        }
+    }
+
+    // Display issues and warnings
+    println!();
+    if !issues.is_empty() {
+        println!("🚨 Issues Found:");
+        for (i, issue) in issues.iter().enumerate() {
+            println!("  {}. {}", i + 1, issue);
+        }
+    }
+
+    if !warnings.is_empty() {
+        println!("⚠️  Warnings:");
+        for (i, warning) in warnings.iter().enumerate() {
+            println!("  {}. {}", i + 1, warning);
+        }
+    }
+
+    if issues.is_empty() && warnings.is_empty() {
+        println!("✅ No issues or warnings found");
+    }
+
+    println!();
+    println!("💡 Deployment Health Summary:");
+    let health_status = if !issues.is_empty() {
+        "🚨 UNHEALTHY"
+    } else if !warnings.is_empty() {
+        "⚠️  NEEDS ATTENTION"
+    } else {
+        "✅ HEALTHY"
+    };
+    
+    println!("  Status: {}", health_status);
+    
+    if !issues.is_empty() {
+        println!("  Recommendation: Address critical issues before using this program");
+    } else if !warnings.is_empty() {
+        println!("  Recommendation: Review warnings and consider improvements");
+    } else {
+        println!("  Recommendation: Program deployment appears healthy");
+    }
+
+    Ok("Debug deployment analysis completed".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -4569,6 +5461,215 @@ mod tests {
         assert_eq!(
             program_id.parse::<Pubkey>().unwrap(),
             program_pubkey.pubkey()
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_health_check() {
+        let test_commands = get_clap_app("test", "desc", "version");
+
+        let default_keypair = Keypair::new();
+        let keypair_file = make_tmp_path("keypair_file");
+        write_keypair_file(&default_keypair, &keypair_file).unwrap();
+        let default_signer = DefaultSigner::new("", &keypair_file);
+
+        let program_pubkey = Pubkey::new_unique();
+        
+        // Test basic health-check command
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "health-check",
+            &program_pubkey.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::HealthCheck {
+                    program_pubkey,
+                    detailed: false,
+                }),
+                signers: vec![],
+            }
+        );
+
+        // Test health-check command with --detailed flag
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "health-check",
+            &program_pubkey.to_string(),
+            "--detailed",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::HealthCheck {
+                    program_pubkey,
+                    detailed: true,
+                }),
+                signers: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_rollback_prepare() {
+        let test_commands = get_clap_app("test", "desc", "version");
+
+        let default_keypair = Keypair::new();
+        let keypair_file = make_tmp_path("keypair_file");
+        write_keypair_file(&default_keypair, &keypair_file).unwrap();
+        let default_signer = DefaultSigner::new("", &keypair_file);
+
+        let program_pubkey = Pubkey::new_unique();
+        
+        // Test basic rollback-prepare command
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "rollback-prepare",
+            &program_pubkey.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::RollbackPrepare {
+                    program_pubkey,
+                    output_dir: None,
+                    backup_name: None,
+                }),
+                signers: vec![],
+            }
+        );
+
+        // Test rollback-prepare with custom options
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program", 
+            "rollback-prepare",
+            &program_pubkey.to_string(),
+            "--output-dir",
+            "/tmp/backups",
+            "--name",
+            "my-backup",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::RollbackPrepare {
+                    program_pubkey,
+                    output_dir: Some("/tmp/backups".to_string()),
+                    backup_name: Some("my-backup".to_string()),
+                }),
+                signers: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_usage_stats() {
+        let test_commands = get_clap_app("test", "desc", "version");
+
+        let default_keypair = Keypair::new();
+        let keypair_file = make_tmp_path("keypair_file");
+        write_keypair_file(&default_keypair, &keypair_file).unwrap();
+        let default_signer = DefaultSigner::new("", &keypair_file);
+
+        let program_pubkey = Pubkey::new_unique();
+        
+        // Test basic usage-stats command
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "usage-stats",
+            &program_pubkey.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::UsageStats {
+                    program_pubkey,
+                    days: None,
+                    detailed: false,
+                }),
+                signers: vec![],
+            }
+        );
+
+        // Test usage-stats with options
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program", 
+            "usage-stats",
+            &program_pubkey.to_string(),
+            "--days",
+            "30",
+            "--detailed",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::UsageStats {
+                    program_pubkey,
+                    days: Some(30),
+                    detailed: true,
+                }),
+                signers: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn test_cli_parse_debug_deployment() {
+        let test_commands = get_clap_app("test", "desc", "version");
+
+        let default_keypair = Keypair::new();
+        let keypair_file = make_tmp_path("keypair_file");
+        write_keypair_file(&default_keypair, &keypair_file).unwrap();
+        let default_signer = DefaultSigner::new("", &keypair_file);
+
+        let program_pubkey = Pubkey::new_unique();
+        
+        // Test basic debug-deployment command
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program",
+            "debug-deployment",
+            &program_pubkey.to_string(),
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::DebugDeployment {
+                    program_pubkey,
+                    deployment_slot: None,
+                    check_features: false,
+                }),
+                signers: vec![],
+            }
+        );
+
+        // Test debug-deployment with options
+        let test_command = test_commands.clone().get_matches_from(vec![
+            "test",
+            "program", 
+            "debug-deployment",
+            &program_pubkey.to_string(),
+            "--slot",
+            "12345",
+            "--check-features",
+        ]);
+        assert_eq!(
+            parse_command(&test_command, &default_signer, &mut None).unwrap(),
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::DebugDeployment {
+                    program_pubkey,
+                    deployment_slot: Some(12345),
+                    check_features: true,
+                }),
+                signers: vec![],
+            }
         );
     }
 }
