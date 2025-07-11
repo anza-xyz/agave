@@ -332,7 +332,7 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
                     .long("target-db")
                     .value_name("DIR")
                     .takes_value(true)
-                    .help("Target db"),
+                    .help("Directory to write inner \"rocksdb\" in."),
             ),
         SubCommand::with_name("dead-slots")
             .about("Print all the dead slots in the ledger")
