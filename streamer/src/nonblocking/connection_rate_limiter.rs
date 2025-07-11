@@ -5,7 +5,10 @@ use {
         borrow::Borrow,
         net::IpAddr,
         num::NonZeroU32,
-        sync::{Mutex, RwLock},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            RwLock,
+        },
         time::Instant,
     },
 };
@@ -79,11 +82,6 @@ impl TotalConnectionRateLimiter {
         }
     }
 }
-#[derive(Clone)]
-struct TokenBucketState {
-    tokens: u64,
-    last_access: u64,
-}
 
 /// Enforces a rate limit on the volume of requests
 /// per unit time.
@@ -91,7 +89,9 @@ pub struct TokenBucket {
     tokens_per_second: f64,
     max_tokens: u64,
     base_time: Instant,
-    state: Mutex<TokenBucketState>,
+    tokens: AtomicU64,
+    last_update: AtomicU64,
+    spare_time: AtomicU64,
 }
 
 impl Clone for TokenBucket {
@@ -100,7 +100,9 @@ impl Clone for TokenBucket {
             tokens_per_second: self.tokens_per_second,
             max_tokens: self.max_tokens,
             base_time: self.base_time,
-            state: Mutex::new(self.state.lock().unwrap().clone()),
+            tokens: AtomicU64::new(self.tokens.load(Ordering::SeqCst)),
+            last_update: AtomicU64::new(self.last_update.load(Ordering::SeqCst)),
+            spare_time: AtomicU64::new(self.spare_time.load(Ordering::SeqCst)),
         }
     }
 }
@@ -120,33 +122,36 @@ impl TokenBucket {
         TokenBucket {
             tokens_per_second,
             max_tokens,
-            state: Mutex::new(TokenBucketState {
-                tokens: initial_tokens,
-                last_access: 0,
-            }),
+            tokens: AtomicU64::new(initial_tokens),
+            last_update: AtomicU64::new(0),
             base_time,
+            spare_time: AtomicU64::new(0),
         }
     }
 
     pub fn current_tokens(&self) -> u64 {
-        let mut state = self.state.lock().unwrap();
         let now = self.time_us();
-        self.update_state(now, &mut state);
-        state.tokens
+        self.update_state(now);
+        self.tokens.load(Ordering::Relaxed)
     }
 
     /// Attempts to consume tokens from bucket.
     /// On success, returns Ok(amount of tokens left in the bucket)
     /// On failure, returns Err(amount of tokens missing to fill request)
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
-        let mut state = self.state.lock().unwrap();
         let now = self.time_us();
-        self.update_state(now, &mut state);
-        if state.tokens >= request_size {
-            state.tokens -= request_size;
-            Ok(state.tokens)
-        } else {
-            Err(request_size - state.tokens)
+        self.update_state(now);
+        match self
+            .tokens
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |tokens| {
+                if tokens >= request_size {
+                    Some(tokens - request_size)
+                } else {
+                    None
+                }
+            }) {
+            Ok(prev) => Ok(prev - request_size),
+            Err(prev) => Err(request_size - prev),
         }
     }
 
@@ -160,19 +165,38 @@ impl TokenBucket {
 
     /// Updates internal state of the bucket by
     /// depositing new tokens (if appropriate)
-    fn update_state(&self, now: u64, state: &mut TokenBucketState) {
-        debug_assert!(now >= state.last_access);
-        let elapsed = (now - state.last_access) as f64;
-        let new_tokens = elapsed * self.tokens_per_second / 1e6;
-        // check if we can mint at least 1 new token
-        if new_tokens > 1.0 {
-            // update time of last mint
-            state.last_access = now;
-            // fill the bucket
-            state.tokens = self
-                .max_tokens
-                .min(state.tokens.saturating_add(new_tokens as u64));
+    fn update_state(&self, now: u64) {
+        // update last_access fist to prevent other threads from adding tokens
+        // concurrent updaters will get elapsed = 0 or close to it
+        let last_access = self.last_update.swap(now, Ordering::Relaxed);
+        if now <= last_access {
+            // this happens if some other thread has beaten us to state update
+            return;
         }
+        // use all actual elapsed time + all leftovers from other conversion attempts
+        let elapsed = now - last_access + self.spare_time.swap(0, Ordering::Relaxed);
+
+        let tokens_per_us = self.tokens_per_second / 1e6;
+        let new_tokens = elapsed as f64 * tokens_per_us;
+        // how much of the elapsed time we can not convert into tokens
+        let mut time_to_return = (new_tokens.fract() / tokens_per_us) as u64;
+        //dbg!(elapsed, tokens_per_us, new_tokens, time_to_return);
+        // check if we can mint at least 1 new token
+        let new_tokens = new_tokens.floor() as u64;
+        if new_tokens >= 1 {
+            // fill the bucket. Ignore results since it is always OK here.
+            let _ = self
+                .tokens
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |tokens| {
+                    Some(tokens.saturating_add(new_tokens).min(self.max_tokens))
+                });
+        } else {
+            // no conversion, return all elapsed time to the pool
+            time_to_return = elapsed;
+        }
+        // return the unused time resource we have borrowed by pretending
+        // last update happened earlier than it truly did
+        self.spare_time.fetch_add(time_to_return, Ordering::Relaxed);
     }
 }
 
@@ -340,15 +364,15 @@ pub mod test {
 
     #[test]
     fn bench_token_bucket() {
-        let run_duration = Duration::from_secs(10);
+        let run_duration = Duration::from_secs(5);
         let tb = TokenBucket::new(1, 60, 100.0);
-        let limiter = KeyedRateLimiter::new(1024 * 2, tb);
+        let limiter = KeyedRateLimiter::new(2048, tb);
 
         let accepted = AtomicUsize::new(0);
         let rejected = AtomicUsize::new(0);
 
         let start = Instant::now();
-        let ip_pool = 1024;
+        let ip_pool = 4096;
         let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
         let workers = 8;
 
@@ -381,14 +405,14 @@ pub mod test {
     #[test]
     #[ignore = "does not pass"]
     fn bench_governor() {
-        let run_duration = Duration::from_secs(10);
+        let run_duration = Duration::from_secs(5);
         let limiter = Arc::new(ConnectionRateLimiter::new(60 * 100));
 
         let accepted = AtomicUsize::new(0);
         let rejected = AtomicUsize::new(0);
 
         let start = Instant::now();
-        let ip_pool = 1024;
+        let ip_pool = 4096;
         let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
         let workers = 8;
 
