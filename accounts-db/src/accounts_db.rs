@@ -8524,12 +8524,17 @@ impl AccountsDb {
         #[allow(clippy::stable_sort_primitive)]
         alive_roots.sort();
         info!("{}: accounts_index alive_roots: {:?}", label, alive_roots,);
-        let full_pubkey_range = Pubkey::from([0; 32])..=Pubkey::from([0xff; 32]);
-
         self.accounts_index.account_maps.iter().for_each(|map| {
-            for (pubkey, slot_list) in map.items(&full_pubkey_range) {
-                info!("  key: {}", pubkey);
-                info!("      slots: {:?}", slot_list);
+            for pubkey in map.keys() {
+                self.accounts_index.get_and_then(&pubkey, |account_entry| {
+                    if let Some(account_entry) = account_entry {
+                        let list_r = &account_entry.slot_list.read().unwrap();
+                        info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
+                        info!("      slots: {:?}", list_r);
+                    }
+                    let add_to_in_mem_cache = false;
+                    (add_to_in_mem_cache, ())
+                });
             }
         });
     }

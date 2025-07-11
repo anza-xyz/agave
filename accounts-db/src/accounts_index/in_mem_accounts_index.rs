@@ -250,52 +250,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    pub fn items<R>(&self, range: &R) -> Vec<(Pubkey, SlotList<T>)>
-    where
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        let start = match range.start_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => bound,
-            Bound::Unbounded => &Pubkey::from([0; 32]),
-        };
-
-        let end = match range.end_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => bound,
-            Bound::Unbounded => &Pubkey::from([0xff; 32]),
-        };
-
-        if start > &self.highest_pubkey || end < &self.lowest_pubkey {
-            // range does not contain any of the keys in this bin. No need to
-            // load and scan the map.
-            // Example:
-            //    |-------------------|  |-------------------|  |-------------------|
-            //       start          end  low               high  start              end
-            return vec![];
-        }
-
-        let m = Measure::start("items");
-
-        // For simplicity, we check the range for every pubkey in the map. This
-        // can be further optimized for case, such as the range contains lowest
-        // and highest pubkey for this bin. In such case, we can return all
-        // items in the map without range check on item's pubkey. Since the
-        // check is cheap when compared with the cost of reading from disk, we
-        // are not optimizing it for now.
-        self.hold_range_in_memory(range, true);
-        let result = self
-            .map_internal
-            .read()
-            .unwrap()
-            .iter()
-            .filter(|&(k, _v)| range.contains(k))
-            .map(|(k, v)| (*k, v.slot_list.read().unwrap().clone()))
-            .collect();
-        self.hold_range_in_memory(range, false);
-        Self::update_stat(&self.stats().items, 1);
-        Self::update_time_stat(&self.stats().items_us, m);
-        result
-    }
-
     /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);
