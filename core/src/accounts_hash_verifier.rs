@@ -284,6 +284,7 @@ impl AccountsHashVerifier {
                     let Some((base_accounts_hash, base_capitalization)) =
                         accounts_db.get_accounts_hash(base_slot)
                     else {
+                        #[rustfmt::skip]
                         panic!(
                             "incremental snapshot requires accounts hash and capitalization from \
                              the full snapshot it is based on\n\

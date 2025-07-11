@@ -623,6 +623,7 @@ fn test_snapshots_with_background_services(
     const MAX_WAIT_DURATION: Duration = Duration::from_secs(10);
 
     info!("Running snapshots with background services test...");
+    #[rustfmt::skip]
     trace!(
         "Test configuration parameters:\
          \n\tfull snapshot archive interval: {} slots\
