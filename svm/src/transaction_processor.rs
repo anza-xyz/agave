@@ -311,6 +311,23 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
+    // HANA TODO OK there are a few things to work through still
+    // * do i need to pass in account loader. what happens if i just use callback
+    //   i feel like it shouldnt matter bc of the exclusion logic but i will have to write a lot of tests...
+    //   the good news is most fuckery should result in a tombstone which blocks later fuckery
+    // * usage counts are bullshit now. we... need to update these at the end of the batch
+    //   this is an absolute nightmare tho. we cant lock the cache again to... uh...
+    //   it just moves the entry to the local cache so maybe we update the local cache usage counts after?
+    //   i really dont understand where this information makes it back to the global cache
+    //   oh my god im so fucking stupid. these fucking things are wrapped in arcs
+    //   we merge after every transaction. so i think. just update usage counters after all txs, before eviction
+    // * we need to handle this stats bullshit. before, on the first round, it would add search_for len to misses
+    //   misses means misses on the global cache. ie the program does exist it just needs to load it
+    //   i think i can still add this where its added... maybe not, because we keep the program in the hashmap
+    //   wait no yes its fine. because misses doesnt mean it doesnt exist lol. ok cool
+    //   as for the hits we also need to do this after the full batch because its just the full length of entries
+    //   which... we can include merge modified? idfk. just try it
+
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
