@@ -558,11 +558,12 @@ async fn test_rate_limiting() {
         },
     );
 
+    // open a connection to consume the limit
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
     drop(connection_to_reach_limit);
 
-    // Setup sending txs
-    let tx_size = 1;
+    // Setup sending txs which are full packets in size
+    let tx_size = 1024;
     let expected_num_txs: usize = 16;
     let SpawnTxGenerator {
         tx_receiver,
@@ -583,16 +584,16 @@ async fn test_rate_limiting() {
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
-    // Accept both 0 and 1 as valid values for it as we may run into connection handshake timeout
-    // error within the TEST_MAX_TIME.
+    dbg!(&stats);
     assert!(
         stats
             == SendTransactionStatsNonAtomic {
-                connection_error_timed_out: 1,
+                successfully_sent: 2,
+                write_error_connection_lost: 2,
                 ..Default::default()
             }
-            || stats == SendTransactionStatsNonAtomic::default()
     );
+    //    drop(connection_to_reach_limit);
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
