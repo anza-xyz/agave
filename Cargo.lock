@@ -7265,6 +7265,7 @@ dependencies = [
  "num_enum",
  "rand 0.8.5",
  "rayon",
+ "solana-bucket-map",
  "solana-clock",
  "solana-logger",
  "solana-measure",
