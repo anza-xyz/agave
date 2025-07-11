@@ -25,10 +25,10 @@ use {
     solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
-        QUIC_CONNECTION_HANDSHAKE_TIMEOUT, QUIC_MAX_STAKED_CONCURRENT_STREAMS,
-        QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO, QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS,
-        QUIC_MIN_STAKED_CONCURRENT_STREAMS, QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO,
-        QUIC_TOTAL_STAKED_CONCURRENT_STREAMS, QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
+        QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
+        QUIC_MAX_UNSTAKED_CONCURRENT_STREAMS, QUIC_MIN_STAKED_CONCURRENT_STREAMS,
+        QUIC_MIN_STAKED_RECEIVE_WINDOW_RATIO, QUIC_TOTAL_STAKED_CONCURRENT_STREAMS,
+        QUIC_UNSTAKED_RECEIVE_WINDOW_RATIO,
     },
     solana_signature::Signature,
     solana_time_utils as timing,
@@ -94,6 +94,10 @@ const TOTAL_CONNECTIONS_PER_SECOND: u64 = 2500;
 /// the map size is above this, we will trigger a cleanup of older
 /// entries used by past requests.
 const CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD: usize = 100_000;
+
+/// Timeout for connection handshake. Timer starts once we get Initial from the
+/// peer, and is canceled when we get a Handshake packet from them.
+const QUIC_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 // A struct to accumulate the bytes making up
 // a packet, along with their offsets, and the
@@ -282,9 +286,12 @@ async fn run_server(
     coalesce_channel_size: usize,
     max_concurrent_connections: usize,
 ) {
-    let rate_limiter = ConnectionRateLimiter::new(max_connections_per_ipaddr_per_min);
-    let overall_connection_rate_limiter =
-        TotalConnectionRateLimiter::new(TOTAL_CONNECTIONS_PER_SECOND);
+    let rate_limiter = Arc::new(ConnectionRateLimiter::new(
+        max_connections_per_ipaddr_per_min,
+    ));
+    let overall_connection_rate_limiter = Arc::new(TotalConnectionRateLimiter::new(
+        TOTAL_CONNECTIONS_PER_SECOND,
+    ));
 
     const WAIT_FOR_CONNECTION_TIMEOUT: Duration = Duration::from_secs(1);
     debug!("spawn quic server");
@@ -353,8 +360,6 @@ async fn run_server(
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
 
-            let remote_address = incoming.remote_address();
-
             // first do per IpAddr rate limiting
             if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
                 rate_limiter.retain_recent();
@@ -362,31 +367,6 @@ async fn run_server(
             stats
                 .connection_rate_limiter_length
                 .store(rate_limiter.len(), Ordering::Relaxed);
-            debug!("Got a connection {remote_address:?}");
-            if !rate_limiter.is_allowed(&remote_address.ip()) {
-                debug!(
-                    "Reject connection from {:?} -- rate limiting exceeded",
-                    remote_address
-                );
-                stats
-                    .connection_rate_limited_per_ipaddr
-                    .fetch_add(1, Ordering::Relaxed);
-                incoming.ignore();
-                continue;
-            }
-
-            // then check overall connection rate limit:
-            if !overall_connection_rate_limiter.is_allowed() {
-                debug!(
-                    "Reject connection from {:?} -- total rate limiting exceeded",
-                    remote_address.ip()
-                );
-                stats
-                    .connection_rate_limited_across_all
-                    .fetch_add(1, Ordering::Relaxed);
-                incoming.ignore();
-                continue;
-            }
 
             let Ok(client_connection_tracker) =
                 ClientConnectionTracker::new(stats.clone(), max_concurrent_connections)
@@ -404,8 +384,12 @@ async fn run_server(
             let connecting = incoming.accept();
             match connecting {
                 Ok(connecting) => {
+                    let rate_limiter = rate_limiter.clone();
+                    let overall_connection_rate_limiter = overall_connection_rate_limiter.clone();
                     tokio::spawn(setup_connection(
                         connecting,
+                        rate_limiter,
+                        overall_connection_rate_limiter,
                         client_connection_tracker,
                         unstaked_connection_table.clone(),
                         staked_connection_table.clone(),
@@ -698,6 +682,8 @@ fn compute_recieve_window(
 #[allow(clippy::too_many_arguments)]
 async fn setup_connection(
     connecting: Connecting,
+    rate_limiter: Arc<ConnectionRateLimiter>,
+    overall_connection_rate_limiter: Arc<TotalConnectionRateLimiter>,
     client_connection_tracker: ClientConnectionTracker,
     unstaked_connection_table: Arc<Mutex<ConnectionTable>>,
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
@@ -720,7 +706,37 @@ async fn setup_connection(
     if let Ok(connecting_result) = res {
         match connecting_result {
             Ok(new_connection) => {
+                debug!("Got a connection {from:?}");
+                if !rate_limiter.is_allowed(&from.ip()) {
+                    debug!(
+                        "Reject connection from {:?} -- rate limiting exceeded",
+                        from
+                    );
+                    stats
+                        .connection_rate_limited_per_ipaddr
+                        .fetch_add(1, Ordering::Relaxed);
+                    new_connection.close(
+                        CONNECTION_CLOSE_CODE_DISALLOWED.into(),
+                        CONNECTION_CLOSE_REASON_DISALLOWED,
+                    );
+                    return;
+                }
                 stats.total_new_connections.fetch_add(1, Ordering::Relaxed);
+
+                if !overall_connection_rate_limiter.is_allowed() {
+                    debug!(
+                        "Reject connection from {:?} -- total rate limiting exceeded",
+                        from.ip()
+                    );
+                    stats
+                        .connection_rate_limited_across_all
+                        .fetch_add(1, Ordering::Relaxed);
+                    new_connection.close(
+                        CONNECTION_CLOSE_CODE_DISALLOWED.into(),
+                        CONNECTION_CLOSE_REASON_DISALLOWED,
+                    );
+                    return;
+                }
 
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
