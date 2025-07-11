@@ -184,11 +184,11 @@ impl<'a, T: Backing> ContiguousBufFileRead<'a> for BufferedReader<'a, T> {
                 .next_power_of_two()
                 .clamp(MIN_CAPACITY, MAX_CAPACITY);
             overflow_buffer.reserve_exact(next_cap - capacity);
-            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
-            // Later, we ensure we only read from the initialized portion of the buffer.
-            unsafe {
-                overflow_buffer.set_len(required_len);
-            }
+        }
+        // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
+        // Later, we ensure we only read from the initialized portion of the buffer.
+        unsafe {
+            overflow_buffer.set_len(required_len);
         }
 
         // Copy already read data to overflow buffer.
