@@ -546,7 +546,7 @@ pub fn execute(
             health_check_slot_distance: run_args.json_rpc_config.health_check_slot_distance,
             disable_health_check: false,
             rpc_threads: run_args.json_rpc_config.rpc_threads,
-            rpc_blocking_threads: value_t_or_exit!(matches, "rpc_blocking_threads", usize),
+            rpc_blocking_threads: run_args.json_rpc_config.rpc_blocking_threads,
             rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
             account_indexes: run_args.json_rpc_config.account_indexes,
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),

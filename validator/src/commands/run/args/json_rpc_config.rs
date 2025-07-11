@@ -35,6 +35,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             max_multiple_accounts: Some(value_t!(matches, "rpc_max_multiple_accounts", usize)?),
             account_indexes: AccountSecondaryIndexes::from_clap_arg_match(matches)?,
             rpc_threads: value_t!(matches, "rpc_threads", usize)?,
+            rpc_blocking_threads: value_t!(matches, "rpc_blocking_threads", usize)?,
             ..Default::default()
         })
     }
@@ -182,6 +183,25 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--rpc-threads", "10"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_rpc_blocking_threads() {
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    rpc_blocking_threads: 999,
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--rpc-blocking-threads", "999"],
                 expected_args,
             );
         }
