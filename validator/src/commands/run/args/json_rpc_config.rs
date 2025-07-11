@@ -39,6 +39,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             rpc_niceness_adj: value_t!(matches, "rpc_niceness_adj", i8)?,
             full_api: matches.is_present("full_rpc_api"),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
+            max_request_body_size: Some(value_t!(matches, "rpc_max_request_body_size", usize)?),
             ..Default::default()
         })
     }
@@ -267,6 +268,26 @@ mod tests {
                     "--enable-rpc-transaction-history", // required by --rpc-scan-and-fix-roots
                     "--rpc-scan-and-fix-roots",
                 ],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_rpc_max_request_body_size() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    max_request_body_size: Some(999),
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--rpc-max-request-body-size", "999"],
                 expected_args,
             );
         }
