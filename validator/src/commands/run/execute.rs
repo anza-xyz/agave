@@ -193,8 +193,6 @@ pub fn execute(
         None
     };
 
-    let blockstore_options = run_args.blockstore_options;
-
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
         .map(Into::into)
@@ -619,7 +617,7 @@ pub fn execute(
         repair_whitelist,
         gossip_validators,
         max_ledger_shreds,
-        blockstore_options,
+        blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
         contact_debug_interval,
