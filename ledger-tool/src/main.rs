@@ -830,9 +830,6 @@ fn main() {
     let accounts_db_config_args = accounts_db_args();
     let snapshot_config_args = snapshot_args();
 
-    let accounts_db_test_hash_calculation_arg = Arg::with_name("accounts_db_test_hash_calculation")
-        .long("accounts-db-test-hash-calculation")
-        .help("DEPRECATED");
     let halt_at_slot_arg = Arg::with_name("halt_at_slot")
         .long("halt-at-slot")
         .value_name("SLOT")
@@ -1099,7 +1096,6 @@ fn main() {
                 .arg(&verify_index_arg)
                 .arg(&halt_at_slot_store_hash_raw_data)
                 .arg(&hard_forks_arg)
-                .arg(&accounts_db_test_hash_calculation_arg)
                 .arg(&os_memory_stats_reporting_arg)
                 .arg(&allow_dead_slots_arg)
                 .arg(&debug_key_arg)
