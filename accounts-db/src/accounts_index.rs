@@ -727,10 +727,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
 
-        for pubkey_list in self.iter(range.as_ref(), returns_items) {
+        for pubkeys in self.iter(range.as_ref(), returns_items) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
-            for pubkey in pubkey_list {
+            for pubkey in pubkeys {
                 num_keys_iterated += 1;
                 self.get_and_then(&pubkey, |entry| {
                     if let Some(list) = entry {
