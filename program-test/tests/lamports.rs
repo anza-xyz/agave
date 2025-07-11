@@ -65,21 +65,13 @@ async fn move_lamports() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer, &source],
-        context.last_blockhash,
+        context.working_bank().last_blockhash(),
     );
 
     context
-        .banks_client
-        .process_transaction(transaction)
-        .await
+        .working_bank()
+        .process_transaction(&transaction)
         .unwrap();
 
-    assert_eq!(
-        context
-            .banks_client
-            .get_balance(source.pubkey())
-            .await
-            .unwrap(),
-        0
-    );
+    assert_eq!(context.working_bank().get_balance(&source.pubkey()), 0);
 }
