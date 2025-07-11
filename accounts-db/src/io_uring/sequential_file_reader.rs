@@ -17,6 +17,9 @@ use {
     },
 };
 
+// Based on transfers seen with `dd bs=SIZE` for NVME drives: values >=64KiB are fine,
+// but peak at 1MiB. Also compare with particular NVME parameters, e.g.
+// 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
 const DEFAULT_READ_SIZE: usize = 1024 * 1024;
 const SQPOLL_IDLE_TIMEOUT: u32 = 50;
 const MAX_IOWQ_WORKERS: u32 = 4;
@@ -90,7 +93,9 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             .read(true)
             .custom_flags(libc::O_NOATIME)
             .open(path)?;
-        let buffers = FixedIoBuffer::split_buffer_chunks(buffer, read_capacity)
+        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
+        // dropped before `backing_buffer` is dropped.
+        let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, read_capacity) }
             .map(ReadBufState::Uninit)
             .collect();
         let ring = Ring::new(
@@ -105,7 +110,9 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             },
         );
 
-        FixedIoBuffer::register(buffer, &ring)?;
+        // Safety: kernel holds unsafe pointers to `buffer`, struct field layout guarantees
+        // that the ring is destroyed before `backing_buffer` is dropped.
+        unsafe { FixedIoBuffer::register(buffer, &ring)? };
 
         let mut reader = Self {
             inner: ring,

@@ -98,11 +98,15 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         let write_aligned_buf_len = buffer.len() / write_capacity * write_capacity;
         let buffer = &mut buffer[..write_aligned_buf_len];
 
-        let buffers = FixedIoBuffer::split_buffer_chunks(buffer, write_capacity);
+        // Safety: buffers contain unsafe pointers to `buffer`, but we make sure they are
+        // dropped before `backing_buffer` is dropped.
+        let buffers = unsafe { FixedIoBuffer::split_buffer_chunks(buffer, write_capacity) };
         let state = FileCreatorState::new(buffers.collect(), file_complete);
         let ring = Ring::new(ring, state);
 
-        FixedIoBuffer::register(buffer, &ring)?;
+        // Safety: kernel holds unsafe pointers to `buffer`, struct field layout guarantees
+        // that the ring is destroyed before `backing_buffer` is dropped.
+        unsafe { FixedIoBuffer::register(buffer, &ring)? };
 
         // Those are fixed file descriptor slots - OpenAt will active them by index
         let fds = vec![-1; MAX_OPEN_FILES];

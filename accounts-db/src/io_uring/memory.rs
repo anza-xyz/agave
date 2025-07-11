@@ -152,7 +152,7 @@ impl FixedIoBuffer {
 
     /// Split buffer into `chunk_size` sized `IoFixedBuffer` buffers for use as registered
     /// buffer in io_uring operations.
-    pub fn split_buffer_chunks<'a>(
+    pub unsafe fn split_buffer_chunks<'a>(
         buffer: &'a mut [u8],
         chunk_size: usize,
     ) -> impl Iterator<Item = Self> + use<'a> {
@@ -196,7 +196,10 @@ impl FixedIoBuffer {
     }
 
     /// Registed provided buffer as fixed buffer in `io_uring`.
-    pub fn register<S, E: RingOp<S>>(buffer: &mut [u8], ring: &Ring<S, E>) -> io::Result<()> {
+    pub unsafe fn register<S, E: RingOp<S>>(
+        buffer: &mut [u8],
+        ring: &Ring<S, E>,
+    ) -> io::Result<()> {
         adjust_ulimit_memlock(buffer.len())?;
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
