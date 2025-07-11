@@ -446,10 +446,7 @@ mod tests {
                         assert_eq!(total_entries, expected_count);
                         let mut r = vec![];
                         for bin in 0..map.num_buckets() {
-                            r.append(
-                                &mut map.buckets[bin]
-                                    .items_in_range(&None::<&std::ops::RangeInclusive<Pubkey>>),
-                            );
+                            r.append(&mut map.buckets[bin].items());
                         }
                         r
                     })
