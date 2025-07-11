@@ -31,6 +31,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             health_check_slot_distance: value_t!(matches, "health_check_slot_distance", u64)?,
             skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
             rpc_bigtable_config,
+            max_multiple_accounts: Some(value_t!(matches, "rpc_max_multiple_accounts", usize)?),
             ..Default::default()
         })
     }
@@ -140,6 +141,25 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--skip-preflight-health-check"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_max_multiple_accounts() {
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    max_multiple_accounts: Some(9999),
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--rpc-max-multiple-accounts", "9999"],
                 expected_args,
             );
         }
