@@ -36,6 +36,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             account_indexes: AccountSecondaryIndexes::from_clap_arg_match(matches)?,
             rpc_threads: value_t!(matches, "rpc_threads", usize)?,
             rpc_blocking_threads: value_t!(matches, "rpc_blocking_threads", usize)?,
+            rpc_niceness_adj: value_t!(matches, "rpc_niceness_adj", i8)?,
             ..Default::default()
         })
     }
@@ -202,6 +203,26 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--rpc-blocking-threads", "999"],
+                expected_args,
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn verify_args_struct_by_command_run_with_rpc_niceness_adj() {
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    rpc_niceness_adj: 10,
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--rpc-niceness-adjustment", "10"],
                 expected_args,
             );
         }
