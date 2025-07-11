@@ -20,6 +20,7 @@ impl FromClapArgMatches for JsonRpcConfig {
                     })
                 })
                 .transpose()?,
+            health_check_slot_distance: value_t!(matches, "health_check_slot_distance", u64)?,
             ..Default::default()
         })
     }
@@ -91,6 +92,25 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--rpc-faucet-address", "127.0.0.1:8000"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_health_check_slot_distance() {
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    health_check_slot_distance: 100,
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--health-check-slot-distance", "100"],
                 expected_args,
             );
         }

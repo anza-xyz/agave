@@ -571,11 +571,7 @@ pub fn execute(
                 "rpc_max_multiple_accounts",
                 usize
             )),
-            health_check_slot_distance: value_t_or_exit!(
-                matches,
-                "health_check_slot_distance",
-                u64
-            ),
+            health_check_slot_distance: run_args.json_rpc_config.health_check_slot_distance,
             disable_health_check: false,
             rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
             rpc_blocking_threads: value_t_or_exit!(matches, "rpc_blocking_threads", usize),
