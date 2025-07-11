@@ -13,7 +13,6 @@ use {
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
-        ffi::CStr,
         fs::File,
         io::{self, Read},
         mem,
@@ -157,8 +156,11 @@ impl<B> IoUringFileCreator<'_, B> {
     }
 
     fn wait_add_file(&mut self, file: PendingFile) -> io::Result<usize> {
-        while self.ring.context().files.len() >= self.ring.context().files.capacity() {
+        loop {
             self.ring.process_completions()?;
+            if self.ring.context().files.len() < self.ring.context().files.capacity() {
+                break;
+            }
             self.ring
                 .submit_and_wait(1, CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT)?;
         }
@@ -214,8 +216,8 @@ impl<B> IoUringFileCreator<'_, B> {
             if let Some(buf) = state.buffers.pop_front() {
                 return Ok(buf);
             }
-            state.stats_no_buf_count += 1;
-            state.stats_no_buf_sum_submitted_write_sizes += state.submitted_writes_size;
+            state.stats.no_buf_count += 1;
+            state.stats.no_buf_sum_submitted_write_sizes += state.submitted_writes_size;
 
             self.ring
                 .submit_and_wait(1, CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT)?;
@@ -231,14 +233,7 @@ struct FileCreatorState<'a> {
     open_fds: usize,
     /// Total write length of submitted writes
     submitted_writes_size: usize,
-    /// Count of cases when more than half of buffers are free (files are written
-    /// faster than submitted - consider less buffers or speeding up submission)
-    stats_large_buf_headroom_count: u32,
-    /// Count of cases when we run out of free buffers (files are not written fast
-    /// enough - consider more buffers or tuning write bandwidth / patterns)
-    stats_no_buf_count: u32,
-    /// Sum of all outstanding write sizes at moments of encountering no free buf
-    stats_no_buf_sum_submitted_write_sizes: usize,
+    stats: FileCreatorStats,
 }
 
 impl<'a> FileCreatorState<'a> {
@@ -249,9 +244,7 @@ impl<'a> FileCreatorState<'a> {
             file_complete: Box::new(file_complete),
             open_fds: 0,
             submitted_writes_size: 0,
-            stats_no_buf_count: 0,
-            stats_large_buf_headroom_count: 0,
-            stats_no_buf_sum_submitted_write_sizes: 0,
+            stats: FileCreatorStats::default(),
         }
     }
 
@@ -261,7 +254,7 @@ impl<'a> FileCreatorState<'a> {
         file.completed_open = true;
         self.open_fds += 1;
         if self.buffers.len() * 2 > self.buffers.capacity() {
-            self.stats_large_buf_headroom_count += 1;
+            self.stats.large_buf_headroom_count += 1;
         }
         mem::take(&mut file.backlog)
     }
@@ -291,14 +284,32 @@ impl<'a> FileCreatorState<'a> {
     }
 
     fn log_stats(&self) {
+        self.stats.log();
+    }
+}
+
+#[derive(Debug, Default)]
+struct FileCreatorStats {
+    /// Count of cases when more than half of buffers are free (files are written
+    /// faster than submitted - consider less buffers or speeding up submission)
+    large_buf_headroom_count: u32,
+    /// Count of cases when we run out of free buffers (files are not written fast
+    /// enough - consider more buffers or tuning write bandwidth / patterns)
+    no_buf_count: u32,
+    /// Sum of all outstanding write sizes at moments of encountering no free buf
+    no_buf_sum_submitted_write_sizes: usize,
+}
+
+impl FileCreatorStats {
+    fn log(&self) {
         let avg_writes_at_no_buf = self
-            .stats_no_buf_sum_submitted_write_sizes
-            .checked_div(self.stats_no_buf_count as usize)
+            .no_buf_sum_submitted_write_sizes
+            .checked_div(self.no_buf_count as usize)
             .unwrap_or_default();
         log::info!(
             "files creation stats - large buf headroom: {}, no buf count: {}, avg pending writes at no buf: {}",
-            self.stats_large_buf_headroom_count,
-            self.stats_no_buf_count,
+            self.large_buf_headroom_count,
+            self.no_buf_count,
             avg_writes_at_no_buf,
         );
     }
@@ -337,22 +348,7 @@ impl OpenOp {
     where
         Self: Sized,
     {
-        match res {
-            Ok(_) => (),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                log::warn!(
-                    "retrying file open: {:?}",
-                    CStr::from_bytes_until_nul(&self.path_bytes)
-                );
-                ring.push(FileCreatorOp::Open(Self {
-                    path_bytes: mem::replace(&mut self.path_bytes, Pin::new(vec![])),
-                    dir_handle: self.dir_handle.clone(),
-                    ..*self
-                }));
-                return Ok(());
-            }
-            Err(e) => return Err(e),
-        }
+        res?;
 
         let backlog = ring.context_mut().mark_file_opened(self.file_key);
         for (buf, offset, len) in backlog {
