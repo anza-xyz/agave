@@ -87,6 +87,51 @@ pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recr
                                          invoked again. To proceed with closing, rerun the \
                                          `close` command with the `--bypass-warning` flag";
 
+pub const EMERGENCY_ABORT_WARNING: &str = "WARNING! Emergency abort will replace the program with an \
+                                           abort program that makes all transactions fail. This is \
+                                           irreversible until the program is upgraded again with a fix. \
+                                           To proceed with emergency abort, rerun the command with the \
+                                           `--bypass-warning` flag";
+
+// Emergency abort program binary (compiled from sbpf-asm-abort.s)
+// This program simply loads 1 into r0 and exits, causing all transactions to fail
+pub const EMERGENCY_ABORT_PROGRAM: &[u8] = &[
+    0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0xf7, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x05, 0x00, 0x04, 0x00,
+    0x18, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x60, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+    0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x68, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x11, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x78, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2e, 0x73, 0x00, 0x2e, 0x74, 0x65, 0x78,
+    0x74, 0x00, 0x2e, 0x73, 0x68, 0x73, 0x74, 0x72, 0x74, 0x61, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramCliCommand {
     Deploy {
@@ -178,6 +223,16 @@ pub enum ProgramCliCommand {
         program_pubkey: Pubkey,
         authority_signer_index: SignerIndex,
         compute_unit_price: Option<u64>,
+    },
+    EmergencyAbort {
+        program_pubkey: Pubkey,
+        upgrade_authority_signer_index: SignerIndex,
+        fee_payer_signer_index: SignerIndex,
+        skip_fee_check: bool,
+        compute_unit_price: Option<u64>,
+        max_sign_attempts: usize,
+        use_rpc: bool,
+        bypass_warning: bool,
     },
 }
 
@@ -667,6 +722,53 @@ impl ProgramSubCommands for App<'_, '_> {
                                 ),
                         )
                         .arg(compute_unit_price_arg()),
+                )
+                .subcommand(
+                    SubCommand::with_name("emergency-abort")
+                        .about(
+                            "Emergency abort: Replace an upgradeable program with an abort program that makes all transactions fail",
+                        )
+                        .arg(
+                            Arg::with_name("program_id")
+                                .index(1)
+                                .value_name("PROGRAM_ID")
+                                .takes_value(true)
+                                .required(true)
+                                .validator(is_valid_pubkey)
+                                .help("Address of the program to replace with abort program"),
+                        )
+                        .arg(fee_payer_arg())
+                        .arg(
+                            Arg::with_name("upgrade_authority")
+                                .long("upgrade-authority")
+                                .value_name("UPGRADE_AUTHORITY_SIGNER")
+                                .takes_value(true)
+                                .validator(is_valid_signer)
+                                .help(
+                                    "Upgrade authority [default: the default configured keypair]",
+                                ),
+                        )
+                        .arg(
+                            Arg::with_name("bypass_warning")
+                                .long("bypass-warning")
+                                .takes_value(false)
+                                .help("Bypass the emergency abort warning"),
+                        )
+                        .arg(
+                            Arg::with_name("max_sign_attempts")
+                                .long("max-sign-attempts")
+                                .takes_value(true)
+                                .validator(is_parsable::<u64>)
+                                .default_value("5")
+                                .help(
+                                    "Maximum number of attempts to sign or resign transactions \
+                                    after blockhash expiration.",
+                                ),
+                        )
+                        .arg(Arg::with_name("use_rpc").long("use-rpc").help(
+                            "Send write transactions to the configured RPC instead of validator TPUs",
+                        ))
+                        .arg(compute_unit_price_arg()),
                 ),
         )
         .subcommand(
@@ -1057,6 +1159,41 @@ pub fn parse_program_subcommand(
                 signers: signer_info.signers,
             }
         }
+        ("emergency-abort", Some(matches)) => {
+            let program_pubkey = pubkey_of(matches, "program_id").unwrap();
+
+            let (fee_payer, fee_payer_pubkey) =
+                signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
+
+            let (upgrade_authority, upgrade_authority_pubkey) =
+                signer_of(matches, "upgrade_authority", wallet_manager)?;
+
+            let signer_info = default_signer.generate_unique_signers(
+                vec![
+                    fee_payer,
+                    upgrade_authority,
+                ],
+                matches,
+                wallet_manager,
+            )?;
+
+            let compute_unit_price = value_of(matches, "compute_unit_price");
+            let max_sign_attempts = value_of(matches, "max_sign_attempts").unwrap();
+
+            CliCommandInfo {
+                command: CliCommand::Program(ProgramCliCommand::EmergencyAbort {
+                    program_pubkey,
+                    upgrade_authority_signer_index: signer_info.index_of(upgrade_authority_pubkey).unwrap(),
+                    fee_payer_signer_index: signer_info.index_of(fee_payer_pubkey).unwrap(),
+                    skip_fee_check,
+                    compute_unit_price,
+                    max_sign_attempts,
+                    use_rpc: matches.is_present("use_rpc"),
+                    bypass_warning: matches.is_present("bypass_warning"),
+                }),
+                signers: signer_info.signers,
+            }
+        }
         _ => unreachable!(),
     };
     Ok(response)
@@ -1258,6 +1395,27 @@ pub fn process_program_subcommand(
             *program_pubkey,
             *authority_signer_index,
             *compute_unit_price,
+        ),
+        ProgramCliCommand::EmergencyAbort {
+            program_pubkey,
+            upgrade_authority_signer_index,
+            fee_payer_signer_index,
+            skip_fee_check,
+            compute_unit_price,
+            max_sign_attempts,
+            use_rpc,
+            bypass_warning,
+        } => process_emergency_abort(
+            rpc_client,
+            config,
+            *program_pubkey,
+            *upgrade_authority_signer_index,
+            *fee_payer_signer_index,
+            *skip_fee_check,
+            *compute_unit_price,
+            *max_sign_attempts,
+            *use_rpc,
+            *bypass_warning,
         ),
     }
 }
@@ -2576,6 +2734,137 @@ fn process_migrate_program(
         .formatted_string(&CliUpgradeableProgramMigrated {
             program_id: program_pubkey.to_string(),
         }))
+}
+
+fn process_emergency_abort(
+    rpc_client: Arc<RpcClient>,
+    config: &CliConfig,
+    program_pubkey: Pubkey,
+    upgrade_authority_signer_index: SignerIndex,
+    fee_payer_signer_index: SignerIndex,
+    skip_fee_check: bool,
+    compute_unit_price: Option<u64>,
+    max_sign_attempts: usize,
+    use_rpc: bool,
+    bypass_warning: bool,
+) -> ProcessResult {
+    // Check if the program is upgradeable
+    let program_account = rpc_client
+        .get_account_with_commitment(&program_pubkey, config.commitment)?
+        .value
+        .ok_or_else(|| format!("Unable to find the program account {program_pubkey}"))?;
+
+    if !bpf_loader_upgradeable::check_id(&program_account.owner) {
+        return Err("Program is not owned by the upgradeable loader".into());
+    }
+
+    if !program_account.executable {
+        return Err("Program account is not executable".into());
+    }
+
+    let programdata_address = match program_account.state() {
+        Ok(UpgradeableLoaderState::Program {
+            programdata_address,
+        }) => programdata_address,
+        _ => {
+            return Err("Program account does not have a valid program state".into());
+        }
+    };
+
+    // Check upgrade authority
+    let programdata_account = rpc_client
+        .get_account_with_commitment(&programdata_address, config.commitment)?
+        .value
+        .ok_or_else(|| format!("Unable to find the programdata account {programdata_address}"))?;
+
+    let upgrade_authority_signer = config.signers[upgrade_authority_signer_index];
+    
+    match programdata_account.state() {
+        Ok(UpgradeableLoaderState::ProgramData {
+            upgrade_authority_address,
+            ..
+        }) => {
+            if upgrade_authority_address.is_none() {
+                return Err("Program is not upgradeable (upgrade authority is None)".into());
+            }
+            if upgrade_authority_address != Some(upgrade_authority_signer.pubkey()) {
+                return Err(format!(
+                    "Upgrade authority {:?} does not match the provided authority {:?}",
+                    upgrade_authority_address,
+                    upgrade_authority_signer.pubkey()
+                )
+                .into());
+            }
+        }
+        _ => {
+            return Err("Programdata account does not have a valid state".into());
+        }
+    }
+
+    // Show warning unless bypassed
+    if !bypass_warning {
+        println!("{}", EMERGENCY_ABORT_WARNING);
+        return Err("Emergency abort requires --bypass-warning flag".into());
+    }
+
+    println!("⚠️  EMERGENCY ABORT: Replacing program {program_pubkey} with abort program...");
+
+    // Create a temporary buffer with the emergency abort program
+    let (buffer_words, buffer_mnemonic, buffer_keypair) = create_ephemeral_keypair()?;
+    let buffer_pubkey = buffer_keypair.pubkey();
+    
+    let fee_payer_signer = config.signers[fee_payer_signer_index];
+    
+    report_ephemeral_mnemonic(buffer_words, buffer_mnemonic, &buffer_pubkey);
+
+    // Write the emergency abort program to the buffer
+    let _write_result = do_process_write_buffer(
+        rpc_client.clone(),
+        config,
+        EMERGENCY_ABORT_PROGRAM,
+        EMERGENCY_ABORT_PROGRAM.len(),
+        rpc_client.get_minimum_balance_for_rent_exemption(
+            UpgradeableLoaderState::size_of_programdata(EMERGENCY_ABORT_PROGRAM.len()),
+        )?,
+        fee_payer_signer,
+        Some(&buffer_keypair as &dyn Signer),
+        &buffer_pubkey,
+        None, // buffer_program_data
+        upgrade_authority_signer,
+        skip_fee_check,
+        compute_unit_price,
+        max_sign_attempts,
+        use_rpc,
+    )?;
+
+    println!("Emergency abort program written to buffer {buffer_pubkey}");
+
+    // Upgrade the program with the emergency abort program
+    let upgrade_result = do_process_program_upgrade(
+        rpc_client.clone(),
+        config,
+        EMERGENCY_ABORT_PROGRAM,
+        EMERGENCY_ABORT_PROGRAM.len(),
+        rpc_client.get_minimum_balance_for_rent_exemption(
+            UpgradeableLoaderState::size_of_programdata(EMERGENCY_ABORT_PROGRAM.len()),
+        )?,
+        fee_payer_signer,
+        &program_pubkey,
+        upgrade_authority_signer,
+        &buffer_pubkey,
+        Some(&buffer_keypair as &dyn Signer),
+        None, // buffer_program_data  
+        skip_fee_check,
+        compute_unit_price,
+        max_sign_attempts,
+        false, // auto_extend
+        use_rpc,
+    )?;
+
+    println!("✅ Emergency abort completed! Program {program_pubkey} has been replaced with an abort program.");
+    println!("   All transactions to this program will now fail until it is upgraded with a fix.");
+    
+    Ok(upgrade_result)
 }
 
 pub fn calculate_max_chunk_size(baseline_msg: Message) -> usize {
