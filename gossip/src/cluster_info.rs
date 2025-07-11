@@ -402,6 +402,15 @@ impl ClusterInfo {
         Ok(())
     }
 
+    pub fn set_tvu(&self, tvu_addr: SocketAddr) -> Result<(), ContactInfoError> {
+        self.my_contact_info
+            .write()
+            .unwrap()
+            .set_tvu(contact_info::Protocol::UDP, tvu_addr)?;
+        self.refresh_my_gossip_contact_info();
+        Ok(())
+    }
+
     pub fn set_tpu(&self, tpu_addr: SocketAddr) -> Result<(), ContactInfoError> {
         self.my_contact_info.write().unwrap().set_tpu(tpu_addr)?;
         self.refresh_my_gossip_contact_info();
@@ -2355,6 +2364,7 @@ pub struct NodeConfig {
     pub port_range: PortRange,
     /// Multihoming: The IP addresses the node can bind to
     pub bind_ip_addrs: BindIpAddrs,
+    pub public_shred_addr: Option<SocketAddr>,
     pub public_tpu_addr: Option<SocketAddr>,
     pub public_tpu_forwards_addr: Option<SocketAddr>,
     pub vortexor_receiver_addr: Option<SocketAddr>,
@@ -2497,6 +2507,7 @@ impl Node {
             gossip_port,
             port_range,
             bind_ip_addrs,
+            public_shred_addr,
             public_tpu_addr,
             public_tpu_forwards_addr,
             num_tvu_receive_sockets,
@@ -2610,7 +2621,10 @@ impl Node {
         );
         use contact_info::Protocol::{QUIC, UDP};
         info.set_gossip((advertised_ip, gossip_port)).unwrap();
-        info.set_tvu(UDP, (advertised_ip, tvu_port)).unwrap();
+        let tvu_endpoint =
+            public_shred_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tvu_port));
+        info.set_tvu(UDP, (tvu_endpoint.ip(), tvu_endpoint.port()))
+            .unwrap();
         info.set_tvu(QUIC, (advertised_ip, tvu_quic_port)).unwrap();
         info.set_tpu(public_tpu_addr.unwrap_or_else(|| SocketAddr::new(advertised_ip, tpu_port)))
             .unwrap();
@@ -3144,6 +3158,7 @@ mod tests {
             gossip_port: 0,
             port_range,
             bind_ip_addrs: BindIpAddrs::new(vec![IpAddr::V4(ip)]).unwrap(),
+            public_shred_addr: None,
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
@@ -3169,6 +3184,7 @@ mod tests {
             gossip_port: port,
             port_range,
             bind_ip_addrs: BindIpAddrs::new(vec![ip]).unwrap(),
+            public_shred_addr: None,
             public_tpu_addr: None,
             public_tpu_forwards_addr: None,
             num_tvu_receive_sockets: MINIMUM_NUM_TVU_RECEIVE_SOCKETS,
