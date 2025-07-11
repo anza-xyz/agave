@@ -1,11 +1,19 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, ArgMatches},
-    solana_rpc::rpc::JsonRpcConfig,
+    solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
 };
 
 impl FromClapArgMatches for JsonRpcConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
+            || matches.is_present("enable_bigtable_ledger_upload")
+        {
+            Some(RpcBigtableConfig::from_clap_arg_match(matches)?)
+        } else {
+            None
+        };
+
         Ok(JsonRpcConfig {
             enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
             enable_extended_tx_metadata_storage: matches
@@ -22,6 +30,7 @@ impl FromClapArgMatches for JsonRpcConfig {
                 .transpose()?,
             health_check_slot_distance: value_t!(matches, "health_check_slot_distance", u64)?,
             skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
+            rpc_bigtable_config,
             ..Default::default()
         })
     }

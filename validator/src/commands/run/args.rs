@@ -39,6 +39,7 @@ const INCLUDE_KEY: &str = "account-index-include-key";
 
 pub mod blockstore_options;
 pub mod json_rpc_config;
+pub mod rpc_bigtable_config;
 pub mod rpc_bootstrap_config;
 
 #[derive(Debug, PartialEq)]
