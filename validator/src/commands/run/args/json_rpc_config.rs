@@ -38,6 +38,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             rpc_blocking_threads: value_t!(matches, "rpc_blocking_threads", usize)?,
             rpc_niceness_adj: value_t!(matches, "rpc_niceness_adj", i8)?,
             full_api: matches.is_present("full_rpc_api"),
+            rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
             ..Default::default()
         })
     }
@@ -243,6 +244,29 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--full-rpc-api"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_rpc_scan_and_fix_roots() {
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    enable_rpc_transaction_history: true,
+                    rpc_scan_and_fix_roots: true,
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--enable-rpc-transaction-history", // required by --rpc-scan-and-fix-roots
+                    "--rpc-scan-and-fix-roots",
+                ],
                 expected_args,
             );
         }
