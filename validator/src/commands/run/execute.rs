@@ -564,9 +564,7 @@ pub fn execute(
             enable_rpc_transaction_history: run_args.json_rpc_config.enable_rpc_transaction_history,
             enable_extended_tx_metadata_storage: run_args.json_rpc_config.enable_extended_tx_metadata_storage,
             rpc_bigtable_config,
-            faucet_addr: matches.value_of("rpc_faucet_addr").map(|address| {
-                solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
-            }),
+            faucet_addr: run_args.json_rpc_config.faucet_addr,
             full_api,
             max_multiple_accounts: Some(value_t_or_exit!(
                 matches,
