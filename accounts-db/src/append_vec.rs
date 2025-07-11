@@ -1049,17 +1049,17 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                let self_len = self.len();
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
-                reader.set_default_required_fill_buf_len(STORE_META_OVERHEAD);
-                let max_buf_len = reader.max_supported_contiguous_buf_len();
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file);
+                let mut min_buf_len = STORE_META_OVERHEAD;
                 // Buffer for account data that doesn't fit within the stack allocated buffer.
                 // This will be re-used for each account that doesn't fit within the stack allocated buffer.
                 let mut data_overflow_buffer = vec![];
                 loop {
                     let offset = reader.get_file_offset();
-                    let bytes = match reader.fill_buf() {
+                    let bytes = match reader
+                        .fill_buf_required_or_overflow(min_buf_len, &mut data_overflow_buffer)
+                    {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -1085,53 +1085,11 @@ impl AppendVec {
                         };
                         callback(account);
                         reader.consume(stored_size);
-                    } else if STORE_META_OVERHEAD + data_len <= max_buf_len {
-                        reader.set_next_required_fill_buf_len(STORE_META_OVERHEAD + data_len);
+                        // restore default required buffer size
+                        min_buf_len = STORE_META_OVERHEAD;
                     } else {
-                        const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
-                        // 128KiB covers a reasonably large distribution of typical account sizes.
-                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-                        const MIN_CAPACITY: usize = 1024 * 128;
-                        let capacity = data_overflow_buffer.capacity();
-                        if data_len > capacity {
-                            let next_cap = data_len
-                                .next_power_of_two()
-                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
-                            data_overflow_buffer.reserve_exact(next_cap - capacity);
-                            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
-                            // Later, we ensure we only read from the initialized portion of the buffer.
-                            unsafe {
-                                data_overflow_buffer.set_len(next_cap);
-                            }
-                        }
-
-                        // Copy already read data to overflow buffer.
-                        data_overflow_buffer[..leftover].copy_from_slice(&bytes.0[next..]);
-
-                        // Read remaining data into overflow buffer.
-                        let Ok(bytes_read) = read_into_buffer(
-                            file,
-                            self_len,
-                            offset + next + leftover,
-                            &mut data_overflow_buffer[leftover..data_len],
-                        ) else {
-                            break;
-                        };
-                        if bytes_read + leftover < data_len {
-                            break;
-                        }
-                        let data = &data_overflow_buffer[..data_len];
-                        let stored_size = aligned_stored_size(data_len);
-                        let account = StoredAccountMeta {
-                            meta,
-                            account_meta,
-                            data,
-                            offset,
-                            stored_size,
-                            hash,
-                        };
-                        callback(account);
-                        reader.consume(stored_size);
+                        // repeat loop with required buffer size holding whole account data
+                        min_buf_len = STORE_META_OVERHEAD + data_len;
                     }
                 }
             }
@@ -1251,12 +1209,11 @@ impl AppendVec {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
                 let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
-                reader.set_default_required_fill_buf_len(
-                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
-                );
+                const REQUIRED_DATA_LEN: usize =
+                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
                     let offset = reader.get_file_offset();
-                    let bytes = match reader.fill_buf() {
+                    let bytes = match reader.fill_buf_required(REQUIRED_DATA_LEN) {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
