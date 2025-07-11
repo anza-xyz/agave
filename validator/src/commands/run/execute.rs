@@ -583,7 +583,7 @@ pub fn execute(
                 "rpc_max_request_body_size",
                 usize
             )),
-            skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
+            skip_preflight_health_check: run_args.json_rpc_config.skip_preflight_health_check,
         },
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
