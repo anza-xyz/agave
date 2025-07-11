@@ -1,7 +1,7 @@
 pub mod ancestor_hashes_service;
 pub mod cluster_slot_state_verifier;
 pub mod duplicate_repair_status;
-pub mod malicious_repair_handler;
+pub(crate) mod malicious_repair_handler;
 pub mod outstanding_requests;
 pub mod packet_threshold;
 pub(crate) mod quic_endpoint;
@@ -15,4 +15,4 @@ pub mod request_response;
 pub mod result;
 pub mod serve_repair;
 pub mod serve_repair_service;
-pub mod standard_repair_handler;
+pub(crate) mod standard_repair_handler;
