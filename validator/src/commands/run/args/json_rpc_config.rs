@@ -40,7 +40,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             full_api: matches.is_present("full_rpc_api"),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
             max_request_body_size: Some(value_t!(matches, "rpc_max_request_body_size", usize)?),
-            ..Default::default()
+            disable_health_check: false,
         })
     }
 }
