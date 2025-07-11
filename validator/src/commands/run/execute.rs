@@ -54,10 +54,7 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
-        rpc_pubsub_service::PubSubConfig,
-    },
+    solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -436,26 +433,6 @@ pub fn execute(
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
 
-    let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
-        || matches.is_present("enable_bigtable_ledger_upload")
-    {
-        Some(RpcBigtableConfig {
-            enable_bigtable_ledger_upload: matches.is_present("enable_bigtable_ledger_upload"),
-            bigtable_instance_name: value_t_or_exit!(matches, "rpc_bigtable_instance_name", String),
-            bigtable_app_profile_id: value_t_or_exit!(
-                matches,
-                "rpc_bigtable_app_profile_id",
-                String
-            ),
-            timeout: value_t!(matches, "rpc_bigtable_timeout", u64)
-                .ok()
-                .map(Duration::from_secs),
-            max_message_size: value_t_or_exit!(matches, "rpc_bigtable_max_message_size", usize),
-        })
-    } else {
-        None
-    };
-
     let rpc_send_retry_rate_ms = value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64);
     let rpc_send_batch_size = value_t_or_exit!(matches, "rpc_send_transaction_batch_size", usize);
     let rpc_send_batch_send_rate_ms =
@@ -562,8 +539,10 @@ pub fn execute(
         new_hard_forks: hardforks_of(matches, "hard_forks"),
         rpc_config: JsonRpcConfig {
             enable_rpc_transaction_history: run_args.json_rpc_config.enable_rpc_transaction_history,
-            enable_extended_tx_metadata_storage: run_args.json_rpc_config.enable_extended_tx_metadata_storage,
-            rpc_bigtable_config,
+            enable_extended_tx_metadata_storage: run_args
+                .json_rpc_config
+                .enable_extended_tx_metadata_storage,
+            rpc_bigtable_config: run_args.json_rpc_config.rpc_bigtable_config,
             faucet_addr: run_args.json_rpc_config.faucet_addr,
             full_api,
             max_multiple_accounts: Some(value_t_or_exit!(
