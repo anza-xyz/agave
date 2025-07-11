@@ -1,0 +1,10 @@
+[package]
+name = "emergency-abort"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "emergency_abort"
+crate-type = ["cdylib"]
+
+[dependencies] 
