@@ -1,6 +1,7 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, ArgMatches},
+    solana_accounts_db::accounts_index::AccountSecondaryIndexes,
     solana_rpc::rpc::{JsonRpcConfig, RpcBigtableConfig},
 };
 
@@ -32,6 +33,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
             rpc_bigtable_config,
             max_multiple_accounts: Some(value_t!(matches, "rpc_max_multiple_accounts", usize)?),
+            account_indexes: AccountSecondaryIndexes::from_clap_arg_match(matches)?,
             ..Default::default()
         })
     }

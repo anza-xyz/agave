@@ -13,10 +13,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
-        accounts_index::{
-            AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
-            AccountsIndexConfig, IndexLimitMb, ScanFilter,
-        },
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
@@ -243,7 +240,7 @@ pub fn execute(
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
-    let account_indexes = process_account_indexes(matches);
+    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
 
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
@@ -551,7 +548,7 @@ pub fn execute(
             rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
             rpc_blocking_threads: value_t_or_exit!(matches, "rpc_blocking_threads", usize),
             rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
-            account_indexes: account_indexes.clone(),
+            account_indexes: run_args.json_rpc_config.account_indexes,
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
             max_request_body_size: Some(value_t_or_exit!(
                 matches,
@@ -1324,53 +1321,4 @@ fn new_snapshot_config(
     }
 
     Ok(snapshot_config)
-}
-
-fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
-    let account_indexes: HashSet<AccountIndex> = matches
-        .values_of("account_indexes")
-        .unwrap_or_default()
-        .map(|value| match value {
-            "program-id" => AccountIndex::ProgramId,
-            "spl-token-mint" => AccountIndex::SplTokenMint,
-            "spl-token-owner" => AccountIndex::SplTokenOwner,
-            _ => unreachable!(),
-        })
-        .collect();
-
-    let account_indexes_include_keys: HashSet<Pubkey> =
-        values_t!(matches, "account_index_include_key", Pubkey)
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect();
-
-    let account_indexes_exclude_keys: HashSet<Pubkey> =
-        values_t!(matches, "account_index_exclude_key", Pubkey)
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect();
-
-    let exclude_keys = !account_indexes_exclude_keys.is_empty();
-    let include_keys = !account_indexes_include_keys.is_empty();
-
-    let keys = if !account_indexes.is_empty() && (exclude_keys || include_keys) {
-        let account_indexes_keys = AccountSecondaryIndexesIncludeExclude {
-            exclude: exclude_keys,
-            keys: if exclude_keys {
-                account_indexes_exclude_keys
-            } else {
-                account_indexes_include_keys
-            },
-        };
-        Some(account_indexes_keys)
-    } else {
-        None
-    };
-
-    AccountSecondaryIndexes {
-        keys,
-        indexes: account_indexes,
-    }
 }

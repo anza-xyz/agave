@@ -37,6 +37,7 @@ use {
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
+pub mod account_secondary_indexes;
 pub mod blockstore_options;
 pub mod json_rpc_config;
 pub mod rpc_bigtable_config;
