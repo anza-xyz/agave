@@ -561,7 +561,7 @@ pub fn execute(
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
         rpc_config: JsonRpcConfig {
-            enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
+            enable_rpc_transaction_history: run_args.json_rpc_config.enable_rpc_transaction_history,
             enable_extended_tx_metadata_storage: matches
                 .is_present("enable_extended_tx_metadata_storage"),
             rpc_bigtable_config,
