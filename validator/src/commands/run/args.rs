@@ -23,6 +23,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{blockstore_options::BlockstoreOptions, use_snapshot_archives_at_startup},
     solana_pubkey::Pubkey,
+    solana_rpc::rpc::JsonRpcConfig,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
@@ -37,6 +38,7 @@ const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
 
 pub mod blockstore_options;
+pub mod json_rpc_config;
 pub mod rpc_bootstrap_config;
 
 #[derive(Debug, PartialEq)]
@@ -48,6 +50,7 @@ pub struct RunArgs {
     pub socket_addr_space: SocketAddrSpace,
     pub rpc_bootstrap_config: RpcBootstrapConfig,
     pub blockstore_options: BlockstoreOptions,
+    pub json_rpc_config: JsonRpcConfig,
 }
 
 impl FromClapArgMatches for RunArgs {
@@ -95,6 +98,7 @@ impl FromClapArgMatches for RunArgs {
             socket_addr_space,
             rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
             blockstore_options: BlockstoreOptions::from_clap_arg_match(matches)?,
+            json_rpc_config: JsonRpcConfig::from_clap_arg_match(matches)?,
         })
     }
 }
@@ -1746,6 +1750,7 @@ mod tests {
                 socket_addr_space: SocketAddrSpace::Global,
                 rpc_bootstrap_config: RpcBootstrapConfig::default(),
                 blockstore_options: BlockstoreOptions::default(),
+                json_rpc_config: JsonRpcConfig::default(),
             }
         }
     }
@@ -1760,6 +1765,7 @@ mod tests {
                 socket_addr_space: self.socket_addr_space,
                 rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
                 blockstore_options: self.blockstore_options.clone(),
+                json_rpc_config: self.json_rpc_config.clone(),
             }
         }
     }
