@@ -591,15 +591,8 @@ async fn test_rate_limiting() {
 
     // And the scheduler.
     scheduler_cancel.cancel();
-    let localhost_stats = join_scheduler(scheduler_handle).await;
+    let stats = join_scheduler(scheduler_handle).await;
 
-<<<<<<< HEAD
-    // We do not expect to see any errors, as the connection is in the pending state still, when we
-    // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
-    // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
-    // accept both 0 and 1 as valid values for it.
-    assert_eq!(localhost_stats, SendTransactionStatsNonAtomic::default());
-=======
     // we get 2 transactions registered as sent (but not acked) because of how QUIC works
     // before ratelimiter kicks in.
     assert!(
@@ -610,7 +603,6 @@ async fn test_rate_limiting() {
                 ..Default::default()
             }
     );
->>>>>>> e0bd9224f (TPU: optimize rate limits (#6937))
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
