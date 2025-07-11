@@ -27,7 +27,6 @@ use {
         accounts_index::{ScanConfig, ScanOrder},
     },
     solana_clap_utils::{
-        hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
@@ -842,13 +841,6 @@ fn main() {
     let os_memory_stats_reporting_arg = Arg::with_name("os_memory_stats_reporting")
         .long("os-memory-stats-reporting")
         .help("Enable reporting of OS memory statistics.");
-    let halt_at_slot_store_hash_raw_data = Arg::with_name("halt_at_slot_store_hash_raw_data")
-        .long("halt-at-slot-store-hash-raw-data")
-        .help(
-            "After halting at slot, run an accounts hash calculation and store the raw hash data \
-             for debugging.",
-        )
-        .hidden(hidden_unless_forced());
     let verify_index_arg = Arg::with_name("verify_accounts_index")
         .long("verify-accounts-index")
         .takes_value(false)
@@ -1097,7 +1089,6 @@ fn main() {
                 .arg(&halt_at_slot_arg)
                 .arg(&limit_load_slot_count_from_snapshot_arg)
                 .arg(&verify_index_arg)
-                .arg(&halt_at_slot_store_hash_raw_data)
                 .arg(&hard_forks_arg)
                 .arg(&accounts_db_test_hash_calculation_arg)
                 .arg(&os_memory_stats_reporting_arg)

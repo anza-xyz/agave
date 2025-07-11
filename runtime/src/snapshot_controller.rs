@@ -3,7 +3,7 @@ use {
         accounts_background_service::{
             SnapshotRequest, SnapshotRequestKind, SnapshotRequestSender,
         },
-        bank::{epoch_accounts_hash_utils, Bank, SquashTiming},
+        bank::{Bank, SquashTiming},
         bank_forks::SetRootError,
         snapshot_config::SnapshotConfig,
         snapshot_utils::SnapshotInterval,
@@ -65,16 +65,10 @@ impl SnapshotController {
         root: Slot,
         banks: &[&Arc<Bank>],
     ) -> Result<(bool, SquashTiming, u64), SetRootError> {
-        let (mut is_root_bank_squashed, mut squash_timing) =
-            self.send_eah_request_if_needed(root, banks)?;
+        let mut is_root_bank_squashed = false;
+        let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
 
-        // After checking for EAH requests, also check for regular snapshot requests.
-        //
-        // This is needed when a snapshot request occurs in a slot after an EAH request, and is
-        // part of the same set of `banks` in a single `set_root()` invocation.  While (very)
-        // unlikely for a validator with default snapshot intervals (and accounts hash verifier
-        // intervals), it *is* possible, and there are tests to exercise this possibility.
         if let Some(SnapshotGenerationIntervals {
             full_snapshot_interval,
             incremental_snapshot_interval,
@@ -153,78 +147,5 @@ impl SnapshotController {
                     .snapshot_config
                     .incremental_snapshot_archive_interval,
             })
-    }
-
-    /// Sends an EpochAccountsHash request if one of the `banks` crosses the EAH boundary.
-    /// Returns if the bank at slot `root` was squashed, and its timings.
-    ///
-    /// Panics if more than one bank in `banks` should send an EAH request.
-    pub fn send_eah_request_if_needed(
-        &self,
-        root: Slot,
-        banks: &[&Arc<Bank>],
-    ) -> Result<(bool, SquashTiming), SetRootError> {
-        let mut is_root_bank_squashed = false;
-        let mut squash_timing = SquashTiming::default();
-
-        // Go through all the banks and see if we should send an EAH request.
-        // Only one EAH bank is allowed to send an EAH request.
-        // NOTE: Instead of filter-collect-assert, `.find()` could be used instead.
-        // Once sufficient testing guarantees only one bank will ever request an EAH,
-        // change to `.find()`.
-        let eah_banks: Vec<_> = banks
-            .iter()
-            .filter(|bank| self.should_request_epoch_accounts_hash(bank))
-            .collect();
-        assert!(
-            eah_banks.len() <= 1,
-            "At most one bank should request an epoch accounts hash calculation! num banks: {}, bank slots: {:?}",
-            eah_banks.len(),
-            eah_banks.iter().map(|bank| bank.slot()).collect::<Vec<_>>(),
-        );
-        if let Some(&&eah_bank) = eah_banks.first() {
-            debug!(
-                "sending epoch accounts hash request, slot: {}",
-                eah_bank.slot(),
-            );
-
-            self.set_latest_abs_request_slot(eah_bank.slot());
-            squash_timing += eah_bank.squash();
-            is_root_bank_squashed = eah_bank.slot() == root;
-
-            eah_bank
-                .rc
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .set_in_flight(eah_bank.slot());
-
-            if let Err(err) = self.abs_request_sender.send(SnapshotRequest {
-                snapshot_root_bank: Arc::clone(eah_bank),
-                status_cache_slot_deltas: Vec::default(),
-                request_kind: SnapshotRequestKind::EpochAccountsHash,
-                enqueued: Instant::now(),
-            }) {
-                return Err(SetRootError::SendEpochAccountHashError(
-                    eah_bank.slot(),
-                    err,
-                ));
-            }
-        }
-
-        Ok((is_root_bank_squashed, squash_timing))
-    }
-
-    /// Determine if this bank should request an epoch accounts hash
-    #[must_use]
-    fn should_request_epoch_accounts_hash(&self, bank: &Bank) -> bool {
-        if !epoch_accounts_hash_utils::is_enabled_this_epoch(bank) {
-            return false;
-        }
-
-        let start_slot = epoch_accounts_hash_utils::calculation_start(bank);
-        bank.slot() > self.latest_abs_request_slot()
-            && bank.parent_slot() < start_slot
-            && bank.slot() >= start_slot
     }
 }

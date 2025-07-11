@@ -168,7 +168,6 @@ pub fn bank_from_snapshot_archives(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
@@ -278,30 +277,12 @@ pub fn bank_from_snapshot_archives(
         snapshot_archive_info.hash,
     )?;
 
-    let base = if bank.is_snapshots_lt_hash_enabled() {
-        None
-    } else {
-        incremental_snapshot_archive_info.is_some().then(|| {
-            let base_slot = full_snapshot_archive_info.slot();
-            let base_capitalization = bank
-                .rc
-                .accounts
-                .accounts_db
-                .get_accounts_hash(base_slot)
-                .expect("accounts hash must exist at full snapshot's slot")
-                .1;
-            (base_slot, base_capitalization)
-        })
-    };
-
     let mut measure_verify = Measure::start("verify");
     if !bank.verify_snapshot_bank(
-        test_hash_calculation,
         accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
-        base,
-        info.duplicates_lt_hash,
+        Some(info.duplicates_lt_hash),
     ) && limit_load_slot_count_from_snapshot.is_none()
     {
         panic!("Snapshot bank for slot {} failed to verify", bank.slot());
@@ -350,7 +331,6 @@ pub fn bank_from_latest_snapshot_archives(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
@@ -382,7 +362,6 @@ pub fn bank_from_latest_snapshot_archives(
         debug_keys,
         additional_builtins,
         limit_load_slot_count_from_snapshot,
-        test_hash_calculation,
         accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
         verify_index,
@@ -449,7 +428,7 @@ pub fn bank_from_snapshot_dir(
     };
     let snapshot_bank_fields = SnapshotBankFields::new(bank_fields, None);
     let snapshot_accounts_db_fields = SnapshotAccountsDbFields::new(accounts_db_fields, None);
-    let ((bank, info), measure_rebuild_bank) = measure_time!(
+    let ((bank, _info), measure_rebuild_bank) = measure_time!(
         reconstruct_bank_from_fields(
             snapshot_bank_fields,
             snapshot_accounts_db_fields,
@@ -480,27 +459,8 @@ pub fn bank_from_snapshot_dir(
 
     bank.status_cache.write().unwrap().append(&slot_deltas);
 
-    if bank
-        .feature_set
-        .is_active(&feature_set::accounts_lt_hash::id())
-    {
-        // Skip bank.verify_snapshot_bank.  Subsequent snapshot requests/accounts hash verification requests
-        // will calculate and check the accounts hash, so we will still have safety/correctness there.
-        bank.set_initial_accounts_hash_verification_completed();
-    } else {
-        // Until the accounts lattice hash feature is enabled, always do accounts verification
-        if !bank.verify_snapshot_bank(
-            false,     // do not test hash calculation
-            true,      // do not shrink
-            false,     // do not clean
-            Slot::MIN, // doesn't matter, only used for calling clean (which we are skipping)
-            None,      // not used for lt hash
-            info.duplicates_lt_hash,
-        ) && limit_load_slot_count_from_snapshot.is_none()
-        {
-            panic!("Snapshot bank for slot {} failed to verify", bank.slot());
-        }
-    }
+    // We trust our local state, so skip the startup accounts verification.
+    bank.set_initial_accounts_hash_verification_completed();
 
     let timings = BankFromDirTimings {
         rebuild_storages_us: measure_rebuild_storages.as_us(),
@@ -1142,7 +1102,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -1240,7 +1199,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -1342,7 +1300,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -1465,7 +1422,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -1572,7 +1528,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -1705,7 +1660,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -1762,7 +1716,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -2042,13 +1995,6 @@ mod tests {
             .accounts
             .remove(&feature_set::snapshots_lt_hash::id())
             .unwrap();
-        // Additionally, remove the accounts lt hash feature, since it would cause startup
-        // verification to use the accounts lt hash and not the IAH.
-        genesis_config_info
-            .genesis_config
-            .accounts
-            .remove(&feature_set::accounts_lt_hash::id())
-            .unwrap();
 
         let do_transfers = |bank: &Bank| {
             let key1 = Keypair::new(); // lamports from mint
@@ -2146,7 +2092,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -2321,7 +2266,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,

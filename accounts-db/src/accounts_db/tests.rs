@@ -176,7 +176,7 @@ fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool)
     append_vec.accounts.write_accounts(&storable_accounts, 0);
 
     assert!(!db.accounts_index.contains(&pubkey));
-    db.generate_index(None, false, false);
+    db.generate_index(None, false);
 }
 
 define_accounts_db_test!(
@@ -207,7 +207,7 @@ fn test_generate_index_for_single_ref_zero_lamport_slot() {
     let storable_accounts = (slot0, &data[..]);
     append_vec.accounts.write_accounts(&storable_accounts, 0);
     assert!(!db.accounts_index.contains(&pubkey));
-    let result = db.generate_index(None, false, false);
+    let result = db.generate_index(None, false);
     let entry = db.accounts_index.get_cloned(&pubkey).unwrap();
     assert_eq!(entry.slot_list.read().unwrap().len(), 1);
     assert_eq!(append_vec.alive_bytes(), aligned_stored_size(0));

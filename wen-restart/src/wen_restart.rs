@@ -501,15 +501,7 @@ pub(crate) fn generate_snapshot(
         let mut banks = vec![&new_root_bank];
         let parents = new_root_bank.parents();
         banks.extend(parents.iter());
-
-        snapshot_controller.send_eah_request_if_needed(my_heaviest_fork_slot, &banks)?;
     }
-
-    // There can't be more than one EAH calculation in progress. If new_root is generated
-    // within the EAH window (1/4 epoch to 3/4 epoch), the following function will wait for
-    // EAH calculation to finish. So if we trigger another EAH when generating snapshots
-    // we won't hit a panic.
-    let _ = new_root_bank.get_epoch_accounts_hash_to_serialize();
 
     // Snapshot generation calls AccountsDb background tasks (flush/clean/shrink).
     // These cannot run conncurrent with each other, so we must shutdown
