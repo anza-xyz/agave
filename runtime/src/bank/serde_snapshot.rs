@@ -2,9 +2,7 @@
 mod tests {
     use {
         crate::{
-            bank::{
-                epoch_accounts_hash_utils, test_utils as bank_test_utils, Bank, EpochRewardStatus,
-            },
+            bank::{test_utils as bank_test_utils, Bank, EpochRewardStatus},
             epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
@@ -28,7 +26,6 @@ mod tests {
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             accounts_hash::{AccountsDeltaHash, AccountsHash},
-            epoch_accounts_hash::EpochAccountsHash,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,
@@ -97,7 +94,7 @@ mod tests {
     fn test_serialize_bank_snapshot(
         storage_access: StorageAccess,
         has_incremental_snapshot_persistence: bool,
-        has_epoch_accounts_hash: bool,
+        _has_epoch_accounts_hash: bool,
         has_accounts_lt_hash: bool,
     ) {
         let (mut genesis_config, _) = create_genesis_config(500);
@@ -109,7 +106,6 @@ mod tests {
             .accounts_db
             .set_is_experimental_accumulator_hash_enabled(has_accounts_lt_hash);
         let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
-        let eah_start_slot = epoch_accounts_hash_utils::calculation_start(&bank0);
         let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
 
         // Create an account on a non-root fork
@@ -119,11 +115,7 @@ mod tests {
         // If setting an initial EAH, then the bank being snapshotted must be in the EAH calculation
         // window.  Otherwise serializing below will *not* include the EAH in the bank snapshot,
         // and the later-deserialized bank's EAH will not match the expected EAH.
-        let bank2_slot = if has_epoch_accounts_hash {
-            eah_start_slot
-        } else {
-            0
-        } + 2;
+        let bank2_slot = 2;
         let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
 
         // Test new account
@@ -150,13 +142,6 @@ mod tests {
                 incremental_capitalization: 32,
             });
 
-        let expected_epoch_accounts_hash = has_epoch_accounts_hash.then(|| {
-            let epoch_accounts_hash = EpochAccountsHash::new(Hash::new_unique());
-            accounts_db
-                .epoch_accounts_hash_manager
-                .set_valid(epoch_accounts_hash, eah_start_slot);
-            epoch_accounts_hash
-        });
         let expected_accounts_lt_hash =
             has_accounts_lt_hash.then(|| bank2.accounts_lt_hash.lock().unwrap().clone());
 
@@ -178,7 +163,7 @@ mod tests {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     incremental_snapshot_persistence: expected_incremental_snapshot_persistence
                         .as_ref(),
-                    epoch_accounts_hash: expected_epoch_accounts_hash,
+                    epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
@@ -242,10 +227,6 @@ mod tests {
             assert_eq!(dbank.get_accounts_hash(), Some(expected_accounts_hash));
             assert_eq!(dbank.get_incremental_accounts_hash(), None);
         }
-        assert_eq!(
-            dbank.get_epoch_accounts_hash_to_serialize(),
-            expected_epoch_accounts_hash,
-        );
         assert_eq!(
             dbank.is_accounts_lt_hash_enabled().then(|| dbank
                 .accounts_lt_hash
@@ -549,7 +530,7 @@ mod tests {
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
                     incremental_snapshot_persistence: Some(&incremental_snapshot_persistence),
-                    epoch_accounts_hash: Some(EpochAccountsHash::new(Hash::new_unique())),
+                    epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
