@@ -66,7 +66,6 @@ fn bench_accounts_hash_bank_hash(bencher: &mut Bencher) {
                 total_lamports,
                 VerifyAccountsHashAndLamportsConfig {
                     ancestors: &ancestors,
-                    test_hash_calculation: false,
                     epoch_schedule: &EpochSchedule::default(),
                     epoch: Epoch::default(),
                     ignore_mismatch: false,
