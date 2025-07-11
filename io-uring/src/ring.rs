@@ -53,15 +53,13 @@ impl<T, E: RingOp<T>> Ring<T, E> {
         self.ring.submitter().register_buffers(iovecs)
     }
 
-    /// Registers file descriptors as fixed for I/O with the kernel. Operations may then use
-    /// `types::Fixed(index)` for index in `fds` to refer to the registered file descriptor.
+    /// Registers file descriptors as fixed for I/O with the kernel.
+    ///
+    /// Operations may then use `types::Fixed(index)` for index in `fds` to refer to the
+    /// registered file descriptor.
+    ///
     /// `-1` values can be used as slots for kernel managed fixed file descriptors (created by
     /// open operation).
-    ///
-    /// # Safety
-    ///
-    /// Callers must ensure that the non-negative `fds` descriptors are valid and will be valid until
-    /// the ring destroyed, otherwise undefined behaviour may occur.
     pub fn register_files(&self, fds: &[RawFd]) -> io::Result<()> {
         self.ring.submitter().register_files(fds)
     }

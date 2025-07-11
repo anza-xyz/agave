@@ -118,7 +118,7 @@ pub fn file_creator<'a>(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::file_creator::IoUringFileCreator;
 
-        let io_uring_creator = IoUringFileCreator::with_capacity(buf_size, file_complete)?;
+        let io_uring_creator = IoUringFileCreator::with_buffer_capacity(buf_size, file_complete)?;
         return Ok(Box::new(io_uring_creator));
     }
     Ok(Box::new(SyncIoFileCreator::new(buf_size, file_complete)))
@@ -307,7 +307,7 @@ mod tests {
         let contents = "Hello, world!";
 
         // Shared state to capture callback invocations
-        let mut callback_invoked_path: Option<PathBuf> = None;
+        let mut callback_invoked_path = None;
 
         // Instantiate FileCreator
         let mut creator = file_creator(2 << 20, |path| {

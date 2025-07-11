@@ -1,6 +1,6 @@
 use {
     super::{
-        memory::{IoFixedBuffer, LargeBuffer},
+        memory::{FixedIoBuffer, LargeBuffer},
         IO_PRIO_BE_HIGHEST,
     },
     agave_io_uring::{Completion, Ring, RingOp},
@@ -18,8 +18,6 @@ use {
 };
 
 const DEFAULT_READ_SIZE: usize = 1024 * 1024;
-#[allow(dead_code)]
-const DEFAULT_BUFFER_SIZE: usize = 64 * DEFAULT_READ_SIZE;
 const SQPOLL_IDLE_TIMEOUT: u32 = 50;
 const MAX_IOWQ_WORKERS: u32 = 4;
 
@@ -29,21 +27,12 @@ const MAX_IOWQ_WORKERS: u32 = 4;
 pub struct SequentialFileReader<B> {
     // Note: state is tied to `backing_buffer` and contains unsafe pointer references to it
     inner: Ring<SequentialFileReaderState, ReadOp>,
-    /// Owned buffer used across lifespan of `inner` (should get dropped last)
-    #[allow(dead_code)]
-    backing_buffer: B,
+    /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `inner`
+    /// (should get dropped last)
+    _backing_buffer: B,
 }
 
 impl SequentialFileReader<LargeBuffer> {
-    /// Create a new `SequentialFileReader` for the given `path` using internally allocated
-    /// large buffer and default read size.
-    ///
-    /// See [SequentialFileReader::with_buffer] for more information.
-    #[allow(dead_code)]
-    pub fn new(path: impl AsRef<Path>) -> io::Result<Self> {
-        Self::with_capacity(DEFAULT_BUFFER_SIZE, path)
-    }
-
     /// Create a new `SequentialFileReader` for the given `path` using internally allocated
     /// buffer of specified `buf_size` and default read size.
     pub fn with_capacity(buf_size: usize, path: impl AsRef<Path>) -> io::Result<Self> {
@@ -101,7 +90,7 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             .read(true)
             .custom_flags(libc::O_NOATIME)
             .open(path)?;
-        let buffers = IoFixedBuffer::split_buffer_chunks(buffer, read_capacity)
+        let buffers = FixedIoBuffer::split_buffer_chunks(buffer, read_capacity)
             .map(ReadBufState::Uninit)
             .collect();
         let ring = Ring::new(
@@ -116,11 +105,11 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             },
         );
 
-        IoFixedBuffer::register_buffer(&ring, buffer)?;
+        FixedIoBuffer::register(buffer, &ring)?;
 
         let mut reader = Self {
             inner: ring,
-            backing_buffer,
+            _backing_buffer: backing_buffer,
         };
 
         // Start reading all buffers.
@@ -215,7 +204,7 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
                         state.current_buf = (state.current_buf + 1) % num_buffers;
                     } else {
                         // we have finished consuming this buffer, queue the next read
-                        let cursor = mem::replace(cursor, Cursor::new(IoFixedBuffer::empty()));
+                        let cursor = mem::replace(cursor, Cursor::new(FixedIoBuffer::empty()));
                         let buf = cursor.into_inner();
 
                         // The very last read when we hit EOF could return less than `read_capacity`, in
@@ -274,12 +263,12 @@ impl<B: AsMut<[u8]>> BufRead for SequentialFileReader<B> {
 enum ReadBufState {
     /// The buffer is pending submission to read queue (on initialization and
     /// in transition from `Full` to `Reading`).
-    Uninit(IoFixedBuffer),
+    Uninit(FixedIoBuffer),
     /// The buffer is currently being read and there's a corresponding ReadOp in
     /// the ring.
     Reading,
     /// The buffer is filled and ready to be consumed.
-    Full(Cursor<IoFixedBuffer>),
+    Full(Cursor<FixedIoBuffer>),
 }
 
 impl std::fmt::Debug for ReadBufState {
@@ -300,7 +289,7 @@ impl std::fmt::Debug for ReadBufState {
 
 struct ReadOp {
     fd: RawFd,
-    buf: IoFixedBuffer,
+    buf: FixedIoBuffer,
     /// This is the offset inside the buffer. It's typically 0, but can be non-zero if a previous
     /// read returned less data than requested (because of EINTR or whatever) and we submitted a new
     /// read for the remaining data.
@@ -373,7 +362,7 @@ impl RingOp<SequentialFileReaderState> for ReadOp {
         }
 
         let total_read_len = *buf_off + last_read_len;
-        let buf = mem::replace(buf, IoFixedBuffer::empty());
+        let buf = mem::replace(buf, FixedIoBuffer::empty());
 
         if last_read_len > 0 && last_read_len < *read_len {
             // Partial read, retry the op with updated offsets

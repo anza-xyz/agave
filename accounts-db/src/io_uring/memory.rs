@@ -8,9 +8,10 @@ use {
     },
 };
 
-// We register fixed buffers in chunks of up to 1GB as this is faster than registering many
-// `read_capacity` buffers. Registering fixed buffers saves the kernel some work in
-// checking/mapping/unmapping buffers for each read operation.
+// We use fixed buffers to save the cost of mapping/unmapping them at each operation.
+//
+// Instead of doing many large allocations and registering those, we do a single large one
+// and chunk it in slices of up to 1G each.
 const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
 pub enum LargeBuffer {
@@ -134,13 +135,13 @@ impl DerefMut for PageAlignedMemory {
 /// registered in `io_uring` for access in scheduled IO operations.
 ///
 /// It is used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
-pub(super) struct IoFixedBuffer {
+pub(super) struct FixedIoBuffer {
     ptr: *mut u8,
     size: usize,
     io_buf_index: Option<u16>,
 }
 
-impl IoFixedBuffer {
+impl FixedIoBuffer {
     pub const fn empty() -> Self {
         Self {
             ptr: std::ptr::null_mut(),
@@ -195,10 +196,7 @@ impl IoFixedBuffer {
     }
 
     /// Registed provided buffer as fixed buffer in `io_uring`.
-    pub fn register_buffer<S, E: RingOp<S>>(
-        ring: &Ring<S, E>,
-        buffer: &mut [u8],
-    ) -> io::Result<()> {
+    pub fn register<S, E: RingOp<S>>(buffer: &mut [u8], ring: &Ring<S, E>) -> io::Result<()> {
         adjust_ulimit_memlock(buffer.len())?;
         let iovecs = buffer
             .chunks(FIXED_BUFFER_LEN)
@@ -211,7 +209,7 @@ impl IoFixedBuffer {
     }
 }
 
-impl std::fmt::Debug for IoFixedBuffer {
+impl std::fmt::Debug for FixedIoBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IoFixedBuffer")
             .field("io_buf_index", &self.io_buf_index)
@@ -219,20 +217,22 @@ impl std::fmt::Debug for IoFixedBuffer {
     }
 }
 
-impl AsRef<[u8]> for IoFixedBuffer {
+impl AsRef<[u8]> for FixedIoBuffer {
     fn as_ref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.size) }
     }
 }
 
-impl AsMut<[u8]> for IoFixedBuffer {
+impl AsMut<[u8]> for FixedIoBuffer {
     fn as_mut(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.size) }
     }
 }
 
 pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
-    let desired_memlock = 2_000_000_000;
+    // This value reflects recommended memory lock limit documented in the validator's
+    // setup instructions at docs/src/operations/guides/validator-start.md
+    const DESIRED_MEMLOCK: u64 = 2_000_000_000;
 
     fn get_memlock() -> libc::rlimit {
         let mut memlock = libc::rlimit {
@@ -248,8 +248,8 @@ pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
     let mut memlock = get_memlock();
     let current = memlock.rlim_cur as usize;
     if current < min_required {
-        memlock.rlim_cur = libc::RLIM_INFINITY;
-        memlock.rlim_max = libc::RLIM_INFINITY;
+        memlock.rlim_cur = DESIRED_MEMLOCK;
+        memlock.rlim_max = DESIRED_MEMLOCK;
         if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
             log::error!(
                 "Unable to increase the maximum memory lock limit to {} from {}",
@@ -260,8 +260,8 @@ pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
             if cfg!(target_os = "macos") {
                 log::error!(
                     "On mac OS you may need to run |sudo launchctl limit memlock {} {}| first",
-                    desired_memlock,
-                    desired_memlock,
+                    DESIRED_MEMLOCK,
+                    DESIRED_MEMLOCK,
                 );
             }
             return Err(io::Error::new(

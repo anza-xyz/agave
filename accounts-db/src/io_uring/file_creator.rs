@@ -2,7 +2,7 @@ use {
     crate::{
         file_io::FileCreator,
         io_uring::{
-            memory::{IoFixedBuffer, LargeBuffer},
+            memory::{FixedIoBuffer, LargeBuffer},
             IO_PRIO_BE_HIGHEST,
         },
     },
@@ -27,8 +27,6 @@ use {
 };
 
 const DEFAULT_WRITE_SIZE: usize = 1024 * 1024;
-#[allow(dead_code)]
-const DEFAULT_BUFFER_SIZE: usize = 64 * DEFAULT_WRITE_SIZE;
 
 const MAX_OPEN_FILES: usize = 1024;
 const MAX_IOWQ_WORKERS: u32 = 4;
@@ -38,23 +36,15 @@ const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::fro
 /// operations.
 pub struct IoUringFileCreator<'a, B = LargeBuffer> {
     ring: Ring<FileCreatorState<'a>, FileCreatorOp>,
-    #[allow(dead_code)]
-    backing_buffer: B,
+    /// Owned buffer used (chunked into `FixedIoBuffer` items) across lifespan of `ring`
+    /// (should get dropped last)
+    _backing_buffer: B,
 }
 
 impl<'a> IoUringFileCreator<'a, LargeBuffer> {
-    /// Create a new `IoUringFileCreator` using `file_complete` to notify caller when
-    /// file contents are already persisted.
-    ///
-    /// See [IoUringFileCreator::with_buffer] for more information.
-    #[allow(dead_code)]
-    pub fn new<F: FnMut(PathBuf) + 'a>(file_complete: F) -> io::Result<Self> {
-        Self::with_capacity(DEFAULT_BUFFER_SIZE, file_complete)
-    }
-
     /// Create a new `IoUringFileCreator` using internally allocated buffer of specified
     /// `buf_size` and default write size.
-    pub fn with_capacity<F: FnMut(PathBuf) + 'a>(
+    pub fn with_buffer_capacity<F: FnMut(PathBuf) + 'a>(
         buf_size: usize,
         file_complete: F,
     ) -> io::Result<Self> {
@@ -79,7 +69,8 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         file_complete: F,
     ) -> io::Result<Self> {
         // Let submission queue hold half of buffers before we explicitly syscall
-        // to submit them for writing.
+        // to submit them for writing (lets kernel start processing before we run out of buffers,
+        // but also amortizes number of `submit` syscalls made).
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
         let ring = IoUring::builder().build(ring_qsize)?;
         ring.submitter()
@@ -99,11 +90,11 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         let write_aligned_buf_len = buffer.len() / write_capacity * write_capacity;
         let buffer = &mut buffer[..write_aligned_buf_len];
 
-        let buffers = IoFixedBuffer::split_buffer_chunks(buffer, write_capacity);
+        let buffers = FixedIoBuffer::split_buffer_chunks(buffer, write_capacity);
         let state = FileCreatorState::new(buffers.collect(), file_complete);
         let ring = Ring::new(ring, state);
 
-        IoFixedBuffer::register_buffer(&ring, buffer)?;
+        FixedIoBuffer::register(buffer, &ring)?;
 
         // Those are fixed file descriptor slots - OpenAt will active them by index
         let fds = vec![-1; MAX_OPEN_FILES];
@@ -111,7 +102,7 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
 
         Ok(Self {
             ring,
-            backing_buffer,
+            _backing_buffer: backing_buffer,
         })
     }
 }
@@ -216,7 +207,7 @@ impl<B> IoUringFileCreator<'_, B> {
         Ok(())
     }
 
-    fn wait_free_buf(&mut self) -> io::Result<IoFixedBuffer> {
+    fn wait_free_buf(&mut self) -> io::Result<FixedIoBuffer> {
         loop {
             self.ring.process_completions()?;
             let state = self.ring.context_mut();
@@ -234,7 +225,7 @@ impl<B> IoUringFileCreator<'_, B> {
 
 struct FileCreatorState<'a> {
     files: Slab<PendingFile>,
-    buffers: VecDeque<IoFixedBuffer>,
+    buffers: VecDeque<FixedIoBuffer>,
     /// Externally provided callback to be called on paths of files that were written
     file_complete: Box<dyn FnMut(PathBuf) + 'a>,
     open_fds: usize,
@@ -251,7 +242,7 @@ struct FileCreatorState<'a> {
 }
 
 impl<'a> FileCreatorState<'a> {
-    fn new(buffers: VecDeque<IoFixedBuffer>, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
+    fn new(buffers: VecDeque<FixedIoBuffer>, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
         Self {
             files: Slab::with_capacity(MAX_OPEN_FILES),
             buffers,
@@ -280,7 +271,7 @@ impl<'a> FileCreatorState<'a> {
         &mut self,
         file_key: usize,
         write_len: usize,
-        buf: IoFixedBuffer,
+        buf: FixedIoBuffer,
     ) -> bool {
         self.submitted_writes_size -= write_len;
         self.buffers.push_front(buf);
@@ -411,7 +402,7 @@ impl<'a> CloseOp {
 struct WriteOp {
     file_key: usize,
     offset: usize,
-    buf: IoFixedBuffer,
+    buf: FixedIoBuffer,
     write_len: usize,
 }
 
@@ -454,9 +445,10 @@ impl<'a> WriteOp {
             write_len,
         } = self;
 
+        // unless specified otherwise, the io uring worker will retry automatically on EAGAIN
         assert_eq!(written, *write_len, "short write");
 
-        let buf = mem::replace(buf, IoFixedBuffer::empty());
+        let buf = mem::replace(buf, FixedIoBuffer::empty());
         if ring
             .context_mut()
             .mark_write_completed(*file_key, *write_len, buf)
@@ -500,12 +492,13 @@ impl RingOp<FileCreatorState<'_>> for FileCreatorOp {
     }
 }
 
-type PendingWrite = (IoFixedBuffer, usize, usize);
+type PendingWrite = (FixedIoBuffer, usize, usize);
 
 #[derive(Debug)]
 struct PendingFile {
     path: PathBuf,
     completed_open: bool,
+    // 99.9% of accounts storage files are < 8MiB
     backlog: SmallVec<[PendingWrite; 8]>,
     eof: bool,
     writes_started: usize,
@@ -525,7 +518,7 @@ impl PendingFile {
     }
 
     fn zero_terminated_path_bytes(&self, only_filename: bool) -> Vec<u8> {
-        let mut path_bytes = Vec::with_capacity(4096);
+        let mut path_bytes = Vec::with_capacity(libc::PATH_MAX);
         let buf_ptr = path_bytes.as_mut_ptr();
         let bytes = if only_filename {
             self.path.file_name().unwrap_or_default().as_bytes()
