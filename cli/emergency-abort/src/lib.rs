@@ -25,4 +25,4 @@ pub extern "C" fn entrypoint(_input: *mut u8) -> u64 {
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
-} 
+}

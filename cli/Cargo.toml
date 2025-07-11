@@ -101,6 +101,13 @@ spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 tiny-bip39 = { workspace = true }
 
+[build-dependencies]
+solana-sbpf = { workspace = true }
+solana-bpf-loader-program = { workspace = true }
+solana-program-runtime = { workspace = true }
+solana-svm-feature-set = { workspace = true }
+solana-compute-budget = { workspace = true }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-faucet = { workspace = true }
