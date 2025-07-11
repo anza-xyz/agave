@@ -281,7 +281,7 @@ pub struct ReplayStageConfig {
 }
 
 pub struct ReplaySenders {
-    pub rpc_subscriptions: Arc<RpcSubscriptions>,
+    pub rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
     pub slot_status_notifier: Option<SlotStatusNotifier>,
     pub transaction_status_sender: Option<TransactionStatusSender>,
     pub entry_notification_sender: Option<EntryNotifierSender>,
@@ -720,7 +720,7 @@ impl ReplayStage {
                     &blockstore,
                     &bank_forks,
                     &leader_schedule_cache,
-                    &rpc_subscriptions,
+                    rpc_subscriptions.as_deref(),
                     &slot_status_notifier,
                     &mut progress,
                     &mut replay_timing,
@@ -746,7 +746,7 @@ impl ReplayStage {
                     &mut heaviest_subtree_fork_choice,
                     &replay_vote_sender,
                     &bank_notification_sender,
-                    &rpc_subscriptions,
+                    rpc_subscriptions.as_deref(),
                     &slot_status_notifier,
                     &mut duplicate_slots_tracker,
                     &duplicate_confirmed_slots,
@@ -1007,7 +1007,7 @@ impl ReplayStage {
                         &leader_schedule_cache,
                         &lockouts_sender,
                         snapshot_controller.as_deref(),
-                        &rpc_subscriptions,
+                        rpc_subscriptions.as_deref(),
                         &block_commitment_cache,
                         &mut heaviest_subtree_fork_choice,
                         &bank_notification_sender,
@@ -1165,7 +1165,7 @@ impl ReplayStage {
                         &bank_forks,
                         &poh_recorder,
                         &leader_schedule_cache,
-                        &rpc_subscriptions,
+                        rpc_subscriptions.as_deref(),
                         &slot_status_notifier,
                         &mut progress,
                         &retransmit_slots_sender,
@@ -2087,7 +2087,7 @@ impl ReplayStage {
         bank_forks: &Arc<RwLock<BankForks>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         progress_map: &mut ProgressMap,
         retransmit_slots_sender: &Sender<Slot>,
@@ -2278,7 +2278,7 @@ impl ReplayStage {
         bank: &Bank,
         root: Slot,
         err: &BlockstoreProcessorError,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
@@ -2330,11 +2330,13 @@ impl ReplayStage {
                 .notify_slot_dead(slot, parent_slot, err.clone());
         }
 
-        rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
-            slot,
-            err,
-            timestamp: timestamp(),
-        });
+        if let Some(rpc_subscriptions) = rpc_subscriptions {
+            rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
+                slot,
+                err,
+                timestamp: timestamp(),
+            });
+        }
 
         let dead_state = DeadState::new_from_state(
             slot,
@@ -2395,7 +2397,7 @@ impl ReplayStage {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         lockouts_sender: &Sender<CommitmentAggregationData>,
         snapshot_controller: Option<&SnapshotController>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
@@ -3074,7 +3076,7 @@ impl ReplayStage {
         transaction_status_sender: Option<&TransactionStatusSender>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
@@ -3378,7 +3380,7 @@ impl ReplayStage {
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         replay_vote_sender: &ReplayVoteSender,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         duplicate_slots_tracker: &mut DuplicateSlotsTracker,
         duplicate_confirmed_slots: &DuplicateConfirmedSlots,
@@ -4009,7 +4011,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         snapshot_controller: Option<&SnapshotController>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         block_commitment_cache: &Arc<RwLock<BlockCommitmentCache>>,
         heaviest_subtree_fork_choice: &mut HeaviestSubtreeForkChoice,
         bank_notification_sender: &Option<BankNotificationSenderConfig>,
@@ -4071,7 +4073,9 @@ impl ReplayStage {
             drop_bank_sender,
         )?;
         blockstore.slots_stats.mark_rooted(new_root);
-        rpc_subscriptions.notify_roots(rooted_slots);
+        if let Some(rpc_subscriptions) = rpc_subscriptions {
+            rpc_subscriptions.notify_roots(rooted_slots);
+        }
         if let Some(sender) = bank_notification_sender {
             sender
                 .sender
@@ -4156,7 +4160,7 @@ impl ReplayStage {
         blockstore: &Blockstore,
         bank_forks: &RwLock<BankForks>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         progress: &mut ProgressMap,
         replay_timing: &mut ReplayLoopTiming,
@@ -4251,11 +4255,13 @@ impl ReplayStage {
         slot: u64,
         root_slot: u64,
         leader: &Pubkey,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         slot_status_notifier: &Option<SlotStatusNotifier>,
         new_bank_options: NewBankOptions,
     ) -> Bank {
-        rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
+        if let Some(rpc_subscriptions) = rpc_subscriptions {
+            rpc_subscriptions.notify_slot(slot, parent.slot(), root_slot);
+        }
         if let Some(slot_status_notifier) = slot_status_notifier {
             slot_status_notifier
                 .read()
@@ -4572,6 +4578,8 @@ pub(crate) mod tests {
         bank1.freeze();
         bank_forks.write().unwrap().insert(bank1);
 
+        let rpc_subscriptions = Some(rpc_subscriptions);
+
         // Insert shreds for slot NUM_CONSECUTIVE_LEADER_SLOTS,
         // chaining to slot 1
         let (shreds, _) = make_slot_entries(
@@ -4591,7 +4599,7 @@ pub(crate) mod tests {
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &mut replay_timing,
@@ -4620,7 +4628,7 @@ pub(crate) mod tests {
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &mut replay_timing,
@@ -5130,13 +5138,15 @@ pub(crate) mod tests {
                 SlotStatusNotifierForTest::new(dead_slots.clone()),
             )));
 
+            let rpc_subscriptions = Some(rpc_subscriptions);
+
             if let Err(err) = &res {
                 ReplayStage::mark_dead_slot(
                     &blockstore,
                     &bank1,
                     0,
                     err,
-                    &rpc_subscriptions,
+                    rpc_subscriptions.as_deref(),
                     &slot_status_notifier,
                     &mut DuplicateSlotsTracker::default(),
                     &DuplicateConfirmedSlots::new(),
@@ -5193,13 +5203,13 @@ pub(crate) mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let rpc_subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
+        let rpc_subscriptions = Some(Arc::new(RpcSubscriptions::new_for_tests(
             exit.clone(),
             max_complete_transaction_status_slot,
             bank_forks.clone(),
             block_commitment_cache.clone(),
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
-        ));
+        )));
         let (lockouts_sender, _) = AggregateCommitmentService::new(
             exit,
             block_commitment_cache.clone(),
@@ -6505,12 +6515,14 @@ pub(crate) mod tests {
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
+        let rpc_subscriptions = Some(rpc_subscriptions);
+
         // 3 should now be an active bank
         ReplayStage::generate_new_bank_forks(
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &mut replay_timing,
@@ -6540,7 +6552,7 @@ pub(crate) mod tests {
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &mut replay_timing,
@@ -6571,7 +6583,7 @@ pub(crate) mod tests {
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &mut replay_timing,
@@ -6601,7 +6613,7 @@ pub(crate) mod tests {
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &mut replay_timing,
@@ -8661,12 +8673,14 @@ pub(crate) mod tests {
         // this test to use true to avoid skipping the leader slot
         let has_new_vote_been_rooted = true;
 
+        let rpc_subscriptions = Some(rpc_subscriptions);
+
         assert!(!ReplayStage::maybe_start_leader(
             my_pubkey,
             bank_forks,
             &poh_recorder,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &retransmit_slots_sender,
@@ -9314,6 +9328,8 @@ pub(crate) mod tests {
         // this test to use true to avoid skipping the leader slot
         let has_new_vote_been_rooted = true;
 
+        let rpc_subscriptions = Some(rpc_subscriptions);
+
         // We should not attempt to start leader for the dummy_slot
         assert_matches!(
             poh_recorder.read().unwrap().reached_leader_slot(&my_pubkey),
@@ -9324,7 +9340,7 @@ pub(crate) mod tests {
             &bank_forks,
             &poh_recorder,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &retransmit_slots_sender,
@@ -9350,7 +9366,7 @@ pub(crate) mod tests {
             &bank_forks,
             &poh_recorder,
             &leader_schedule_cache,
-            &rpc_subscriptions,
+            rpc_subscriptions.as_deref(),
             &None,
             &mut progress,
             &retransmit_slots_sender,
