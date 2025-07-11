@@ -548,11 +548,7 @@ pub fn execute(
             rpc_niceness_adj: run_args.json_rpc_config.rpc_niceness_adj,
             account_indexes: run_args.json_rpc_config.account_indexes,
             rpc_scan_and_fix_roots: run_args.json_rpc_config.rpc_scan_and_fix_roots,
-            max_request_body_size: Some(value_t_or_exit!(
-                matches,
-                "rpc_max_request_body_size",
-                usize
-            )),
+            max_request_body_size: run_args.json_rpc_config.max_request_body_size,
             skip_preflight_health_check: run_args.json_rpc_config.skip_preflight_health_check,
         },
         on_start_geyser_plugin_config_files,
