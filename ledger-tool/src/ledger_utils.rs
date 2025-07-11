@@ -404,11 +404,8 @@ pub fn load_and_process_ledger(
         snapshot_request_handler,
         pruned_banks_request_handler,
     };
-    let accounts_background_service = AccountsBackgroundService::new(
-        bank_forks.clone(),
-        exit.clone(),
-        abs_request_handler,
-    );
+    let accounts_background_service =
+        AccountsBackgroundService::new(bank_forks.clone(), exit.clone(), abs_request_handler);
 
     let result = blockstore_processor::process_blockstore_from_root(
         blockstore.as_ref(),
