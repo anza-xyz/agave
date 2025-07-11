@@ -49,11 +49,11 @@ pub const MAX_GENESIS_ARCHIVE_UNPACKED_SIZE: u64 = 10 * 1024 * 1024; // 10 MiB
 const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 
 // The buffer should be large enough to saturate write I/O bandwidth, while also accommodating:
-// - Many small files: each file consumes at least one write-capacity-sized chunk (1 MB).
+// - Many small files: each file consumes at least one write-capacity-sized chunk (0.5-1 MiB).
 // - Large files: their data may accumulate in backlog buffers while waiting for file open
 //   operations to complete.
 const UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
-// Minimum for unpacking small archives - allows 2 write-capacity-sized operations concurrently.
+// Minimum for unpacking small archives - allows ~2-4 write-capacity-sized operations concurrently.
 const MIN_UNPACK_WRITE_BUF_SIZE: usize = 2 * 1024 * 1024;
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {

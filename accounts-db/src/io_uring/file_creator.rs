@@ -25,10 +25,19 @@ use {
     },
 };
 
-const DEFAULT_WRITE_SIZE: usize = 1024 * 1024;
+// Based on transfers seen with `dd bs=SIZE` for NVME drives: values >=64KiB are fine,
+// but usually peak around 256KiB-1MiB. Also compare with particular NVME parameters, e.g.
+// 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
+const DEFAULT_WRITE_SIZE: usize = 512 * 1024;
 
+// Sanity limit for slab size and number of concurrent operations, in practice with 0.5-1GiB
+// buffer this is also close to the number of available buffers that small files will use up.
 const MAX_OPEN_FILES: usize = 1024;
+
+// With flat layout of accounts files in a single directory io_uring threads are waiting a lot
+// trying to lock the directory inode (on open), but we still want to permit concurrent operations.
 const MAX_IOWQ_WORKERS: u32 = 4;
+
 const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
 
 /// Multiple files creator with `io_uring` queue for open -> write -> close
