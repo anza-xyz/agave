@@ -855,14 +855,12 @@ mod test {
     use {
         super::*,
         crate::{
-            bank::epoch_accounts_hash_utils, genesis_utils::create_genesis_config,
-            snapshot_config::SnapshotConfig, snapshot_utils::SnapshotInterval,
+            genesis_utils::create_genesis_config, snapshot_config::SnapshotConfig,
+            snapshot_utils::SnapshotInterval,
         },
         crossbeam_channel::unbounded,
         solana_account::AccountSharedData,
-        solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_pubkey::Pubkey,
         std::num::NonZeroU64,
     };
@@ -948,13 +946,6 @@ mod test {
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
         let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
         bank.set_initial_accounts_hash_verification_completed();
-        // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during
-        // freeze when parent is in the EAH calculation window.
-        bank.rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .set_valid(EpochAccountsHash::new(Hash::new_unique()), 0);
 
         // We need to get and set accounts-db's latest full snapshot slot to test
         // get_next_snapshot_request().  To workaround potential borrowing issues
@@ -996,14 +987,7 @@ mod test {
                     slot,
                 ));
 
-                // Since we're not using `BankForks::set_root()`, we have to handle sending the
-                // correct snapshot requests ourself.
-                if bank.slot() == epoch_accounts_hash_utils::calculation_start(&bank) {
-                    send_snapshot_request(
-                        Arc::clone(&bank),
-                        SnapshotRequestKind::EpochAccountsHash,
-                    );
-                } else if bank.block_height() % FULL_SNAPSHOT_INTERVAL == 0 {
+                if bank.block_height() % FULL_SNAPSHOT_INTERVAL == 0 {
                     send_snapshot_request(Arc::clone(&bank), SnapshotRequestKind::FullSnapshot);
                 } else if bank.block_height() % INCREMENTAL_SNAPSHOT_INTERVAL == 0 {
                     send_snapshot_request(

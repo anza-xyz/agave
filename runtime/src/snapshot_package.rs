@@ -280,20 +280,7 @@ impl SnapshotPackage {
             }
         };
 
-        let epoch_accounts_hash = snapshot_info.must_include_epoch_accounts_hash.then(|| {
-            // If we were told we must include the EAH in the snapshot, go retrieve it now.
-            // SAFETY: Snapshot handling happens sequentially, and EAH requests must be handled
-            // prior to snapshot requests for higher slots.  Therefore, a snapshot for a slot
-            // in the EAH calculation window is guaranteed to have been handled by AHV after the
-            // EAH request.  This guarantees the EAH calc has completed prior to here.
-            accounts_package
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .try_get_epoch_accounts_hash()
-                .unwrap()
-        });
-
+        let epoch_accounts_hash = None;
         Self {
             snapshot_kind: kind,
             slot: accounts_package.slot,

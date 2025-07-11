@@ -3,7 +3,7 @@ use {
         accounts_background_service::{
             SnapshotRequest, SnapshotRequestKind, SnapshotRequestSender,
         },
-        bank::{epoch_accounts_hash_utils, Bank, SquashTiming},
+        bank::{Bank, SquashTiming},
         bank_forks::SetRootError,
         snapshot_config::SnapshotConfig,
         snapshot_utils::SnapshotInterval,
@@ -192,13 +192,6 @@ impl SnapshotController {
             squash_timing += eah_bank.squash();
             is_root_bank_squashed = eah_bank.slot() == root;
 
-            eah_bank
-                .rc
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .set_in_flight(eah_bank.slot());
-
             if let Err(err) = self.abs_request_sender.send(SnapshotRequest {
                 snapshot_root_bank: Arc::clone(eah_bank),
                 status_cache_slot_deltas: Vec::default(),
@@ -217,14 +210,7 @@ impl SnapshotController {
 
     /// Determine if this bank should request an epoch accounts hash
     #[must_use]
-    fn should_request_epoch_accounts_hash(&self, bank: &Bank) -> bool {
-        if !epoch_accounts_hash_utils::is_enabled_this_epoch(bank) {
-            return false;
-        }
-
-        let start_slot = epoch_accounts_hash_utils::calculation_start(bank);
-        bank.slot() > self.latest_abs_request_slot()
-            && bank.parent_slot() < start_slot
-            && bank.slot() >= start_slot
+    fn should_request_epoch_accounts_hash(&self, _bank: &Bank) -> bool {
+        false
     }
 }

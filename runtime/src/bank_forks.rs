@@ -659,7 +659,6 @@ mod tests {
     use {
         super::*,
         crate::{
-            accounts_background_service::SnapshotRequestKind,
             bank::test_utils::update_vote_account_timestamp,
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
@@ -667,15 +666,12 @@ mod tests {
             snapshot_config::SnapshotConfig,
         },
         assert_matches::assert_matches,
-        solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
         solana_clock::UnixTimestamp,
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
-        std::{sync::atomic::Ordering::Relaxed, time::Duration},
     };
 
     #[test]
@@ -781,38 +777,12 @@ mod tests {
         // Spin up a thread to be a fake Accounts Background Service.  Need to intercept and handle
         // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
         // waiting for an in-flight EAH calculation to complete.
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+        let (snapshot_request_sender, _snapshot_request_receiver) = crossbeam_channel::unbounded();
         let snapshot_controller = SnapshotController::new(
             snapshot_request_sender,
             SnapshotConfig::new_disabled(),
             0, /* root_slot */
         );
-        let bg_exit = Arc::new(AtomicBool::new(false));
-        let bg_thread = {
-            let exit = Arc::clone(&bg_exit);
-            std::thread::spawn(move || {
-                while !exit.load(Relaxed) {
-                    snapshot_request_receiver
-                        .try_iter()
-                        .filter(|snapshot_request| {
-                            snapshot_request.request_kind == SnapshotRequestKind::EpochAccountsHash
-                        })
-                        .for_each(|snapshot_request| {
-                            snapshot_request
-                                .snapshot_root_bank
-                                .rc
-                                .accounts
-                                .accounts_db
-                                .epoch_accounts_hash_manager
-                                .set_valid(
-                                    EpochAccountsHash::new(Hash::new_unique()),
-                                    snapshot_request.snapshot_root_bank.slot(),
-                                )
-                        });
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            })
-        };
 
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
@@ -870,9 +840,6 @@ mod tests {
         info!("child0.ancestors: {:?}", child1.ancestors);
         info!("child1.ancestors: {:?}", child2.ancestors);
         assert_eq!(child1.hash(), child2.hash());
-
-        bg_exit.store(true, Relaxed);
-        bg_thread.join().unwrap();
     }
 
     fn make_hash_map(data: Vec<(Slot, Vec<Slot>)>) -> HashMap<Slot, HashSet<Slot>> {

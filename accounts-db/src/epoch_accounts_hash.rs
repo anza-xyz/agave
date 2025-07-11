@@ -9,9 +9,6 @@
 
 use {crate::accounts_hash::AccountsHash, solana_hash::Hash};
 
-mod manager;
-pub use manager::Manager as EpochAccountsHashManager;
-
 /// The EpochAccountsHash holds the result after calculating the accounts hash once per epoch
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]

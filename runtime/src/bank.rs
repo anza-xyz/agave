@@ -211,7 +211,6 @@ pub mod bank_hash_details;
 mod builtin_programs;
 pub mod builtins;
 mod check_transactions;
-pub mod epoch_accounts_hash_utils;
 mod fee_distribution;
 mod metrics;
 pub(crate) mod partitioned_epoch_rewards;
@@ -1699,24 +1698,9 @@ impl Bank {
         parent: Arc<Bank>,
         collector_id: &Pubkey,
         slot: Slot,
-        data_source: CalcAccountsHashDataSource,
+        _data_source: CalcAccountsHashDataSource,
     ) -> Self {
         parent.freeze();
-        parent
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .set_in_flight(parent.slot());
-        let accounts_hash = parent.update_accounts_hash(data_source, true);
-        let epoch_accounts_hash = accounts_hash.into();
-        parent
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .set_valid(epoch_accounts_hash, parent.slot());
-
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
         new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
@@ -4690,37 +4674,10 @@ impl Bank {
         self.collector_fees.load(Relaxed)
     }
 
-    /// The epoch accounts hash is hashed into the bank's hash once per epoch at a predefined slot.
-    /// Should it be included in *this* bank?
-    fn should_include_epoch_accounts_hash(&self) -> bool {
-        if !epoch_accounts_hash_utils::is_enabled_this_epoch(self) {
-            return false;
-        }
-
-        let stop_slot = epoch_accounts_hash_utils::calculation_stop(self);
-        self.parent_slot() < stop_slot && self.slot() >= stop_slot
-    }
-
     /// If the epoch accounts hash should be included in this Bank, then fetch it. If the EAH
     /// calculation has not completed yet, this fn will block until it does complete.
     fn wait_get_epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
-        if !self.should_include_epoch_accounts_hash() {
-            return None;
-        }
-
-        let (epoch_accounts_hash, waiting_time_us) = measure_us!(self
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .wait_get_epoch_accounts_hash());
-
-        datapoint_info!(
-            "bank-wait_get_epoch_accounts_hash",
-            ("slot", self.slot(), i64),
-            ("waiting-time-us", waiting_time_us, i64),
-        );
-        Some(epoch_accounts_hash)
+        None
     }
 
     /// Used by ledger tool to run a final hash calculation once all ledger replay has completed.
@@ -6051,8 +6008,7 @@ impl Bank {
 
     /// Must a snapshot of this bank include the EAH?
     pub fn must_include_epoch_accounts_hash_in_snapshot(&self) -> bool {
-        epoch_accounts_hash_utils::is_enabled_this_epoch(self)
-            && epoch_accounts_hash_utils::is_in_calculation_window(self)
+        false
     }
 
     /// Get the EAH that will be used by snapshots
@@ -6061,32 +6017,12 @@ impl Bank {
     /// EAH *must* be included.  This means if an EAH calculation is currently in-flight we will
     /// wait for it to complete.
     pub fn get_epoch_accounts_hash_to_serialize(&self) -> Option<EpochAccountsHash> {
-        if !self.must_include_epoch_accounts_hash_in_snapshot() {
-            return None;
-        }
-
-        let (epoch_accounts_hash, waiting_time_us) = measure_us!(self
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .wait_get_epoch_accounts_hash());
-
-        datapoint_info!(
-            "bank-get_epoch_accounts_hash_to_serialize",
-            ("slot", self.slot(), i64),
-            ("waiting-time-us", waiting_time_us, i64),
-        );
-        Some(epoch_accounts_hash)
+        None
     }
 
     /// Convenience fn to get the Epoch Accounts Hash
     pub fn epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
-        self.rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .try_get_epoch_accounts_hash()
+        None
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {

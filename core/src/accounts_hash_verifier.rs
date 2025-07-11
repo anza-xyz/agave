@@ -453,11 +453,6 @@ impl AccountsHashVerifier {
                 "saving epoch accounts hash, slot: {}, hash: {}",
                 accounts_package.slot, accounts_hash.0,
             );
-            accounts_package
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .set_valid((*accounts_hash).into(), accounts_package.slot);
         }
     }
 
