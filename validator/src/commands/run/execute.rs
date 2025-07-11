@@ -542,7 +542,7 @@ pub fn execute(
             full_api: run_args.json_rpc_config.full_api,
             max_multiple_accounts: run_args.json_rpc_config.max_multiple_accounts,
             health_check_slot_distance: run_args.json_rpc_config.health_check_slot_distance,
-            disable_health_check: false,
+            disable_health_check: run_args.json_rpc_config.disable_health_check,
             rpc_threads: run_args.json_rpc_config.rpc_threads,
             rpc_blocking_threads: run_args.json_rpc_config.rpc_blocking_threads,
             rpc_niceness_adj: run_args.json_rpc_config.rpc_niceness_adj,
