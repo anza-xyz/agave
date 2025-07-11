@@ -255,19 +255,14 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         Self::update_stat(&self.stats().keys, 1);
 
         // Collect keys from the in-memory map first.
-        // We hold a read lock to the in-memory map to ensure that no other thread is modifying it while we are reading.
-        let map = self.map_internal.read().unwrap();
-        let mut keys: HashSet<_> = map.keys().cloned().collect();
+        let mut keys: HashSet<_> = self.map_internal.read().unwrap().keys().cloned().collect();
 
-        // Next, collect keys from the disk if they are not already in-memory.
+        // Next, collect keys from the disk.
         if let Some(disk) = self.bucket.as_ref() {
             for key in disk.keys() {
-                if !map.contains_key(&key) {
-                    keys.insert(key);
-                }
+                keys.insert(key);
             }
         }
-        drop(map);
         keys.into_iter().collect::<Vec<_>>()
     }
 
