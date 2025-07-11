@@ -377,8 +377,7 @@ fn check_duplicate_confirmed_hash_against_bank_status(
             // If the cluster duplicate confirmed some version of this slot, then
             // there's another version of our dead slot
             warn!(
-                "Cluster duplicate confirmed slot {} with hash {}, but we marked slot dead",
-                slot, duplicate_confirmed_hash
+                "Cluster duplicate confirmed slot {slot} with hash {duplicate_confirmed_hash}, but we marked slot dead"
             );
             state_changes.push(ResultingStateChange::RepairDuplicateConfirmedVersion(
                 duplicate_confirmed_hash,
@@ -397,8 +396,7 @@ fn check_duplicate_confirmed_hash_against_bank_status(
             // Modify fork choice rule to exclude our version from being voted
             // on and also repair the correct version
             warn!(
-                "Cluster duplicate confirmed slot {} with hash {}, but our version has hash {}",
-                slot, duplicate_confirmed_hash, bank_frozen_hash
+                "Cluster duplicate confirmed slot {slot} with hash {duplicate_confirmed_hash}, but our version has hash {bank_frozen_hash}"
             );
             state_changes.push(ResultingStateChange::MarkSlotDuplicate(bank_frozen_hash));
             state_changes.push(ResultingStateChange::RepairDuplicateConfirmedVersion(
@@ -857,8 +855,7 @@ pub(crate) fn check_slot_agrees_with_cluster(
     slot_state_update: SlotStateUpdate,
 ) {
     info!(
-        "check_slot_agrees_with_cluster() slot: {}, root: {}, slot_state_update: {:?}",
-        slot, root, slot_state_update
+        "check_slot_agrees_with_cluster() slot: {slot}, root: {root}, slot_state_update: {slot_state_update:?}"
     );
 
     if slot <= root {

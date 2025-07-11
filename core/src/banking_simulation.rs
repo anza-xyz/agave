@@ -193,8 +193,7 @@ impl BankingTraceEvents {
             ) {
                 // Silence errors here as this can happen under normal operation...
                 warn!(
-                    "Reading {:?} failed {:?} due to file corruption or unclean validator shutdown",
-                    event_file_path, read_result,
+                    "Reading {event_file_path:?} failed {read_result:?} due to file corruption or unclean validator shutdown",
                 );
             } else {
                 read_result?
@@ -595,8 +594,7 @@ impl<'a> SenderLoopLogger<'a> {
         tx_count: usize,
     ) {
         debug!(
-            "sent {:?} {} batches ({} txes)",
-            label, batch_count, tx_count
+            "sent {label:?} {batch_count} batches ({tx_count} txes)"
         );
 
         use ChannelLabel::*;
@@ -764,8 +762,7 @@ impl BankingSimulator {
         .unwrap();
         assert!(retracer.is_enabled());
         info!(
-            "Enabled banking retracer (dir_byte_limit: {})",
-            BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+            "Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",
         );
 
         // Create a partially-dummy ClusterInfo for the banking stage.

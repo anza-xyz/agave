@@ -128,7 +128,7 @@ impl AncestorRepairRequestsStats {
 
         let repair_total = self.ancestor_requests.count;
         if self.last_report.elapsed().as_secs() > 2 && repair_total > 0 {
-            info!("ancestor_repair_requests_stats: {:?}", slot_to_count);
+            info!("ancestor_repair_requests_stats: {slot_to_count:?}");
             datapoint_info!(
                 "ancestor-repair",
                 ("ancestor-repair-count", self.ancestor_requests.count, i64)
