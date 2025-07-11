@@ -17,7 +17,7 @@ use {
     solana_instruction::AccountMeta,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-        loaded_programs::ProgramCacheEntryType,
+        loaded_programs::{ProgramCacheEntryType, ProgramCacheForTxBatch},
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -76,10 +76,18 @@ fn program_cache_execution(threads: usize) {
                     &feature_set,
                     0,
                 );
-                let result = processor.replenish_program_cache(
+                let mut result = {
+                    let program_cache = processor.program_cache.read().unwrap();
+                    ProgramCacheForTxBatch::new_from_cache(
+                        processor.slot,
+                        processor.epoch,
+                        &program_cache,
+                    )
+                };
+                processor.replenish_program_cache(
                     &account_loader,
                     &maps,
-                    &HashMap::default(),
+                    &mut result,
                     &mut ExecuteTimings::default(),
                     false,
                     true,
