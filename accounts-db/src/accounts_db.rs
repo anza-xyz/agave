@@ -180,8 +180,6 @@ pub(crate) struct ShrinkCollectAliveSeparatedByRefs<'a> {
 pub struct VerifyAccountsHashAndLamportsConfig<'a> {
     /// bank ancestors
     pub ancestors: &'a Ancestors,
-    /// true to verify hash calculation
-    pub test_hash_calculation: bool,
     /// epoch_schedule
     pub epoch_schedule: &'a EpochSchedule,
     /// epoch
@@ -8860,7 +8858,6 @@ impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
     ) -> Self {
         Self {
             ancestors,
-            test_hash_calculation: true,
             epoch_schedule,
             epoch,
             ignore_mismatch: false,

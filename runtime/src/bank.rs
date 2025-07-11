@@ -199,7 +199,6 @@ pub use {partitioned_epoch_rewards::KeyedRewardsAndNumPartitions, solana_reward_
 
 /// params to `verify_accounts_hash`
 struct VerifyAccountsHashConfig {
-    test_hash_calculation: bool,
     ignore_mismatch: bool,
     require_rooted_bank: bool,
     run_in_background: bool,
@@ -4732,7 +4731,6 @@ impl Bank {
         _ = self.verify_accounts_hash(
             None,
             VerifyAccountsHashConfig {
-                test_hash_calculation: false,
                 ignore_mismatch: true,
                 require_rooted_bank: false,
                 run_in_background: false,
@@ -4815,7 +4813,6 @@ impl Bank {
             ancestors: &self.ancestors,
             epoch_schedule: self.epoch_schedule(),
             epoch: self.epoch(),
-            test_hash_calculation: config.test_hash_calculation,
             ignore_mismatch: config.ignore_mismatch,
             store_detailed_debug_info: config.store_hash_raw_data_for_debug,
             use_bg_thread_pool: config.run_in_background,
@@ -5258,7 +5255,7 @@ impl Bank {
     /// calculation and could shield other real accounts.
     pub fn verify_snapshot_bank(
         &self,
-        test_hash_calculation: bool,
+        _test_hash_calculation: bool,
         skip_shrink: bool,
         force_clean: bool,
         latest_full_snapshot_slot: Slot,
@@ -5279,7 +5276,6 @@ impl Bank {
                 let verified = self.verify_accounts_hash(
                     base,
                     VerifyAccountsHashConfig {
-                        test_hash_calculation,
                         ignore_mismatch: false,
                         require_rooted_bank: false,
                         run_in_background: true,

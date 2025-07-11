@@ -943,7 +943,6 @@ fn test_bank_update_rewards_determinism() {
 impl VerifyAccountsHashConfig {
     fn default_for_test() -> Self {
         Self {
-            test_hash_calculation: true,
             ignore_mismatch: false,
             require_rooted_bank: false,
             run_in_background: false,
@@ -10934,10 +10933,7 @@ fn test_bank_verify_accounts_hash_with_base() {
     // ensure the accounts hash verifies
     assert!(bank.verify_accounts_hash(
         Some((base_slot, base_capitalization)),
-        VerifyAccountsHashConfig {
-            test_hash_calculation: false,
-            ..VerifyAccountsHashConfig::default_for_test()
-        },
+        VerifyAccountsHashConfig::default_for_test(),
         None,
     ));
 }
