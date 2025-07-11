@@ -518,7 +518,7 @@ impl PendingFile {
     }
 
     fn zero_terminated_path_bytes(&self, only_filename: bool) -> Vec<u8> {
-        let mut path_bytes = Vec::with_capacity(libc::PATH_MAX);
+        let mut path_bytes = Vec::with_capacity(libc::PATH_MAX as usize);
         let buf_ptr = path_bytes.as_mut_ptr();
         let bytes = if only_filename {
             self.path.file_name().unwrap_or_default().as_bytes()
