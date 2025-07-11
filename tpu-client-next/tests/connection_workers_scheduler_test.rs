@@ -584,7 +584,8 @@ async fn test_rate_limiting() {
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
-    dbg!(&stats);
+    // we get 2 transactions registered as sent (but not acked) because of how QUIC works
+    // before ratelimiter kicks in.
     assert!(
         stats
             == SendTransactionStatsNonAtomic {
@@ -593,7 +594,6 @@ async fn test_rate_limiting() {
                 ..Default::default()
             }
     );
-    //    drop(connection_to_reach_limit);
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
