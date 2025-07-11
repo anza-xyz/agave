@@ -10,7 +10,33 @@ use {
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction_error::TransactionError,
     std::{cmp::Ordering, collections::HashMap, num::Saturating},
+
 };
+
+use std::sync::{
+        atomic::{AtomicUsize, Ordering as SyncOrdering}, Condvar, Mutex
+    };
+
+#[derive(Debug, Clone)]
+pub enum TxType {
+    SimpleVote,
+    Standard,
+}
+
+#[derive(Debug, Clone)]
+pub struct TxCostTask {
+    pub tx_type: TxType,
+    pub total_cus: u64,
+    pub write_accounts: Vec<Pubkey>,
+    pub read_accounts: Vec<Pubkey>,
+    pub tx_index: usize,  // position of the transaction in the block
+}
+
+impl TxCostTask {
+    pub fn is_simple_vote(&self) -> bool {
+        matches!(self.tx_type, TxType::SimpleVote)
+    }
+}
 
 const WRITABLE_ACCOUNTS_PER_BLOCK: usize = 4096;
 
@@ -57,8 +83,40 @@ pub struct UpdatedCosts {
     pub updated_costliest_account_cost: u64,
 }
 
+#[derive(Debug, Default)]
+pub struct IndexedLatch {
+    done:   AtomicUsize,   // how many tasks have completed so far
+    mutex:  Mutex<()>,     // guards the condvar
+    cv:     Condvar,
+}
+
+impl IndexedLatch {
+    pub const fn new() -> Self {
+        Self {
+            done:  AtomicUsize::new(0),
+            mutex: Mutex::new(()),
+            cv:    Condvar::new(),
+        }
+    }
+
+    /// Block the current thread until `done >= idx`.
+    pub fn wait_until(&self, idx: usize) {
+        while self.done.load(SyncOrdering::Acquire) < idx {
+            let guard = self.mutex.lock().unwrap();
+            self.cv.wait(guard).unwrap();
+        }
+    }
+
+    /// Call once *after* a task finishes.
+    pub fn task_done(&self) {
+        self.done.fetch_add(1, SyncOrdering::Release);
+        self.cv.notify_all(); // wake any waiters
+    }
+}
+
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CostTracker {
     account_cost_limit: u64,
     block_cost_limit: u64,
@@ -76,6 +134,8 @@ pub struct CostTracker {
     /// removal if the transaction does not end up getting committed.
     in_flight_transaction_count: Saturating<usize>,
     secp256r1_instruction_signature_count: Saturating<u64>,
+
+    task_latch: IndexedLatch,
 }
 
 impl Default for CostTracker {
@@ -103,6 +163,7 @@ impl Default for CostTracker {
             ed25519_instruction_signature_count: Saturating(0),
             in_flight_transaction_count: Saturating(0),
             secp256r1_instruction_signature_count: Saturating(0),
+            task_latch: IndexedLatch::new(),
         }
     }
 }
@@ -163,9 +224,12 @@ impl CostTracker {
     pub fn try_add(
         &mut self,
         tx_cost: &TransactionCost<impl TransactionWithMeta>,
+        tx_index: usize,
     ) -> Result<UpdatedCosts, CostTrackerError> {
         self.would_fit(tx_cost)?;
         let updated_costliest_account_cost = self.add_transaction_cost(tx_cost);
+        // Store the transaction with its actual block position
+        self.try_process_cost_task(tx_index, tx_cost)?;
         Ok(UpdatedCosts {
             updated_block_cost: self.block_cost,
             updated_costliest_account_cost,
@@ -397,6 +461,16 @@ impl CostTracker {
             .values()
             .filter(|units| **units > 0)
             .count()
+    }
+
+    fn try_process_cost_task(&self, tx_index: usize, tx_cost: &TransactionCost<impl TransactionWithMeta>) -> Result<(), CostTrackerError> {
+        self.task_latch.wait_until(tx_index);
+
+        // process task
+
+        self.task_latch.task_done();
+
+        Ok(())
     }
 }
 
@@ -672,13 +746,13 @@ mod tests {
         let second_account = Keypair::new();
         let tx1 = build_simple_transaction(&mint_keypair);
         let mut tx_cost1 = simple_transaction_cost(&tx1, 5);
-        let tx2 = build_simple_transaction(&second_account);
-        let mut tx_cost2 = simple_transaction_cost(&tx2, 5);
         if let TransactionCost::Transaction(ref mut usage_cost) = tx_cost1 {
             usage_cost.allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA;
         } else {
             unreachable!();
         }
+        let tx2 = build_simple_transaction(&second_account);
+        let mut tx_cost2 = simple_transaction_cost(&tx2, 5);
         if let TransactionCost::Transaction(ref mut usage_cost) = tx_cost2 {
             usage_cost.allocated_accounts_data_size = MAX_BLOCK_ACCOUNTS_DATA_SIZE_DELTA + 1;
         } else {
@@ -712,8 +786,8 @@ mod tests {
         // build testee
         let mut testee = CostTracker::new(cost1 + cost2, cost1 + cost2, cost1 + cost2);
 
-        assert!(testee.try_add(&tx_cost1).is_ok());
-        assert!(testee.try_add(&tx_cost2).is_ok());
+        assert!(testee.try_add(&tx_cost1, 0).is_ok());
+        assert!(testee.try_add(&tx_cost2, 1).is_ok());
         assert_eq!(cost1 + cost2, testee.block_cost);
 
         // removing a tx_cost affects block_cost
@@ -721,11 +795,11 @@ mod tests {
         assert_eq!(cost2, testee.block_cost);
 
         // add back tx1
-        assert!(testee.try_add(&tx_cost1).is_ok());
+        assert!(testee.try_add(&tx_cost1, 0).is_ok());
         assert_eq!(cost1 + cost2, testee.block_cost);
 
         // cannot add tx1 again, cost limit would be exceeded
-        assert!(testee.try_add(&tx_cost1).is_err());
+        assert!(testee.try_add(&tx_cost1, 0).is_err());
     }
 
     #[test]
@@ -747,7 +821,7 @@ mod tests {
         {
             let transaction = WritableKeysTransaction(vec![acct1, acct2, acct3]);
             let tx_cost = simple_transaction_cost(&transaction, cost);
-            assert!(testee.try_add(&tx_cost).is_ok());
+            assert!(testee.try_add(&tx_cost, 0).is_ok());
             let (_costliest_account, costliest_account_cost) = testee.find_costliest_account();
             assert_eq!(cost, testee.block_cost);
             assert_eq!(3, testee.cost_by_writable_accounts.len());
@@ -762,7 +836,7 @@ mod tests {
         {
             let transaction = WritableKeysTransaction(vec![acct2]);
             let tx_cost = simple_transaction_cost(&transaction, cost);
-            assert!(testee.try_add(&tx_cost).is_ok());
+            assert!(testee.try_add(&tx_cost, 0).is_ok());
             let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
             assert_eq!(cost * 2, testee.block_cost);
             assert_eq!(3, testee.cost_by_writable_accounts.len());
@@ -779,7 +853,7 @@ mod tests {
         {
             let transaction = WritableKeysTransaction(vec![acct1, acct2]);
             let tx_cost = simple_transaction_cost(&transaction, cost);
-            assert!(testee.try_add(&tx_cost).is_err());
+            assert!(testee.try_add(&tx_cost, 0).is_err());
             let (costliest_account, costliest_account_cost) = testee.find_costliest_account();
             assert_eq!(cost * 2, testee.block_cost);
             assert_eq!(3, testee.cost_by_writable_accounts.len());
@@ -802,7 +876,7 @@ mod tests {
         let tx_cost = simple_transaction_cost(&transaction, cost);
         let mut expected_block_cost = tx_cost.sum();
         let expected_tx_count = 1;
-        assert!(testee.try_add(&tx_cost).is_ok());
+        assert!(testee.try_add(&tx_cost, 0).is_ok());
         assert_eq!(expected_block_cost, testee.block_cost());
         assert_eq!(expected_tx_count, testee.transaction_count());
         testee
@@ -901,7 +975,7 @@ mod tests {
         let test_update_cost_tracker =
             |execution_cost_adjust: i64, loaded_acounts_data_size_cost_adjust: i64| {
                 let mut cost_tracker = CostTracker::default();
-                assert!(cost_tracker.try_add(&tx_cost).is_ok());
+                assert!(cost_tracker.try_add(&tx_cost, 0).is_ok());
 
                 let actual_programs_execution_cost =
                     (estimated_programs_execution_cost as i64 + execution_cost_adjust) as u64;
