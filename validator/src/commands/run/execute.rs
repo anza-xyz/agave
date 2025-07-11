@@ -545,11 +545,7 @@ pub fn execute(
             rpc_bigtable_config: run_args.json_rpc_config.rpc_bigtable_config,
             faucet_addr: run_args.json_rpc_config.faucet_addr,
             full_api,
-            max_multiple_accounts: Some(value_t_or_exit!(
-                matches,
-                "rpc_max_multiple_accounts",
-                usize
-            )),
+            max_multiple_accounts: run_args.json_rpc_config.max_multiple_accounts,
             health_check_slot_distance: run_args.json_rpc_config.health_check_slot_distance,
             disable_health_check: false,
             rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
