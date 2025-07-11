@@ -37,6 +37,7 @@ impl FromClapArgMatches for JsonRpcConfig {
             rpc_threads: value_t!(matches, "rpc_threads", usize)?,
             rpc_blocking_threads: value_t!(matches, "rpc_blocking_threads", usize)?,
             rpc_niceness_adj: value_t!(matches, "rpc_niceness_adj", i8)?,
+            full_api: matches.is_present("full_rpc_api"),
             ..Default::default()
         })
     }
@@ -223,6 +224,25 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--rpc-niceness-adjustment", "10"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_full_api() {
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                json_rpc_config: JsonRpcConfig {
+                    full_api: true,
+                    ..default_run_args.json_rpc_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--full-rpc-api"],
                 expected_args,
             );
         }

@@ -472,8 +472,6 @@ pub fn execute(
             value_t_or_exit!(matches, "rpc_send_transaction_leader_forward_count", u64)
         };
 
-    let full_api = matches.is_present("full_rpc_api");
-
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
     let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
     let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
@@ -541,7 +539,7 @@ pub fn execute(
                 .enable_extended_tx_metadata_storage,
             rpc_bigtable_config: run_args.json_rpc_config.rpc_bigtable_config,
             faucet_addr: run_args.json_rpc_config.faucet_addr,
-            full_api,
+            full_api: run_args.json_rpc_config.full_api,
             max_multiple_accounts: run_args.json_rpc_config.max_multiple_accounts,
             health_check_slot_distance: run_args.json_rpc_config.health_check_slot_distance,
             disable_health_check: false,
