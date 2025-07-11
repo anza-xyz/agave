@@ -34,27 +34,13 @@ impl FromClapArgMatches for BlockstoreOptions {
                     }
                 },
             },
-            rocks_perf_sample_interval: value_t!(matches, "rocksdb_perf_sample_interval", usize)
-                .map_err(|err| {
-                    Box::<dyn std::error::Error>::from(format!(
-                        "failed to parse rocksdb_perf_sample_interval: {err}"
-                    ))
-                })?,
+            rocks_perf_sample_interval: value_t!(matches, "rocksdb_perf_sample_interval", usize)?,
         };
 
         let rocksdb_compaction_threads =
-            value_t!(matches, RocksdbCompactionThreadsArg::NAME, NonZeroUsize).map_err(|err| {
-                Box::<dyn std::error::Error>::from(format!(
-                    "failed to parse rocksdb_compaction_threads: {err}"
-                ))
-            })?;
+            value_t!(matches, RocksdbCompactionThreadsArg::NAME, NonZeroUsize)?;
 
-        let rocksdb_flush_threads = value_t!(matches, RocksdbFlushThreadsArg::NAME, NonZeroUsize)
-            .map_err(|err| {
-            Box::<dyn std::error::Error>::from(format!(
-                "failed to parse rocksdb_flush_threads: {err}"
-            ))
-        })?;
+        let rocksdb_flush_threads = value_t!(matches, RocksdbFlushThreadsArg::NAME, NonZeroUsize)?;
 
         Ok(BlockstoreOptions {
             recovery_mode,
