@@ -547,7 +547,7 @@ pub fn execute(
             rpc_blocking_threads: run_args.json_rpc_config.rpc_blocking_threads,
             rpc_niceness_adj: run_args.json_rpc_config.rpc_niceness_adj,
             account_indexes: run_args.json_rpc_config.account_indexes,
-            rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
+            rpc_scan_and_fix_roots: run_args.json_rpc_config.rpc_scan_and_fix_roots,
             max_request_body_size: Some(value_t_or_exit!(
                 matches,
                 "rpc_max_request_body_size",
