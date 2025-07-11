@@ -1,7 +1,7 @@
 [package]
 name = "emergency-abort"
 version = "0.1.0"
-edition = "2021"
+edition = { workspace = true }
 
 [lib]
 name = "emergency_abort"
