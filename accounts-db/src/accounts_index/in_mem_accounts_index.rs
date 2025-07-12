@@ -253,11 +253,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);
-        // easiest implementation is to load everything from disk into cache and return the keys
-        let evictions_guard = EvictionsGuard::lock(self);
-        self.put_range_in_cache(&None::<&RangeInclusive<Pubkey>>, &evictions_guard);
-        let keys = self.map_internal.read().unwrap().keys().cloned().collect();
-        keys
+
+        // Collect keys from the in-memory map first.
+        let mut keys: HashSet<_> = self.map_internal.read().unwrap().keys().cloned().collect();
+
+        // Next, collect keys from the disk.
+        if let Some(disk) = self.bucket.as_ref() {
+            let disk_keys = disk.keys();
+            keys.reserve(disk_keys.len());
+            for key in disk_keys {
+                keys.insert(key);
+            }
+        }
+        keys.into_iter().collect()
     }
 
     fn load_from_disk(&self, pubkey: &Pubkey) -> Option<(SlotList<U>, RefCount)> {
