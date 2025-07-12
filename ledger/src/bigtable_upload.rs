@@ -92,10 +92,10 @@ pub async fn upload_confirmed_blocks(
         while start_slot <= last_blockstore_slot {
             let mut next_bigtable_slots = loop {
                 let num_bigtable_blocks = min(1000, config.max_num_slots_to_check * 2);
-                match bigtable
+                let ledger_storage = bigtable
                     .get_confirmed_blocks(start_slot, num_bigtable_blocks)
-                    .await
-                {
+                    .await;
+                match ledger_storage {
                     Ok(slots) => break slots,
                     Err(err) => {
                         error!("get_confirmed_blocks for {} failed: {:?}", start_slot, err);
@@ -234,12 +234,18 @@ pub async fn upload_confirmed_blocks(
         });
 
         for result in futures::future::join_all(uploads).await {
-            if let Err(err) = result {
-                error!("upload_confirmed_block() join failed: {:?}", err);
-                failures += 1;
-            } else if let Err(err) = result.unwrap() {
-                error!("upload_confirmed_block() upload failed: {:?}", err);
-                failures += 1;
+            let result = result;
+            match result {
+                Err(err) => {
+                    error!("upload_confirmed_block() join failed: {:?}", err);
+                    failures += 1;
+                }
+                Ok(inner_result) => {
+                    if let Err(err) = inner_result {
+                        error!("upload_confirmed_block() upload failed: {:?}", err);
+                        failures += 1;
+                    }
+                }
             }
         }
 

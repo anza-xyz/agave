@@ -911,14 +911,15 @@ where
             );
         }
 
-        if let Some(pinnable_slice) = result? {
-            let value = match C::Type::decode(pinnable_slice.as_ref()) {
-                Ok(value) => value,
-                Err(_) => deserialize::<T>(pinnable_slice.as_ref())?.into(),
-            };
-            Ok(Some(value))
-        } else {
-            Ok(None)
+        match result? {
+            Some(pinnable_slice) => {
+                let value = match C::Type::decode(pinnable_slice.as_ref()) {
+                    Ok(value) => value,
+                    Err(_) => deserialize::<T>(pinnable_slice.as_ref())?.into(),
+                };
+                Ok(Some(value))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -939,11 +940,9 @@ where
                 &self.column_options,
             );
         }
-
-        if let Some(pinnable_slice) = result? {
-            Ok(Some(C::Type::decode(pinnable_slice.as_ref())?))
-        } else {
-            Ok(None)
+        match result? {
+            Some(pinnable_slice) => Ok(Some(C::Type::decode(pinnable_slice.as_ref())?)),
+            _ => Ok(None),
         }
     }
 

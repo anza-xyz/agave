@@ -1,6 +1,6 @@
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion},
+    criterion::{Criterion, black_box, criterion_group, criterion_main},
     rand::Rng,
     solana_entry::entry::Entry,
     solana_hash::Hash,
@@ -13,15 +13,15 @@ use {
 };
 
 fn make_dummy_hash<R: Rng>(rng: &mut R) -> Hash {
-    Hash::from(rng.gen::<[u8; 32]>())
+    Hash::from(rng.r#gen::<[u8; 32]>())
 }
 
 fn make_dummy_transaction<R: Rng>(rng: &mut R) -> Transaction {
     solana_system_transaction::transfer(
-        &Keypair::new(),                      // from
-        &Pubkey::from(rng.gen::<[u8; 32]>()), // to
-        rng.gen(),                            // lamports
-        make_dummy_hash(rng),                 // recent_blockhash
+        &Keypair::new(),                        // from
+        &Pubkey::from(rng.r#gen::<[u8; 32]>()), // to
+        rng.r#gen(),                            // lamports
+        make_dummy_hash(rng),                   // recent_blockhash
     )
 }
 
@@ -84,7 +84,7 @@ fn run_make_shreds_from_entries(
         slot,
         slot - u64::from(parent_offset), // parent_slot
         rng.gen_range(0..64),            // reference_tick
-        rng.gen(),                       // shred_version
+        rng.r#gen(),                     // shred_version
     )
     .unwrap();
     let keypair = Keypair::new();
@@ -138,7 +138,7 @@ fn run_recover_shreds(
         slot,
         slot - u64::from(parent_offset), // parent_slot
         rng.gen_range(0..64),            // reference_tick
-        rng.gen(),                       // shred_version
+        rng.r#gen(),                     // shred_version
     )
     .unwrap();
     let keypair = Keypair::new();

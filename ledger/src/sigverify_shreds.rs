@@ -1,8 +1,8 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred::{self, SignedData, SIZE_OF_MERKLE_ROOT},
-    itertools::{izip, Itertools},
-    rayon::{prelude::*, ThreadPool},
+    crate::shred::{self, SIZE_OF_MERKLE_ROOT, SignedData},
+    itertools::{Itertools, izip},
+    rayon::{ThreadPool, prelude::*},
     solana_clock::Slot,
     solana_hash::Hash,
     solana_metrics::inc_new_counter_debug,
@@ -11,7 +11,7 @@ use {
         packet::{Packet, PacketBatch, PacketRef},
         perf_libs,
         recycler_cache::RecyclerCache,
-        sigverify::{self, count_packets_in_batches, TxOffset},
+        sigverify::{self, TxOffset, count_packets_in_batches},
     },
     solana_pubkey::Pubkey,
     solana_signature::Signature,
@@ -534,7 +534,7 @@ mod tests {
             shredder::{ReedSolomonCache, Shredder},
         },
         assert_matches::assert_matches,
-        rand::{seq::SliceRandom, Rng},
+        rand::{Rng, seq::SliceRandom},
         rayon::ThreadPoolBuilder,
         solana_entry::entry::Entry,
         solana_hash::Hash,
@@ -708,12 +708,12 @@ mod tests {
     }
 
     fn make_transaction<R: Rng>(rng: &mut R) -> Transaction {
-        let block = rng.gen::<[u8; 32]>();
+        let block = rng.r#gen::<[u8; 32]>();
         let recent_blockhash = solana_sha256_hasher::hashv(&[&block]);
         system_transaction::transfer(
             &Keypair::new(),       // from
             &Pubkey::new_unique(), // to
-            rng.gen(),             // lamports
+            rng.r#gen(),           // lamports
             recent_blockhash,
         )
     }
@@ -729,7 +729,7 @@ mod tests {
     }
 
     fn make_entries<R: Rng>(rng: &mut R, num_entries: usize) -> Vec<Entry> {
-        let prev_hash = solana_sha256_hasher::hashv(&[&rng.gen::<[u8; 32]>()]);
+        let prev_hash = solana_sha256_hasher::hashv(&[&rng.r#gen::<[u8; 32]>()]);
         let entry = make_entry(rng, &prev_hash);
         std::iter::successors(Some(entry), |entry| Some(make_entry(rng, &entry.hash)))
             .take(num_entries)
@@ -746,13 +746,13 @@ mod tests {
         let mut shreds: Vec<_> = keypairs
             .iter()
             .flat_map(|(&slot, keypair)| {
-                let parent_slot = slot - rng.gen::<u16>().max(1) as Slot;
+                let parent_slot = slot - rng.r#gen::<u16>().max(1) as Slot;
                 let num_entries = rng.gen_range(64..128);
                 let (data_shreds, coding_shreds) = Shredder::new(
                     slot,
                     parent_slot,
                     rng.gen_range(0..0x40), // reference_tick
-                    rng.gen(),              // version
+                    rng.r#gen(),            // version
                 )
                 .unwrap()
                 .entries_to_shreds(
@@ -760,10 +760,10 @@ mod tests {
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
                     // chained_merkle_root
-                    chained.then(|| Hash::new_from_array(rng.gen())),
+                    chained.then(|| Hash::new_from_array(rng.r#gen())),
                     rng.gen_range(0..2671), // next_shred_index
                     rng.gen_range(0..2781), // next_code_index
-                    rng.gen(),              // merkle_variant,
+                    rng.r#gen(),            // merkle_variant,
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
@@ -852,7 +852,7 @@ mod tests {
                 packets
                     .iter_mut()
                     .map(|packet| {
-                        let coin_flip: bool = rng.gen();
+                        let coin_flip: bool = rng.r#gen();
                         if !coin_flip {
                             shred::layout::corrupt_packet(&mut rng, packet, &keypairs);
                         }

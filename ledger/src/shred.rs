@@ -56,7 +56,7 @@ pub(crate) use self::{
     payload::serde_bytes_payload,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
+use solana_perf::packet::{BytesPacket, Meta, Packet, bytes::Bytes};
 pub use {
     self::{
         payload::Payload,
@@ -74,13 +74,13 @@ use {
     rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
-    solana_entry::entry::{create_ticks, Entry},
+    solana_entry::entry::{Entry, create_ticks},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_perf::packet::PacketRef,
     solana_pubkey::Pubkey,
     solana_sha256_hasher::hashv,
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     static_assertions::const_assert_eq,
     std::{fmt::Debug, time::Instant},
@@ -1048,7 +1048,7 @@ mod tests {
         bincode::serialized_size,
         itertools::Itertools,
         rand::Rng,
-        rand_chacha::{rand_core::SeedableRng, ChaChaRng},
+        rand_chacha::{ChaChaRng, rand_core::SeedableRng},
         rayon::ThreadPoolBuilder,
         solana_keypair::keypair_from_seed,
         solana_signer::Signer,
@@ -1076,24 +1076,26 @@ mod tests {
         is_last_in_slot: bool,
     ) -> Result<Vec<merkle::Shred>, Error> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.r#gen()));
         let parent_offset = rng.gen_range(1..=u16::try_from(slot).unwrap_or(u16::MAX));
         let parent_slot = slot.checked_sub(u64::from(parent_offset)).unwrap();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let keypair = Keypair::new();
         let mut data = vec![0u8; data_size];
         rng.fill(&mut data[..]);
         merkle::make_shreds_from_data(
             &thread_pool,
-            &Keypair::new(),
+            &keypair,
             chained_merkle_root,
             &data[..],
             slot,
             parent_slot,
-            rng.gen(),            // shred_version
+            rng.r#gen(),          // shred_version
             rng.gen_range(1..64), // reference_tick
             is_last_in_slot,
             rng.gen_range(0..671), // next_shred_index
             rng.gen_range(0..781), // next_code_index
-            &ReedSolomonCache::default(),
+            &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         )
     }
@@ -1632,7 +1634,7 @@ mod tests {
     #[test]
     fn test_shred_seed() {
         let mut rng = ChaChaRng::from_seed([147u8; 32]);
-        let leader = Pubkey::new_from_array(rng.gen());
+        let leader = Pubkey::new_from_array(rng.r#gen());
         let key = ShredId(
             141939602, // slot
             28685,     // index
@@ -1642,7 +1644,7 @@ mod tests {
             bs58::encode(key.seed(&leader)).into_string(),
             "Gp4kUM4ZpWGQN5XSCyM9YHYWEBCAZLa94ZQuSgDE4r56"
         );
-        let leader = Pubkey::new_from_array(rng.gen());
+        let leader = Pubkey::new_from_array(rng.r#gen());
         let key = ShredId(
             141945197, // slot
             23418,     // index
