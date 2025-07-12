@@ -44,7 +44,7 @@ impl NonceInfo {
     ) -> Result<(), AdvanceNonceError> {
         let nonce_versions = StateMut::<NonceVersions>::state(&self.account)
             .map_err(|_| AdvanceNonceError::Invalid)?;
-        if let NonceState::Initialized(ref data) = nonce_versions.state() {
+        if let NonceState::Initialized(data) = nonce_versions.state() {
             let nonce_state =
                 NonceState::new_initialized(&data.authority, durable_nonce, lamports_per_signature);
             let nonce_versions = NonceVersions::new(nonce_state);

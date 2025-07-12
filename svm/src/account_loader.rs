@@ -8,15 +8,15 @@ use {
     },
     ahash::{AHashMap, AHashSet},
     solana_account::{
-        state_traits::StateMut, Account, AccountSharedData, ReadableAccount, WritableAccount,
-        PROGRAM_OWNERS,
+        Account, AccountSharedData, PROGRAM_OWNERS, ReadableAccount, WritableAccount,
+        state_traits::StateMut,
     },
     solana_fee_structure::FeeDetails,
     solana_instruction::{BorrowedAccountMeta, BorrowedInstruction},
     solana_instructions_sysvar::construct_instructions_data,
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_nonce::state::State as NonceState,
-    solana_nonce_account::{get_system_account_kind, SystemAccountKind},
+    solana_nonce_account::{SystemAccountKind, get_system_account_kind},
     solana_program_runtime::execution_budget::{
         SVMTransactionExecutionAndFeeBudgetLimits, SVMTransactionExecutionBudget,
     },
@@ -66,7 +66,7 @@ pub(crate) enum TransactionLoadResult {
 #[derive(PartialEq, Eq, Debug, Clone)]
 #[cfg_attr(feature = "svm-internal", field_qualifiers(nonce(pub)))]
 pub struct CheckedTransactionDetails {
-    pub(crate) nonce: Option<NonceInfo>,
+    pub nonce: Option<NonceInfo>,
     pub(crate) compute_budget_and_limits: Result<SVMTransactionExecutionAndFeeBudgetLimits>,
 }
 
@@ -859,18 +859,18 @@ mod tests {
         solana_keypair::Keypair,
         solana_loader_v3_interface::state::UpgradeableLoaderState,
         solana_message::{
+            LegacyMessage, Message, MessageHeader, SanitizedMessage,
             compiled_instruction::CompiledInstruction,
             v0::{LoadedAddresses, LoadedMessage},
-            LegacyMessage, Message, MessageHeader, SanitizedMessage,
         },
-        solana_native_token::{sol_to_lamports, LAMPORTS_PER_SOL},
+        solana_native_token::{LAMPORTS_PER_SOL, sol_to_lamports},
         solana_nonce::{self as nonce, versions::Versions as NonceVersions},
         solana_program_runtime::execution_budget::{
             DEFAULT_INSTRUCTION_COMPUTE_UNIT_LIMIT, MAX_LOADED_ACCOUNTS_DATA_SIZE_BYTES,
         },
         solana_pubkey::Pubkey,
         solana_rent::Rent,
-        solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
+        solana_rent_collector::{RENT_EXEMPT_RENT_EPOCH, RentCollector},
         solana_sdk_ids::{
             bpf_loader, bpf_loader_upgradeable, native_loader, system_program, sysvar,
         },
@@ -878,7 +878,7 @@ mod tests {
         solana_signer::Signer,
         solana_svm_callback::{InvokeContextCallback, TransactionProcessingCallback},
         solana_system_transaction::transfer,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::{Transaction, sanitized::SanitizedTransaction},
         solana_transaction_context::{TransactionAccount, TransactionContext},
         solana_transaction_error::{TransactionError, TransactionResult as Result},
         std::{borrow::Cow, cell::RefCell, collections::HashMap, fs::File, io::Read},
@@ -1369,13 +1369,15 @@ mod tests {
         let requested_data_size_limit = NonZeroU32::new(data_size as u32).unwrap();
 
         // OK - loaded data size is up to limit
-        assert!(accumulate_and_check_loaded_account_data_size(
-            &mut accumulated_data_size,
-            data_size,
-            requested_data_size_limit,
-            &mut error_metrics
-        )
-        .is_ok());
+        assert!(
+            accumulate_and_check_loaded_account_data_size(
+                &mut accumulated_data_size,
+                data_size,
+                requested_data_size_limit,
+                &mut error_metrics
+            )
+            .is_ok()
+        );
         assert_eq!(data_size as u32, accumulated_data_size.0);
 
         // fail - loading more data that would exceed limit
@@ -2865,7 +2867,7 @@ mod tests {
                 1,
                 vec![0; rng.gen_range(0, 128)],
                 Pubkey::new_unique(),
-                rng.gen(),
+                rng.r#gen(),
                 u64::MAX,
             );
             mock_bank.accounts_map.insert(Pubkey::new_unique(), account);
@@ -2879,7 +2881,7 @@ mod tests {
                 LAMPORTS_PER_SOL,
                 vec![0; rng.gen_range(0, 32)],
                 system_program::id(),
-                rng.gen(),
+                rng.r#gen(),
                 u64::MAX,
             );
             mock_bank.accounts_map.insert(fee_payer, account);
@@ -2896,7 +2898,7 @@ mod tests {
                     1,
                     vec![0; rng.gen_range(0, 512)],
                     *loader,
-                    !remove_accounts_executable_flag_checks || rng.gen(),
+                    !remove_accounts_executable_flag_checks || rng.r#gen(),
                     u64::MAX,
                 );
 
@@ -2907,14 +2909,14 @@ mod tests {
                 // this will always fail at execution but we are merely testing the data size accounting here
                 if *loader == bpf_loader_upgradeable::id() && account.data().len() >= 64 {
                     let programdata_address = Pubkey::new_unique();
-                    let has_programdata = rng.gen();
+                    let has_programdata = rng.r#gen();
 
                     if has_programdata {
                         let programdata_account = AccountSharedData::create(
                             1,
                             vec![0; rng.gen_range(0, 512)],
                             *loader,
-                            !remove_accounts_executable_flag_checks || rng.gen(),
+                            !remove_accounts_executable_flag_checks || rng.r#gen(),
                             u64::MAX,
                         );
                         programdata_tracker.insert(
@@ -2927,7 +2929,7 @@ mod tests {
                         loader_owned_accounts.push(programdata_address);
                     }
 
-                    if has_programdata || rng.gen() {
+                    if has_programdata || rng.r#gen() {
                         account
                             .set_state(&UpgradeableLoaderState::Program {
                                 programdata_address,
@@ -2971,8 +2973,8 @@ mod tests {
 
                     accounts.push(AccountMeta {
                         pubkey,
-                        is_writable: rng.gen(),
-                        is_signer: rng.gen() && rng.gen(),
+                        is_writable: rng.r#gen(),
+                        is_signer: rng.r#gen() && rng.r#gen(),
                     });
                 }
 
