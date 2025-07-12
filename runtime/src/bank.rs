@@ -137,7 +137,7 @@ use {
         account_loader::LoadedTransaction,
         account_overrides::AccountOverrides,
         program_loader::load_program_with_pubkey,
-        transaction_balances::BalanceCollector,
+        transaction_balances::{BalanceCollector, SvmTokenInfo},
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{
@@ -323,6 +323,11 @@ pub struct TransactionSimulationResult {
     pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
+    pub fee: Option<u64>,
+    pub pre_balances: Option<Vec<u64>>,
+    pub post_balances: Option<Vec<u64>>,
+    pub pre_token_balances: Option<Vec<SvmTokenInfo>>,
+    pub post_token_balances: Option<Vec<SvmTokenInfo>>,
 }
 
 #[derive(Clone, Debug)]
@@ -3249,6 +3254,7 @@ impl Bank {
 
         let LoadAndExecuteTransactionsOutput {
             mut processing_results,
+            balance_collector,
             ..
         } = self.load_and_execute_transactions(
             &batch,
@@ -3267,7 +3273,7 @@ impl Bank {
                     enable_cpi_recording,
                     enable_log_recording: true,
                     enable_return_data_recording: true,
-                    enable_transaction_balance_recording: false,
+                    enable_transaction_balance_recording: true,
                 },
             },
         );
@@ -3280,44 +3286,68 @@ impl Bank {
         let (
             post_simulation_accounts,
             result,
+            fee,
             logs,
             return_data,
             inner_instructions,
             units_consumed,
             loaded_accounts_data_size,
         ) = match processing_result {
-            Ok(processed_tx) => match processed_tx {
-                ProcessedTransaction::Executed(executed_tx) => {
-                    let details = executed_tx.execution_details;
-                    let post_simulation_accounts = executed_tx
-                        .loaded_transaction
-                        .accounts
-                        .into_iter()
-                        .take(number_of_accounts)
-                        .collect::<Vec<_>>();
-                    (
-                        post_simulation_accounts,
-                        details.status,
-                        details.log_messages,
-                        details.return_data,
-                        details.inner_instructions,
-                        details.executed_units,
-                        executed_tx.loaded_transaction.loaded_accounts_data_size,
-                    )
+            Ok(processed_tx) => {
+                let executed_units = processed_tx.executed_units();
+                let loaded_accounts_data_size = processed_tx.loaded_accounts_data_size();
+
+                match processed_tx {
+                    ProcessedTransaction::Executed(executed_tx) => {
+                        let details = executed_tx.execution_details;
+                        let post_simulation_accounts = executed_tx
+                            .loaded_transaction
+                            .accounts
+                            .into_iter()
+                            .take(number_of_accounts)
+                            .collect::<Vec<_>>();
+                        (
+                            post_simulation_accounts,
+                            details.status,
+                            Some(executed_tx.loaded_transaction.fee_details.total_fee()),
+                            details.log_messages,
+                            details.return_data,
+                            details.inner_instructions,
+                            executed_units,
+                            loaded_accounts_data_size,
+                        )
+                    }
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => (
+                        vec![],
+                        Err(fees_only_tx.load_error),
+                        Some(fees_only_tx.fee_details.total_fee()),
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
                 }
-                ProcessedTransaction::FeesOnly(fees_only_tx) => (
-                    vec![],
-                    Err(fees_only_tx.load_error),
-                    None,
-                    None,
-                    None,
-                    0,
-                    fees_only_tx.rollback_accounts.data_size() as u32,
-                ),
-            },
-            Err(error) => (vec![], Err(error), None, None, None, 0, 0),
+            }
+            Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
         };
         let logs = logs.unwrap_or_default();
+
+        let (pre_balances, post_balances, pre_token_balances, post_token_balances) =
+            match balance_collector {
+                Some(balance_collector) => {
+                    let (mut native_pre, mut native_post, mut token_pre, mut token_post) =
+                        balance_collector.into_vecs();
+
+                    (
+                        native_pre.pop(),
+                        native_post.pop(),
+                        token_pre.pop(),
+                        token_post.pop(),
+                    )
+                }
+                None => (None, None, None, None),
+            };
 
         TransactionSimulationResult {
             result,
@@ -3327,6 +3357,11 @@ impl Bank {
             loaded_accounts_data_size,
             return_data,
             inner_instructions,
+            fee,
+            pre_balances,
+            post_balances,
+            pre_token_balances,
+            post_token_balances,
         }
     }
 
