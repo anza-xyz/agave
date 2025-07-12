@@ -6,7 +6,7 @@ use {
         IoUring,
     },
     smallvec::{smallvec, SmallVec},
-    std::{io, time::Duration},
+    std::{io, os::fd::RawFd, time::Duration},
 };
 
 /// An io_uring instance.
@@ -51,6 +51,17 @@ impl<T, E: RingOp<T>> Ring<T, E> {
     /// [Submitter::register_buffers](https://docs.rs/io-uring/0.6.3/io_uring/struct.Submitter.html#method.register_buffers).
     pub unsafe fn register_buffers(&self, iovecs: &[libc::iovec]) -> io::Result<()> {
         self.ring.submitter().register_buffers(iovecs)
+    }
+
+    /// Registers file descriptors as fixed for I/O with the kernel.
+    ///
+    /// Operations may then use `types::Fixed(index)` for index in `fds` to refer to the
+    /// registered file descriptor.
+    ///
+    /// `-1` values can be used as slots for kernel managed fixed file descriptors (created by
+    /// open operation).
+    pub fn register_files(&self, fds: &[RawFd]) -> io::Result<()> {
+        self.ring.submitter().register_files(fds)
     }
 
     /// Pushes an operation to the submission queue.
