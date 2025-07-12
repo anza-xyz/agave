@@ -246,14 +246,14 @@ impl AccountsHashVerifier {
         match accounts_package.accounts_hash_algorithm {
             AccountsHashAlgorithm::Merkle => {
                 debug!(
-                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, \
-                     DO merkle-based accounts hash calculation",
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, DO \
+                     merkle-based accounts hash calculation",
                 );
             }
             AccountsHashAlgorithm::Lattice => {
                 debug!(
-                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, \
-                     SKIP merkle-based accounts hash calculation",
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, SKIP \
+                     merkle-based accounts hash calculation",
                 );
                 return Ok((MerkleOrLatticeAccountsHash::Lattice, None));
             }
@@ -284,6 +284,7 @@ impl AccountsHashVerifier {
                     let Some((base_accounts_hash, base_capitalization)) =
                         accounts_db.get_accounts_hash(base_slot)
                     else {
+                        #[rustfmt::skip]
                         panic!(
                             "incremental snapshot requires accounts hash and capitalization from \
                              the full snapshot it is based on\n\
@@ -447,7 +448,10 @@ impl AccountsHashVerifier {
             let MerkleOrLatticeAccountsHash::Merkle(AccountsHashKind::Full(accounts_hash)) =
                 merkle_or_lattice_accounts_hash
             else {
-                panic!("EAH requires a full accounts hash, but was given {merkle_or_lattice_accounts_hash:?}");
+                panic!(
+                    "EAH requires a full accounts hash, but was given \
+                     {merkle_or_lattice_accounts_hash:?}"
+                );
             };
             info!(
                 "saving epoch accounts hash, slot: {}, hash: {}",

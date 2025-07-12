@@ -124,7 +124,8 @@ impl TestSetup {
             },
             Err(err) => {
                 unreachable!(
-                    "All test Transactions should be well-formatted for execution and commit, err: '{}'", err
+                    "All test Transactions should be well-formatted for execution and commit, \
+                     err: '{err}'",
                 );
             }
         }

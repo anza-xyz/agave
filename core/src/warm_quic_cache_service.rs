@@ -42,8 +42,8 @@ impl WarmQuicCacheService {
                 let conn = connection_cache.get_connection(&addr);
                 if let Err(err) = conn.send_data(&[]) {
                     warn!(
-                        "Failed to warmup QUIC connection to the leader {leader_pubkey:?} at {addr:?}, \
-                        Context: {log_context}, Error: {err:?}"
+                        "Failed to warmup QUIC connection to the leader {leader_pubkey:?} at \
+                         {addr:?}, Context: {log_context}, Error: {err:?}"
                     );
                 }
             }

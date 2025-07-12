@@ -33,8 +33,8 @@ impl PendingSnapshotPackages {
                             pending_full_snapshot_package,
                         ),
                         Greater,
-                        "full snapshot package must be newer than pending package, \
-                         old: {pending_full_snapshot_package:?}, new: {snapshot_package:?}",
+                        "full snapshot package must be newer than pending package, old: \
+                         {pending_full_snapshot_package:?}, new: {snapshot_package:?}",
                     );
                     info!(
                         "overwrote pending full snapshot package, old slot: {}, new slot: {}",
@@ -55,8 +55,8 @@ impl PendingSnapshotPackages {
                             pending_incremental_snapshot_package,
                         ),
                         Greater,
-                        "incremental snapshot package must be newer than pending package, \
-                         old: {pending_incremental_snapshot_package:?}, new: {snapshot_package:?}",
+                        "incremental snapshot package must be newer than pending package, old: \
+                         {pending_incremental_snapshot_package:?}, new: {snapshot_package:?}",
                     );
                     info!(
                         "overwrote pending incremental snapshot package, old slot: {}, new slot: \

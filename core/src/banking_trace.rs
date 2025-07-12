@@ -450,10 +450,7 @@ impl TracedSender {
                         TracedEvent::PacketBatch(self.label, BankingPacketBatch::clone(&batch)),
                     ))
                     .map_err(|err| {
-                        error!(
-                            "unexpected error when tracing a banking event...: {:?}",
-                            err
-                        );
+                        error!("unexpected error when tracing a banking event...: {err:?}");
                         SendError(BankingPacketBatch::clone(&batch))
                     })?;
             }

@@ -96,7 +96,7 @@ impl WindowServiceMetrics {
             Error::RecvTimeout(_) => self.num_errors_cross_beam_recv_timeout += 1,
             Error::Blockstore(err) => {
                 self.num_errors_blockstore += 1;
-                error!("blockstore error: {}", err);
+                error!("blockstore error: {err}");
             }
             _ => self.num_errors_other += 1,
         }

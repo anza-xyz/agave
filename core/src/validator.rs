@@ -468,7 +468,7 @@ impl BlockstoreRootScan {
     fn join(self) {
         if let Some(blockstore_root_scan) = self.thread {
             if let Err(err) = blockstore_root_scan.join() {
-                warn!("blockstore_root_scan failed to join {:?}", err);
+                warn!("blockstore_root_scan failed to join {err:?}");
             }
         }
     }
@@ -667,7 +667,7 @@ impl Validator {
         }
 
         for cluster_entrypoint in &cluster_entrypoints {
-            info!("entrypoint: {:?}", cluster_entrypoint);
+            info!("entrypoint: {cluster_entrypoint:?}");
         }
 
         if solana_perf::perf_libs::api().is_some() {
@@ -817,10 +817,7 @@ impl Validator {
             (root_bank.slot(), root_bank.hard_forks())
         };
         let shred_version = compute_shred_version(&genesis_config.hash(), Some(&hard_forks));
-        info!(
-            "shred version: {shred_version}, hard forks: {:?}",
-            hard_forks
-        );
+        info!("shred version: {shred_version}, hard forks: {hard_forks:?}");
 
         if let Some(expected_shred_version) = config.expected_shred_version {
             if expected_shred_version != shred_version {
@@ -921,8 +918,11 @@ impl Validator {
             },
         );
         info!(
-            "Using: block-verification-method: {}, block-production-method: {}, transaction-structure: {}",
-            config.block_verification_method, config.block_production_method, config.transaction_struct
+            "Using: block-verification-method: {}, block-production-method: {}, \
+             transaction-structure: {}",
+            config.block_verification_method,
+            config.block_production_method,
+            config.transaction_struct
         );
 
         let (replay_vote_sender, replay_vote_receiver) = unbounded();
@@ -1469,14 +1469,11 @@ impl Validator {
         };
         let tower = match process_blockstore.process_to_create_tower() {
             Ok(tower) => {
-                info!("Tower state: {:?}", tower);
+                info!("Tower state: {tower:?}");
                 tower
             }
             Err(e) => {
-                warn!(
-                    "Unable to retrieve tower: {:?} creating default tower....",
-                    e
-                );
+                warn!("Unable to retrieve tower: {e:?} creating default tower....");
                 Tower::default()
             }
         };
@@ -1942,7 +1939,7 @@ fn post_process_restored_tower(
             let message =
                 format!("Hard fork is detected; discarding tower restoration result: {tower:?}");
             datapoint_error!("tower_error", ("error", message, String),);
-            error!("{}", message);
+            error!("{message}");
 
             // unconditionally relax tower requirement so that we can always restore tower
             // from root bank.
@@ -1989,8 +1986,7 @@ fn post_process_restored_tower(
             } else {
                 error!(
                     "Rebuilding a new tower from the latest vote account due to failed tower \
-                     restore: {}",
-                    err
+                     restore: {err}"
                 );
             }
 
@@ -2016,7 +2012,7 @@ fn load_genesis(
     assert!(leader_epoch_offset <= MAX_LEADER_SCHEDULE_EPOCH_OFFSET);
 
     let genesis_hash = genesis_config.hash();
-    info!("genesis hash: {}", genesis_hash);
+    info!("genesis hash: {genesis_hash}");
 
     if let Some(expected_genesis_hash) = config.expected_genesis_hash {
         if genesis_hash != expected_genesis_hash {
@@ -2056,7 +2052,7 @@ fn load_blockstore(
     ),
     String,
 > {
-    info!("loading ledger from {:?}...", ledger_path);
+    info!("loading ledger from {ledger_path:?}...");
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
 
     let blockstore = Blockstore::open_with_options(ledger_path, config.blockstore_options.clone())
@@ -2310,7 +2306,7 @@ fn maybe_warp_slot(
                 working_bank.slot()
             ));
         }
-        info!("warping to slot {}", warp_slot);
+        info!("warping to slot {warp_slot}");
 
         let root_bank = bank_forks.root_bank();
 
@@ -2381,7 +2377,7 @@ fn should_cleanup_blockstore_incorrect_shred_versions(
     let blockstore_min_slot = blockstore.lowest_slot();
     info!(
         "Blockstore contains data from slot {blockstore_min_slot} to {blockstore_max_slot}, the \
-        latest hard fork is {latest_hard_fork}"
+         latest hard fork is {latest_hard_fork}"
     );
 
     if latest_hard_fork < blockstore_min_slot {
@@ -2469,8 +2465,7 @@ fn cleanup_blockstore_incorrect_shred_versions(
     // Backing up the shreds that will be deleted from primary blockstore is
     // not critical, so swallow errors from backup blockstore operations.
     let backup_folder = format!(
-        "{}_backup_{}_{}_{}",
-        BLOCKSTORE_DIRECTORY_ROCKS_LEVEL, incorrect_shred_version, start_slot, end_slot
+        "{BLOCKSTORE_DIRECTORY_ROCKS_LEVEL}_backup_{incorrect_shred_version}_{start_slot}_{end_slot}"
     );
     match Blockstore::open_with_options(
         &blockstore.ledger_path().join(backup_folder),
@@ -2555,8 +2550,8 @@ pub enum ValidatorError {
     GenesisHashMismatch(Hash, Hash),
 
     #[error(
-        "ledger does not have enough data to wait for supermajority: \
-        current slot={0}, needed slot={1}"
+        "ledger does not have enough data to wait for supermajority: current slot={0}, needed \
+         slot={1}"
     )]
     NotEnoughLedgerData(Slot, Slot),
 
@@ -2646,8 +2641,8 @@ fn wait_for_supermajority(
 
                 if gossip_stake_percent >= WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT {
                     info!(
-                        "Supermajority reached, {}% active stake detected, starting up now.",
-                        gossip_stake_percent,
+                        "Supermajority reached, {gossip_stake_percent}% active stake detected, \
+                         starting up now.",
                     );
                     break;
                 }
@@ -2701,9 +2696,8 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
         if let Some(peer) = peers.get(&vote_state_node_pubkey) {
             if peer.shred_version() == my_shred_version {
                 trace!(
-                    "observed {} in gossip, (activated_stake={})",
-                    vote_state_node_pubkey,
-                    activated_stake
+                    "observed {vote_state_node_pubkey} in gossip, \
+                     (activated_stake={activated_stake})"
                 );
                 online_stake += activated_stake;
             } else {
@@ -2720,10 +2714,7 @@ fn get_stake_percent_in_gossip(bank: &Bank, cluster_info: &ClusterInfo, log: boo
 
     let online_stake_percentage = (online_stake as f64 / total_activated_stake as f64) * 100.;
     if log {
-        info!(
-            "{:.3}% of active stake visible in gossip",
-            online_stake_percentage
-        );
+        info!("{online_stake_percentage:.3}% of active stake visible in gossip");
 
         if !wrong_shred_nodes.is_empty() {
             info!(

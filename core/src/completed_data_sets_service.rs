@@ -74,7 +74,7 @@ impl CompletedDataSetsService {
                         rpc_subscriptions.notify_signatures_received((slot, transactions));
                     }
                 }
-                Err(e) => warn!("completed-data-set-service deserialize error: {:?}", e),
+                Err(e) => warn!("completed-data-set-service deserialize error: {e:?}"),
             }
             slot
         };

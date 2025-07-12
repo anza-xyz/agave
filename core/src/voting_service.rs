@@ -113,7 +113,7 @@ impl VotingService {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
             if let Err(err) = tower_storage.store(saved_tower) {
-                error!("Unable to save tower to storage: {:?}", err);
+                error!("Unable to save tower to storage: {err:?}");
                 std::process::exit(1);
             }
             measure.stop();

@@ -292,7 +292,7 @@ impl TowerStorage for EtcdTowerStorage {
         self.runtime
             .block_on(async { self.client.lock().await.txn(txn).await })
             .map_err(|err| {
-                error!("Failed to acquire etcd instance lock: {}", err);
+                error!("Failed to acquire etcd instance lock: {err}");
                 Self::etdc_to_tower_error(err)
             })?;
 
@@ -308,7 +308,7 @@ impl TowerStorage for EtcdTowerStorage {
             .runtime
             .block_on(async { self.client.lock().await.txn(txn).await })
             .map_err(|err| {
-                error!("Failed to read etcd saved tower: {}", err);
+                error!("Failed to read etcd saved tower: {err}");
                 Self::etdc_to_tower_error(err)
             })?;
 
@@ -353,7 +353,7 @@ impl TowerStorage for EtcdTowerStorage {
             .runtime
             .block_on(async { self.client.lock().await.txn(txn).await })
             .map_err(|err| {
-                error!("Failed to write etcd saved tower: {}", err);
+                error!("Failed to write etcd saved tower: {err}");
                 err
             })
             .map_err(Self::etdc_to_tower_error)?;

@@ -396,12 +396,10 @@ fn test_bank_forks_incremental_snapshot() {
     const LAST_SLOT: Slot = FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 2 - 1;
 
     info!(
-        "Running bank forks incremental snapshot test, full snapshot interval: {} slots, \
-         incremental snapshot interval: {} slots, last slot: {}, set root interval: {} slots",
-        FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        LAST_SLOT,
-        SET_ROOT_INTERVAL
+        "Running bank forks incremental snapshot test, full snapshot interval: \
+         {FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, incremental snapshot interval: \
+         {INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, last slot: {LAST_SLOT}, set root \
+         interval: {SET_ROOT_INTERVAL} slots"
     );
 
     let snapshot_test_config = SnapshotTestConfig::new(
@@ -623,18 +621,14 @@ fn test_snapshots_with_background_services(
     const MAX_WAIT_DURATION: Duration = Duration::from_secs(10);
 
     info!("Running snapshots with background services test...");
+    #[rustfmt::skip]
     trace!(
         "Test configuration parameters:\
-         \n\tfull snapshot archive interval: {} slots\
-         \n\tincremental snapshot archive interval: {} slots\
-         \n\tbank snapshot interval: {} slots\
-         \n\tset root interval: {} slots\
-         \n\tlast slot: {}",
-        FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        BANK_SNAPSHOT_INTERVAL_SLOTS,
-        SET_ROOT_INTERVAL_SLOTS,
-        LAST_SLOT
+         \n\tfull snapshot archive interval: {FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots\
+         \n\tincremental snapshot archive interval: {INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots\
+         \n\tbank snapshot interval: {BANK_SNAPSHOT_INTERVAL_SLOTS} slots\
+         \n\tset root interval: {SET_ROOT_INTERVAL_SLOTS} slots\
+         \n\tlast slot: {LAST_SLOT}"
     );
 
     let snapshot_test_config = SnapshotTestConfig::new(

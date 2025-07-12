@@ -545,7 +545,7 @@ impl ClusterInfoVoteListener {
                         sender
                             .send(BankNotification::OptimisticallyConfirmed(slot))
                             .unwrap_or_else(|err| {
-                                warn!("bank_notification_sender failed: {:?}", err)
+                                warn!("bank_notification_sender failed: {err:?}")
                             });
                     }
                 }
