@@ -56,7 +56,7 @@ pub(crate) use self::{
     payload::serde_bytes_payload,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
+use solana_perf::packet::Packet;
 pub use {
     self::{
         payload::Payload,
@@ -202,6 +202,8 @@ pub enum Error {
     InvalidShredType,
     #[error("Invalid shred variant")]
     InvalidShredVariant,
+    #[error("Invalid packet size, could not get the shred")]
+    InvalidPacketSize,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Unknown proof size")]
@@ -405,7 +407,7 @@ impl Shred {
     dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
     // Returns the shard index within the erasure coding set.
     dispatch!(pub(crate) fn erasure_shard_index(&self) -> Result<usize, Error>);
-    dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub fn retransmitter_signature(&self) -> Result<Signature, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
@@ -423,16 +425,6 @@ impl Shred {
         let size = payload.len();
         packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
         packet.meta_mut().size = size;
-    }
-
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn to_packet(&self) -> BytesPacket {
-        let buffer: &[u8] = match self.payload() {
-            Payload::Shared(bytes) => bytes.as_ref(),
-            Payload::Unique(bytes) => bytes.as_ref(),
-        };
-        let buffer = Bytes::copy_from_slice(buffer);
-        BytesPacket::new(buffer, Meta::default())
     }
 
     // TODO: Should this sanitize output?
@@ -662,7 +654,20 @@ impl Shred {
         get_payload(self) != get_payload(other)
     }
 
-    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
+    pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
+        match self {
+            Self::ShredCode(ShredCode::Merkle(shred)) => {
+                shred.set_retransmitter_signature(signature)
+            }
+            Self::ShredData(ShredData::Merkle(shred)) => {
+                shred.set_retransmitter_signature(signature)
+            }
+            Self::ShredCode(ShredCode::Legacy(_)) => Err(Error::InvalidShredVariant),
+            Self::ShredData(ShredData::Legacy(_)) => Err(Error::InvalidShredVariant),
+        }
+    }
+
+    pub fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
         match self {
             Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
             Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),

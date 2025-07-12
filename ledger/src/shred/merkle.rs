@@ -70,7 +70,7 @@ pub struct ShredCode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum Shred {
+pub enum Shred {
     ShredCode(ShredCode),
     ShredData(ShredData),
 }
@@ -85,7 +85,9 @@ impl Shred {
     dispatch!(fn signed_data(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn common_header(&self) -> &ShredCommonHeader);
     dispatch!(pub(super) fn payload(&self) -> &Payload);
-    dispatch!(pub(super) fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
+    dispatch!(pub fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
+    dispatch!(pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error>);
 
     #[inline]
     fn fec_set_index(&self) -> u32 {
@@ -142,8 +144,6 @@ impl Shred {
     dispatch!(fn proof_size(&self) -> Result<u8, Error>);
     dispatch!(pub(super) fn chained_merkle_root(&self) -> Result<Hash, Error>);
     dispatch!(pub(super) fn merkle_root(&self) -> Result<Hash, Error>);
-    dispatch!(pub(super) fn retransmitter_signature(&self) -> Result<Signature, Error>);
-    dispatch!(pub(super) fn retransmitter_signature_offset(&self) -> Result<usize, Error>);
 
     fn index(&self) -> u32 {
         self.common_header().index
@@ -423,7 +423,7 @@ macro_rules! impl_merkle_shred {
                 .ok_or(Error::InvalidPayloadSize(self.payload.len()))
         }
 
-        fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
+        pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
             let offset = self.retransmitter_signature_offset()?;
             let Some(buffer) = self.payload.get_mut(offset..offset + SIZE_OF_SIGNATURE) else {
                 return Err(Error::InvalidPayloadSize(self.payload.len()));

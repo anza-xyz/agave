@@ -12,10 +12,19 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
-        shred,
+        shred::{
+            self,
+            layout::{get_shred, resign_packet},
+            wire::is_retransmitter_signed_variant,
+        },
         sigverify_shreds::{verify_shreds_gpu, LruCache},
     },
-    solana_perf::{self, deduper::Deduper, packet::PacketBatch, recycler_cache::RecyclerCache},
+    solana_perf::{
+        self,
+        deduper::Deduper,
+        packet::{PacketBatch, PacketRefMut},
+        recycler_cache::RecyclerCache,
+    },
     solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_signer::Signer,
@@ -202,50 +211,16 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| !packet.meta().discard())
             .for_each(|mut packet| {
-                let repair = packet.meta().repair();
-                let Some(shred) = shred::layout::get_shred_mut(&mut packet) else {
-                    packet.meta_mut().set_discard(true);
-                    return;
-                };
-                // Repair packets do not follow turbine tree and
-                // are verified using the trailing nonce.
-                if !repair
-                    && !verify_retransmitter_signature(
-                        shred,
-                        &root_bank,
-                        &working_bank,
-                        cluster_info,
-                        leader_schedule_cache,
-                        cluster_nodes_cache,
-                        stats,
-                    )
-                {
-                    stats
-                        .num_invalid_retransmitter
-                        .fetch_add(1, Ordering::Relaxed);
-                    if shred::layout::get_slot(shred)
-                        .map(|slot| {
-                            check_feature_activation(
-                                &feature_set::verify_retransmitter_signature::id(),
-                                slot,
-                                &root_bank,
-                            )
-                        })
-                        .unwrap_or_default()
-                    {
-                        packet.meta_mut().set_discard(true);
-                        return;
-                    }
-                }
-                // We can ignore Error::InvalidShredVariant because that
-                // basically means that the shred is of a variant which
-                // cannot be signed by the retransmitter node.
-                if !matches!(
-                    shred::layout::resign_shred(shred, keypair),
-                    Ok(()) | Err(shred::Error::InvalidShredVariant)
-                ) {
-                    packet.meta_mut().set_discard(true);
-                }
+                maybe_verify_and_resign_packet(
+                    &mut packet,
+                    &root_bank,
+                    &working_bank,
+                    cluster_info,
+                    leader_schedule_cache,
+                    cluster_nodes_cache,
+                    stats,
+                    keypair,
+                )
             })
     });
     stats.resign_micros += resign_start.elapsed().as_micros() as u64;
@@ -290,6 +265,65 @@ fn run_shred_sigverify<const K: usize>(
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
     shred_buffer.clear();
     Ok(())
+}
+
+/// Checks whether the shred in the given `packet` is of resigned variant. If
+/// yes, it calls [`verify_and_resign_shred`].
+fn maybe_verify_and_resign_packet(
+    packet: &mut PacketRefMut,
+    root_bank: &Bank,
+    working_bank: &Bank,
+    cluster_info: &ClusterInfo,
+    leader_schedule_cache: &LeaderScheduleCache,
+    cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
+    stats: &ShredSigVerifyStats,
+    keypair: &Keypair,
+) {
+    let repair = packet.meta().repair();
+    let Some(shred) = get_shred(packet.as_ref()) else {
+        packet.meta_mut().set_discard(true);
+        return;
+    };
+    let Ok(is_signed) = is_retransmitter_signed_variant(shred) else {
+        packet.meta_mut().set_discard(true);
+        return;
+    };
+    if is_signed {
+        // Repair packets do not follow turbine tree and
+        // are verified using the trailing nonce.
+        if !repair
+            && !verify_retransmitter_signature(
+                shred,
+                root_bank,
+                working_bank,
+                cluster_info,
+                leader_schedule_cache,
+                cluster_nodes_cache,
+                stats,
+            )
+        {
+            stats
+                .num_invalid_retransmitter
+                .fetch_add(1, Ordering::Relaxed);
+            if shred::layout::get_slot(shred)
+                .map(|slot| {
+                    check_feature_activation(
+                        &feature_set::verify_retransmitter_signature::id(),
+                        slot,
+                        root_bank,
+                    )
+                })
+                .unwrap_or_default()
+            {
+                packet.meta_mut().set_discard(true);
+                return;
+            }
+        }
+
+        if resign_packet(packet, keypair).is_err() {
+            packet.meta_mut().set_discard(true);
+        }
+    }
 }
 
 #[must_use]
@@ -530,16 +564,22 @@ impl ShredSigVerifyStats {
 mod tests {
     use {
         super::*,
-        solana_entry::entry::create_ticks,
+        rand::Rng,
+        solana_entry::entry::{create_ticks, Entry},
+        solana_gossip::contact_info::ContactInfo,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
             genesis_utils::create_genesis_config_with_leader,
             shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
         },
-        solana_perf::packet::{Packet, PinnedPacketBatch},
+        solana_perf::packet::{Packet, PacketFlags, PinnedPacketBatch},
         solana_runtime::bank::Bank,
+        solana_signature::{Signature, SIGNATURE_BYTES},
         solana_signer::Signer,
+        solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
+        test_case::test_matrix,
     };
 
     #[test]
@@ -608,5 +648,161 @@ mod tests {
         );
         assert!(!batches[0].get(0).unwrap().meta().discard());
         assert!(batches[0].get(1).unwrap().meta().discard());
+    }
+
+    #[test_matrix(
+        [true, false],
+        [true, false],
+        [true, false]
+    )]
+    fn test_maybe_verify_and_resign_packet(repaired: bool, chained: bool, is_last_in_slot: bool) {
+        let mut rng = rand::thread_rng();
+
+        let leader_keypair = Arc::new(Keypair::new());
+        let leader_pubkey = leader_keypair.pubkey();
+        let bank = Bank::new_for_tests(
+            &create_genesis_config_with_leader(100, &leader_pubkey, 10).genesis_config,
+        );
+        let leader_schedule_cache = LeaderScheduleCache::new_from_bank(&bank);
+        let bank_forks = BankForks::new_rw_arc(bank);
+        let (working_bank, root_bank) = {
+            let bank_forks = bank_forks.read().unwrap();
+            (bank_forks.working_bank(), bank_forks.root_bank())
+        };
+
+        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+
+        let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
+        let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
+        let mut shreds: Vec<_> = shredder
+            .make_merkle_shreds_from_entries(
+                &leader_keypair,
+                &entries,
+                is_last_in_slot,
+                chained_merkle_root,
+                0,
+                0,
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .collect();
+
+        let cluster_info = ClusterInfo::new(
+            ContactInfo::new_localhost(&leader_pubkey, timestamp()),
+            leader_keypair,
+            SocketAddrSpace::Unspecified,
+        );
+
+        let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
+            CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
+            CLUSTER_NODES_CACHE_TTL,
+        );
+        let stats = ShredSigVerifyStats::new(Instant::now());
+
+        for shred in shreds.iter_mut() {
+            let keypair = Keypair::new();
+            let signature = Signature::new_unique();
+
+            if chained && is_last_in_slot {
+                shred.set_retransmitter_signature(&signature).unwrap();
+                let signature_offset = shred.retransmitter_signature_offset().unwrap();
+
+                let packet = &mut shred.payload().to_packet();
+                if repaired {
+                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                }
+                maybe_verify_and_resign_packet(
+                    &mut packet.into(),
+                    &root_bank,
+                    &working_bank,
+                    &cluster_info,
+                    &leader_schedule_cache,
+                    &cluster_nodes_cache,
+                    &stats,
+                    &keypair,
+                );
+                assert!(!packet.meta().discard());
+
+                // Check whether the shred was resigned.
+                let modified_shred = get_shred(packet).unwrap();
+                let new_signature =
+                    &modified_shred[signature_offset..signature_offset + SIGNATURE_BYTES];
+                assert_ne!(signature.as_array(), new_signature);
+
+                let mut bytes_packet = shred.payload().to_bytes_packet();
+                if repaired {
+                    bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+                }
+                maybe_verify_and_resign_packet(
+                    &mut bytes_packet.as_mut(),
+                    &root_bank,
+                    &working_bank,
+                    &cluster_info,
+                    &leader_schedule_cache,
+                    &cluster_nodes_cache,
+                    &stats,
+                    &keypair,
+                );
+                assert!(!bytes_packet.meta().discard());
+
+                // Check whether the shred was resigned.
+                let modified_shred = get_shred(bytes_packet.as_ref()).unwrap();
+                let new_signature =
+                    &modified_shred[signature_offset..signature_offset + SIGNATURE_BYTES];
+                assert_ne!(signature.as_array(), new_signature);
+            } else {
+                assert_matches!(
+                    shred.set_retransmitter_signature(&signature),
+                    Err(shred::Error::InvalidShredVariant)
+                );
+
+                let packet = &mut shred.payload().to_packet();
+                if repaired {
+                    packet.meta_mut().flags |= PacketFlags::REPAIR;
+                }
+                maybe_verify_and_resign_packet(
+                    &mut packet.into(),
+                    &root_bank,
+                    &working_bank,
+                    &cluster_info,
+                    &leader_schedule_cache,
+                    &cluster_nodes_cache,
+                    &stats,
+                    &keypair,
+                );
+                assert!(!packet.meta().discard());
+
+                // Getting signature should fail.
+                assert_matches!(
+                    shred.retransmitter_signature(),
+                    Err(shred::Error::InvalidShredVariant)
+                );
+                assert_matches!(
+                    shred.retransmitter_signature_offset(),
+                    Err(shred::Error::InvalidShredVariant)
+                );
+
+                let mut bytes_packet = shred.payload().to_bytes_packet();
+                if repaired {
+                    bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
+                }
+                let buf_addr = bytes_packet.buffer().as_ptr().addr();
+                maybe_verify_and_resign_packet(
+                    &mut bytes_packet.as_mut(),
+                    &root_bank,
+                    &working_bank,
+                    &cluster_info,
+                    &leader_schedule_cache,
+                    &cluster_nodes_cache,
+                    &stats,
+                    &keypair,
+                );
+                assert!(!packet.meta().discard());
+
+                // Packet should not be modified.
+                let buf_addr_after = bytes_packet.buffer().as_ptr().addr();
+                assert_eq!(buf_addr, buf_addr_after);
+            }
+        }
     }
 }

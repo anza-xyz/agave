@@ -1,3 +1,5 @@
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -57,6 +59,32 @@ impl Payload {
             Self::Shared(bytes) => Arc::unwrap_or_clone(bytes),
             Self::Unique(bytes) => bytes,
         }
+    }
+}
+
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl Payload {
+    pub fn copy_to_packet(&self, packet: &mut Packet) {
+        let size = self.len();
+        packet.buffer_mut()[..size].copy_from_slice(&self[..]);
+        packet.meta_mut().size = size;
+    }
+
+    pub fn to_packet(&self) -> Packet {
+        let mut packet = Packet::default();
+        let size = self.len();
+        packet.buffer_mut()[..size].copy_from_slice(self);
+        packet.meta_mut().size = size;
+        packet
+    }
+
+    pub fn to_bytes_packet(&self) -> BytesPacket {
+        let buffer: &[u8] = match self {
+            Payload::Shared(bytes) => bytes.as_ref(),
+            Payload::Unique(bytes) => bytes.as_ref(),
+        };
+        let buffer = Bytes::copy_from_slice(buffer);
+        BytesPacket::new(buffer, Meta::default())
     }
 }
 
