@@ -180,3 +180,9 @@ impl ClientConnection for QuicClientConnection {
         Ok(())
     }
 }
+
+pub(crate) fn close_quic_connection(connection: Arc<QuicClient>) {
+    // Close the connection and release resources
+    trace!("Closing QUIC connection to {}", connection.server_addr());
+    RUNTIME.block_on(connection.close());
+}
