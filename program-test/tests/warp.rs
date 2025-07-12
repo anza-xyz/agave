@@ -240,7 +240,7 @@ async fn stake_rewards_filter_bench_core(num_stake_accounts: u64) {
         program_test.add_account(stake_pubkey, stake_account);
         to_filter.push(stake_pubkey);
         if i % 100 == 0 {
-            debug!("create stake account {} {}", i, stake_pubkey);
+            debug!("create stake account {i} {stake_pubkey}");
         }
     }
 

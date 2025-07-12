@@ -85,7 +85,7 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 config.generate_child_script_on_failure,
             );
             if config.verbose {
-                debug!("{}", output);
+                debug!("{output}");
             }
         }
 
@@ -93,12 +93,17 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
             let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
             #[cfg(windows)]
             {
-                error!("Using Bash scripts from within a program is not supported on Windows, skipping `--dump`.");
                 error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this command to see the processed program dump.",
+                    "Using Bash scripts from within a program is not supported on Windows, \
+                     skipping `--dump`."
+                );
+                error!(
+                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this \
+                     command to see the processed program dump.",
                     &dump_script.display(),
                     &program_unstripped_so.display(),
-                    &program_dump.display());
+                    &program_dump.display()
+                );
             }
             #[cfg(not(windows))]
             {
@@ -108,7 +113,7 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                     config.generate_child_script_on_failure,
                 );
                 if config.verbose {
-                    debug!("{}", output);
+                    debug!("{output}");
                 }
             }
             postprocess_dump(&program_dump);
@@ -130,7 +135,7 @@ pub(crate) fn post_process(config: &Config, target_directory: &Path, program_nam
                 config.generate_child_script_on_failure,
             );
             if config.verbose {
-                debug!("{}", output);
+                debug!("{output}");
             }
         }
 
@@ -179,7 +184,7 @@ fn check_undefined_symbols(config: &Config, program: &Path) {
         config.generate_child_script_on_failure,
     );
     if config.verbose {
-        debug!("{}", output);
+        debug!("{output}");
     }
     let mut unresolved_symbols: Vec<String> = Vec::new();
     for line in output.lines() {
@@ -194,8 +199,7 @@ fn check_undefined_symbols(config: &Config, program: &Path) {
     }
     if !unresolved_symbols.is_empty() {
         warn!(
-            "The following functions are undefined and not known syscalls {:?}.",
-            unresolved_symbols
+            "The following functions are undefined and not known syscalls {unresolved_symbols:?}."
         );
         warn!("         Calling them will trigger a run-time error.");
     }

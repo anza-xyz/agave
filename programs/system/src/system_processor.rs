@@ -305,7 +305,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let instruction =
         limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?;
 
-    trace!("process_instruction: {:?}", instruction);
+    trace!("process_instruction: {instruction:?}");
 
     let signers = instruction_context.get_signers(transaction_context)?;
     match instruction {
