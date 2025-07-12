@@ -4944,6 +4944,8 @@ impl AccountsDb {
         #[cfg(not(test))]
         assert!(max_root.is_none());
 
+        let starting_max_root = self.accounts_index.max_root_inclusive();
+
         let (slot, storage_location, _maybe_account_accesor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, max_root, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
@@ -5004,6 +5006,15 @@ impl AccountsDb {
             */
             self.read_only_accounts_cache
                 .store(*pubkey, slot, account.clone());
+        }
+        if load_hint == LoadHint::FixedMaxRoot
+            || load_hint == LoadHint::FixedMaxRootDoNotPopulateReadCache
+        {
+            // If the load hint is that the max root is fixed, the max root should be fixed.
+            let ending_max_root = self.accounts_index.max_root_inclusive();
+            if starting_max_root != ending_max_root {
+                error!("do_load_with_populate_read_cache() called with fixed max root, but max root changed from {} to {} during function call", starting_max_root, ending_max_root);
+            }
         }
         Some((account, slot))
     }

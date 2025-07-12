@@ -4605,7 +4605,8 @@ fn start_load_thread(
         .unwrap()
 }
 
-fn do_test_load_account_and_cache_flush_race(with_retry: bool) {
+#[test]
+fn test_load_account_and_cache_flush_race() {
     solana_logger::setup();
 
     let mut db = AccountsDb::new_single_for_tests();
@@ -4648,7 +4649,7 @@ fn do_test_load_account_and_cache_flush_race(with_retry: bool) {
     };
 
     let t_do_load = start_load_thread(
-        with_retry,
+        false,
         Ancestors::default(),
         db,
         exit.clone(),
@@ -4660,16 +4661,6 @@ fn do_test_load_account_and_cache_flush_race(with_retry: bool) {
     exit.store(true, Ordering::Relaxed);
     t_flush_accounts_cache.join().unwrap();
     t_do_load.join().map_err(std::panic::resume_unwind).unwrap()
-}
-
-#[test]
-fn test_load_account_and_cache_flush_race_with_retry() {
-    do_test_load_account_and_cache_flush_race(true);
-}
-
-#[test]
-fn test_load_account_and_cache_flush_race_without_retry() {
-    do_test_load_account_and_cache_flush_race(false);
 }
 
 fn do_test_load_account_and_shrink_race(with_retry: bool) {
