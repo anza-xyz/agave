@@ -3,26 +3,26 @@ use {
         nonblocking::{
             connection_rate_limiter::{ConnectionRateLimiter, TotalConnectionRateLimiter},
             stream_throttle::{
-                ConnectionStreamCounter, StakedStreamLoadEMA, STREAM_THROTTLING_INTERVAL,
-                STREAM_THROTTLING_INTERVAL_MS,
+                ConnectionStreamCounter, STREAM_THROTTLING_INTERVAL, STREAM_THROTTLING_INTERVAL_MS,
+                StakedStreamLoadEMA,
             },
         },
-        quic::{configure_server, QuicServerError, QuicServerParams, StreamerStats},
+        quic::{QuicServerError, QuicServerParams, StreamerStats, configure_server},
         streamer::StakedNodes,
     },
     bytes::{BufMut, Bytes, BytesMut},
-    crossbeam_channel::{bounded, Receiver, Sender, TrySendError},
-    futures::{stream::FuturesUnordered, Future, StreamExt as _},
+    crossbeam_channel::{Receiver, Sender, TrySendError, bounded},
+    futures::{Future, StreamExt as _, stream::FuturesUnordered},
     indexmap::map::{Entry, IndexMap},
     percentage::Percentage,
     quinn::{Accept, Connecting, Connection, Endpoint, EndpointConfig, TokioRuntime, VarInt},
     quinn_proto::VarIntBoundsExceeded,
-    rand::{thread_rng, Rng},
+    rand::{Rng, thread_rng},
     smallvec::SmallVec,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_packet::{Meta, PACKET_DATA_SIZE},
-    solana_perf::packet::{BytesPacket, BytesPacketBatch, PacketBatch, PACKETS_PER_BATCH},
+    solana_perf::packet::{BytesPacket, BytesPacketBatch, PACKETS_PER_BATCH, PacketBatch},
     solana_pubkey::Pubkey,
     solana_quic_definitions::{
         QUIC_MAX_STAKED_CONCURRENT_STREAMS, QUIC_MAX_STAKED_RECEIVE_WINDOW_RATIO,
@@ -42,8 +42,8 @@ use {
         pin::Pin,
         // CAUTION: be careful not to introduce any awaits while holding an RwLock.
         sync::{
-            atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         task::Poll,
         thread,
@@ -554,42 +554,43 @@ fn handle_and_cache_new_connection(
             remote_addr,
         );
 
-        if let Some((last_update, cancel_connection, stream_counter)) = connection_table_l
-            .try_add_connection(
-                ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
-                remote_addr.port(),
-                client_connection_tracker,
-                Some(connection.clone()),
-                params.peer_type,
-                timing::timestamp(),
-                params.max_connections_per_peer,
-            )
-        {
-            drop(connection_table_l);
+        match connection_table_l.try_add_connection(
+            ConnectionTableKey::new(remote_addr.ip(), params.remote_pubkey),
+            remote_addr.port(),
+            client_connection_tracker,
+            Some(connection.clone()),
+            params.peer_type,
+            timing::timestamp(),
+            params.max_connections_per_peer,
+        ) {
+            Some((last_update, cancel_connection, stream_counter)) => {
+                drop(connection_table_l);
 
-            if let Ok(receive_window) = receive_window {
-                connection.set_receive_window(receive_window);
+                if let Ok(receive_window) = receive_window {
+                    connection.set_receive_window(receive_window);
+                }
+                connection.set_max_concurrent_uni_streams(max_uni_streams);
+
+                tokio::spawn(handle_connection(
+                    connection,
+                    remote_addr,
+                    last_update,
+                    connection_table,
+                    cancel_connection,
+                    params.clone(),
+                    wait_for_chunk_timeout,
+                    stream_load_ema,
+                    stream_counter,
+                ));
+                Ok(())
             }
-            connection.set_max_concurrent_uni_streams(max_uni_streams);
-
-            tokio::spawn(handle_connection(
-                connection,
-                remote_addr,
-                last_update,
-                connection_table,
-                cancel_connection,
-                params.clone(),
-                wait_for_chunk_timeout,
-                stream_load_ema,
-                stream_counter,
-            ));
-            Ok(())
-        } else {
-            params
-                .stats
-                .connection_add_failed
-                .fetch_add(1, Ordering::Relaxed);
-            Err(ConnectionHandlerError::ConnectionAddError)
+            _ => {
+                params
+                    .stats
+                    .connection_add_failed
+                    .fetch_add(1, Ordering::Relaxed);
+                Err(ConnectionHandlerError::ConnectionAddError)
+            }
         }
     } else {
         connection.close(
@@ -927,31 +928,34 @@ fn packet_batch_sender(
                 let len = packet_batch.len();
                 track_streamer_fetch_packet_performance(&packet_perf_measure, &stats);
 
-                if let Err(e) = packet_sender.try_send(packet_batch.into()) {
-                    stats
-                        .total_packet_batch_send_err
-                        .fetch_add(1, Ordering::Relaxed);
-                    trace!("Send error: {}", e);
+                match packet_sender.try_send(packet_batch.into()) {
+                    Err(e) => {
+                        stats
+                            .total_packet_batch_send_err
+                            .fetch_add(1, Ordering::Relaxed);
+                        trace!("Send error: {}", e);
 
-                    // The downstream channel is disconnected, this error is not recoverable.
-                    if matches!(e, TrySendError::Disconnected(_)) {
-                        exit.store(true, Ordering::Relaxed);
-                        return;
+                        // The downstream channel is disconnected, this error is not recoverable.
+                        if matches!(e, TrySendError::Disconnected(_)) {
+                            exit.store(true, Ordering::Relaxed);
+                            return;
+                        }
                     }
-                } else {
-                    stats
-                        .total_packet_batches_sent
-                        .fetch_add(1, Ordering::Relaxed);
+                    _ => {
+                        stats
+                            .total_packet_batches_sent
+                            .fetch_add(1, Ordering::Relaxed);
 
-                    stats
-                        .total_packets_sent_to_consumer
-                        .fetch_add(len, Ordering::Relaxed);
+                        stats
+                            .total_packets_sent_to_consumer
+                            .fetch_add(len, Ordering::Relaxed);
 
-                    stats
-                        .total_bytes_sent_to_consumer
-                        .fetch_add(total_bytes, Ordering::Relaxed);
+                        stats
+                            .total_bytes_sent_to_consumer
+                            .fetch_add(total_bytes, Ordering::Relaxed);
 
-                    trace!("Sent {} packet batch", len);
+                        trace!("Sent {} packet batch", len);
+                    }
                 }
                 break;
             }
@@ -1075,15 +1079,16 @@ async fn handle_connection(
     'conn: loop {
         // Wait for new streams. If the peer is disconnected we get a cancellation signal and stop
         // the connection task.
-        let mut stream = select! {
-            stream = connection.accept_uni() => match stream {
-                Ok(stream) => stream,
-                Err(e) => {
-                    debug!("stream error: {:?}", e);
-                    break;
-                }
-            },
+        let stream = select! {
+            conn = connection.accept_uni() => conn,
             _ = cancel.cancelled() => break,
+        };
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(err) => {
+                debug!("stream error: {:?}", err);
+                break;
+            }
         };
 
         let max_streams_per_throttling_interval =
@@ -1098,10 +1103,12 @@ async fn handle_connection(
                 STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
 
             if !throttle_duration.is_zero() {
-                debug!("Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
+                debug!(
+                    "Throttling stream from {remote_addr:?}, peer type: {:?}, total stake: {}, \
                                     max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
                                     throttle_duration: {throttle_duration:?}",
-                                    peer_type, total_stake);
+                    peer_type, total_stake
+                );
                 stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
                 match peer_type {
                     ConnectionPeerType::Unstaked => {
@@ -1170,16 +1177,15 @@ async fn handle_connection(
                 }
             };
 
-            match handle_chunks(
-                // Bytes::clone() is a cheap atomic inc
+            let handle_chunks = handle_chunks(
                 chunks.iter().take(n_chunks).cloned(),
                 &mut accum,
                 &packet_sender,
                 &stats,
                 peer_type,
             )
-            .await
-            {
+            .await;
+            match handle_chunks {
                 // The stream is finished, break out of the loop and close the stream.
                 Ok(StreamState::Finished) => {
                     last_update.store(timing::timestamp(), Ordering::Relaxed);
@@ -1280,48 +1286,51 @@ async fn handle_chunks(
     let bytes_sent = accum.meta.size;
     let chunks_sent = accum.chunks.len();
 
-    if let Err(err) = packet_sender.try_send(accum.clone()) {
-        stats
-            .total_handle_chunk_to_packet_batcher_send_err
-            .fetch_add(1, Ordering::Relaxed);
-        match err {
-            TrySendError::Full(_) => {
-                stats
-                    .total_handle_chunk_to_packet_batcher_send_full_err
-                    .fetch_add(1, Ordering::Relaxed);
+    match packet_sender.try_send(accum.clone()) {
+        Err(err) => {
+            stats
+                .total_handle_chunk_to_packet_batcher_send_err
+                .fetch_add(1, Ordering::Relaxed);
+            match err {
+                TrySendError::Full(_) => {
+                    stats
+                        .total_handle_chunk_to_packet_batcher_send_full_err
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                TrySendError::Disconnected(_) => {
+                    stats
+                        .total_handle_chunk_to_packet_batcher_send_disconnected_err
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
-            TrySendError::Disconnected(_) => {
-                stats
-                    .total_handle_chunk_to_packet_batcher_send_disconnected_err
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+            trace!("packet batch send error {:?}", err);
         }
-        trace!("packet batch send error {:?}", err);
-    } else {
-        stats
-            .total_packets_sent_for_batching
-            .fetch_add(1, Ordering::Relaxed);
-        stats
-            .total_bytes_sent_for_batching
-            .fetch_add(bytes_sent, Ordering::Relaxed);
-        stats
-            .total_chunks_sent_for_batching
-            .fetch_add(chunks_sent, Ordering::Relaxed);
+        _ => {
+            stats
+                .total_packets_sent_for_batching
+                .fetch_add(1, Ordering::Relaxed);
+            stats
+                .total_bytes_sent_for_batching
+                .fetch_add(bytes_sent, Ordering::Relaxed);
+            stats
+                .total_chunks_sent_for_batching
+                .fetch_add(chunks_sent, Ordering::Relaxed);
 
-        match peer_type {
-            ConnectionPeerType::Unstaked => {
-                stats
-                    .total_unstaked_packets_sent_for_batching
-                    .fetch_add(1, Ordering::Relaxed);
+            match peer_type {
+                ConnectionPeerType::Unstaked => {
+                    stats
+                        .total_unstaked_packets_sent_for_batching
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+                ConnectionPeerType::Staked(_) => {
+                    stats
+                        .total_staked_packets_sent_for_batching
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
-            ConnectionPeerType::Staked(_) => {
-                stats
-                    .total_staked_packets_sent_for_batching
-                    .fetch_add(1, Ordering::Relaxed);
-            }
+
+            trace!("sent {} byte packet for batching", bytes_sent);
         }
-
-        trace!("sent {} byte packet for batching", bytes_sent);
     }
 
     Ok(StreamState::Finished)
@@ -1566,14 +1575,14 @@ pub mod test {
             nonblocking::{
                 quic::compute_max_allowed_uni_streams,
                 testing_utilities::{
-                    check_multiple_streams, get_client_config, make_client_endpoint,
-                    setup_quic_server, SpawnTestServerResult,
+                    SpawnTestServerResult, check_multiple_streams, get_client_config,
+                    make_client_endpoint, setup_quic_server,
                 },
             },
             quic::DEFAULT_TPU_COALESCE,
         },
         assert_matches::assert_matches,
-        crossbeam_channel::{unbounded, Receiver},
+        crossbeam_channel::{Receiver, unbounded},
         quinn::{ApplicationClose, ConnectionError},
         solana_keypair::Keypair,
         solana_net_utils::bind_to_localhost,
@@ -1594,11 +1603,14 @@ pub mod test {
         }
         let mut received = 0;
         loop {
-            if let Ok(_x) = receiver.try_recv() {
-                received += 1;
-                info!("got {}", received);
-            } else {
-                sleep(Duration::from_millis(500)).await;
+            match receiver.try_recv() {
+                Ok(_x) => {
+                    received += 1;
+                    info!("got {}", received);
+                }
+                _ => {
+                    sleep(Duration::from_millis(500)).await;
+                }
             }
             if received >= total {
                 break;
@@ -1651,11 +1663,14 @@ pub mod test {
         while now.elapsed().as_secs() < 5 {
             // We're running in an async environment, we (almost) never
             // want to block
-            if let Ok(packets) = receiver.try_recv() {
-                total_packets += packets.len();
-                all_packets.push(packets)
-            } else {
-                sleep(Duration::from_secs(1)).await;
+            match receiver.try_recv() {
+                Ok(packets) => {
+                    total_packets += packets.len();
+                    all_packets.push(packets)
+                }
+                _ => {
+                    sleep(Duration::from_secs(1)).await;
+                }
             }
             if total_packets >= num_expected_packets {
                 break;
@@ -1673,7 +1688,8 @@ pub mod test {
         let conn1 = Arc::new(make_client_endpoint(&server_address, None).await);
 
         // Send a full size packet with single byte writes.
-        if let Ok(mut s1) = conn1.open_uni().await {
+        let outgoing_uni_stream = conn1.open_uni().await;
+        if let Ok(mut s1) = outgoing_uni_stream {
             for _ in 0..PACKET_DATA_SIZE {
                 // Ignoring any errors here. s1.finish() will test the error condition
                 s1.write_all(&[0u8]).await.unwrap_or_default();
@@ -1750,10 +1766,14 @@ pub mod test {
         let mut i = 0;
         let start = Instant::now();
         while i < num_packets && start.elapsed().as_secs() < 2 {
-            if let Ok(batch) = pkt_batch_receiver.try_recv() {
-                i += batch.len();
-            } else {
-                sleep(Duration::from_millis(1)).await;
+            let pkt_batch_try_recv_r = pkt_batch_receiver.try_recv();
+            match pkt_batch_try_recv_r {
+                Ok(batch) => {
+                    i += batch.len();
+                }
+                _ => {
+                    sleep(Duration::from_millis(1)).await;
+                }
             }
         }
         assert_eq!(i, num_packets);
@@ -2180,32 +2200,36 @@ pub mod test {
 
         // We should NOT be able to add more entries than max_connections_per_peer, since we are
         // using the same peer pubkey.
-        assert!(table
-            .try_add_connection(
-                ConnectionTableKey::Pubkey(pubkey),
-                0,
-                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                None,
-                ConnectionPeerType::Unstaked,
-                10,
-                max_connections_per_peer,
-            )
-            .is_none());
+        assert!(
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    10,
+                    max_connections_per_peer,
+                )
+                .is_none()
+        );
 
         // We should be able to add an entry from another peer pubkey
         let num_entries = max_connections_per_peer + 1;
         let pubkey2 = Pubkey::new_unique();
-        assert!(table
-            .try_add_connection(
-                ConnectionTableKey::Pubkey(pubkey2),
-                0,
-                ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
-                None,
-                ConnectionPeerType::Unstaked,
-                10,
-                max_connections_per_peer,
-            )
-            .is_some());
+        assert!(
+            table
+                .try_add_connection(
+                    ConnectionTableKey::Pubkey(pubkey2),
+                    0,
+                    ClientConnectionTracker::new(stats.clone(), 1000).unwrap(),
+                    None,
+                    ConnectionPeerType::Unstaked,
+                    10,
+                    max_connections_per_peer,
+                )
+                .is_some()
+        );
 
         assert_eq!(table.total_size, num_entries);
 
@@ -2419,10 +2443,14 @@ pub mod test {
         let start_time = tokio::time::Instant::now();
         let mut num_txs_received = 0;
         while num_txs_received < expected_num_txs && start_time.elapsed() < Duration::from_secs(2) {
-            if let Ok(packets) = receiver.try_recv() {
-                num_txs_received += packets.len();
-            } else {
-                sleep(Duration::from_millis(100)).await;
+            let try_receive_r = receiver.try_recv();
+            match try_receive_r {
+                Ok(packets) => {
+                    num_txs_received += packets.len();
+                }
+                _ => {
+                    sleep(Duration::from_millis(100)).await;
+                }
             }
         }
         assert_eq!(expected_num_txs, num_txs_received);

@@ -263,7 +263,9 @@ mod tests {
             &ipv4local,
             &ipv4broadcast,
         ];
-        match multi_target_send(&sender, &packets[0], &dest_refs).await {
+        let send_result: Result<(), SendPktsError> =
+            multi_target_send(&sender, &packets[0], &dest_refs).await;
+        match send_result {
             Ok(()) => panic!(),
             Err(SendPktsError::IoError(ioerror, num_failed)) => {
                 assert_matches!(ioerror.kind(), ErrorKind::PermissionDenied);

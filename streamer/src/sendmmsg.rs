@@ -244,7 +244,7 @@ mod tests {
         crate::{
             packet::Packet,
             recvmmsg::recv_mmsg,
-            sendmmsg::{batch_send, multi_target_send, SendPktsError},
+            sendmmsg::{SendPktsError, batch_send, multi_target_send},
         },
         assert_matches::assert_matches,
         solana_net_utils::{bind_to_localhost, bind_to_unspecified},
