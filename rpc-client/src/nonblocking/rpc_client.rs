@@ -3595,7 +3595,7 @@ impl RpcClient {
 
         response
             .map(|result_json: Value| {
-                if result_json.is_null() {
+                if result_json.is_null() || result_json["value"].is_null() {
                     return Err(
                         RpcError::ForUser(format!("AccountNotFound: pubkey={pubkey}")).into(),
                     );
