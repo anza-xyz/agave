@@ -2032,12 +2032,11 @@ pub fn process_split_stake(
                 )))
             }
         };
-        let current_balance =
-            if let Ok(stake_account) = rpc_client.get_account(&split_stake_account_address) {
-                check_stake_account(stake_account)?
-            } else {
-                0
-            };
+        let account = rpc_client.get_account(&split_stake_account_address);
+        let current_balance = match account {
+            Ok(stake_account) => check_stake_account(stake_account)?,
+            _ => 0,
+        };
 
         let rent_exempt_reserve =
             rpc_client.get_minimum_balance_for_rent_exemption(StakeStateV2::size_of())?;
@@ -2600,10 +2599,14 @@ pub(crate) fn fetch_epoch_rewards(
         };
 
     while num_epochs > 0 {
-        if let Ok(rewards) = rpc_client.get_inflation_reward(&[*address], Some(rewards_epoch)) {
-            process_reward(&rewards[0])?;
-        } else {
-            eprintln!("Rewards not available for epoch {rewards_epoch}");
+        let reward = rpc_client.get_inflation_reward(&[*address], Some(rewards_epoch));
+        match reward {
+            Ok(rewards) => {
+                process_reward(&rewards[0])?;
+            }
+            _ => {
+                eprintln!("Rewards not available for epoch {rewards_epoch}");
+            }
         }
         num_epochs = num_epochs.saturating_sub(1);
         rewards_epoch = rewards_epoch.saturating_add(1);

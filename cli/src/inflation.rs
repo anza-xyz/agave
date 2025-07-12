@@ -79,7 +79,7 @@ pub fn process_inflation_subcommand(
 ) -> ProcessResult {
     match inflation_subcommand {
         InflationCliCommand::Show => process_show(rpc_client, config),
-        InflationCliCommand::Rewards(ref addresses, rewards_epoch) => {
+        InflationCliCommand::Rewards(addresses, rewards_epoch) => {
             process_rewards(rpc_client, config, addresses, *rewards_epoch)
         }
     }
