@@ -265,7 +265,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 keys.insert(key);
             }
         }
-        keys.into_iter().collect::<Vec<_>>()
+        keys.into_iter().collect()
     }
 
     fn load_from_disk(&self, pubkey: &Pubkey) -> Option<(SlotList<U>, RefCount)> {
