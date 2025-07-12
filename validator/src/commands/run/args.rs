@@ -1872,6 +1872,32 @@ mod tests {
         verify_args_struct_by_command(&default_args, args, expected_args);
     }
 
+    pub fn verify_args_struct_by_command_run_is_error_with_identity_setup(
+        default_run_args: RunArgs,
+        args: Vec<&str>,
+    ) {
+        let default_args = DefaultArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity_keypair.insecure_clone();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
+
+        let app = add_args(App::new("run_command"), &default_args)
+            .args(&thread_args(&default_args.thread_args));
+
+        crate::commands::tests::verify_args_struct_by_command_is_error::<RunArgs>(
+            app,
+            [
+                &["run_command"],
+                &["--identity", file.to_str().unwrap()][..],
+                &args[..],
+            ]
+            .concat(),
+        );
+    }
+
     #[test]
     fn verify_args_struct_by_command_run_with_log() {
         let default_run_args = RunArgs::default();

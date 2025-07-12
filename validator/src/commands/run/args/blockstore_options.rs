@@ -61,7 +61,11 @@ mod tests {
     use {
         super::*,
         crate::commands::run::args::{
-            tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
+            tests::{
+                verify_args_struct_by_command_run_is_error_with_identity_setup,
+                verify_args_struct_by_command_run_with_identity_setup,
+            },
+            RunArgs,
         },
     };
 
@@ -215,6 +219,15 @@ mod tests {
                 default_run_args,
                 vec!["--rocksdb-ledger-compression", "zlib"],
                 expected_args,
+            );
+        }
+
+        // invalid
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            verify_args_struct_by_command_run_is_error_with_identity_setup(
+                default_run_args,
+                vec!["--rocksdb-ledger-compression", "invalid"],
             );
         }
     }
