@@ -217,6 +217,20 @@ pull_request_rules:
           If this PR represents a change to a native program implementation (not
           tests), please include a reviewer from the Firedancer team. And please
           keep refactors to a minimum.
+  - name: Notify about future move of zk-keygen, zk-sdk, and zk-token-sdk
+    conditions:
+      - or:
+        - files~=^zk-keygen/
+        - files~=^zk-sdk/
+        - files~=^zk-token-sdk/
+    actions:
+      comment:
+        message: |
+          For your information, the `zk-keygen` and `zk-sdk` directories are
+          scheduled to be relocated to `solana-program/zk-elgamal-proof` in a
+          separate repository. Additionally, the `zk-token-sdk` directory will
+          be removed. Please take these upcoming changes into account when
+          making modifications.
 
 commands_restrictions:
   # The author of copied PRs is the Mergify user.
