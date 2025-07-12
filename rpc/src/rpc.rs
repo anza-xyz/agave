@@ -5376,7 +5376,7 @@ pub mod tests {
         // make a non-circulating account one of the largest accounts
         let non_circulating_key = &non_circulating_accounts()[0];
         let bank = rpc.working_bank();
-        bank.process_transaction(&system_transaction::transfer(
+        bank.process_transaction(system_transaction::transfer(
             &rpc.mint_keypair,
             non_circulating_key,
             500_000,
@@ -7658,7 +7658,7 @@ pub mod tests {
                 bank.last_blockhash(),
             );
 
-            bank.process_transaction(&transaction)
+            bank.process_transaction(transaction)
                 .expect("process transaction");
         };
 

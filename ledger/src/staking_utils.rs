@@ -36,7 +36,7 @@ pub(crate) mod tests {
                 keypairs,
                 bank.last_blockhash(),
             );
-            bank.process_transaction(&tx).unwrap();
+            bank.process_transaction(tx).unwrap();
         }
 
         process_instructions(

@@ -1394,7 +1394,7 @@ pub(crate) mod tests {
                 .unwrap()
                 .get(1)
                 .unwrap()
-                .process_transaction(&tx)
+                .process_transaction(tx)
                 .unwrap();
             let commitment_slots = CommitmentSlots {
                 slot: 1,
@@ -1796,7 +1796,7 @@ pub(crate) mod tests {
             .unwrap()
             .get(0)
             .unwrap()
-            .process_transaction(&tx)
+            .process_transaction(tx)
             .unwrap();
 
         let exit = Arc::new(AtomicBool::new(false));
@@ -1908,7 +1908,7 @@ pub(crate) mod tests {
             &stake::program::id(),
         );
 
-        bank1.process_transaction(&tx).unwrap();
+        bank1.process_transaction(tx).unwrap();
 
         let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
@@ -1925,7 +1925,7 @@ pub(crate) mod tests {
         );
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
 
-        bank2.process_transaction(&tx).unwrap();
+        bank2.process_transaction(tx).unwrap();
 
         let bank3 = Bank::new_from_parent(bank2, &Pubkey::default(), 3);
         bank_forks.write().unwrap().insert(bank3);
@@ -1942,7 +1942,7 @@ pub(crate) mod tests {
         );
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
 
-        bank3.process_transaction(&tx).unwrap();
+        bank3.process_transaction(tx).unwrap();
 
         // now add programSubscribe at the "confirmed" commitment level
         let exit = Arc::new(AtomicBool::new(false));
@@ -2100,7 +2100,7 @@ pub(crate) mod tests {
             &stake::program::id(),
         );
 
-        bank1.process_transaction(&tx).unwrap();
+        bank1.process_transaction(tx).unwrap();
 
         let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
@@ -2117,7 +2117,7 @@ pub(crate) mod tests {
         );
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
 
-        bank2.process_transaction(&tx).unwrap();
+        bank2.process_transaction(tx).unwrap();
 
         // now add programSubscribe at the "confirmed" commitment level
         let exit = Arc::new(AtomicBool::new(false));
@@ -2213,7 +2213,7 @@ pub(crate) mod tests {
             &stake::program::id(),
         );
 
-        bank1.process_transaction(&tx).unwrap();
+        bank1.process_transaction(tx).unwrap();
 
         let bank2 = Bank::new_from_parent(bank1, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
@@ -2230,7 +2230,7 @@ pub(crate) mod tests {
         );
         let bank2 = bank_forks.read().unwrap().get(2).unwrap();
 
-        bank2.process_transaction(&tx).unwrap();
+        bank2.process_transaction(tx).unwrap();
 
         // now add programSubscribe at the "confirmed" commitment level
         let exit = Arc::new(AtomicBool::new(false));
@@ -2331,7 +2331,7 @@ pub(crate) mod tests {
         );
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
 
-        bank3.process_transaction(&tx).unwrap();
+        bank3.process_transaction(tx).unwrap();
         bank3.freeze();
         OptimisticallyConfirmedBankTracker::process_notification(
             BankNotification::Frozen(bank3),
@@ -2394,7 +2394,7 @@ pub(crate) mod tests {
             .unwrap()
             .get(0)
             .unwrap()
-            .process_transaction(&past_bank_tx)
+            .process_transaction(past_bank_tx.clone())
             .unwrap();
 
         let next_bank = Bank::new_from_parent(
@@ -2409,7 +2409,7 @@ pub(crate) mod tests {
             .unwrap()
             .get(1)
             .unwrap()
-            .process_transaction(&processed_tx)
+            .process_transaction(processed_tx.clone())
             .unwrap();
         let bank1 = bank_forks.read().unwrap().get(1).unwrap().clone();
 
@@ -2747,7 +2747,7 @@ pub(crate) mod tests {
 
         // Add the transaction to the 1st bank and then freeze the bank
         let bank1 = bank_forks.write().unwrap().get(1).unwrap();
-        bank1.process_transaction(&tx).unwrap();
+        bank1.process_transaction(tx.clone()).unwrap();
         bank1.freeze();
 
         // Add the same transaction to the unfrozen 2nd bank
@@ -2756,7 +2756,7 @@ pub(crate) mod tests {
             .unwrap()
             .get(2)
             .unwrap()
-            .process_transaction(&tx)
+            .process_transaction(tx)
             .unwrap();
 
         // First, notify the unfrozen bank first to queue pending notification

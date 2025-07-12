@@ -5432,7 +5432,7 @@ pub(crate) mod tests {
             &my_node_pubkey,
             1,
         );
-        bank1.process_transaction(&vote_tx).unwrap();
+        bank1.process_transaction(vote_tx).unwrap();
         bank1.freeze();
 
         // Insert the bank that contains a vote for slot 0, which confirms slot 0
@@ -6319,7 +6319,7 @@ pub(crate) mod tests {
             &validator0_keypairs.vote_keypair,
             None,
         );
-        bank7.process_transaction(&vote_tx).unwrap();
+        bank7.process_transaction(vote_tx.clone()).unwrap();
         assert!(bank7.get_signature_status(&vote_tx.signatures[0]).is_some());
 
         // Both signatures should exist in status cache
@@ -7684,9 +7684,9 @@ pub(crate) mod tests {
         );
 
         let mut cursor = Cursor::default();
-        let votes = cluster_info.get_votes(&mut cursor);
+        let mut votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
-        let vote_tx = &votes[0];
+        let vote_tx = votes.pop().unwrap();
         assert_eq!(vote_tx.message.recent_blockhash, bank0.last_blockhash());
         assert_eq!(
             tower.last_vote_tx_blockhash(),
@@ -7917,9 +7917,9 @@ pub(crate) mod tests {
         );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
-        let votes = cluster_info.get_votes(&mut cursor);
+        let mut votes = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
-        let vote_tx = &votes[0];
+        let vote_tx = votes.pop().unwrap();
         assert_eq!(
             vote_tx.message.recent_blockhash,
             expired_bank.last_blockhash()
@@ -7938,7 +7938,9 @@ pub(crate) mod tests {
             &Pubkey::default(),
             expired_bank_child_slot,
         );
-        expired_bank_child.process_transaction(vote_tx).unwrap();
+        expired_bank_child
+            .process_transaction(vote_tx.clone())
+            .unwrap();
         let vote_account = expired_bank_child
             .get_vote_account(&my_vote_pubkey)
             .unwrap();
@@ -8058,9 +8060,9 @@ pub(crate) mod tests {
             Arc::new(connection_cache),
         );
 
-        let votes = cluster_info.get_votes(cursor);
+        let mut votes = cluster_info.get_votes(cursor);
         assert_eq!(votes.len(), 1);
-        let vote_tx = &votes[0];
+        let vote_tx = votes.pop().unwrap();
         assert_eq!(
             vote_tx.message.recent_blockhash,
             parent_bank.last_blockhash()

@@ -61,8 +61,9 @@ impl SyncClient for BankClient {
     ) -> Result<Signature> {
         let blockhash = self.bank.last_blockhash();
         let transaction = Transaction::new(keypairs, message, blockhash);
-        self.bank.process_transaction(&transaction)?;
-        Ok(transaction.signatures.first().cloned().unwrap_or_default())
+        let signature = transaction.signatures.first().cloned().unwrap_or_default();
+        self.bank.process_transaction(transaction)?;
+        Ok(signature)
     }
 
     /// Create and process a transaction from a single instruction.

@@ -130,7 +130,7 @@ impl VoteSimulator {
                         None,
                     );
                     info!("voting {} {}", parent_bank.slot(), parent_bank.hash());
-                    new_bank.process_transaction(&vote_tx).unwrap();
+                    new_bank.process_transaction(vote_tx).unwrap();
 
                     // Check the vote landed
                     let vote_account = new_bank

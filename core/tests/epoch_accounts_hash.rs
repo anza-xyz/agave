@@ -284,7 +284,7 @@ fn test_epoch_accounts_hash_basic(test_environment: TestEnvironment) {
                 1,
                 bank.last_blockhash(),
             );
-            bank.process_transaction(&transaction).unwrap();
+            bank.process_transaction(transaction).unwrap();
             bank.fill_bank_with_ticks_for_tests();
 
             bank
@@ -397,7 +397,7 @@ fn test_snapshots_have_expected_epoch_accounts_hash() {
                 1,
                 bank.last_blockhash(),
             );
-            bank.process_transaction(&transaction).unwrap();
+            bank.process_transaction(transaction).unwrap();
             bank.fill_bank_with_ticks_for_tests();
 
             bank
@@ -516,7 +516,7 @@ fn test_background_services_request_handling_for_epoch_accounts_hash() {
                 1,
                 bank.last_blockhash(),
             );
-            bank.process_transaction(&transaction).unwrap();
+            bank.process_transaction(transaction).unwrap();
             bank.fill_bank_with_ticks_for_tests();
 
             bank

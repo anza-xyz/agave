@@ -573,7 +573,7 @@ mod tests {
                 &validator_vote_keypairs.vote_keypair,
                 None,
             );
-            bank.process_transaction(&vote).unwrap();
+            bank.process_transaction(vote).unwrap();
         }
 
         let working_bank = bank_forks.read().unwrap().working_bank();
@@ -602,7 +602,7 @@ mod tests {
             &validator_vote_keypairs.vote_keypair,
             None,
         );
-        bank34.process_transaction(&vote33).unwrap();
+        bank34.process_transaction(vote33).unwrap();
 
         let working_bank = bank_forks.read().unwrap().working_bank();
         let vote_state = get_vote_state(vote_pubkey, &working_bank);
@@ -684,7 +684,7 @@ mod tests {
                 &validator_vote_keypairs.vote_keypair,
                 None,
             );
-            bank.process_transaction(&vote).unwrap();
+            bank.process_transaction(vote).unwrap();
         }
 
         let working_bank = bank_forks.read().unwrap().working_bank();
