@@ -3326,37 +3326,42 @@ impl Bank {
             units_consumed,
             loaded_accounts_data_size,
         ) = match processing_result {
-            Ok(processed_tx) => match processed_tx {
-                ProcessedTransaction::Executed(executed_tx) => {
-                    let details = executed_tx.execution_details;
-                    let post_simulation_accounts = executed_tx
-                        .loaded_transaction
-                        .accounts
-                        .into_iter()
-                        .take(number_of_accounts)
-                        .collect::<Vec<_>>();
-                    (
-                        post_simulation_accounts,
-                        details.status,
-                        Some(executed_tx.loaded_transaction.fee_details.total_fee()),
-                        details.log_messages,
-                        details.return_data,
-                        details.inner_instructions,
-                        details.executed_units,
-                        executed_tx.loaded_transaction.loaded_accounts_data_size,
-                    )
+            Ok(processed_tx) => {
+                let executed_units = processed_tx.executed_units();
+                let loaded_accounts_data_size = processed_tx.loaded_accounts_data_size();
+
+                match processed_tx {
+                    ProcessedTransaction::Executed(executed_tx) => {
+                        let details = executed_tx.execution_details;
+                        let post_simulation_accounts = executed_tx
+                            .loaded_transaction
+                            .accounts
+                            .into_iter()
+                            .take(number_of_accounts)
+                            .collect::<Vec<_>>();
+                        (
+                            post_simulation_accounts,
+                            details.status,
+                            Some(executed_tx.loaded_transaction.fee_details.total_fee()),
+                            details.log_messages,
+                            details.return_data,
+                            details.inner_instructions,
+                            executed_units,
+                            loaded_accounts_data_size,
+                        )
+                    }
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => (
+                        vec![],
+                        Err(fees_only_tx.load_error),
+                        Some(fees_only_tx.fee_details.total_fee()),
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
                 }
-                ProcessedTransaction::FeesOnly(fees_only_tx) => (
-                    vec![],
-                    Err(fees_only_tx.load_error),
-                    Some(fees_only_tx.fee_details.total_fee()),
-                    None,
-                    None,
-                    None,
-                    0,
-                    fees_only_tx.rollback_accounts.data_size() as u32,
-                ),
-            },
+            }
             Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
         };
         let logs = logs.unwrap_or_default();
