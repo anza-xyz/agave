@@ -259,26 +259,26 @@ impl BroadcastHandler {
     }
 
     fn handle(&self, notification: RpcNotification) -> Result<Option<Arc<String>>, Error> {
-        if let Entry::Occupied(entry) = self
+        match self
             .current_subscriptions
             .entry(notification.subscription_id)
         {
-            increment_sent_notification_stats(
-                entry.get().params(),
-                &notification,
-                &self.sent_stats,
-            );
-
-            if notification.is_final {
-                entry.remove();
+            Entry::Occupied(entry) => {
+                increment_sent_notification_stats(
+                    entry.get().params(),
+                    &notification,
+                    &self.sent_stats,
+                );
+                if notification.is_final {
+                    entry.remove();
+                }
+                notification
+                    .json
+                    .upgrade()
+                    .ok_or(Error::NotificationIsGone)
+                    .map(Some)
             }
-            notification
-                .json
-                .upgrade()
-                .ok_or(Error::NotificationIsGone)
-                .map(Some)
-        } else {
-            Ok(None)
+            _ => Ok(None),
         }
     }
 }

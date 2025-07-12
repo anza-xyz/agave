@@ -986,21 +986,23 @@ impl JsonRpcRequestProcessor {
 
         let mut slot_leaders = Vec::with_capacity(limit);
         while slot_leaders.len() < limit {
-            if let Some(leader_schedule) =
-                self.leader_schedule_cache.get_epoch_leader_schedule(epoch)
-            {
-                slot_leaders.extend(
-                    leader_schedule
-                        .get_slot_leaders()
-                        .iter()
-                        .skip(slot_index as usize)
-                        .take(limit.saturating_sub(slot_leaders.len())),
-                );
-            } else {
-                return Err(Error::invalid_params(format!(
-                    "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
-                )));
-            }
+            let leader_schedule = self.leader_schedule_cache.get_epoch_leader_schedule(epoch);
+            match leader_schedule {
+                Some(leader_schedule) => {
+                    slot_leaders.extend(
+                        leader_schedule
+                            .get_slot_leaders()
+                            .iter()
+                            .skip(slot_index as usize)
+                            .take(limit.saturating_sub(slot_leaders.len())),
+                    );
+                }
+                None => {
+                    return Err(Error::invalid_params(format!(
+                        "Invalid slot range: leader schedule for epoch {epoch} is unavailable"
+                    )));
+                }
+            };
 
             epoch += 1;
             slot_index = 0;
@@ -1375,7 +1377,9 @@ impl JsonRpcRequestProcessor {
                             || confirmed_block.block_height.is_none()
                         {
                             let r_bank_forks = self.bank_forks.read().unwrap();
-                            if let Some(bank) = r_bank_forks.get(slot) {
+                            let bank = r_bank_forks.get(slot);
+
+                            if let Some(bank) = bank {
                                 if confirmed_block.block_time.is_none() {
                                     confirmed_block.block_time = Some(bank.clock().unix_timestamp);
                                 }
@@ -1603,10 +1607,10 @@ impl JsonRpcRequestProcessor {
             Ok(result.ok())
         } else {
             let r_bank_forks = self.bank_forks.read().unwrap();
-            if let Some(bank) = r_bank_forks.get(slot) {
-                Ok(Some(bank.clock().unix_timestamp))
-            } else {
-                Err(RpcCustomError::BlockNotAvailable { slot }.into())
+            let bank = r_bank_forks.get(slot);
+            match bank {
+                Some(bank) => Ok(Some(bank.clock().unix_timestamp)),
+                _ => Err(RpcCustomError::BlockNotAvailable { slot }.into()),
             }
         }
     }
@@ -1657,10 +1661,11 @@ impl JsonRpcRequestProcessor {
         let mut statuses: Vec<Option<TransactionStatus>> = vec![];
 
         for signature in signatures {
-            let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
+            let status = self.get_transaction_status(signature, &bank);
+            let status = if let Some(status) = status {
                 Some(status)
             } else if search_transaction_history {
-                if let Some(status) = self
+                match self
                     .blockstore
                     .get_rooted_transaction_status(signature)
                     .map_err(|_| Error::internal_error())?
@@ -1680,17 +1685,15 @@ impl JsonRpcRequestProcessor {
                             err,
                             confirmation_status: Some(TransactionConfirmationStatus::Finalized),
                         }
-                    })
-                {
-                    Some(status)
-                } else if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
-                    bigtable_ledger_storage
-                        .get_signature_status(&signature)
-                        .await
-                        .map(Some)
-                        .unwrap_or(None)
-                } else {
-                    None
+                    }) {
+                    Some(status) => Some(status),
+                    None => match &self.bigtable_ledger_storage {
+                        Some(bigtable_ledger_storage) => {
+                            let future = bigtable_ledger_storage.get_signature_status(&signature);
+                            future.await.map(Some).unwrap_or(None)
+                        }
+                        None => None,
+                    },
                 }
             } else {
                 None
