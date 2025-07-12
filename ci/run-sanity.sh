@@ -62,7 +62,7 @@ do
   $solana_ledger_tool create-snapshot --ledger config/ledger "$snapshot_slot" config/snapshot-ledger
   cp config/ledger/genesis.tar.bz2 config/snapshot-ledger
   $solana_ledger_tool copy --ledger config/ledger \
-    --target-db config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
+    --target-ledger config/snapshot-ledger --starting-slot "$snapshot_slot" --ending-slot "$latest_slot"
 
   set -x
   $solana_ledger_tool --ledger config/snapshot-ledger slot "$latest_slot" --verbose --verbose \

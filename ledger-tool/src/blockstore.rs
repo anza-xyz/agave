@@ -327,11 +327,11 @@ pub fn blockstore_subcommands<'a, 'b>(hidden: bool) -> Vec<App<'a, 'b>> {
             .arg(&starting_slot_arg)
             .arg(&ending_slot_arg)
             .arg(
-                Arg::with_name("target_db")
-                    .long("target-db")
+                Arg::with_name("target_ledger")
+                    .long("target-ledger")
                     .value_name("DIR")
                     .takes_value(true)
-                    .help("Target db"),
+                    .help("Target ledger directory to write inner \"rocksdb\" within."),
             ),
         SubCommand::with_name("dead-slots")
             .about("Print all the dead slots in the ledger")
@@ -662,11 +662,15 @@ fn do_blockstore_process_command(ledger_path: &Path, matches: &ArgMatches<'_>) -
         ("copy", Some(arg_matches)) => {
             let starting_slot = value_t_or_exit!(arg_matches, "starting_slot", Slot);
             let ending_slot = value_t_or_exit!(arg_matches, "ending_slot", Slot);
-            let target_db = PathBuf::from(value_t_or_exit!(arg_matches, "target_db", String));
+            let target_ledger =
+                PathBuf::from(value_t_or_exit!(arg_matches, "target_ledger", String));
 
             let source = crate::open_blockstore(&ledger_path, arg_matches, AccessType::Secondary);
-            let target =
-                crate::open_blockstore(&target_db, arg_matches, AccessType::PrimaryForMaintenance);
+            let target = crate::open_blockstore(
+                &target_ledger,
+                arg_matches,
+                AccessType::PrimaryForMaintenance,
+            );
 
             for (slot, _meta) in source.slot_meta_iterator(starting_slot)? {
                 if slot > ending_slot {
