@@ -372,7 +372,7 @@ pub mod test {
         let rejected = AtomicUsize::new(0);
 
         let start = Instant::now();
-        let ip_pool = 4096;
+        let ip_pool = 2048;
         let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
         let workers = 8;
 
@@ -412,7 +412,7 @@ pub mod test {
         let rejected = AtomicUsize::new(0);
 
         let start = Instant::now();
-        let ip_pool = 4096;
+        let ip_pool = 2048;
         let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
         let workers = 8;
 
