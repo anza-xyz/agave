@@ -259,7 +259,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
         // Next, collect keys from the disk.
         if let Some(disk) = self.bucket.as_ref() {
-            for key in disk.keys() {
+            let disk_keys = disk.keys();
+            keys.reserve(disk_keys.len());
+            for key in disk_keys {
                 keys.insert(key);
             }
         }
