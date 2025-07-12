@@ -2167,28 +2167,12 @@ fn test_bank_parent_account_spend() {
     assert_eq!(parent.get_signature_status(&tx.signatures[0]), None);
 }
 
-#[test_case(false; "accounts lt hash disabled")]
-#[test_case(true; "accounts lt hash enabled")]
-fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
-    let (mut genesis_config, mint_keypair) =
+#[test]
+fn test_bank_hash_internal_state() {
+    let (genesis_config, mint_keypair) =
         create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
-    if !is_accounts_lt_hash_enabled {
-        // Disable the accounts lt hash feature by removing its account from genesis.
-        genesis_config
-            .accounts
-            .remove(&feature_set::accounts_lt_hash::id())
-            .unwrap();
-    }
     let (bank0, _bank_forks0) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let (bank1, bank_forks1) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    assert_eq!(
-        bank0.is_accounts_lt_hash_enabled(),
-        is_accounts_lt_hash_enabled,
-    );
-    assert_eq!(
-        bank1.is_accounts_lt_hash_enabled(),
-        is_accounts_lt_hash_enabled,
-    );
 
     let initial_state = bank0.hash_internal_state();
     assert_eq!(bank1.hash_internal_state(), initial_state);
@@ -2217,28 +2201,12 @@ fn test_bank_hash_internal_state(is_accounts_lt_hash_enabled: bool) {
     assert!(bank2.verify_accounts_hash(None, VerifyAccountsHashConfig::default_for_test(), None,));
 }
 
-#[test_case(false; "accounts lt hash disabled")]
-#[test_case(true; "accounts lt hash enabled")]
-fn test_bank_hash_internal_state_verify(is_accounts_lt_hash_enabled: bool) {
+#[test]
+fn test_bank_hash_internal_state_verify() {
     for pass in 0..4 {
-        let (mut genesis_config, mint_keypair) =
+        let (genesis_config, mint_keypair) =
             create_genesis_config_no_tx_fee_no_rent(sol_to_lamports(1.));
-        if !is_accounts_lt_hash_enabled {
-            // Disable the accounts lt hash feature by removing its account from genesis.
-            genesis_config
-                .accounts
-                .remove(&feature_set::accounts_lt_hash::id())
-                .unwrap();
-            genesis_config
-                .accounts
-                .remove(&feature_set::remove_accounts_delta_hash::id())
-                .unwrap();
-        }
         let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-        assert_eq!(
-            bank0.is_accounts_lt_hash_enabled(),
-            is_accounts_lt_hash_enabled,
-        );
 
         let amount = genesis_config.rent.minimum_balance(0);
         let pubkey = solana_pubkey::new_rand();
@@ -2314,17 +2282,15 @@ fn test_bank_hash_internal_state_verify(is_accounts_lt_hash_enabled: bool) {
                 None,
             ));
 
-            if is_accounts_lt_hash_enabled {
-                // Verifying the accounts lt hash is only intended to be called at startup, and
-                // normally in the background.  Since here we're *not* at startup, and doing it
-                // in the foreground, the verification uses the accounts index.  The test just
-                // rooted bank2, and will root bank3 next; but they are on different forks,
-                // which is not valid.  This causes the accounts index to see accounts from
-                // bank2 and bank3, which causes verifying bank3's accounts lt hash to fail.
-                // To workaround this "issue", we cannot root bank2 when the accounts lt hash
-                // is enabled.
-                continue;
-            }
+            // Verifying the accounts lt hash is only intended to be called at startup, and
+            // normally in the background.  Since here we're *not* at startup, and doing it
+            // in the foreground, the verification uses the accounts index.  The test just
+            // rooted bank2, and will root bank3 next; but they are on different forks,
+            // which is not valid.  This causes the accounts index to see accounts from
+            // bank2 and bank3, which causes verifying bank3's accounts lt hash to fail.
+            // To workaround this "issue", we cannot root bank2 when the accounts lt hash
+            // is enabled.
+            continue;
         }
 
         bank3.freeze();
