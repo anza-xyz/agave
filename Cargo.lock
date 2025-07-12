@@ -1327,7 +1327,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4114279215a005bc675e386011e594e1d9b800918cea18fcadadcce864a2046b"
 dependencies = [
  "borsh-derive 0.10.3",
- "hashbrown 0.13.2",
+ "hashbrown 0.12.3",
 ]
 
 [[package]]
@@ -10910,8 +10910,7 @@ dependencies = [
 [[package]]
 name = "solana-system-interface"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94d7c18cb1a91c6be5f5a8ac9276a1d7c737e39a21beba9ea710ab4b9c63bc90"
+source = "git+https://github.com/rustopian/system.git?branch=create-account-prefunded#76543c1c53e4bbd555818cf67475c6022e818bc0"
 dependencies = [
  "js-sys",
  "num-traits",
@@ -10919,6 +10918,8 @@ dependencies = [
  "serde_derive",
  "solana-decode-error",
  "solana-instruction",
+ "solana-msg",
+ "solana-program-error",
  "solana-pubkey",
  "wasm-bindgen",
 ]

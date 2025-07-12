@@ -160,7 +160,7 @@ solana-svm = { path = "../../svm", version = "=3.0.0" }
 solana-svm-callback = { path = "../../svm-callback", version = "=3.0.0" }
 solana-svm-feature-set = { path = "../../svm-feature-set", version = "=3.0.0" }
 solana-svm-transaction = { path = "../../svm-transaction", version = "=3.0.0" }
-solana-system-interface = { version = "=1.0", features = ["bincode"] }
+solana-system-interface = { version = "1.0", git = "https://github.com/rustopian/system.git", branch = "create-account-prefunded", features = ["bincode"] }
 solana-sysvar = "=2.2.2"
 solana-timings = { path = "../../timings", version = "=3.0.0" }
 solana-transaction-context = { path = "../../transaction-context", version = "=3.0.0" }
@@ -238,7 +238,7 @@ solana-svm = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-transaction = { workspace = true }
-solana-system-interface = "1.0"
+solana-system-interface = { version = "1.0", git = "https://github.com/rustopian/system.git", branch = "create-account-prefunded", features = ["bincode"] }
 solana-sysvar = "2.2.1"
 solana-timings = { workspace = true }
 solana-transaction = "2.2.2"
@@ -300,3 +300,4 @@ name = "bpf_loader"
 # and the overrides in sync.
 solana-curve25519 = { path = "../../curves/curve25519" }
 solana-zk-sdk = { path = "../../zk-sdk" }
+solana-system-interface = { version = "1.0", git = "https://github.com/rustopian/system.git", branch = "create-account-prefunded", features = ["bincode"] }
