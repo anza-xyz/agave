@@ -101,6 +101,14 @@ impl AccountStorage {
         self.map.iter().map(|iter_item| *iter_item.key()).collect()
     }
 
+    pub(crate) fn all_items(&self) -> Vec<(Slot, Arc<AccountStorageEntry>)> {
+        assert!(self.no_shrink_in_progress());
+        self.map
+            .iter()
+            .map(|iter_item| (*iter_item.key(), Arc::clone(iter_item.value())))
+            .collect()
+    }
+
     /// returns true if there is no entry for 'slot'
     #[cfg(test)]
     pub(crate) fn is_empty_entry(&self, slot: Slot) -> bool {

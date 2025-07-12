@@ -7,6 +7,7 @@ use {
         },
         active_stats::ActiveStatItem,
         cache_hash_data::{CacheHashData, CacheHashDataFileReference},
+        io_uring::sequential_file_reader::SequentialFileReader,
         pubkey_bins::PubkeyBinCalculator24,
         sorted_storages::SortedStorages,
     },
@@ -382,11 +383,14 @@ impl AccountsDb {
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts(|_offset, account| {
-            if scanner.filter(account.pubkey()) {
-                scanner.found_account(&LoadedAccount::Stored(account))
-            }
-        })
+        let mut r_reader = SequentialFileReader::new().unwrap();
+        storage
+            .accounts
+            .scan_accounts(&mut r_reader, |_offset, account| {
+                if scanner.filter(account.pubkey()) {
+                    scanner.found_account(&LoadedAccount::Stored(account))
+                }
+            })
     }
 }
 
@@ -707,14 +711,17 @@ mod tests {
                 .iter()
                 .map(|storage| {
                     let slot = storage.slot();
+                    let mut r_reader = SequentialFileReader::new().unwrap();
+
                     let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                     let mut all_accounts = Vec::default();
                     storage
                         .accounts
-                        .scan_accounts(|_offset, acct| {
+                        .scan_accounts(&mut r_reader, |_offset, acct| {
                             all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
                         })
                         .expect("must scan accounts storage");
+
                     let accounts = all_accounts
                         .iter()
                         .map(|stored| (&stored.0, &stored.1))
@@ -746,9 +753,11 @@ mod tests {
                 let slot = storage.slot() + max_slot;
                 let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                 let mut all_accounts = Vec::default();
+
+                let mut r_reader = SequentialFileReader::new().unwrap();
                 storage
                     .accounts
-                    .scan_accounts(|_offset, acct| {
+                    .scan_accounts(&mut r_reader, |_offset, acct| {
                         all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
                     })
                     .expect("must scan accounts storage");

@@ -1,5 +1,8 @@
+use std::fs::File;
+
 #[cfg(feature = "dev-context-only-utils")]
 use crate::append_vec::StoredAccountMeta;
+use crate::io_uring::{memory::LargeBuffer, sequential_file_reader::SequentialFileReader};
 use {
     crate::{
         account_info::{AccountInfo, Offset},
@@ -324,10 +327,11 @@ impl AccountsFile {
     /// as it can potentially read less and be faster.
     pub fn scan_accounts(
         &self,
+        r_reader: &mut SequentialFileReader<LargeBuffer>,
         callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_accounts(callback),
+            Self::AppendVec(av) => av.scan_accounts(r_reader, callback),
             Self::TieredStorage(ts) => {
                 if let Some(reader) = ts.reader() {
                     reader.scan_accounts(callback)?;
@@ -344,10 +348,11 @@ impl AccountsFile {
     #[cfg(feature = "dev-context-only-utils")]
     pub fn scan_accounts_stored_meta(
         &self,
+        r_reader: &mut SequentialFileReader<LargeBuffer>,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
         match self {
-            Self::AppendVec(av) => av.scan_accounts_stored_meta(callback),
+            Self::AppendVec(av) => av.scan_accounts_stored_meta(r_reader, callback),
             Self::TieredStorage(_) => {
                 unimplemented!("StoredAccountMeta is only implemented for AppendVec")
             }
@@ -358,9 +363,10 @@ impl AccountsFile {
     /// Only intended to be used by Geyser.
     pub fn scan_accounts_for_geyser(
         &self,
+        r_reader: &mut SequentialFileReader<LargeBuffer>,
         mut callback: impl for<'local> FnMut(AccountForGeyser<'local>),
     ) -> Result<()> {
-        self.scan_accounts(|_offset, account| {
+        self.scan_accounts(r_reader, |_offset, account| {
             let account_for_geyser = AccountForGeyser {
                 pubkey: account.pubkey(),
                 lamports: account.lamports(),
@@ -447,6 +453,13 @@ impl AccountsFile {
                     .expect("must be a reader when archiving")
                     .data_for_archive(),
             ),
+        }
+    }
+
+    pub(crate) fn get_file(&self) -> Option<(&File, usize)> {
+        match self {
+            Self::AppendVec(av) => av.get_file(),
+            Self::TieredStorage(_) => None,
         }
     }
 }
