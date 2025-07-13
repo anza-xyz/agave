@@ -1,14 +1,13 @@
 use {
+    dashmap::{mapref::entry::Entry, DashMap},
     governor::{DefaultDirectRateLimiter, DefaultKeyedRateLimiter, Quota, RateLimiter},
-    lazy_lru::LruCache,
     std::{
         borrow::Borrow,
+        cmp::Reverse,
+        hash::Hash,
         net::IpAddr,
         num::NonZeroU32,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            RwLock,
-        },
+        sync::atomic::{AtomicU64, AtomicUsize, Ordering},
         time::Instant,
     },
 };
@@ -180,7 +179,6 @@ impl TokenBucket {
         let new_tokens = elapsed as f64 * tokens_per_us;
         // how much of the elapsed time we can not convert into tokens
         let mut time_to_return = (new_tokens.fract() / tokens_per_us) as u64;
-        //dbg!(elapsed, tokens_per_us, new_tokens, time_to_return);
         // check if we can mint at least 1 new token
         let new_tokens = new_tokens.floor() as u64;
         if new_tokens >= 1 {
@@ -201,43 +199,113 @@ impl TokenBucket {
 }
 
 /// Provides rate limiting for multiple source IP addresses
-/// on demand. Uses LazyLru under the hood.
-pub struct KeyedRateLimiter {
-    data: RwLock<LruCache<IpAddr, TokenBucket>>,
+/// on demand. Uses LazyLru logic under the hood.
+pub struct KeyedRateLimiter<K>
+where
+    K: Hash + Eq,
+{
+    data: DashMap<K, TokenBucket>,
+    target_capacity: usize,
     prototype_bucket: TokenBucket,
+    countdown_to_shrink: AtomicUsize,
 }
 
-impl KeyedRateLimiter {
-    pub fn new(capacity: usize, prototype_bucket: TokenBucket) -> Self {
+impl<K> KeyedRateLimiter<K>
+where
+    K: Hash + Eq,
+{
+    /// Creates a new KeyedRateLimiter with a specified taget capacity and shard amount for the
+    /// underlying DashMap. This uses a LazyLRU style eviction policy, so actual memory consumption
+    /// will be 2 * target_capacity.
+    ///
+    /// shard_amount should greater than 0 and be a power of two.
+    /// If a shard_amount which is not a power of two is provided, the function will panic.
+    pub fn new(target_capacity: usize, prototype_bucket: TokenBucket, shard_amount: usize) -> Self {
         Self {
-            data: RwLock::new(LruCache::new(capacity)),
+            data: DashMap::with_capacity_and_shard_amount(target_capacity * 2, shard_amount),
+            target_capacity,
             prototype_bucket,
+            countdown_to_shrink: AtomicUsize::new(0),
         }
     }
-    pub fn current_tokens(&self, key: impl Borrow<IpAddr>) -> Option<u64> {
-        let readguard = self.data.read().unwrap();
-        let bucket = readguard.get(key.borrow())?;
+
+    /// Fetches amount of tokens available for key.
+    ///
+    /// Returns None if no bucket exists for the key provided
+    pub fn current_tokens(&self, key: impl Borrow<K>) -> Option<u64> {
+        let bucket = self.data.get(key.borrow())?;
         Some(bucket.current_tokens())
     }
 
-    pub fn consume_tokens(&self, key: impl Borrow<IpAddr>, request_size: u64) -> Result<u64, u64> {
-        // try to take read locks only (works for keys we have in the LRU)
-        {
-            let readguard = self.data.read().unwrap();
-            let bucket = readguard.get(key.borrow());
-            if let Some(bucket) = bucket {
-                return bucket.consume_tokens(request_size);
+    /// Consumes request_size tokens from a bucket at given key.
+    ///
+    /// On success, returns Ok(amount of tokens left in the bucket)
+    /// On failure, returns Err(amount of tokens missing to fill request)
+    /// If no bucket exists at key, a new bucket will be allocated, and normal policy will be applied to it
+    /// Outdated buckets may be evicted on an LRU basis.
+    pub fn consume_tokens(&self, key: K, request_size: u64) -> Result<u64, u64> {
+        let (entry_added, res) = {
+            let bucket = self.data.entry(key);
+            match bucket {
+                Entry::Occupied(entry) => (false, entry.get().consume_tokens(request_size)),
+                Entry::Vacant(entry) => {
+                    // if the key is not in the LRU, we need to allocate a new bucket
+                    let bucket = self.prototype_bucket.clone();
+                    let res = bucket.consume_tokens(request_size);
+                    entry.insert(bucket);
+                    (true, res)
+                }
+            }
+        };
+
+        if entry_added {
+            // we want to check for length, but not too often
+            let step = self.target_capacity / 8;
+            if self
+                .countdown_to_shrink
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    if v >= step {
+                        Some(0)
+                    } else {
+                        Some(v + 1)
+                    }
+                })
+                .unwrap_or_default()
+                >= step
+            {
+                self.maybe_shrink();
             }
         }
-        // if the key is not in the LRU, we need to allocate a new bucket
-        let bucket = self.prototype_bucket.clone();
-        let res = bucket.consume_tokens(request_size);
-        // place the new bucket into the LRU
-        {
-            let mut writeguard = self.data.write().unwrap();
-            writeguard.put(*key.borrow(), bucket);
-        }
         res
+    }
+
+    // apply lazy-LRU eviction policy to each DashMap shard.
+    fn maybe_shrink(&self) {
+        let target_shard_size = self.target_capacity / self.data.shards().len();
+        for shardlock in self.data.shards() {
+            let mut shard = shardlock.write();
+
+            if shard.len() < target_shard_size.saturating_mul(2) {
+                continue;
+            }
+
+            let mut entries: Vec<_> = shard
+                .drain()
+                .map(|(key, value)| (key, value.get().last_update.load(Ordering::Relaxed), value))
+                .collect();
+
+            entries.select_nth_unstable_by_key(target_shard_size, |(_, last_update, _)| {
+                Reverse(*last_update)
+            });
+
+            shard.extend(
+                entries
+                    .into_iter()
+                    .take(target_shard_size)
+                    .map(|(key, _last_update, value)| (key, value)),
+            );
+            debug_assert!(shard.len() <= target_shard_size);
+        }
     }
 }
 
@@ -309,7 +377,7 @@ pub mod test {
     #[test]
     fn test_token_buckets() {
         let prototype_bucket = TokenBucket::new(100, 100, 1000.0);
-        let rl = KeyedRateLimiter::new(8, prototype_bucket);
+        let rl = KeyedRateLimiter::new(8, prototype_bucket, 8);
         let ip1 = IpAddr::V4(Ipv4Addr::from_bits(1234));
         let ip2 = IpAddr::V4(Ipv4Addr::from_bits(4321));
         assert_eq!(rl.current_tokens(ip1), None, "Initially no buckets exist");
@@ -363,10 +431,59 @@ pub mod test {
     }
 
     #[test]
+    fn bench_token_bucket_eviction() {
+        let run_duration = Duration::from_secs(5);
+        let target_size = 128;
+        let tb = TokenBucket::new(1, 60, 100.0);
+        let limiter = KeyedRateLimiter::new(target_size, tb, 8);
+
+        let accepted = AtomicUsize::new(0);
+        let rejected = AtomicUsize::new(0);
+
+        let start = Instant::now();
+        let ip_pool = 2048;
+        let workers = 8;
+
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    for i in 1.. {
+                        if Instant::now() > start + run_duration {
+                            break;
+                        }
+                        let ip = IpAddr::V4(Ipv4Addr::from_bits(i % ip_pool as u32));
+                        if limiter.consume_tokens(ip, 1).is_ok() {
+                            accepted.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            rejected.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if limiter.data.len() > target_size * 2 + 1 {
+                            eprintln!(
+                                "Rate limiter grown over allowed size to {}!",
+                                limiter.data.len()
+                            );
+                            panic!(
+                                "Rate limiter grown over allowed size to {}!",
+                                limiter.data.len()
+                            );
+                        }
+                    }
+                });
+            }
+        });
+
+        let acc = accepted.load(Ordering::Relaxed);
+        let rej = rejected.load(Ordering::Relaxed);
+        println!("Run complete over {:?} seconds", run_duration.as_secs());
+        println!("processed {} requests", acc + rej);
+        println!("Rejected: {rej}");
+    }
+
+    #[test]
     fn bench_token_bucket() {
         let run_duration = Duration::from_secs(5);
         let tb = TokenBucket::new(1, 60, 100.0);
-        let limiter = KeyedRateLimiter::new(2048, tb);
+        let limiter = KeyedRateLimiter::new(2048, tb, 8);
 
         let accepted = AtomicUsize::new(0);
         let rejected = AtomicUsize::new(0);
