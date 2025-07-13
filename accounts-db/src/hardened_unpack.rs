@@ -113,9 +113,11 @@ where
     let mut total_entries = 0;
     let mut open_dirs = Vec::new();
 
-    let buf_size = UNPACK_WRITE_BUF_SIZE
-        .min((actual_limit_size.div_ceil(limit_count)) as usize)
-        .max(MIN_UNPACK_WRITE_BUF_SIZE);
+    // Bound the buffer based on provided limit of unpacked data (buffering a fraction,
+    // e.g. 25%, of absolute maximum won't be necessary) - this works well for genesis,
+    // while normal case hit the UNPACK_WRITE_BUF_SIZE tuned for it prod snapshot archive.
+    let buf_size = (apparent_limit_size.div_ceil(4) as usize)
+        .clamp(MIN_UNPACK_WRITE_BUF_SIZE, UNPACK_WRITE_BUF_SIZE);
     let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {
