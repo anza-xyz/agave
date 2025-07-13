@@ -2923,6 +2923,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-interface",
  "solana-hash",
+ "solana-ledger",
  "solana-message",
  "solana-nonce",
  "solana-perf",
@@ -6061,9 +6062,9 @@ dependencies = [
 
 [[package]]
 name = "solana-curve25519"
-version = "2.2.15"
+version = "2.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "def3cfe5279edb64fc39111cff6dcf77b01fbfba2c02c13ced41e6a48baf4cbe"
+checksum = "be64f4005f30cb8de8850a0e03356521da7e35b8c06d85bc79d78f9a74df028a"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -8912,9 +8913,9 @@ dependencies = [
 
 [[package]]
 name = "solana-zk-sdk"
-version = "2.2.15"
+version = "2.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15045540c315a9b8ea056323e73320e76098dfdaac9e65b1b33fe9c2f3c9b9e1"
+checksum = "7c13cbe908b9142274d5cdedc57b6bbc705181d05c7a2c7df21a76ad93463119"
 dependencies = [
  "aes-gcm-siv",
  "base64 0.22.1",
@@ -8924,7 +8925,6 @@ dependencies = [
  "curve25519-dalek 4.1.3",
  "itertools 0.12.1",
  "js-sys",
- "lazy_static",
  "merlin",
  "num-derive",
  "num-traits",
@@ -9124,7 +9124,7 @@ dependencies = [
  "solana-sdk-ids",
  "solana-system-interface",
  "solana-sysvar",
- "solana-zk-sdk 2.2.15",
+ "solana-zk-sdk 2.3.4",
  "spl-pod",
  "spl-token-confidential-transfer-proof-extraction",
 ]
@@ -9169,7 +9169,7 @@ dependencies = [
  "solana-program-error",
  "solana-program-option",
  "solana-pubkey",
- "solana-zk-sdk 2.2.15",
+ "solana-zk-sdk 2.3.4",
  "thiserror 2.0.12",
 ]
 
@@ -9279,7 +9279,7 @@ dependencies = [
  "solana-security-txt",
  "solana-system-interface",
  "solana-sysvar",
- "solana-zk-sdk 2.2.15",
+ "solana-zk-sdk 2.3.4",
  "spl-elgamal-registry",
  "spl-memo",
  "spl-pod",
@@ -9302,8 +9302,8 @@ checksum = "94ab20faf7b5edaa79acd240e0f21d5a2ef936aa99ed98f698573a2825b299c4"
 dependencies = [
  "base64 0.22.1",
  "bytemuck",
- "solana-curve25519 2.2.15",
- "solana-zk-sdk 2.2.15",
+ "solana-curve25519 2.3.4",
+ "solana-zk-sdk 2.3.4",
 ]
 
 [[package]]
@@ -9314,14 +9314,14 @@ checksum = "fe2629860ff04c17bafa9ba4bed8850a404ecac81074113e1f840dbd0ebb7bd6"
 dependencies = [
  "bytemuck",
  "solana-account-info",
- "solana-curve25519 2.2.15",
+ "solana-curve25519 2.3.4",
  "solana-instruction",
  "solana-instructions-sysvar",
  "solana-msg",
  "solana-program-error",
  "solana-pubkey",
  "solana-sdk-ids",
- "solana-zk-sdk 2.2.15",
+ "solana-zk-sdk 2.3.4",
  "spl-pod",
  "thiserror 2.0.12",
 ]
@@ -9333,7 +9333,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae5b124840d4aed474cef101d946a798b806b46a509ee4df91021e1ab1cef3ef"
 dependencies = [
  "curve25519-dalek 4.1.3",
- "solana-zk-sdk 2.2.15",
+ "solana-zk-sdk 2.3.4",
  "thiserror 2.0.12",
 ]
 
