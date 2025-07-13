@@ -24,14 +24,13 @@ arc-swap = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
-dashmap = { workspace = true }
+dashmap = { workspace = true, features = ["raw-api"] }
 futures = { workspace = true }
 futures-util = { workspace = true }
 governor = { workspace = true }
 histogram = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
-lazy-lru = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["net", "poll", "signal"] }
