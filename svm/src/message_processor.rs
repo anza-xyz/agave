@@ -3,7 +3,9 @@ use {
     solana_program_runtime::invoke_context::InvokeContext,
     solana_svm_transaction::svm_message::SVMMessage,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::{
+        IndexOfAccount, InstructionAccountView, InstructionAccountViewVector,
+    },
     solana_transaction_error::TransactionError,
 };
 
@@ -25,7 +27,8 @@ pub(crate) fn process_message(
         .zip(program_indices.iter())
         .enumerate()
     {
-        let mut instruction_accounts = Vec::with_capacity(instruction.accounts.len());
+        let mut instruction_accounts =
+            InstructionAccountViewVector::with_capacity(instruction.accounts.len());
         for (instruction_account_index, index_in_transaction) in
             instruction.accounts.iter().enumerate()
         {
@@ -38,7 +41,7 @@ pub(crate) fn process_message(
                 .unwrap_or(instruction_account_index)
                 as IndexOfAccount;
             let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount::new(
+            instruction_accounts.push(InstructionAccountView::new(
                 index_in_transaction as IndexOfAccount,
                 index_in_transaction as IndexOfAccount,
                 index_in_callee,
@@ -53,14 +56,14 @@ pub(crate) fn process_message(
                 invoke_context.process_precompile(
                     program_id,
                     instruction.data,
-                    &instruction_accounts,
+                    instruction_accounts,
                     program_indices,
                     message.instructions_iter().map(|ix| ix.data),
                 )
             } else {
                 invoke_context.process_instruction(
                     instruction.data,
-                    &instruction_accounts,
+                    instruction_accounts,
                     program_indices,
                     &mut compute_units_consumed,
                     execute_timings,

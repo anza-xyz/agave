@@ -329,7 +329,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         invoke_context
             .process_instruction(
                 &instruction.data,
-                &instruction_accounts,
+                instruction_accounts,
                 &program_indices,
                 &mut compute_units_consumed,
                 &mut ExecuteTimings::default(),

@@ -5,7 +5,9 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated},
-    solana_transaction_context::{IndexOfAccount, InstructionAccount, TransactionContext},
+    solana_transaction_context::{
+        IndexOfAccount, InstructionAccountView, InstructionAccountViewVector, TransactionContext,
+    },
 };
 
 fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionContext {
@@ -82,7 +84,7 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
             }),
         ),
     ];
-    let mut instruction_accounts: Vec<InstructionAccount> = Vec::new();
+    let mut instruction_accounts = InstructionAccountViewVector::new();
     for (instruction_account_index, index_in_transaction) in [1, 1, 2, 3, 4, 4, 5, 6]
         .into_iter()
         .cycle()
@@ -93,7 +95,7 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
             .iter()
             .position(|account| account.index_in_transaction == index_in_transaction)
             .unwrap_or(instruction_account_index) as IndexOfAccount;
-        instruction_accounts.push(InstructionAccount::new(
+        instruction_accounts.push(InstructionAccountView::new(
             instruction_account_index as IndexOfAccount,
             index_in_transaction,
             index_in_callee,
@@ -108,7 +110,7 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
     transaction_context
         .get_next_instruction_context()
         .unwrap()
-        .configure(&[0], &instruction_accounts, &instruction_data);
+        .configure(&[0], instruction_accounts, &instruction_data);
     transaction_context.push().unwrap();
     transaction_context
 }

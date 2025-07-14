@@ -50,7 +50,7 @@ use {
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::IndexOfAccount,
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -2201,6 +2201,7 @@ mod tests {
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_transaction_context::{InstructionAccountView, InstructionAccountViewVector},
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -2236,7 +2237,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&[0, 1], &[], &[]);
+                .configure(&[0, 1], InstructionAccountViewVector::new(), &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -4441,18 +4442,20 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = [InstructionAccount::new(
-                    index_in_trace.saturating_add(1) as IndexOfAccount,
-                    0, // This is incorrect / inconsistent but not required
-                    0,
-                    false,
-                    false,
-                )];
+                let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+                    InstructionAccountView::new(
+                        index_in_trace.saturating_add(1) as IndexOfAccount,
+                        0, // This is incorrect / inconsistent but not required
+                        0,
+                        false,
+                        false,
+                    ),
+                ]);
                 invoke_context
                     .transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[0], &instruction_accounts, &[index_in_trace as u8]);
+                    .configure(&[0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

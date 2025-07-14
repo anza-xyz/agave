@@ -13,8 +13,11 @@ use {
     std::{
         cell::{Ref, RefCell, RefMut},
         collections::HashSet,
+        iter::{Map, Zip},
+        ops::Range,
         pin::Pin,
         rc::Rc,
+        slice::Iter,
     },
 };
 
@@ -49,8 +52,152 @@ static_assertions::const_assert_eq!(
     solana_account_info::MAX_PERMITTED_DATA_INCREASE
 );
 
+#[derive(Default, Clone)]
+pub struct InstructionAccountViewVector {
+    metadata: Vec<InstructionAccount>,
+    indexes: Vec<AccountCallIndexes>,
+}
+
+type ViewIterator<'a> = Map<
+    Zip<Iter<'a, InstructionAccount>, Iter<'a, AccountCallIndexes>>,
+    fn((&InstructionAccount, &AccountCallIndexes)) -> InstructionAccountView,
+>;
+
+impl InstructionAccountViewVector {
+    pub fn new() -> InstructionAccountViewVector {
+        InstructionAccountViewVector::default()
+    }
+
+    pub fn with_capacity(capacity: usize) -> InstructionAccountViewVector {
+        InstructionAccountViewVector {
+            metadata: Vec::with_capacity(capacity),
+            indexes: Vec::with_capacity(capacity),
+        }
+    }
+
+    pub fn push(&mut self, element: InstructionAccountView) {
+        self.metadata.push(InstructionAccount::new(
+            element.index_in_transaction,
+            element.is_signer,
+            element.is_writable,
+        ));
+
+        self.indexes.push(AccountCallIndexes {
+            index_in_caller: element.index_in_caller,
+            index_in_callee: element.index_in_callee,
+        });
+    }
+
+    pub fn from_view_vector(vector: Vec<InstructionAccountView>) -> InstructionAccountViewVector {
+        let mut view_owner = Self::with_capacity(vector.len());
+        for item in vector {
+            view_owner.push(item);
+        }
+
+        view_owner
+    }
+
+    pub fn iter(&self) -> ViewIterator {
+        self.metadata
+            .iter()
+            .zip(self.indexes.iter())
+            .map(|(acc, idx)| InstructionAccountView {
+                index_in_callee: idx.index_in_callee,
+                index_in_caller: idx.index_in_caller,
+                index_in_transaction: acc.index_in_transaction,
+                is_signer: acc.is_signer(),
+                is_writable: acc.is_writable(),
+            })
+    }
+
+    pub fn get_metadata_mut(&mut self, idx: usize) -> Option<&mut InstructionAccount> {
+        self.metadata.get_mut(idx)
+    }
+
+    pub fn get_metadata(&self, range: Range<usize>) -> Option<&[InstructionAccount]> {
+        self.metadata.get(range)
+    }
+
+    pub fn len(&self) -> usize {
+        debug_assert_eq!(self.metadata.len(), self.indexes.len());
+        self.metadata.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        debug_assert_eq!(self.metadata.len(), self.indexes.len());
+        self.metadata.is_empty()
+    }
+
+    pub fn get_raw_cloned(&self, idx: usize) -> Option<(InstructionAccount, AccountCallIndexes)> {
+        Some((
+            self.metadata.get(idx)?.clone(),
+            self.indexes.get(idx)?.clone(),
+        ))
+    }
+
+    pub fn push_raw(&mut self, elements: (InstructionAccount, AccountCallIndexes)) {
+        self.metadata.push(elements.0.clone());
+        self.indexes.push(elements.1.clone());
+    }
+}
+
+pub struct InstructionAccountView {
+    /// Points to the account and its key in the `TransactionContext`
+    pub index_in_transaction: IndexOfAccount,
+    /// Is this account supposed to sign
+    is_signer: bool,
+    /// Is this account allowed to become writable
+    is_writable: bool,
+    /// Points to the first occurrence in the parent `InstructionContext`
+    ///
+    /// This excludes the program accounts.
+    pub index_in_caller: IndexOfAccount,
+    /// Points to the first occurrence in the current `InstructionContext`
+    ///
+    /// This excludes the program accounts.
+    pub index_in_callee: IndexOfAccount,
+}
+
+impl InstructionAccountView {
+    pub fn new(
+        index_in_transaction: IndexOfAccount,
+        index_in_caller: IndexOfAccount,
+        index_in_callee: IndexOfAccount,
+        is_signer: bool,
+        is_writable: bool,
+    ) -> InstructionAccountView {
+        InstructionAccountView {
+            index_in_transaction,
+            index_in_caller,
+            index_in_callee,
+            is_writable,
+            is_signer,
+        }
+    }
+
+    pub fn is_signer(&self) -> bool {
+        self.is_signer
+    }
+
+    pub fn is_writable(&self) -> bool {
+        self.is_writable
+    }
+}
+
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AccountCallIndexes {
+    /// Points to the first occurrence in the parent `InstructionContext`
+    ///
+    /// This excludes the program accounts.
+    pub index_in_caller: IndexOfAccount,
+    /// Points to the first occurrence in the current `InstructionContext`
+    ///
+    /// This excludes the program accounts.
+    pub index_in_callee: IndexOfAccount,
+}
 
 /// Contains account meta data which varies between instruction.
 ///
@@ -60,14 +207,6 @@ pub type IndexOfAccount = u16;
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
-    /// Points to the first occurrence in the parent `InstructionContext`
-    ///
-    /// This excludes the program accounts.
-    pub index_in_caller: IndexOfAccount,
-    /// Points to the first occurrence in the current `InstructionContext`
-    ///
-    /// This excludes the program accounts.
-    pub index_in_callee: IndexOfAccount,
     /// Is this account supposed to sign
     is_signer: u8,
     /// Is this account allowed to become writable
@@ -77,15 +216,11 @@ pub struct InstructionAccount {
 impl InstructionAccount {
     pub fn new(
         index_in_transaction: IndexOfAccount,
-        index_in_caller: IndexOfAccount,
-        index_in_callee: IndexOfAccount,
         is_signer: bool,
         is_writable: bool,
     ) -> InstructionAccount {
         InstructionAccount {
             index_in_transaction,
-            index_in_caller,
-            index_in_callee,
             is_signer: is_signer as u8,
             is_writable: is_writable as u8,
         }
@@ -619,6 +754,7 @@ pub struct InstructionContext {
     instruction_accounts_lamport_sum: u128,
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
+    account_call_indexes: Vec<AccountCallIndexes>,
     instruction_data: Vec<u8>,
 }
 
@@ -628,11 +764,16 @@ impl InstructionContext {
     pub fn configure(
         &mut self,
         program_accounts: &[IndexOfAccount],
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: InstructionAccountViewVector,
         instruction_data: &[u8],
     ) {
+        debug_assert_eq!(
+            instruction_accounts.metadata.len(),
+            instruction_accounts.indexes.len()
+        );
         self.program_accounts = program_accounts.to_vec();
-        self.instruction_accounts = instruction_accounts.to_vec();
+        self.instruction_accounts = instruction_accounts.metadata;
+        self.account_call_indexes = instruction_accounts.indexes;
         self.instruction_data = instruction_data.to_vec();
     }
 
@@ -734,7 +875,7 @@ impl InstructionContext {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Option<IndexOfAccount>, InstructionError> {
         let index_in_callee = self
-            .instruction_accounts
+            .account_call_indexes
             .get(instruction_account_index as usize)
             .ok_or(InstructionError::NotEnoughAccountKeys)?
             .index_in_callee;

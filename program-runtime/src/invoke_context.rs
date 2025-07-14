@@ -31,7 +31,8 @@ use {
     solana_svm_feature_set::SVMFeatureSet,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
-        IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        IndexOfAccount, InstructionAccountView, InstructionAccountViewVector, TransactionAccount,
+        TransactionContext,
     },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{
@@ -312,7 +313,7 @@ impl<'a> InvokeContext<'a> {
         let mut compute_units_consumed = 0;
         self.process_instruction(
             &instruction.data,
-            &instruction_accounts,
+            instruction_accounts,
             &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
@@ -326,13 +327,14 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         instruction: &StableInstruction,
         signers: &[Pubkey],
-    ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
+    ) -> Result<(InstructionAccountViewVector, Vec<IndexOfAccount>), InstructionError> {
         // Finds the index of each account in the instruction by its pubkey.
         // Then normalizes / unifies the privileges of duplicate accounts.
         // Note: This is an O(n^2) algorithm,
         // but performed on a very small slice and requires no heap allocations.
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
+        let mut deduplicated_instruction_accounts =
+            InstructionAccountViewVector::with_capacity(instruction.accounts.len() as usize);
         let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len() as usize);
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
@@ -346,6 +348,8 @@ impl<'a> InvokeContext<'a> {
                     );
                     InstructionError::MissingAccount
                 })?;
+
+            // TODO: This can be refactored into unique account indexes to avoid a copy!
             if let Some(duplicate_index) =
                 deduplicated_instruction_accounts
                     .iter()
@@ -355,7 +359,7 @@ impl<'a> InvokeContext<'a> {
             {
                 duplicate_indicies.push(duplicate_index);
                 let instruction_account = deduplicated_instruction_accounts
-                    .get_mut(duplicate_index)
+                    .get_metadata_mut(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
                 instruction_account
                     .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
@@ -376,7 +380,7 @@ impl<'a> InvokeContext<'a> {
                         InstructionError::MissingAccount
                     })?;
                 duplicate_indicies.push(deduplicated_instruction_accounts.len());
-                deduplicated_instruction_accounts.push(InstructionAccount::new(
+                deduplicated_instruction_accounts.push(InstructionAccountView::new(
                     index_in_transaction,
                     index_in_caller,
                     instruction_account_index as IndexOfAccount,
@@ -385,6 +389,7 @@ impl<'a> InvokeContext<'a> {
                 ));
             }
         }
+
         for instruction_account in deduplicated_instruction_accounts.iter() {
             let borrowed_account = instruction_context.try_borrow_instruction_account(
                 self.transaction_context,
@@ -414,15 +419,17 @@ impl<'a> InvokeContext<'a> {
                 return Err(InstructionError::PrivilegeEscalation);
             }
         }
-        let instruction_accounts = duplicate_indicies
-            .into_iter()
-            .map(|duplicate_index| {
+
+        let mut instruction_accounts =
+            InstructionAccountViewVector::with_capacity(duplicate_indicies.len());
+
+        for duplicate_index in duplicate_indicies.into_iter() {
+            instruction_accounts.push_raw(
                 deduplicated_instruction_accounts
-                    .get(duplicate_index)
-                    .cloned()
-                    .ok_or(InstructionError::NotEnoughAccountKeys)
-            })
-            .collect::<Result<Vec<InstructionAccount>, InstructionError>>()?;
+                    .get_raw_cloned(duplicate_index)
+                    .ok_or(InstructionError::NotEnoughAccountKeys)?,
+            );
+        }
 
         // Find and validate executables / program accounts
         let callee_program_id = instruction.program_id;
@@ -452,7 +459,7 @@ impl<'a> InvokeContext<'a> {
     pub fn process_instruction(
         &mut self,
         instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: InstructionAccountViewVector,
         program_indices: &[IndexOfAccount],
         compute_units_consumed: &mut u64,
         timings: &mut ExecuteTimings,
@@ -473,7 +480,7 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: InstructionAccountViewVector,
         program_indices: &[IndexOfAccount],
         message_instruction_datas_iter: impl Iterator<Item = &'ix_data [u8]>,
     ) -> Result<(), InstructionError> {
@@ -481,7 +488,6 @@ impl<'a> InvokeContext<'a> {
             .get_next_instruction_context()?
             .configure(program_indices, instruction_accounts, instruction_data);
         self.push()?;
-
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
         self.environment_config
             .epoch_stake_callback
@@ -824,8 +830,8 @@ pub fn mock_process_instruction_with_feature_set<
     mut post_adjustments: G,
     feature_set: &SVMFeatureSet,
 ) -> Vec<AccountSharedData> {
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(instruction_account_metas.len());
+    let mut instruction_accounts =
+        InstructionAccountViewVector::with_capacity(instruction_account_metas.len());
     for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
         let index_in_transaction = transaction_accounts
             .iter()
@@ -833,14 +839,14 @@ pub fn mock_process_instruction_with_feature_set<
             .unwrap_or(transaction_accounts.len())
             as IndexOfAccount;
         let index_in_callee = instruction_accounts
-            .get(0..instruction_account_index)
+            .get_metadata(0..instruction_account_index)
             .unwrap()
             .iter()
             .position(|instruction_account| {
                 instruction_account.index_in_transaction == index_in_transaction
             })
             .unwrap_or(instruction_account_index) as IndexOfAccount;
-        instruction_accounts.push(InstructionAccount::new(
+        instruction_accounts.push(InstructionAccountView::new(
             index_in_transaction,
             index_in_transaction,
             index_in_callee,
@@ -880,7 +886,7 @@ pub fn mock_process_instruction_with_feature_set<
     pre_adjustments(&mut invoke_context);
     let result = invoke_context.process_instruction(
         instruction_data,
-        &instruction_accounts,
+        instruction_accounts,
         &program_indices,
         &mut 0,
         &mut ExecuteTimings::default(),
@@ -960,17 +966,16 @@ mod tests {
             let instruction_context = transaction_context.get_current_instruction_context()?;
             let instruction_data = instruction_context.get_instruction_data();
             let program_id = instruction_context.get_last_program_key(transaction_context)?;
-            let instruction_accounts = (0..4)
-                .map(|instruction_account_index| {
-                    InstructionAccount::new(
-                        instruction_account_index,
-                        instruction_account_index,
-                        instruction_account_index,
-                        false,
-                        false,
-                    )
-                })
-                .collect::<Vec<_>>();
+            let mut instruction_accounts = InstructionAccountViewVector::new();
+            for instruction_account_index in 0..4 {
+                instruction_accounts.push(InstructionAccountView::new(
+                    instruction_account_index,
+                    instruction_account_index,
+                    instruction_account_index,
+                    false,
+                    false,
+                ));
+            }
             assert_eq!(
                 program_id,
                 instruction_context
@@ -1023,7 +1028,7 @@ mod tests {
                             .transaction_context
                             .get_next_instruction_context()
                             .unwrap()
-                            .configure(&[3], &instruction_accounts, &[]);
+                            .configure(&[3], instruction_accounts, &[]);
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
@@ -1061,14 +1066,14 @@ mod tests {
             .saturating_add(1);
         let mut invoke_stack = vec![];
         let mut transaction_accounts = vec![];
-        let mut instruction_accounts = vec![];
+        let mut instruction_accounts = InstructionAccountViewVector::new();
         for index in 0..one_more_than_max_depth {
             invoke_stack.push(solana_pubkey::new_rand());
             transaction_accounts.push((
                 solana_pubkey::new_rand(),
                 AccountSharedData::new(index as u64, 1, invoke_stack.get(index).unwrap()),
             ));
-            instruction_accounts.push(InstructionAccount::new(
+            instruction_accounts.push(InstructionAccountView::new(
                 index as IndexOfAccount,
                 index as IndexOfAccount,
                 instruction_accounts.len() as IndexOfAccount,
@@ -1081,7 +1086,7 @@ mod tests {
                 *program_id,
                 AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
             ));
-            instruction_accounts.push(InstructionAccount::new(
+            instruction_accounts.push(InstructionAccountView::new(
                 index as IndexOfAccount,
                 index as IndexOfAccount,
                 index as IndexOfAccount,
@@ -1100,7 +1105,7 @@ mod tests {
                 .unwrap()
                 .configure(
                     &[one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
-                    &instruction_accounts,
+                    instruction_accounts.clone(),
                     &[],
                 );
             if Err(InstructionError::CallDepth) == invoke_context.push() {
@@ -1157,17 +1162,16 @@ mod tests {
             AccountMeta::new(transaction_accounts.get(1).unwrap().0, false),
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
-        let instruction_accounts = (0..4)
-            .map(|instruction_account_index| {
-                InstructionAccount::new(
-                    instruction_account_index,
-                    instruction_account_index,
-                    instruction_account_index,
-                    false,
-                    instruction_account_index < 2,
-                )
-            })
-            .collect::<Vec<_>>();
+        let mut instruction_accounts = InstructionAccountViewVector::new();
+        for instruction_account_index in 0..4 {
+            instruction_accounts.push(InstructionAccountView::new(
+                instruction_account_index,
+                instruction_account_index,
+                instruction_account_index,
+                false,
+                instruction_account_index < 2,
+            ));
+        }
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -1181,7 +1185,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(&[4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
@@ -1215,17 +1219,17 @@ mod tests {
             AccountMeta::new(transaction_accounts.get(1).unwrap().0, false),
             AccountMeta::new_readonly(transaction_accounts.get(2).unwrap().0, false),
         ];
-        let instruction_accounts = (0..4)
-            .map(|instruction_account_index| {
-                InstructionAccount::new(
-                    instruction_account_index,
-                    instruction_account_index,
-                    instruction_account_index,
-                    false,
-                    instruction_account_index < 2,
-                )
-            })
-            .collect::<Vec<_>>();
+
+        let mut instruction_accounts = InstructionAccountViewVector::new();
+        for instruction_account_index in 0..4 {
+            instruction_accounts.push(InstructionAccountView::new(
+                instruction_account_index,
+                instruction_account_index,
+                instruction_account_index,
+                false,
+                instruction_account_index < 2,
+            ));
+        }
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -1240,7 +1244,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(&[4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
             callee_program_id,
@@ -1258,7 +1262,7 @@ mod tests {
         let mut compute_units_consumed = 0;
         let result = invoke_context.process_instruction(
             &inner_instruction.data,
-            &inner_instruction_accounts,
+            inner_instruction_accounts,
             &program_indices,
             &mut compute_units_consumed,
             &mut ExecuteTimings::default(),
@@ -1292,7 +1296,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0], &[], &[]);
+            .configure(&[0], InstructionAccountViewVector::new(), &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
@@ -1314,10 +1318,10 @@ mod tests {
             (Pubkey::new_unique(), dummy_account),
             (program_key, program_account),
         ];
-        let instruction_accounts = [
-            InstructionAccount::new(0, 0, 0, false, true),
-            InstructionAccount::new(1, 1, 1, false, false),
-        ];
+        let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+            InstructionAccountView::new(0, 0, 0, false, true),
+            InstructionAccountView::new(1, 1, 1, false, false),
+        ]);
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
         program_cache_for_tx_batch.replenish(
@@ -1331,7 +1335,7 @@ mod tests {
 
         let result = invoke_context.process_instruction(
             &instruction_data,
-            &instruction_accounts,
+            instruction_accounts,
             &[2],
             &mut 0,
             &mut ExecuteTimings::default(),

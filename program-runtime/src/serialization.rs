@@ -605,7 +605,7 @@ mod tests {
         solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
         solana_sdk_ids::bpf_loader,
         solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
-        solana_transaction_context::InstructionAccount,
+        solana_transaction_context::{InstructionAccountView, InstructionAccountViewVector},
         std::{
             cell::RefCell,
             mem::transmute,
@@ -617,26 +617,27 @@ mod tests {
     fn deduplicated_instruction_accounts(
         transaction_indexes: &[IndexOfAccount],
         is_writable: fn(usize) -> bool,
-    ) -> Vec<InstructionAccount> {
-        transaction_indexes
-            .iter()
-            .enumerate()
-            .map(|(index_in_instruction, index_in_transaction)| {
-                let index_in_callee = transaction_indexes
-                    .get(0..index_in_instruction)
-                    .unwrap()
-                    .iter()
-                    .position(|account_index| account_index == index_in_transaction)
-                    .unwrap_or(index_in_instruction);
-                InstructionAccount::new(
-                    *index_in_transaction,
-                    *index_in_transaction,
-                    index_in_callee as IndexOfAccount,
-                    false,
-                    is_writable(index_in_instruction),
-                )
-            })
-            .collect()
+    ) -> InstructionAccountViewVector {
+        let mut instr_accounts =
+            InstructionAccountViewVector::with_capacity(transaction_indexes.len());
+
+        for (index_in_instruction, index_in_transaction) in transaction_indexes.iter().enumerate() {
+            let index_in_callee = transaction_indexes
+                .get(0..index_in_instruction)
+                .unwrap()
+                .iter()
+                .position(|account_index| account_index == index_in_transaction)
+                .unwrap_or(index_in_instruction);
+            instr_accounts.push(InstructionAccountView::new(
+                *index_in_transaction,
+                *index_in_transaction,
+                index_in_callee as IndexOfAccount,
+                false,
+                is_writable(index_in_instruction),
+            ));
+        }
+
+        instr_accounts
     }
 
     #[test]
@@ -703,7 +704,9 @@ mod tests {
                 let mut instruction_accounts =
                     deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
-                    instruction_accounts.push(instruction_accounts.last().cloned().unwrap());
+                    let last_idx = instruction_accounts.len().saturating_sub(1);
+                    instruction_accounts
+                        .push_raw(instruction_accounts.get_raw_cloned(last_idx).unwrap());
                 }
                 let program_indices = [0];
                 let instruction_data = vec![];
@@ -717,7 +720,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&program_indices, &instruction_accounts, &instruction_data);
+                    .configure(&program_indices, instruction_accounts, &instruction_data);
                 invoke_context.push().unwrap();
                 let instruction_context = invoke_context
                     .transaction_context
@@ -860,7 +863,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&program_indices, &instruction_accounts, &instruction_data);
+                .configure(&program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1106,7 +1109,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&program_indices, &instruction_accounts, &instruction_data);
+                .configure(&program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
             let instruction_context = invoke_context
                 .transaction_context
@@ -1375,7 +1378,7 @@ mod tests {
         transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&program_indices, &instruction_accounts, &instruction_data);
+            .configure(&program_indices, instruction_accounts, &instruction_data);
         transaction_context.push().unwrap();
         let instruction_context = transaction_context
             .get_current_instruction_context()

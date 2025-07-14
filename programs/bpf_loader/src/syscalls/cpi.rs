@@ -8,7 +8,7 @@ use {
     },
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
-    solana_transaction_context::BorrowedAccount,
+    solana_transaction_context::{BorrowedAccount, InstructionAccountViewVector},
     std::mem,
 };
 
@@ -328,7 +328,7 @@ trait SyscallInvokeSigned {
         invoke_context: &mut InvokeContext,
     ) -> Result<StableInstruction, Error>;
     fn translate_accounts<'a>(
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: &InstructionAccountViewVector,
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -427,7 +427,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     }
 
     fn translate_accounts<'a>(
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: &InstructionAccountViewVector,
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -649,7 +649,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
     }
 
     fn translate_accounts<'a>(
-        instruction_accounts: &[InstructionAccount],
+        instruction_accounts: &InstructionAccountViewVector,
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -775,7 +775,7 @@ where
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
 fn translate_and_update_accounts<'a, T, F>(
-    instruction_accounts: &[InstructionAccount],
+    instruction_accounts: &InstructionAccountViewVector,
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
@@ -1045,7 +1045,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
     let mut compute_units_consumed = 0;
     invoke_context.process_instruction(
         &instruction.data,
-        &instruction_accounts,
+        instruction_accounts,
         &program_indices,
         &mut compute_units_consumed,
         &mut ExecuteTimings::default(),
@@ -1302,7 +1302,9 @@ mod tests {
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::TransactionAccount,
+        solana_transaction_context::{
+            InstructionAccountView, InstructionAccountViewVector, TransactionAccount,
+        },
         std::{
             cell::{Cell, RefCell},
             mem, ptr,
@@ -1321,19 +1323,17 @@ mod tests {
          $instruction_accounts:expr) => {
             let program_accounts = $program_accounts;
             let instruction_data = $instruction_data;
-            let instruction_accounts = $instruction_accounts
-                .iter()
-                .enumerate()
-                .map(|(index_in_callee, index_in_transaction)| {
-                    InstructionAccount::new(
-                        *index_in_transaction as IndexOfAccount,
-                        *index_in_transaction as IndexOfAccount,
-                        index_in_callee as IndexOfAccount,
-                        false,
-                        $transaction_accounts[*index_in_transaction as usize].2,
-                    )
-                })
-                .collect::<Vec<_>>();
+            let mut instruction_accounts = InstructionAccountViewVector::new();
+            for (index_in_callee, index_in_transaction) in $instruction_accounts.iter().enumerate()
+            {
+                instruction_accounts.push(InstructionAccountView::new(
+                    *index_in_transaction as IndexOfAccount,
+                    *index_in_transaction as IndexOfAccount,
+                    index_in_callee as IndexOfAccount,
+                    false,
+                    $transaction_accounts[*index_in_transaction as usize].2,
+                ));
+            }
             let transaction_accounts = $transaction_accounts
                 .into_iter()
                 .map(|a| (a.0, a.1))
@@ -1351,7 +1351,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(program_accounts, &instruction_accounts, instruction_data);
+                .configure(program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }
@@ -1877,11 +1877,12 @@ mod tests {
 
         mock_create_vm!(_vm, Vec::new(), vec![account_metadata], &mut invoke_context);
 
+        let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+            InstructionAccountView::new(1, 0, 0, false, true),
+            InstructionAccountView::new(1, 0, 0, false, true),
+        ]);
         let accounts = SyscallInvokeSignedRust::translate_accounts(
-            &[
-                InstructionAccount::new(1, 0, 0, false, true),
-                InstructionAccount::new(1, 0, 0, false, true),
-            ],
+            &instruction_accounts,
             vm_addr,
             1,
             false,
