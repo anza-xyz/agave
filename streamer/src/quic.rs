@@ -37,8 +37,8 @@ pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
 pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
-/// Limit to 250K PPS
-pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
+/// Limit to 500K PPS
+pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
 
 /// The new connections per minute from a particular IP address.
 /// Heuristically set to the default maximum concurrent connections
