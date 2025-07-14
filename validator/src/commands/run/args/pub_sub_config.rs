@@ -15,6 +15,7 @@ impl FromClapArgMatches for PubSubConfig {
                 usize
             )?,
             queue_capacity_items: value_t!(matches, "rpc_pubsub_queue_capacity_items", usize)?,
+            queue_capacity_bytes: value_t!(matches, "rpc_pubsub_queue_capacity_bytes", usize)?,
             ..Default::default()
         })
     }
@@ -101,6 +102,23 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--rpc-pubsub-queue-capacity-items", "9999"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_queue_capacity_bytes() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            pub_sub_config: PubSubConfig {
+                queue_capacity_bytes: 9999,
+                ..default_run_args.pub_sub_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--rpc-pubsub-queue-capacity-bytes", "9999"],
             expected_args,
         );
     }

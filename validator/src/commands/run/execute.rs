@@ -565,11 +565,7 @@ pub fn execute(
             enable_vote_subscription: run_args.pub_sub_config.enable_vote_subscription,
             max_active_subscriptions: run_args.pub_sub_config.max_active_subscriptions,
             queue_capacity_items: run_args.pub_sub_config.queue_capacity_items,
-            queue_capacity_bytes: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_queue_capacity_bytes",
-                usize
-            ),
+            queue_capacity_bytes: run_args.pub_sub_config.queue_capacity_bytes,
             worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
             notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
                 .ok()
