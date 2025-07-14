@@ -2049,7 +2049,7 @@ impl AccountsDb {
             MarkAccountsObsolete::No,
         );
         measure.stop();
-        debug!("{}", measure);
+        debug!("{measure}");
         self.clean_accounts_stats
             .clean_old_root_reclaim_us
             .fetch_add(measure.as_us(), Ordering::Relaxed);
@@ -3758,7 +3758,7 @@ impl AccountsDb {
         }
         let mut unique_accounts =
             self.get_unique_accounts_from_storage_for_shrink(&store, &self.shrink_stats);
-        debug!("do_shrink_slot_store: slot: {}", slot);
+        debug!("do_shrink_slot_store: slot: {slot}");
         let shrink_collect = self.shrink_collect::<AliveAccounts<'_>>(
             &store,
             &mut unique_accounts,
@@ -3940,7 +3940,7 @@ impl AccountsDb {
     // Reads all accounts in given slot's AppendVecs and filter only to alive,
     // then create a minimum AppendVec filled with the alive.
     fn shrink_slot_forced(&self, slot: Slot) {
-        debug!("shrink_slot_forced: slot: {}", slot);
+        debug!("shrink_slot_forced: slot: {slot}");
 
         if let Some(store) = self
             .storage
@@ -6772,7 +6772,7 @@ impl AccountsDb {
                 .filter_map(|r| r.as_ref().err())
                 .next()
             {
-                panic!("failed generating accounts hash files: {:?}", err);
+                panic!("failed generating accounts hash files: {err:?}");
             }
 
             // convert mmapped cache files into slices of data
@@ -6879,8 +6879,7 @@ impl AccountsDb {
                 self.calculate_accounts_hash(&calc_config, &sorted_storages, HashStats::default());
             if calculated_lamports != total_lamports {
                 warn!(
-                    "Mismatched total lamports: {} calculated: {}",
-                    total_lamports, calculated_lamports
+                    "Mismatched total lamports: {total_lamports} calculated: {calculated_lamports}"
                 );
                 return Err(AccountsHashVerificationError::MismatchedTotalLamports(
                     calculated_lamports,
@@ -7421,7 +7420,7 @@ impl AccountsDb {
                 "remove_dead_slots_metadata: {} dead slots",
                 dead_slots.len()
             );
-            trace!("remove_dead_slots_metadata: dead_slots: {:?}", dead_slots);
+            trace!("remove_dead_slots_metadata: dead_slots: {dead_slots:?}");
         }
         self.accounts_index
             .update_roots_stats(&mut accounts_index_root_stats);
@@ -8515,7 +8514,7 @@ impl AccountsDb {
                     .alive_bytes
                     .store(entry.stored_size, Ordering::Release);
             } else {
-                trace!("id: {} clearing count", id);
+                trace!("id: {id} clearing count");
                 store.count_and_status.lock_write().0 = 0;
             }
         }
@@ -8532,14 +8531,14 @@ impl AccountsDb {
         let mut alive_roots: Vec<_> = self.accounts_index.all_alive_roots();
         #[allow(clippy::stable_sort_primitive)]
         alive_roots.sort();
-        info!("{}: accounts_index alive_roots: {:?}", label, alive_roots,);
+        info!("{label}: accounts_index alive_roots: {alive_roots:?}",);
         self.accounts_index.account_maps.iter().for_each(|map| {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
                         let list_r = &account_entry.slot_list.read().unwrap();
                         info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
-                        info!("      slots: {:?}", list_r);
+                        info!("      slots: {list_r:?}");
                     }
                     let add_to_in_mem_cache = false;
                     (add_to_in_mem_cache, ())

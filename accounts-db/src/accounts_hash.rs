@@ -551,7 +551,7 @@ impl AccountsHasher<'_> {
             })
             .collect();
         time.stop();
-        debug!("hashing {} {}", total_hashes, time);
+        debug!("hashing {total_hashes} {time}");
 
         if result.len() == 1 {
             result[0]
@@ -725,7 +725,7 @@ impl AccountsHasher<'_> {
             })
             .collect();
         time.stop();
-        debug!("hashing {} {}", total_hashes, time);
+        debug!("hashing {total_hashes} {time}");
 
         if let Some(mut specific_level_count_value) = specific_level_count {
             specific_level_count_value -= levels_hashed;
@@ -2428,7 +2428,7 @@ mod tests {
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", len);
+        assert_eq!(result, result2.0, "len: {len}");
 
         let result2 = AccountsHasher::compute_merkle_root_from_slices(
             len,
@@ -2437,7 +2437,7 @@ mod tests {
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", len);
+        assert_eq!(result, result2.0, "len: {len}");
 
         let max = std::cmp::min(reduced.len(), fanout * 2);
         for left in 0..max {

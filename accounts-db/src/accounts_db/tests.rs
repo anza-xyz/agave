@@ -1812,7 +1812,7 @@ fn test_accounts_db_purge1() {
     accounts.print_accounts_stats("pre_purge");
 
     let ancestors = linear_ancestors(current_slot);
-    info!("ancestors: {:?}", ancestors);
+    info!("ancestors: {ancestors:?}");
     let hash = accounts.update_accounts_hash_for_tests(current_slot, &ancestors, true, true);
 
     accounts.clean_accounts_for_tests();
@@ -2945,9 +2945,9 @@ fn test_delete_dependencies() {
             },
         ) in candidates_bin.iter()
         {
-            info!(" purge {} ref_count {} =>", key, ref_count);
+            info!(" purge {key} ref_count {ref_count} =>");
             for x in list {
-                info!("  {:?}", x);
+                info!("  {x:?}");
             }
         }
     }
@@ -3017,7 +3017,7 @@ fn test_store_overhead() {
     accounts.add_root_and_flush_write_cache(0);
     let store = accounts.storage.get_slot_storage_entry(0).unwrap();
     let total_len = store.accounts.len();
-    info!("total: {}", total_len);
+    info!("total: {total_len}");
     assert_eq!(total_len, STORE_META_OVERHEAD);
 }
 

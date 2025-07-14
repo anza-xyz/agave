@@ -1417,7 +1417,7 @@ mod tests {
             accounts.add_root_and_flush_write_cache(i);
 
             if i % 1_000 == 0 {
-                info!("  store {}", i);
+                info!("  store {i}");
             }
         }
         info!("done..cleaning..");
