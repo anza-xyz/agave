@@ -8,7 +8,7 @@ use {
     },
     agave_io_uring::{Completion, Ring, RingOp},
     io_uring::{opcode, squeue, types, IoUring},
-    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_TRUNC, O_WRONLY},
+    libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_NONBLOCK, O_TRUNC, O_WRONLY},
     slab::Slab,
     smallvec::SmallVec,
     std::{
@@ -32,10 +32,15 @@ const DEFAULT_WRITE_SIZE: usize = 512 * 1024;
 
 // Sanity limit for slab size and number of concurrent operations, in practice with 0.5-1GiB
 // buffer this is also close to the number of available buffers that small files will use up.
-const MAX_OPEN_FILES: usize = 1024;
+// Also, permitting too many open files results in many submitted open ops, which will contend
+// on the directory inode lock.
+const MAX_OPEN_FILES: usize = 512;
 
-// With flat layout of accounts files in a single directory io_uring threads are waiting a lot
-// trying to lock the directory inode (on open), but we still want to permit concurrent operations.
+// We need a few threads to saturate the disk bandwidth, especially that we are writing lots
+// of small files, so the number of ops / write size is high. We also need open ops and writes
+// to run concurrently.
+// We shouldn't use too many threads, as they will contend a lot to lock the directory inode
+// (on open, since in accounts-db most files land in a single dir).
 const MAX_IOWQ_WORKERS: u32 = 4;
 
 const CHECK_PROGRESS_AFTER_SUBMIT_TIMEOUT: Option<Duration> = Some(Duration::from_millis(10));
@@ -81,8 +86,10 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         // but also amortizes number of `submit` syscalls made).
         let ring_qsize = (buffer.as_mut().len() / write_capacity / 2).max(1) as u32;
         let ring = IoUring::builder().build(ring_qsize)?;
+        // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
+        // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()
-            .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 0])?;
+            .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 1])?;
         Self::with_buffer_and_ring(ring, buffer, write_capacity, file_complete)
     }
 
@@ -345,7 +352,7 @@ impl OpenOp {
                 .unwrap_or(libc::AT_FDCWD),
         );
         opcode::OpenAt::new(at_dir_fd, self.path_bytes.as_ptr() as _)
-            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME)
+            .flags(O_CREAT | O_TRUNC | O_NOFOLLOW | O_WRONLY | O_NOATIME | O_NONBLOCK)
             .mode(self.mode)
             .file_index(Some(
                 types::DestinationSlot::try_from_slot_target(self.file_key as u32).unwrap(),
@@ -434,7 +441,6 @@ impl<'a> WriteOp {
         .offset(*offset as u64)
         .ioprio(IO_PRIO_BE_HIGHEST)
         .build()
-        .flags(squeue::Flags::ASYNC)
     }
 
     fn complete(
