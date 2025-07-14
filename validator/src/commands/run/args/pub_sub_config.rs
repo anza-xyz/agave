@@ -1,7 +1,9 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
     clap::{value_t, ArgMatches},
+    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::rpc_pubsub_service::PubSubConfig,
+    std::num::NonZeroUsize,
 };
 
 impl FromClapArgMatches for PubSubConfig {
@@ -17,7 +19,13 @@ impl FromClapArgMatches for PubSubConfig {
             queue_capacity_items: value_t!(matches, "rpc_pubsub_queue_capacity_items", usize)?,
             queue_capacity_bytes: value_t!(matches, "rpc_pubsub_queue_capacity_bytes", usize)?,
             worker_threads: value_t!(matches, "rpc_pubsub_worker_threads", usize)?,
-            ..Default::default()
+            notification_threads: value_t!(
+                matches,
+                "rpc_pubsub_notification_threads",
+                NonZeroUsize
+            )
+            .ok()
+            .or(Some(NonZeroUsize::new(get_thread_count()).unwrap())),
         })
     }
 }
@@ -137,6 +145,31 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--rpc-pubsub-worker-threads", "9999"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_notification_threads() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            json_rpc_config: JsonRpcConfig {
+                full_api: true,
+                ..default_run_args.json_rpc_config.clone()
+            },
+            pub_sub_config: PubSubConfig {
+                notification_threads: Some(NonZeroUsize::new(9999).unwrap()),
+                ..default_run_args.pub_sub_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--full-rpc-api", // required by --rpc-pubsub-notification-threads
+                "--rpc-pubsub-notification-threads",
+                "9999",
+            ],
             expected_args,
         );
     }

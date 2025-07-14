@@ -567,9 +567,7 @@ pub fn execute(
             queue_capacity_items: run_args.pub_sub_config.queue_capacity_items,
             queue_capacity_bytes: run_args.pub_sub_config.queue_capacity_bytes,
             worker_threads: run_args.pub_sub_config.worker_threads,
-            notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
-                .ok()
-                .and_then(NonZeroUsize::new),
+            notification_threads: run_args.pub_sub_config.notification_threads,
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
