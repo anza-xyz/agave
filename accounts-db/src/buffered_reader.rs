@@ -171,19 +171,9 @@ impl<'a, T: Backing> ContiguousBufFileRead<'a> for BufferedReader<'a, T> {
             return self.fill_buf_required(required_len);
         }
 
-        // Capacity sizing is tuned for the use-case of reading accounts to minimize memory allocations.
-        // This can be improved once buf reader is shared between scans of multiple storages.
-        const MAX_CAPACITY: usize = crate::append_vec::STORE_META_OVERHEAD
-            + solana_system_interface::MAX_PERMITTED_DATA_LENGTH as usize;
-        // 128KiB covers a reasonably large distribution of typical account sizes.
-        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-        const MIN_CAPACITY: usize = 1024 * 128;
         let capacity = overflow_buffer.capacity();
         if required_len > capacity {
-            let next_cap = required_len
-                .next_power_of_two()
-                .clamp(MIN_CAPACITY, MAX_CAPACITY);
-            overflow_buffer.reserve_exact(next_cap - capacity);
+            overflow_buffer.reserve(required_len - capacity);
         }
         // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
         // Later, we ensure we only read from the initialized portion of the buffer.

@@ -1090,6 +1090,19 @@ impl AppendVec {
                     } else {
                         // repeat loop with required buffer size holding whole account data
                         min_buf_len = STORE_META_OVERHEAD + data_len;
+
+                        const MAX_CAPACITY: usize =
+                            STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+                        // 128KiB covers a reasonably large distribution of typical account sizes.
+                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                        const MIN_CAPACITY: usize = 1024 * 128;
+                        let capacity = data_overflow_buffer.capacity();
+                        if min_buf_len > capacity {
+                            let next_cap = min_buf_len
+                                .next_power_of_two()
+                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
+                            data_overflow_buffer.reserve_exact(next_cap - capacity);
+                        }
                     }
                 }
             }
