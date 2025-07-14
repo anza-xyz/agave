@@ -415,9 +415,9 @@ pub(crate) fn find_heaviest_fork(
                     );
                 } else {
                     error!(
-                        "Block {} in blockstore is not linked to expected parent from Wen Restart \
-                         {} but to Block {:?}",
-                        slot, expected_parent, block_meta.parent_slot
+                        "Block {slot} in blockstore is not linked to expected parent from Wen \
+                         Restart {expected_parent} but to Block {:?}",
+                        block_meta.parent_slot
                     );
                 }
                 return Err(WenRestartError::BlockNotLinkedToExpectedParent(
@@ -1304,9 +1304,8 @@ pub(crate) fn initialize(
                                 .collect();
                     } else {
                         error!(
-                            "
-                            Cannot find last voted slot in the tower storage, it either means that \
-                             this node has never voted or the tower storage is corrupted. \
+                            "Cannot find last voted slot in the tower storage, it either means \
+                             that this node has never voted or the tower storage is corrupted. \
                              Unfortunately, since WenRestart is a consensus protocol depending on \
                              each participant to send their last voted fork slots, your validator \
                              cannot participate.Please check discord for the conclusion of the \
