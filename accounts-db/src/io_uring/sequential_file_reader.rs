@@ -22,7 +22,9 @@ use {
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
 const DEFAULT_READ_SIZE: usize = 1024 * 1024;
 const SQPOLL_IDLE_TIMEOUT: u32 = 50;
-const MAX_IOWQ_WORKERS: u32 = 4;
+// For large file we don't really use workers as few regularly submitted requests get handled
+// within sqpoll thread. Allow some workers just in case, but limit them.
+const MAX_IOWQ_WORKERS: u32 = 2;
 
 /// Reader for non-seekable files.
 ///
@@ -69,8 +71,10 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
         let ring = IoUring::builder()
             .setup_sqpoll(SQPOLL_IDLE_TIMEOUT)
             .build(ring_qsize)?;
+        // Maximum number of spawned [bounded IO, unbounded IO] kernel threads, we don't expect
+        // any unbounded work, but limit it to 1 just in case (0 leaves it unlimited).
         ring.submitter()
-            .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 0])?;
+            .register_iowq_max_workers(&mut [MAX_IOWQ_WORKERS, 1])?;
         Self::with_buffer_and_ring(buffer, ring, path, read_capacity)
     }
 

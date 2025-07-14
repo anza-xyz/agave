@@ -30,6 +30,9 @@ use {
 // 32 pages (Maximum Data Transfer Size) * page size (MPSMIN = Memory Page Size) = 128KiB.
 const DEFAULT_WRITE_SIZE: usize = 512 * 1024;
 
+// 99.9% of accounts storage files are < 8MiB
+type BacklogVec = SmallVec<[PendingWrite; 8 * 1024 * 1024 / DEFAULT_WRITE_SIZE]>;
+
 // Sanity limit for slab size and number of concurrent operations, in practice with 0.5-1GiB
 // buffer this is also close to the number of available buffers that small files will use up.
 // Also, permitting too many open files results in many submitted open ops, which will contend
@@ -269,7 +272,7 @@ impl<'a> FileCreatorState<'a> {
     }
 
     /// Returns write backlog that needs to be submitted to IO ring
-    fn mark_file_opened(&mut self, file_key: usize) -> SmallVec<[PendingWrite; 8]> {
+    fn mark_file_opened(&mut self, file_key: usize) -> BacklogVec {
         let file = &mut self.files[file_key];
         file.completed_open = true;
         self.open_fds += 1;
@@ -513,8 +516,7 @@ type PendingWrite = (FixedIoBuffer, usize, usize);
 struct PendingFile {
     path: PathBuf,
     completed_open: bool,
-    // 99.9% of accounts storage files are < 8MiB
-    backlog: SmallVec<[PendingWrite; 8]>,
+    backlog: BacklogVec,
     eof: bool,
     writes_started: usize,
     writes_completed: usize,
