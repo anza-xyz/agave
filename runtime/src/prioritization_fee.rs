@@ -23,14 +23,15 @@ struct PrioritizationFeeMetrics {
     // Count of attempted update on finalized PrioritizationFee
     attempted_update_on_finalized_fee_count: Saturating<u64>,
 
+    // TODO - replace with transaction fee in next step
     // Total prioritization fees included in this slot.
     total_prioritization_fee: Saturating<u64>,
 
-    // The minimum prioritization fee of prioritized transactions in this slot.
-    min_prioritization_fee: Option<u64>,
+    // The minimum compute unit price of prioritized transactions in this slot.
+    min_compute_unit_price: Option<u64>,
 
-    // The maximum prioritization fee of prioritized transactions in this slot.
-    max_prioritization_fee: u64,
+    // The maximum compute unit price of prioritized transactions in this slot.
+    max_compute_unit_price: u64,
 
     // Accumulated time spent on tracking prioritization fee for each slot.
     total_update_elapsed_us: Saturating<u64>,
@@ -49,8 +50,8 @@ impl PrioritizationFeeMetrics {
         self.attempted_update_on_finalized_fee_count += val;
     }
 
-    fn update_prioritization_fee(&mut self, fee: u64) {
-        if fee == 0 {
+    fn update_compute_unit_price(&mut self, cu_price: u64) {
+        if cu_price == 0 {
             self.non_prioritized_transactions_count += 1;
             return;
         }
@@ -58,11 +59,11 @@ impl PrioritizationFeeMetrics {
         // update prioritized transaction fee metrics.
         self.prioritized_transactions_count += 1;
 
-        self.max_prioritization_fee = self.max_prioritization_fee.max(fee);
+        self.max_compute_unit_price = self.max_compute_unit_price.max(cu_price);
 
-        self.min_prioritization_fee = Some(
-            self.min_prioritization_fee
-                .map_or(fee, |min_fee| min_fee.min(fee)),
+        self.min_compute_unit_price = Some(
+            self.min_compute_unit_price
+                .map_or(cu_price, |min_cu_price| min_cu_price.min(cu_price)),
         );
     }
 
@@ -75,8 +76,8 @@ impl PrioritizationFeeMetrics {
             attempted_update_on_finalized_fee_count:
                 Saturating(attempted_update_on_finalized_fee_count),
             total_prioritization_fee: Saturating(total_prioritization_fee),
-            min_prioritization_fee,
-            max_prioritization_fee,
+            min_compute_unit_price,
+            max_compute_unit_price,
             total_update_elapsed_us: Saturating(total_update_elapsed_us),
         } = self;
         datapoint_info!(
@@ -113,11 +114,11 @@ impl PrioritizationFeeMetrics {
                 i64
             ),
             (
-                "min_prioritization_fee",
-                min_prioritization_fee.unwrap_or(0) as i64,
+                "min_compute_unit_price",
+                min_compute_unit_price.unwrap_or(0) as i64,
                 i64
             ),
-            ("max_prioritization_fee", max_prioritization_fee as i64, i64),
+            ("max_compute_unit_price", max_compute_unit_price as i64, i64),
             (
                 "total_update_elapsed_us",
                 total_update_elapsed_us as i64,
@@ -144,11 +145,11 @@ pub enum PrioritizationFeeError {
 /// Block minimum prioritization fee stats, includes the minimum prioritization fee for a transaction in this
 /// block; and the minimum fee for each writable account in all transactions in this block. The only relevant
 /// write account minimum fees are those greater than the block minimum transaction fee, because the minimum fee needed to land
-/// a transaction is determined by Max( min_transaction_fee, min_writable_account_fees(key), ...)
+/// a transaction is determined by Max( min_compute_unit_price, min_writable_account_fees(key), ...)
 #[derive(Debug)]
 pub struct PrioritizationFee {
     // The minimum prioritization fee of transactions that landed in this block.
-    min_transaction_fee: u64,
+    min_compute_unit_price: u64,
 
     // The minimum prioritization fee of each writable account in transactions in this block.
     min_writable_account_fees: HashMap<Pubkey, u64>,
@@ -164,7 +165,7 @@ pub struct PrioritizationFee {
 impl Default for PrioritizationFee {
     fn default() -> Self {
         PrioritizationFee {
-            min_transaction_fee: u64::MAX,
+            min_compute_unit_price: u64::MAX,
             min_writable_account_fees: HashMap::new(),
             is_finalized: false,
             metrics: PrioritizationFeeMetrics::default(),
@@ -174,25 +175,25 @@ impl Default for PrioritizationFee {
 
 impl PrioritizationFee {
     /// Update self for minimum transaction fee in the block and minimum fee for each writable account.
-    pub fn update(&mut self, transaction_fee: u64, writable_accounts: Vec<Pubkey>) {
+    pub fn update(&mut self, compute_unit_price: u64, writable_accounts: Vec<Pubkey>) {
         let (_, update_us) = measure_us!({
             if !self.is_finalized {
-                if transaction_fee < self.min_transaction_fee {
-                    self.min_transaction_fee = transaction_fee;
+                if compute_unit_price < self.min_compute_unit_price {
+                    self.min_compute_unit_price = compute_unit_price;
                 }
 
                 for write_account in writable_accounts {
                     self.min_writable_account_fees
                         .entry(write_account)
                         .and_modify(|write_lock_fee| {
-                            *write_lock_fee = std::cmp::min(*write_lock_fee, transaction_fee)
+                            *write_lock_fee = std::cmp::min(*write_lock_fee, compute_unit_price)
                         })
-                        .or_insert(transaction_fee);
+                        .or_insert(compute_unit_price);
                 }
 
                 self.metrics
-                    .accumulate_total_prioritization_fee(transaction_fee);
-                self.metrics.update_prioritization_fee(transaction_fee);
+                    .accumulate_total_prioritization_fee(compute_unit_price);
+                self.metrics.update_compute_unit_price(compute_unit_price);
             } else {
                 self.metrics
                     .increment_attempted_update_on_finalized_fee_count(1);
@@ -207,7 +208,7 @@ impl PrioritizationFee {
     fn prune_irrelevant_writable_accounts(&mut self) {
         self.metrics.total_writable_accounts_count = self.get_writable_accounts_count() as u64;
         self.min_writable_account_fees
-            .retain(|_, account_fee| account_fee > &mut self.min_transaction_fee);
+            .retain(|_, account_fee| account_fee > &mut self.min_compute_unit_price);
         self.metrics.relevant_writable_accounts_count = self.get_writable_accounts_count() as u64;
     }
 
@@ -220,8 +221,8 @@ impl PrioritizationFee {
         Ok(())
     }
 
-    pub fn get_min_transaction_fee(&self) -> Option<u64> {
-        (self.min_transaction_fee != u64::MAX).then_some(self.min_transaction_fee)
+    pub fn get_min_compute_unit_price(&self) -> Option<u64> {
+        (self.min_compute_unit_price != u64::MAX).then_some(self.min_compute_unit_price)
     }
 
     pub fn get_writable_account_fee(&self, key: &Pubkey) -> Option<u64> {
@@ -257,7 +258,7 @@ mod tests {
         let write_account_c = Pubkey::new_unique();
 
         let mut prioritization_fee = PrioritizationFee::default();
-        assert!(prioritization_fee.get_min_transaction_fee().is_none());
+        assert!(prioritization_fee.get_min_compute_unit_price().is_none());
 
         // Assert for 1st transaction
         // [fee, write_accounts...]  -->  [block, account_a, account_b, account_c]
@@ -265,7 +266,7 @@ mod tests {
         // [5,   a, b             ]  -->  [5,     5,         5,         nil      ]
         {
             prioritization_fee.update(5, vec![write_account_a, write_account_b]);
-            assert_eq!(5, prioritization_fee.get_min_transaction_fee().unwrap());
+            assert_eq!(5, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert_eq!(
                 5,
                 prioritization_fee
@@ -289,7 +290,7 @@ mod tests {
         // [9,      b, c          ]  -->  [5,     5,         5,         9        ]
         {
             prioritization_fee.update(9, vec![write_account_b, write_account_c]);
-            assert_eq!(5, prioritization_fee.get_min_transaction_fee().unwrap());
+            assert_eq!(5, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert_eq!(
                 5,
                 prioritization_fee
@@ -316,7 +317,7 @@ mod tests {
         // [2,   a,    c          ]  -->  [2,     2,         5,         2        ]
         {
             prioritization_fee.update(2, vec![write_account_a, write_account_c]);
-            assert_eq!(2, prioritization_fee.get_min_transaction_fee().unwrap());
+            assert_eq!(2, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert_eq!(
                 2,
                 prioritization_fee
@@ -341,7 +342,7 @@ mod tests {
         {
             prioritization_fee.prune_irrelevant_writable_accounts();
             assert_eq!(1, prioritization_fee.min_writable_account_fees.len());
-            assert_eq!(2, prioritization_fee.get_min_transaction_fee().unwrap());
+            assert_eq!(2, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert!(prioritization_fee
                 .get_writable_account_fee(&write_account_a)
                 .is_none());
