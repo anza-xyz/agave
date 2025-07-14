@@ -55,7 +55,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let data = instruction_context.get_instruction_data();
 
-    trace!("process_instruction: {:?}", data);
+    trace!("process_instruction: {data:?}");
 
     let mut me = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
     if *me.get_owner() != id() {

@@ -271,7 +271,7 @@ async fn process_instruction<T: Signers + ?Sized>(
                 TransactionError::InsufficientFundsForRent { .. } => {
                     Err(ProgramError::InsufficientFunds)
                 }
-                _ => panic!("couldnt convert {:?} to ProgramError", e),
+                _ => panic!("couldnt convert {e:?} to ProgramError"),
             }
         }
     }
