@@ -4,6 +4,7 @@
 use {
     super::leader_updater::LeaderUpdater,
     crate::{
+        connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
         quic_networking::{
             create_client_config, create_client_endpoint, QuicClientCertificate, QuicError,
         },
@@ -40,7 +41,7 @@ pub struct ConnectionWorkersScheduler {
 }
 
 /// Errors that arise from running [`ConnectionWorkersSchedulerError`].
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error)]
 pub enum ConnectionWorkersSchedulerError {
     #[error(transparent)]
     QuicError(#[from] QuicError),
@@ -275,6 +276,7 @@ impl ConnectionWorkersScheduler {
                         worker_channel_size,
                         skip_check_transaction_age,
                         max_reconnect_attempts,
+                        DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
                         stats.clone(),
                     );
                     if let Some(pop_worker) = workers.push(peer, worker) {

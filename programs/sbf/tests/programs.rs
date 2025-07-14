@@ -1284,17 +1284,17 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_c")]
     {
         programs.extend_from_slice(&[
-            ("alloc", 19332),
+            ("alloc", 18572),
             ("sbf_to_sbf", 316),
             ("multiple_static", 210),
             ("noop", 6),
             ("noop++", 6),
             ("relative_call", 212),
-            ("return_data", 1027),
-            ("sanity", 2396),
-            ("sanity++", 2296),
-            ("secp256k1_recover", 25483),
-            ("sha", 1447),
+            ("return_data", 1026),
+            ("sanity", 2374),
+            ("sanity++", 2274),
+            ("secp256k1_recover", 25422),
+            ("sha", 1446),
             ("struct_pass", 108),
             ("struct_ret", 122),
         ]);
@@ -1302,20 +1302,20 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_rust")]
     {
         programs.extend_from_slice(&[
-            ("solana_sbf_rust_128bit", 969),
-            ("solana_sbf_rust_alloc", 5077),
-            ("solana_sbf_rust_custom_heap", 304),
-            ("solana_sbf_rust_dep_crate", 2),
-            ("solana_sbf_rust_iter", 1514),
-            ("solana_sbf_rust_many_args", 1290),
-            ("solana_sbf_rust_mem", 1302),
-            ("solana_sbf_rust_membuiltins", 331),
-            ("solana_sbf_rust_noop", 314),
-            ("solana_sbf_rust_param_passing", 108),
-            ("solana_sbf_rust_rand", 278),
-            ("solana_sbf_rust_sanity", 51325),
-            ("solana_sbf_rust_secp256k1_recover", 89388),
-            ("solana_sbf_rust_sha", 22855),
+            ("solana_sbf_rust_128bit", 801),
+            ("solana_sbf_rust_alloc", 4983),
+            ("solana_sbf_rust_custom_heap", 303),
+            ("solana_sbf_rust_dep_crate", 3),
+            ("solana_sbf_rust_iter", 1414),
+            ("solana_sbf_rust_many_args", 1287),
+            ("solana_sbf_rust_mem", 1298),
+            ("solana_sbf_rust_membuiltins", 330),
+            ("solana_sbf_rust_noop", 313),
+            ("solana_sbf_rust_param_passing", 109),
+            ("solana_sbf_rust_rand", 276),
+            ("solana_sbf_rust_sanity", 18116),
+            ("solana_sbf_rust_secp256k1_recover", 89274),
+            ("solana_sbf_rust_sha", 22811),
         ]);
     }
 
