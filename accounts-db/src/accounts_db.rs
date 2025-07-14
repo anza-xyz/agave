@@ -8531,7 +8531,7 @@ impl AccountsDb {
         let mut alive_roots: Vec<_> = self.accounts_index.all_alive_roots();
         #[allow(clippy::stable_sort_primitive)]
         alive_roots.sort();
-        info!("{label}: accounts_index alive_roots: {alive_roots:?}",);
+        info!("{label}: accounts_index alive_roots: {alive_roots:?}");
         self.accounts_index.account_maps.iter().for_each(|map| {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
