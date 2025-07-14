@@ -120,9 +120,7 @@ fn do_get_first_error<T, Tx: SVMTransaction>(
             if first_err.is_none() {
                 first_err = Some((Err(err.clone()), *transaction.signature()));
             }
-            warn!(
-                "Unexpected validator error: {err:?}, transaction: {transaction:?}"
-            );
+            warn!("Unexpected validator error: {err:?}, transaction: {transaction:?}");
             datapoint_error!(
                 "validator_process_entry_error",
                 (
@@ -1001,9 +999,7 @@ pub fn process_blockstore_from_root(
         let bank = bank_forks.read().unwrap().root_bank();
         #[cfg(feature = "dev-context-only-utils")]
         if let Some(hash_overrides) = &opts.hash_overrides {
-            info!(
-                "Will override following slots' hashes: {hash_overrides:#?}"
-            );
+            info!("Will override following slots' hashes: {hash_overrides:#?}");
             bank.set_hash_overrides(hash_overrides.clone());
         }
         if opts.no_block_cost_limits {
@@ -1033,7 +1029,8 @@ pub fn process_blockstore_from_root(
             .expect("Couldn't mark start_slot as connected during startup")
     } else {
         info!(
-            "Start slot {start_slot} isn't a root, and won't be updated due to secondary blockstore access"
+            "Start slot {start_slot} isn't a root, and won't be updated due to secondary \
+             blockstore access"
         );
     }
 
@@ -1065,9 +1062,7 @@ pub fn process_blockstore_from_root(
         //
         // If the ledger has any data at all, the snapshot was likely taken at
         // a slot that is not within the range of ledger min/max slot(s).
-        warn!(
-            "Starting slot {start_slot} is not in Blockstore, unable to process"
-        );
+        warn!("Starting slot {start_slot} is not in Blockstore, unable to process");
         (0, 0)
     };
 
@@ -1600,7 +1595,8 @@ fn confirm_slot_entries(
                     starting_transaction_index: entry_tx_starting_index,
                 }) {
                     warn!(
-                        "Slot {slot}, entry {entry_index} entry_notification_sender send failed: {err:?}"
+                        "Slot {slot}, entry {entry_index} entry_notification_sender send failed: \
+                         {err:?}"
                     );
                 }
             }
@@ -1612,7 +1608,8 @@ fn confirm_slot_entries(
         })
         .sum::<usize>();
     trace!(
-        "Fetched entries for slot {slot}, num_entries: {num_entries}, num_shreds: {num_shreds}, num_txs: {num_txs}, slot_full: {slot_full}",
+        "Fetched entries for slot {slot}, num_entries: {num_entries}, num_shreds: {num_shreds}, \
+         num_txs: {num_txs}, slot_full: {slot_full}",
     );
 
     if !skip_verification {
@@ -1871,7 +1868,8 @@ fn load_frozen_forks(
     let mut root = bank_forks.read().unwrap().root();
     let max_root = std::cmp::max(root, blockstore_max_root);
     info!(
-        "load_frozen_forks() latest root from blockstore: {blockstore_max_root}, max_root: {max_root}",
+        "load_frozen_forks() latest root from blockstore: {blockstore_max_root}, max_root: \
+         {max_root}",
     );
 
     // The total number of slots processed
@@ -2179,15 +2177,21 @@ pub fn process_single_slot(
         result?
     }
 
-    let block_id = blockstore.check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
+    let block_id = blockstore
+        .check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
         .inspect_err(|err| {
             warn!("slot {slot} failed last fec set checks: {err}");
             if blockstore.is_primary_access() {
-                blockstore.set_dead_slot(slot).expect("Failed to mark slot as dead in blockstore");
+                blockstore
+                    .set_dead_slot(slot)
+                    .expect("Failed to mark slot as dead in blockstore");
             } else {
-                info!("Failed last fec set checks slot {slot} won't be marked dead due to being secondary blockstore access");
+                info!(
+                    "Failed last fec set checks slot {slot} won't be marked dead due to being \
+                     secondary blockstore access"
+                );
             }
-    })?;
+        })?;
     bank.set_block_id(block_id);
     bank.freeze(); // all banks handled by this routine are created from complete slots
 
@@ -2252,9 +2256,7 @@ impl TransactionStatusSender {
                 transaction_indexes,
             }))
         {
-            trace!(
-                "Slot {slot} transaction_status send batch failed: {e:?}"
-            );
+            trace!("Slot {slot} transaction_status send batch failed: {e:?}");
         }
     }
 
@@ -2264,9 +2266,7 @@ impl TransactionStatusSender {
             .send(TransactionStatusMessage::Freeze(bank.clone()))
         {
             let slot = bank.slot();
-            warn!(
-                "Slot {slot} transaction_status send freeze message failed: {e:?}"
-            );
+            warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
         }
     }
 }

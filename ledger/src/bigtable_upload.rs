@@ -54,9 +54,7 @@ pub async fn upload_confirmed_blocks(
 ) -> Result<Slot, Box<dyn std::error::Error>> {
     let mut measure = Measure::start("entire upload");
 
-    info!(
-        "Loading ledger slots from {starting_slot} to {ending_slot}"
-    );
+    info!("Loading ledger slots from {starting_slot} to {ending_slot}");
     let blockstore_slots: Vec<_> = blockstore
         .rooted_slot_iterator(starting_slot)
         .map_err(|err| {
@@ -83,7 +81,8 @@ pub async fn upload_confirmed_blocks(
     let bigtable_slots = if !config.force_reupload {
         let mut bigtable_slots = vec![];
         info!(
-            "Loading list of bigtable blocks between slots {first_blockstore_slot} and {last_blockstore_slot}..."
+            "Loading list of bigtable blocks between slots {first_blockstore_slot} and \
+             {last_blockstore_slot}..."
         );
 
         let mut start_slot = first_blockstore_slot;
@@ -182,7 +181,8 @@ pub async fn upload_confirmed_blocks(
                                     }
                                     Err(err) => {
                                         warn!(
-                                            "Failed to get load confirmed block from slot {slot}: {err:?}"
+                                            "Failed to get load confirmed block from slot {slot}: \
+                                             {err:?}"
                                         );
                                         sender.send((slot, None))
                                     }

@@ -1382,9 +1382,9 @@ impl Blockstore {
         // we must retain the chain by preserving `next_slots`.
         match self.purge_slot_cleanup_chaining(slot) {
             Ok(_) => {}
-            Err(BlockstoreError::SlotUnavailable) => error!(
-                "clear_unconfirmed_slot() called on slot {slot} with no SlotMeta"
-            ),
+            Err(BlockstoreError::SlotUnavailable) => {
+                error!("clear_unconfirmed_slot() called on slot {slot} with no SlotMeta")
+            }
             Err(e) => panic!("Purge database operations failed {e}"),
         }
     }
@@ -1891,8 +1891,7 @@ impl Blockstore {
                 shred.clone().into_payload(),
             ) {
                 warn!(
-                    "Unable to store conflicting merkle root duplicate proof for {slot} \
-                     {:?} {e}",
+                    "Unable to store conflicting merkle root duplicate proof for {slot} {:?} {e}",
                     shred.erasure_set(),
                 );
             }
@@ -2039,10 +2038,10 @@ impl Blockstore {
                 .map(Cow::into_owned)
         else {
             warn!(
-                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} \
-                 is missing from blockstore. This can happen if you have recently upgraded \
-                 from a version < v1.18.13, or if blockstore cleanup has caught up to the root. \
-                 Skipping the backwards chained merkle root consistency check"
+                "Shred {prev_shred_id:?} indicated by the erasure meta {prev_erasure_meta:?} is \
+                 missing from blockstore. This can happen if you have recently upgraded from a \
+                 version < v1.18.13, or if blockstore cleanup has caught up to the root. Skipping \
+                 the backwards chained merkle root consistency check"
             );
             return true;
         };
@@ -2053,7 +2052,8 @@ impl Blockstore {
             warn!(
                 "Received conflicting chained merkle roots for slot: {slot}, shred {:?} type {:?} \
                  chains to merkle root {chained_merkle_root:?}, however previous fec set coding \
-                 shred {prev_erasure_set:?} has merkle root {merkle_root:?}. Reporting as duplicate",
+                 shred {prev_erasure_set:?} has merkle root {merkle_root:?}. Reporting as \
+                 duplicate",
                 shred.erasure_set(),
                 shred.shred_type(),
             );
@@ -2737,7 +2737,8 @@ impl Blockstore {
                     .map(|transaction| {
                         if let Err(err) = transaction.sanitize() {
                             warn!(
-                                "Blockstore::get_block sanitize failed: {err:?}, slot: {slot:?}, {transaction:?}",
+                                "Blockstore::get_block sanitize failed: {err:?}, slot: {slot:?}, \
+                                 {transaction:?}",
                             );
                         }
                         transaction
@@ -3238,8 +3239,8 @@ impl Blockstore {
             .map(|transaction| {
                 if let Err(err) = transaction.sanitize() {
                     warn!(
-                        "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: {slot:?}, \
-                         {transaction:?}",
+                        "Blockstore::find_transaction_in_slot sanitize failed: {err:?}, slot: \
+                         {slot:?}, {transaction:?}",
                     );
                 }
                 transaction
@@ -3779,8 +3780,8 @@ impl Blockstore {
         let results = self.check_last_fec_set(slot);
         let Ok(results) = results else {
             warn!(
-                "Unable to check the last fec set for slot {slot} {bank_hash}, \
-                 marking as dead: {results:?}",
+                "Unable to check the last fec set for slot {slot} {bank_hash}, marking as dead: \
+                 {results:?}",
             );
             return Err(BlockstoreProcessorError::IncompleteFinalFecSet);
         };
@@ -3820,7 +3821,11 @@ impl Blockstore {
         #[cfg(test)]
         const_assert_eq!(MINIMUM_INDEX, 31);
         let Some(start_index) = last_shred_index.checked_sub(MINIMUM_INDEX) else {
-            warn!("Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} required", last_shred_index + 1);
+            warn!(
+                "Slot {slot} has only {} shreds, fewer than the {DATA_SHREDS_PER_FEC_BLOCK} \
+                 required",
+                last_shred_index + 1
+            );
             return Ok(LastFECSetCheckResults {
                 last_fec_set_merkle_root: None,
                 is_retransmitter_signed: false,
@@ -4277,9 +4282,7 @@ impl Blockstore {
         if root_meta.is_connected() {
             return Ok(());
         }
-        info!(
-            "Marking slot {root} and any full children slots as connected"
-        );
+        info!("Marking slot {root} and any full children slots as connected");
         let mut write_batch = self.get_write_batch()?;
 
         // Mark both connected bits on the root slot so that the flags for this
@@ -5314,7 +5317,8 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
 
             if cfg!(target_os = "macos") {
                 error!(
-                    "On mac OS you may need to run |sudo launchctl limit maxfiles {desired_nofile} {desired_nofile}| first",
+                    "On mac OS you may need to run |sudo launchctl limit maxfiles \
+                     {desired_nofile} {desired_nofile}| first",
                 );
             }
             if enforce_ulimit_nofile {
@@ -7188,7 +7192,8 @@ pub mod tests {
                 ShredSource::Repaired,
                 &mut duplicate_shreds,
             ),
-            "Should not insert shred with 'last' flag set and index less than already existing shreds"
+            "Should not insert shred with 'last' flag set and index less than already existing \
+             shreds"
         );
         assert!(blockstore.has_duplicate_shreds_in_slot(0));
         assert_eq!(duplicate_shreds.len(), 1);
@@ -7718,11 +7723,11 @@ pub mod tests {
             .insert_shreds(vec![coding_shred.clone()], None, false)
             .expect("Insertion should succeed");
 
-        assert!(Blockstore::should_insert_coding_shred(
-            &coding_shred,
-            max_root
-        ),
-        "Inserting the same shred again should be allowed since this doesn't check for duplicate index");
+        assert!(
+            Blockstore::should_insert_coding_shred(&coding_shred, max_root),
+            "Inserting the same shred again should be allowed since this doesn't check for \
+             duplicate index"
+        );
 
         assert!(
             Blockstore::should_insert_coding_shred(&code_shreds[1], max_root),
