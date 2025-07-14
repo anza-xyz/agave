@@ -564,11 +564,7 @@ pub fn execute(
             enable_block_subscription: run_args.pub_sub_config.enable_block_subscription,
             enable_vote_subscription: run_args.pub_sub_config.enable_vote_subscription,
             max_active_subscriptions: run_args.pub_sub_config.max_active_subscriptions,
-            queue_capacity_items: value_t_or_exit!(
-                matches,
-                "rpc_pubsub_queue_capacity_items",
-                usize
-            ),
+            queue_capacity_items: run_args.pub_sub_config.queue_capacity_items,
             queue_capacity_bytes: value_t_or_exit!(
                 matches,
                 "rpc_pubsub_queue_capacity_bytes",
