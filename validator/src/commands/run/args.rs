@@ -1768,10 +1768,7 @@ mod tests {
     use {
         super::*,
         crate::cli::thread_args::thread_args,
-        std::{
-            net::{IpAddr, Ipv4Addr},
-            num::NonZeroUsize,
-        },
+        std::net::{IpAddr, Ipv4Addr},
     };
 
     impl Default for RunArgs {
@@ -2315,46 +2312,6 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec!["--no-incremental-snapshots"],
-                expected_args,
-            );
-        }
-    }
-
-    #[test]
-    fn verify_args_struct_by_command_run_with_rocksdb_compaction_threads() {
-        // long arg
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    num_rocksdb_compaction_threads: NonZeroUsize::new(1).unwrap(),
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-compaction-threads", "1"],
-                expected_args,
-            );
-        }
-    }
-
-    #[test]
-    fn verify_args_struct_by_command_run_with_rocksdb_flush_threads() {
-        // long arg
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    num_rocksdb_flush_threads: NonZeroUsize::new(1).unwrap(),
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-flush-threads", "1"],
                 expected_args,
             );
         }
