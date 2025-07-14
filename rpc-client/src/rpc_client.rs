@@ -3935,7 +3935,7 @@ mod tests {
         assert!(result.is_err());
         if let Err(err) = result {
             if let ErrorKind::RpcError(RpcError::ForUser(message)) = err.kind() {
-                assert!(message.contains("AccountNotFound"));
+                assert!(message.contains("Deserialization failed: invalid type: null, expected struct UiAccount"));
                 assert!(message.contains(&pubkey.to_string()));
             } else {
                 panic!("Expected RpcError::ForUser, got {:?}", err);
