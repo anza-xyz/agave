@@ -1211,11 +1211,6 @@ where
         })
         .unwrap();
 
-    // When generating the index, we want to calculate the duplicates lt hash value (needed to do
-    // the lattice-based verification of the accounts in the background) optimistically.
-    // This means, either when the cli arg is set, or when the snapshot has an accounts lt hash.
-    let is_accounts_lt_hash_enabled =
-        accounts_db.is_experimental_accumulator_hash_enabled() || has_accounts_lt_hash;
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
@@ -1224,7 +1219,7 @@ where
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
         verify_index,
-        is_accounts_lt_hash_enabled,
+        has_accounts_lt_hash,
     );
     info!("Building accounts index... Done in {:?}", start.elapsed());
 

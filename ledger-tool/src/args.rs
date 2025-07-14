@@ -115,14 +115,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .takes_value(true)
             .possible_values(&["mmap", "file"])
             .help("Access account storages using this method"),
-        Arg::with_name("no_accounts_db_experimental_accumulator_hash")
-            .long("no-accounts-db-experimental-accumulator-hash")
-            .help("Disables the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_verify_experimental_accumulator_hash")
-            .long("accounts-db-verify-experimental-accumulator-hash")
-            .help("Verifies the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
             .long("accounts-db-snapshots-use-experimental-accumulator-hash")
             .help("Snapshots use the experimental accumulator hash")
@@ -359,10 +351,6 @@ pub fn get_accounts_db_config(
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
         storage_access,
         scan_filter_for_shrinking,
-        enable_experimental_accumulator_hash: !arg_matches
-            .is_present("no_accounts_db_experimental_accumulator_hash"),
-        verify_experimental_accumulator_hash: arg_matches
-            .is_present("accounts_db_verify_experimental_accumulator_hash"),
         snapshots_use_experimental_accumulator_hash: arg_matches
             .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,

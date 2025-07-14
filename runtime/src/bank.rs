@@ -2549,34 +2549,6 @@ impl Bank {
                 // updating the accounts lt hash must happen *outside* of hash_internal_state() so
                 // that rehash() can be called and *not* modify self.accounts_lt_hash.
                 self.update_accounts_lt_hash();
-
-                // For lattice-hash R&D, we have a CLI arg to do extra verfication.  If set, we'll
-                // re-calculate the accounts lt hash every slot and compare it against the value
-                // already stored in the bank.
-                if self
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .verify_experimental_accumulator_hash
-                {
-                    let slot = self.slot();
-                    info!("Verifying the accounts lt hash for slot {slot}...");
-                    let (calculated_accounts_lt_hash, duration) = meas_dur!({
-                        self.rc
-                            .accounts
-                            .accounts_db
-                            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
-                    });
-                    let actual_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
-                    assert_eq!(
-                        calculated_accounts_lt_hash,
-                        *actual_accounts_lt_hash,
-                        "Verifying the accounts lt hash for slot {slot} failed! calculated checksum: {}, actual checksum: {}",
-                        calculated_accounts_lt_hash.0.checksum(),
-                        actual_accounts_lt_hash.0.checksum(),
-                    );
-                    info!("Verifying the accounts lt hash for slot {slot}... Done successfully in {duration:?}");
-                }
             }
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
@@ -4635,6 +4607,7 @@ impl Bank {
     ) -> bool {
         #[derive(Debug, Eq, PartialEq)]
         enum VerifyKind {
+            #[allow(dead_code)] // will be removed next
             Merkle,
             Lattice,
         }
@@ -4649,23 +4622,13 @@ impl Bank {
 
         let slot = self.slot();
 
-        let verify_kind = match (
-            duplicates_lt_hash.is_some(),
-            self.rc
-                .accounts
-                .accounts_db
-                .is_experimental_accumulator_hash_enabled(),
-        ) {
-            (true, _) => VerifyKind::Lattice,
-            (false, false) => VerifyKind::Merkle,
-            (false, true) => {
-                // Calculating the accounts lt hash from storages *requires* a duplicates_lt_hash.
-                // If it is None here, then we must use the index instead, which also means we
-                // cannot run in the background.
-                config.run_in_background = false;
-                VerifyKind::Lattice
-            }
-        };
+        let verify_kind = VerifyKind::Lattice;
+        if duplicates_lt_hash.is_none() {
+            // Calculating the accounts lt hash from storages *requires* a duplicates_lt_hash.
+            // If it is None here, then we must use the index instead, which also means we
+            // cannot run in the background.
+            config.run_in_background = false;
+        }
 
         if config.require_rooted_bank && !accounts.accounts_db.accounts_index.is_alive_root(slot) {
             if let Some(parent) = self.parent() {
