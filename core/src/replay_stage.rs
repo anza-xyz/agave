@@ -4428,8 +4428,8 @@ pub(crate) mod tests {
 
         let blockstore = Arc::new(blockstore);
         let validator_node_to_vote_keys: HashMap<Pubkey, Pubkey> = validator_keypairs
-            .values()
-            .map(|keypairs| {
+            .iter()
+            .map(|(_, keypairs)| {
                 (
                     keypairs.node_keypair.pubkey(),
                     keypairs.vote_keypair.pubkey(),
