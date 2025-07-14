@@ -1,6 +1,6 @@
 use {
     crate::commands::{FromClapArgMatches, Result},
-    clap::ArgMatches,
+    clap::{value_t, ArgMatches},
     solana_rpc::rpc_pubsub_service::PubSubConfig,
 };
 
@@ -9,6 +9,11 @@ impl FromClapArgMatches for PubSubConfig {
         Ok(PubSubConfig {
             enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
             enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
+            max_active_subscriptions: value_t!(
+                matches,
+                "rpc_pubsub_max_active_subscriptions",
+                usize
+            )?,
             ..Default::default()
         })
     }
@@ -61,6 +66,23 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--rpc-pubsub-enable-vote-subscription"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_max_active_subscriptions() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            pub_sub_config: PubSubConfig {
+                max_active_subscriptions: 1000,
+                ..default_run_args.pub_sub_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--rpc-pubsub-max-active-subscriptions", "1000"],
             expected_args,
         );
     }
