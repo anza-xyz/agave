@@ -305,7 +305,7 @@ impl ConnectionWorkersScheduler {
 }
 
 /// Sets up the QUIC endpoint for the scheduler to handle connections.
-fn setup_endpoint(
+pub fn setup_endpoint(
     bind: BindTarget,
     stake_identity: Option<StakeIdentity>,
 ) -> Result<Endpoint, ConnectionWorkersSchedulerError> {
@@ -367,7 +367,7 @@ impl WorkersBroadcaster for NonblockingBroadcaster {
 ///
 /// This function selects up to `send_fanout` addresses from the `leaders` list, ensuring that
 /// only unique addresses are included while maintaining their original order.
-fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
+pub fn extract_send_leaders(leaders: &[SocketAddr], send_fanout: usize) -> Vec<SocketAddr> {
     let send_count = send_fanout.min(leaders.len());
     remove_duplicates(&leaders[..send_count])
 }

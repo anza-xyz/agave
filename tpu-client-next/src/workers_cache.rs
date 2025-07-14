@@ -71,7 +71,7 @@ impl WorkerInfo {
 }
 
 /// Spawns a worker to handle communication with a given peer.
-pub(crate) fn spawn_worker(
+pub fn spawn_worker(
     endpoint: &Endpoint,
     peer: &SocketAddr,
     worker_channel_size: usize,
@@ -127,7 +127,7 @@ pub enum WorkersCacheError {
 }
 
 impl WorkersCache {
-    pub(crate) fn new(capacity: usize, cancel: CancellationToken) -> Self {
+    pub fn new(capacity: usize, cancel: CancellationToken) -> Self {
         Self {
             workers: LruCache::new(capacity),
             cancel,
@@ -140,7 +140,7 @@ impl WorkersCache {
         self.workers.contains(peer)
     }
 
-    pub(crate) fn push(
+    pub fn push(
         &mut self,
         leader: SocketAddr,
         peer_worker: WorkerInfo,
@@ -266,7 +266,7 @@ impl WorkersCache {
     ///
     /// The method awaits the completion of all shutdown tasks, ensuring that
     /// each worker is properly terminated.
-    pub(crate) async fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) {
         // Interrupt any outstanding `send_transactions()` calls.
         self.cancel.cancel();
 
