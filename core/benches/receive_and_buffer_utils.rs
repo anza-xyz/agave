@@ -86,7 +86,7 @@ fn generate_transactions(
         assert!(
             num_instructions_per_tx > 0,
             "`num_instructions_per_tx` must be at least 1 when `set_rand_cu_price` flag is set to \
-             countthe set_compute_unit_price instruction."
+             count the set_compute_unit_price instruction."
         );
     }
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
