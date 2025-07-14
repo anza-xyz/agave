@@ -2,11 +2,9 @@
 
 use {
     solana_account::{from_account, state_traits::StateMut},
-    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_client_traits::SyncClient,
     solana_clock::Slot,
     solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
@@ -310,13 +308,6 @@ fn test_stake_account_lifetime() {
     genesis_config.rent = Rent::default();
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     let mint_pubkey = mint_keypair.pubkey();
-    // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during freeze
-    // when parent is in the EAH calculation window.
-    bank.rc
-        .accounts
-        .accounts_db
-        .epoch_accounts_hash_manager
-        .set_valid(EpochAccountsHash::new(Hash::new_unique()), bank.slot());
     let bank_client = BankClient::new_shared(bank.clone());
 
     let (vote_balance, stake_rent_exempt_reserve, stake_minimum_delegation) = {

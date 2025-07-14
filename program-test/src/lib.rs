@@ -11,7 +11,6 @@ use {
     log::*,
     solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
     solana_account_info::AccountInfo,
-    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
@@ -36,7 +35,6 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        accounts_background_service::SnapshotRequestKind,
         bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
@@ -1172,7 +1170,7 @@ impl ProgramTestContext {
                 .clone_without_scheduler()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
+        let (snapshot_request_sender, _snapshot_request_receiver) = crossbeam_channel::unbounded();
         let snapshot_controller = SnapshotController::new(
             snapshot_request_sender,
             SnapshotConfig::new_disabled(),
@@ -1186,27 +1184,6 @@ impl ProgramTestContext {
                 Some(pre_warp_slot),
             )
             .unwrap();
-
-        // The call to `set_root()` above will send an EAH request.  Need to intercept and handle
-        // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
-        // waiting for an in-flight EAH calculation to complete.
-        snapshot_request_receiver
-            .try_iter()
-            .filter(|snapshot_request| {
-                snapshot_request.request_kind == SnapshotRequestKind::EpochAccountsHash
-            })
-            .for_each(|snapshot_request| {
-                snapshot_request
-                    .snapshot_root_bank
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .epoch_accounts_hash_manager
-                    .set_valid(
-                        EpochAccountsHash::new(Hash::new_unique()),
-                        snapshot_request.snapshot_root_bank.slot(),
-                    )
-            });
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(Bank::new_from_parent(

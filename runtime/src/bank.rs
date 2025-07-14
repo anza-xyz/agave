@@ -86,7 +86,6 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
-        epoch_accounts_hash::EpochAccountsHash,
         sorted_storages::SortedStorages,
         storable_accounts::StorableAccounts,
     },
@@ -211,7 +210,6 @@ pub mod bank_hash_details;
 mod builtin_programs;
 pub mod builtins;
 mod check_transactions;
-pub mod epoch_accounts_hash_utils;
 mod fee_distribution;
 mod metrics;
 pub(crate) mod partitioned_epoch_rewards;
@@ -440,7 +438,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
     pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
-    pub(crate) epoch_accounts_hash: Option<Hash>,
     // When removing the accounts lt hash featurization code, also remove this Option wrapper
     pub(crate) accounts_lt_hash: Option<AccountsLtHash>,
     pub(crate) bank_hash_stats: BankHashStats,
@@ -1694,29 +1691,13 @@ impl Bank {
     ///   in the past
     /// * Adjusts the new bank's tick height to avoid having to run PoH for millions of slots
     /// * Freezes the new bank, assuming that the user will `Bank::new_from_parent` from this bank
-    /// * Calculates and sets the epoch accounts hash from the parent
     pub fn warp_from_parent(
         parent: Arc<Bank>,
         collector_id: &Pubkey,
         slot: Slot,
-        data_source: CalcAccountsHashDataSource,
+        _data_source: CalcAccountsHashDataSource, // will be removed next
     ) -> Self {
         parent.freeze();
-        parent
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .set_in_flight(parent.slot());
-        let accounts_hash = parent.update_accounts_hash(data_source, true);
-        let epoch_accounts_hash = accounts_hash.into();
-        parent
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .set_valid(epoch_accounts_hash, parent.slot());
-
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);
         new.apply_feature_activations(ApplyFeatureActivationsCaller::WarpFromParent, false);
@@ -5052,10 +5033,8 @@ impl Bank {
             (None, Some(incremental_accounts_hash)) => incremental_accounts_hash.into(),
             (None, None) => panic!("accounts hash is required to get snapshot hash"),
         };
-        let epoch_accounts_hash = self.get_epoch_accounts_hash_to_serialize();
         SnapshotHash::new(
             &MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind),
-            epoch_accounts_hash.as_ref(),
             None,
         )
     }
@@ -5066,7 +5045,6 @@ impl Bank {
     pub fn get_lattice_snapshot_hash(&self) -> SnapshotHash {
         SnapshotHash::new(
             &MerkleOrLatticeAccountsHash::Lattice,
-            None,
             Some(self.accounts_lt_hash.lock().unwrap().0.checksum()),
         )
     }
@@ -5904,46 +5882,6 @@ impl Bank {
         });
 
         total_accounts_stats
-    }
-
-    /// Must a snapshot of this bank include the EAH?
-    pub fn must_include_epoch_accounts_hash_in_snapshot(&self) -> bool {
-        epoch_accounts_hash_utils::is_enabled_this_epoch(self)
-            && epoch_accounts_hash_utils::is_in_calculation_window(self)
-    }
-
-    /// Get the EAH that will be used by snapshots
-    ///
-    /// Since snapshots are taken on roots, if the bank is in the EAH calculation window then an
-    /// EAH *must* be included.  This means if an EAH calculation is currently in-flight we will
-    /// wait for it to complete.
-    pub fn get_epoch_accounts_hash_to_serialize(&self) -> Option<EpochAccountsHash> {
-        if !self.must_include_epoch_accounts_hash_in_snapshot() {
-            return None;
-        }
-
-        let (epoch_accounts_hash, waiting_time_us) = measure_us!(self
-            .rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .wait_get_epoch_accounts_hash());
-
-        datapoint_info!(
-            "bank-get_epoch_accounts_hash_to_serialize",
-            ("slot", self.slot(), i64),
-            ("waiting-time-us", waiting_time_us, i64),
-        );
-        Some(epoch_accounts_hash)
-    }
-
-    /// Convenience fn to get the Epoch Accounts Hash
-    pub fn epoch_accounts_hash(&self) -> Option<EpochAccountsHash> {
-        self.rc
-            .accounts
-            .accounts_db
-            .epoch_accounts_hash_manager
-            .try_get_epoch_accounts_hash()
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {

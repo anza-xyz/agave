@@ -5,10 +5,7 @@ use {
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
-    solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        epoch_accounts_hash::EpochAccountsHash,
-    },
+    solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
     solana_clock::Slot,
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -16,7 +13,6 @@ use {
     },
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -313,24 +309,6 @@ fn test_slots_to_snapshot() {
                 .unwrap()
                 .set_root(current_bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
-
-            // Since the accounts background services are not running, EpochAccountsHash
-            // calculation requests will not be handled. To prevent banks from hanging during
-            // Bank::freeze() due to waiting for EAH to complete, just set the EAH to Valid.
-            let epoch_accounts_hash_manager = &current_bank
-                .rc
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager;
-            if epoch_accounts_hash_manager
-                .try_get_epoch_accounts_hash()
-                .is_none()
-            {
-                epoch_accounts_hash_manager.set_valid(
-                    EpochAccountsHash::new(Hash::new_unique()),
-                    current_bank.slot(),
-                )
-            }
         }
 
         let num_old_slots = num_set_roots * *add_root_interval - MAX_CACHE_ENTRIES + 1;

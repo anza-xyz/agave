@@ -6,8 +6,8 @@ use {
     solana_accounts_db::{
         accounts_db::CalcAccountsHashKind,
         accounts_hash::{
-            AccountsHash, AccountsHashKind, CalcAccountsHashConfig, HashStats,
-            IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
+            AccountsHash, CalcAccountsHashConfig, HashStats, IncrementalAccountsHash,
+            MerkleOrLatticeAccountsHash,
         },
         sorted_storages::SortedStorages,
     },
@@ -221,8 +221,6 @@ impl AccountsHashVerifier {
         let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
             Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config)?;
 
-        Self::save_epoch_accounts_hash(&accounts_package, &merkle_or_lattice_accounts_hash);
-
         Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
 
         Self::submit_for_packaging(
@@ -260,7 +258,7 @@ impl AccountsHashVerifier {
         }
 
         let accounts_hash_calculation_kind = match accounts_package.package_kind {
-            AccountsPackageKind::EpochAccountsHash => CalcAccountsHashKind::Full,
+            AccountsPackageKind::EpochAccountsHash => unreachable!("EAH is removed"),
             AccountsPackageKind::Snapshot(snapshot_kind) => match snapshot_kind {
                 SnapshotKind::FullSnapshot => CalcAccountsHashKind::Full,
                 SnapshotKind::IncrementalSnapshot(_) => CalcAccountsHashKind::Incremental,
@@ -438,31 +436,6 @@ impl AccountsHashVerifier {
         );
 
         incremental_accounts_hash
-    }
-
-    fn save_epoch_accounts_hash(
-        accounts_package: &AccountsPackage,
-        merkle_or_lattice_accounts_hash: &MerkleOrLatticeAccountsHash,
-    ) {
-        if accounts_package.package_kind == AccountsPackageKind::EpochAccountsHash {
-            let MerkleOrLatticeAccountsHash::Merkle(AccountsHashKind::Full(accounts_hash)) =
-                merkle_or_lattice_accounts_hash
-            else {
-                panic!(
-                    "EAH requires a full accounts hash, but was given \
-                     {merkle_or_lattice_accounts_hash:?}"
-                );
-            };
-            info!(
-                "saving epoch accounts hash, slot: {}, hash: {}",
-                accounts_package.slot, accounts_hash.0,
-            );
-            accounts_package
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager
-                .set_valid((*accounts_hash).into(), accounts_package.slot);
-        }
     }
 
     fn purge_old_accounts_hashes(
