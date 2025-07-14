@@ -5,7 +5,10 @@ mod utils;
 use {
     crate::{
         post_processing::post_process,
-        toolchain::{corrupted_toolchain, get_base_rust_version, install_tools, DEFAULT_PLATFORM_TOOLS_VERSION},
+        toolchain::{
+            corrupted_toolchain, get_base_rust_version, install_tools,
+            DEFAULT_PLATFORM_TOOLS_VERSION,
+        },
         utils::{rust_target_triple, spawn},
     },
     cargo_metadata::camino::Utf8PathBuf,
@@ -16,7 +19,7 @@ use {
         borrow::Cow,
         env,
         fs::{self},
-        path::{PathBuf},
+        path::PathBuf,
         process::exit,
     },
 };
