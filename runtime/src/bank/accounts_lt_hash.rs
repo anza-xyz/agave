@@ -421,6 +421,7 @@ mod tests {
             accounts_index::{
                 AccountsIndexConfig, IndexLimitMb, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
             },
+            io_uring::sequential_file_reader::SequentialFileReader,
         },
         solana_fee_calculator::FeeRateGovernor,
         solana_genesis_config::{self, GenesisConfig},
@@ -878,10 +879,12 @@ mod tests {
 
         // get all the lt hashes for each version of all accounts
         let mut stored_accounts_map = HashMap::<_, Vec<_>>::new();
+        let mut r_reader = SequentialFileReader::new().unwrap();
+
         for storage in &storages {
             storage
                 .accounts
-                .scan_accounts(|_offset, account| {
+                .scan_accounts(&mut r_reader, |_offset, account| {
                     let pubkey = account.pubkey();
                     let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
                     stored_accounts_map

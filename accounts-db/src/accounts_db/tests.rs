@@ -5086,7 +5086,8 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let storage_info = StorageSizeAndCountMap::default();
-    accounts.generate_index_for_slot(&storage, slot0, 0, &storage_info);
+    let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+    accounts.generate_index_for_slot(&storage, slot0, 0, &storage_info, &mut r_reader);
     assert_eq!(storage_info.len(), 1);
     for entry in storage_info.iter() {
         let expected_stored_size =
@@ -5109,7 +5110,8 @@ define_accounts_db_test!(
         // empty store
         let storage = accounts.create_and_insert_store(0, 1, "test");
         let storage_info = StorageSizeAndCountMap::default();
-        accounts.generate_index_for_slot(&storage, 0, 0, &storage_info);
+        let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+        accounts.generate_index_for_slot(&storage, 0, 0, &storage_info, &mut r_reader);
         assert!(storage_info.is_empty());
     }
 );
@@ -5145,7 +5147,8 @@ define_accounts_db_test!(
         );
 
         let storage_info = StorageSizeAndCountMap::default();
-        accounts.generate_index_for_slot(&storage, 0, 0, &storage_info);
+        let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+        accounts.generate_index_for_slot(&storage, 0, 0, &storage_info, &mut r_reader);
         assert_eq!(storage_info.len(), 1);
         for entry in storage_info.iter() {
             let expected_stored_size =
@@ -6637,15 +6640,17 @@ fn test_combine_ancient_slots_simple() {
 fn get_all_accounts_from_storages<'a>(
     storages: impl Iterator<Item = &'a Arc<AccountStorageEntry>>,
 ) -> Vec<(Pubkey, AccountSharedData)> {
+    let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
     storages
         .flat_map(|storage| {
             let mut vec = Vec::default();
             storage
                 .accounts
-                .scan_accounts(|_offset, account| {
+                .scan_accounts(&mut r_reader, |_offset, account| {
                     vec.push((*account.pubkey(), account.to_account_shared_data()));
                 })
                 .expect("must scan accounts storage");
+
             // make sure scan_pubkeys results match
             // Note that we assume traversals are both in the same order, but this doesn't have to be true.
             let mut compare = Vec::default();
@@ -6872,11 +6877,12 @@ pub fn get_account_from_account_from_storage(
 }
 
 fn populate_index(db: &AccountsDb, slots: Range<Slot>) {
-    slots.into_iter().for_each(|slot| {
+    let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+    slots.into_iter().for_each(move |slot| {
         if let Some(storage) = db.get_storage_for_slot(slot) {
             storage
                 .accounts
-                .scan_accounts_stored_meta(|account| {
+                .scan_accounts_stored_meta(&mut r_reader, |account| {
                     let info = AccountInfo::new(
                         StorageLocation::AppendVec(storage.id(), account.offset()),
                         account.is_zero_lamport(),

@@ -57,6 +57,43 @@ impl<const N: usize> Backing for Stack<N> {
     }
 }
 
+/// An extension of the `BufRead` trait for file readers that require control over
+/// buffer size and tracking of the file offset.
+///
+/// This trait allows callers to enforce a minimum number of contiguous bytes
+/// in the buffer returned by `fill_buf`, either persistently or on a per-call basis.
+pub(crate) trait ContiguousBufFileRead: BufRead {
+    /// Returns the current file offset corresponding to the start of the buffer
+    /// that will be returned by the next call to `fill_buf`.
+    ///
+    /// This offset represents the position within the underlying file where data
+    /// will be consumed from.
+    fn get_file_offset(&self) -> usize;
+
+    /// Sets the default minimum number of bytes that must be available in the buffer
+    /// returned by each call to `fill_buf`.
+    ///
+    /// If the end of the file is reached before this amount of data can be provided,
+    /// an `Err(UnexpectedEof)` is returned.
+    ///
+    /// By default, no minimum is enforced, and `fill_buf` behaves as defined by the `BufRead`
+    /// trait—returning a non-empty buffer until EOF.
+    ///
+    /// Note: This sets a persistent default requirement. To override it for a single
+    /// `fill_buf` call, use `set_next_required_fill_buf_len`.
+    fn set_default_required_fill_buf_len(&mut self, len: usize);
+
+    /// Sets a one-time override for the minimum number of bytes required in the next
+    /// `fill_buf` call.
+    ///
+    /// If the end of the file is reached before this amount of data can be provided,
+    /// an `Err(UnexpectedEof)` is returned.
+    ///
+    /// This override applies only to the next call to `fill_buf`. After that,
+    /// the default requirement (set by `set_default_required_fill_buf_len`) is restored.
+    fn set_next_required_fill_buf_len(&mut self, len: usize);
+}
+
 /// read a file a large buffer at a time and provide access to a slice in that buffer
 pub struct BufferedReader<'a, T> {
     /// when we are next asked to read from file, start at this offset
@@ -81,12 +118,7 @@ impl<'a, T> BufferedReader<'a, T> {
     /// `buffer_size`: how much to try to read at a time
     /// `file_len_valid`: # bytes that are valid in the file, may be less than overall file len
     /// `default_min_read_requirement`: make sure we always have this much data available if we're asked to read
-    pub fn new(
-        backing: T,
-        file_len_valid: usize,
-        file: &'a File,
-        default_min_read_requirement: usize,
-    ) -> Self {
+    pub fn new(backing: T, file_len_valid: usize, file: &'a File) -> Self {
         Self {
             file_offset_of_next_read: 0,
             buf: backing,
@@ -95,13 +127,27 @@ impl<'a, T> BufferedReader<'a, T> {
             read_requirements: None,
             file_len_valid,
             file,
-            default_min_read_requirement,
+            default_min_read_requirement: 0,
+        }
+    }
+}
+
+impl<'a, T: Backing> ContiguousBufFileRead for BufferedReader<'a, T> {
+    #[inline(always)]
+    fn get_file_offset(&self) -> usize {
+        if self.buf_valid_bytes.is_empty() {
+            self.file_offset_of_next_read
+        } else {
+            self.file_last_offset + self.buf_valid_bytes.start
         }
     }
 
-    /// specify the amount of data required to read next time `read` is called
+    fn set_default_required_fill_buf_len(&mut self, len: usize) {
+        self.default_min_read_requirement = len;
+    }
+
     #[inline(always)]
-    pub fn set_required_data_len(&mut self, len: usize) {
+    fn set_next_required_fill_buf_len(&mut self, len: usize) {
         self.read_requirements = Some(len);
     }
 }
@@ -138,34 +184,12 @@ where
         self.read_requirements = None;
         Ok(())
     }
-
-    /// Return file offset within `file` of the current consume position.
-    ///
-    /// The offset is corresponding to the start of buffer that will be returned
-    /// by the next `fill_buf` call.
-    #[inline(always)]
-    pub fn get_offset(&'a self) -> usize {
-        if self.buf_valid_bytes.is_empty() {
-            self.file_offset_of_next_read
-        } else {
-            self.file_last_offset + self.buf_valid_bytes.start
-        }
-    }
 }
 
 impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
     /// create a new buffered reader with a stack-allocated buffer
-    pub fn new_stack(
-        file_len_valid: usize,
-        file: &'a File,
-        default_min_read_requirement: usize,
-    ) -> Self {
-        BufferedReader::new(
-            Stack::new(),
-            file_len_valid,
-            file,
-            default_min_read_requirement,
-        )
+    pub fn new_stack(file_len_valid: usize, file: &'a File) -> Self {
+        BufferedReader::new(Stack::new(), file_len_valid, file)
     }
 }
 
@@ -225,9 +249,12 @@ pub fn large_file_buf_reader(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::sequential_file_reader::SequentialFileReader;
 
-        let io_uring_reader = SequentialFileReader::with_capacity(buf_size, path.as_ref());
+        let io_uring_reader = SequentialFileReader::with_capacity(buf_size);
         match io_uring_reader {
-            Ok(reader) => return Ok(Box::new(reader)),
+            Ok(mut reader) => {
+                reader.add_path(path)?;
+                return Ok(Box::new(reader));
+            }
             Err(error) => {
                 log::warn!("unable to create io_uring reader: {error}");
             }
@@ -262,9 +289,9 @@ mod tests {
         // First read 16 bytes to fill buffer
         let file_len_valid = 32;
         let default_min_read = 8;
-        let mut reader =
-            BufferedReader::new(backing, file_len_valid, &sample_file, default_min_read);
-        let offset = reader.get_offset();
+        let mut reader = BufferedReader::new(backing, file_len_valid, &sample_file);
+        reader.set_default_required_fill_buf_len(default_min_read);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
@@ -275,8 +302,8 @@ mod tests {
         let advance = 16;
         let mut required_len = 32;
         reader.consume(advance);
-        reader.set_required_data_len(required_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -286,8 +313,8 @@ mod tests {
 
         // Continue reading should yield EOF.
         reader.consume(advance);
-        reader.set_required_data_len(required_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -297,8 +324,8 @@ mod tests {
 
         // set_required_data to zero and offset should not change, and slice should be empty.
         required_len = 0;
-        reader.set_required_data_len(required_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_len);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         let expected_offset = file_len_valid;
         assert_eq!(offset, expected_offset);
@@ -319,9 +346,9 @@ mod tests {
 
         // First read 16 bytes to fill buffer
         let default_min_read_size = 8;
-        let mut reader =
-            BufferedReader::new(backing, valid_len, &sample_file, default_min_read_size);
-        let offset = reader.get_offset();
+        let mut reader = BufferedReader::new(backing, valid_len, &sample_file);
+        reader.set_default_required_fill_buf_len(default_min_read_size);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
@@ -332,8 +359,8 @@ mod tests {
         let mut advance = 16;
         let mut required_data_len = 32;
         reader.consume(advance);
-        reader.set_required_data_len(required_data_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_data_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -345,8 +372,8 @@ mod tests {
         advance = 14;
         required_data_len = 32;
         reader.consume(advance);
-        reader.set_required_data_len(required_data_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_data_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -358,8 +385,8 @@ mod tests {
         advance = 1;
         required_data_len = 8;
         reader.consume(advance);
-        reader.set_required_data_len(required_data_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_data_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -371,8 +398,8 @@ mod tests {
         advance = 3;
         required_data_len = 8;
         reader.consume(advance);
-        reader.set_required_data_len(required_data_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_data_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -392,9 +419,9 @@ mod tests {
         // First read 16 bytes to fill buffer
         let file_len_valid = 32;
         let default_min_read_size = 8;
-        let mut reader =
-            BufferedReader::new(backing, file_len_valid, &sample_file, default_min_read_size);
-        let offset = reader.get_offset();
+        let mut reader = BufferedReader::new(backing, file_len_valid, &sample_file);
+        reader.set_default_required_fill_buf_len(default_min_read_size);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
@@ -405,8 +432,8 @@ mod tests {
         let mut advance = 8;
         let mut required_len = 8;
         reader.consume(advance);
-        reader.set_required_data_len(required_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_len);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
@@ -420,8 +447,8 @@ mod tests {
         advance = 8;
         required_len = 16;
         reader.consume(advance);
-        reader.set_required_data_len(required_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_len);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
@@ -435,8 +462,8 @@ mod tests {
         advance = 16;
         required_len = 32;
         reader.consume(advance);
-        reader.set_required_data_len(required_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_len);
+        let offset = reader.get_file_offset();
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
         assert_eq!(
@@ -456,8 +483,9 @@ mod tests {
         // First read 16 bytes to fill buffer
         let valid_len = 32;
         let default_min_read = 8;
-        let mut reader = BufferedReader::new(backing, valid_len, &sample_file, default_min_read);
-        let offset = reader.get_offset();
+        let mut reader = BufferedReader::new(backing, valid_len, &sample_file);
+        reader.set_default_required_fill_buf_len(default_min_read);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         let mut expected_offset = 0;
         assert_eq!(offset, expected_offset);
@@ -469,8 +497,8 @@ mod tests {
         let mut advance = 8;
         let mut required_data_len = 16;
         reader.consume(advance);
-        reader.set_required_data_len(required_data_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_data_len);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         expected_offset += advance;
         assert_eq!(offset, expected_offset);
@@ -484,8 +512,8 @@ mod tests {
         advance = 16;
         required_data_len = 8;
         reader.consume(advance);
-        reader.set_required_data_len(required_data_len);
-        let offset = reader.get_offset();
+        reader.set_next_required_fill_buf_len(required_data_len);
+        let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf().unwrap());
         expected_offset += advance;
         assert_eq!(offset, expected_offset);

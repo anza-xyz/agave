@@ -10,10 +10,15 @@ pub mod test_utils;
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
+use crate::{
+    buffered_reader::ContiguousBufFileRead,
+    io_uring::{memory::LargeBuffer, sequential_file_reader::SequentialFileReader},
+};
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
 use meta::{AccountMeta, StoredMeta};
+
 use {
     crate::{
         account_info::Offset,
@@ -1007,9 +1012,10 @@ impl AppendVec {
     /// as it can potentially read less and be faster.
     pub fn scan_accounts(
         &self,
+        r_reader: &mut SequentialFileReader<LargeBuffer>,
         mut callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> Result<()> {
-        self.scan_accounts_stored_meta(|stored_account_meta| {
+        self.scan_accounts_stored_meta(r_reader, |stored_account_meta| {
             let offset = stored_account_meta.offset();
             let account = StoredAccountInfo {
                 pubkey: stored_account_meta.pubkey(),
@@ -1030,6 +1036,7 @@ impl AppendVec {
     #[allow(clippy::blocks_in_conditions)]
     pub fn scan_accounts_stored_meta(
         &self,
+        _r_reader: &mut SequentialFileReader<LargeBuffer>,
         mut callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
         match &self.backing {
@@ -1052,16 +1059,13 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 let self_len = self.len();
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
-                    self_len,
-                    file,
-                    STORE_META_OVERHEAD,
-                );
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
+                reader.set_default_required_fill_buf_len(STORE_META_OVERHEAD);
                 // Buffer for account data that doesn't fit within the stack allocated buffer.
                 // This will be re-used for each account that doesn't fit within the stack allocated buffer.
                 let mut data_overflow_buffer = vec![];
                 loop {
-                    let offset = reader.get_offset();
+                    let offset = reader.get_file_offset();
                     let bytes = match reader.fill_buf() {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
@@ -1089,7 +1093,7 @@ impl AppendVec {
                         callback(account);
                         reader.consume(stored_size);
                     } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
-                        reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
+                        reader.set_next_required_fill_buf_len(STORE_META_OVERHEAD + data_len);
                     } else {
                         const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
                         // 128KiB covers a reasonably large distribution of typical account sizes.
@@ -1253,13 +1257,12 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
-                    self_len,
-                    file,
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
+                reader.set_default_required_fill_buf_len(
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
                 );
                 loop {
-                    let offset = reader.get_offset();
+                    let offset = reader.get_file_offset();
                     let bytes = match reader.fill_buf() {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
@@ -1387,6 +1390,13 @@ impl AppendVec {
             AppendVecFileBacking::File(_file) => InternalsForArchive::FileIo(self.path()),
             // note this returns the entire mmap slice, even bytes that we consider invalid
             AppendVecFileBacking::Mmap(mmap) => InternalsForArchive::Mmap(mmap),
+        }
+    }
+
+    pub(crate) fn get_file(&self) -> Option<(&File, usize)> {
+        match &self.backing {
+            AppendVecFileBacking::File(file) => Some((file, self.len())),
+            AppendVecFileBacking::Mmap(_) => None,
         }
     }
 }
@@ -1735,9 +1745,11 @@ pub mod tests {
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
+        let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+
         for av in [&av_mmap, &av_file] {
             let mut index = 0;
-            av.scan_accounts_stored_meta(|v| {
+            av.scan_accounts_stored_meta(&mut r_reader, |v| {
                 let (pubkey, account) = &test_accounts[index];
                 let recovered = v.to_account_shared_data();
                 assert_eq!(&recovered, account);
@@ -1786,7 +1798,9 @@ pub mod tests {
 
         let mut sample = 0;
         let now = Instant::now();
-        av.scan_accounts_stored_meta(|v| {
+        let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+
+        av.scan_accounts_stored_meta(&mut r_reader, |v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();
             assert_eq!(recovered, account.1);

@@ -1108,6 +1108,7 @@ pub mod tests {
             accounts_file::StorageAccess,
             accounts_index::{AccountsIndexScanResult, ScanFilter, UpsertReclaim},
             append_vec::aligned_stored_size,
+            io_uring::sequential_file_reader::SequentialFileReader,
             storable_accounts::StorableAccountsBySlot,
         },
         rand::seq::SliceRandom as _,
@@ -2099,10 +2100,12 @@ pub mod tests {
             // assert that we wrote the 2_ref account to the newly shrunk append vec
             let shrink_in_progress = shrinks_in_progress.first().unwrap().1;
             let mut count = 0;
+            let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
+
             shrink_in_progress
                 .new_storage()
                 .accounts
-                .scan_accounts(|_, _| {
+                .scan_accounts(&mut r_reader, |_, _| {
                     count += 1;
                 })
                 .expect("must scan accounts storage");
@@ -2264,9 +2267,10 @@ pub mod tests {
                 })
                 .unwrap();
             let mut count = 0;
+            let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
             storage
                 .accounts
-                .scan_accounts(|_, _| {
+                .scan_accounts(&mut r_reader, |_, _| {
                     count += 1;
                 })
                 .expect("must scan accounts storage");
@@ -3123,14 +3127,15 @@ pub mod tests {
                             get_sample_storages(num_slots, data_size);
 
                         let initial_accounts = get_all_accounts(&db, slots.clone());
-
+                        let mut r_reader = SequentialFileReader::with_capacity(2 << 20).unwrap();
                         let accounts_byval = storages
                             .iter()
                             .map(|storage| {
                                 let mut accounts = Vec::default();
+
                                 storage
                                     .accounts
-                                    .scan_accounts_stored_meta(|account| {
+                                    .scan_accounts_stored_meta(&mut r_reader, |account| {
                                         accounts.push(AccountFromStorage::new(&account));
                                     })
                                     .expect("must scan accounts storage");
@@ -3205,12 +3210,15 @@ pub mod tests {
                             );
                             // make sure the single new append vec contains all the same accounts
                             let mut two = Vec::default();
+
+                            let mut r_reader =
+                                SequentialFileReader::with_capacity(2 << 20).unwrap();
                             one.first()
                                 .unwrap()
                                 .1
                                 .new_storage()
                                 .accounts
-                                .scan_accounts(|_offset, meta| {
+                                .scan_accounts(&mut r_reader, |_offset, meta| {
                                     two.push((*meta.pubkey(), meta.to_account_shared_data()));
                                 })
                                 .expect("must scan accounts storage");

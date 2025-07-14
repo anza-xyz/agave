@@ -6,7 +6,10 @@ use {
     },
     rayon::prelude::*,
     solana_account::ReadableAccount,
-    solana_accounts_db::accounts_file::{AccountsFile, StorageAccess},
+    solana_accounts_db::{
+        accounts_file::{AccountsFile, StorageAccess},
+        io_uring::sequential_file_reader::SequentialFileReader,
+    },
     solana_pubkey::Pubkey,
     solana_system_interface::MAX_PERMITTED_DATA_LENGTH,
     std::{
@@ -137,7 +140,8 @@ fn do_inspect(file: impl AsRef<Path>, verbose: bool) -> Result<(), String> {
     let mut num_accounts = Saturating(0usize);
     let mut stored_accounts_size = Saturating(0);
     let mut lamports = Saturating(0);
-    storage.scan_accounts_stored_meta(|account| {
+    let mut r_reader = SequentialFileReader::new().unwrap();
+    storage.scan_accounts_stored_meta(&mut r_reader, |account| {
         if verbose {
             println!("{account:?}");
         } else {
@@ -218,7 +222,9 @@ fn do_search(
         let storage = ManuallyDrop::new(storage);
 
         let file_name = Path::new(file.file_name().expect("path is a file"));
-        storage.scan_accounts_stored_meta(|account| {
+        let mut r_reader = SequentialFileReader::new().unwrap();
+
+        storage.scan_accounts_stored_meta(&mut r_reader, |account| {
             if addresses.contains(account.pubkey()) {
                 if verbose {
                     println!("storage: {}, {account:?}", file_name.display());
