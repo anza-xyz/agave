@@ -83,7 +83,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "clap 2.33.3",
- "memmap2 0.9.5",
+ "memmap2 0.9.7",
  "rayon",
  "solana-accounts-db",
  "solana-clap-utils",
@@ -4362,9 +4362,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.9.5"
+version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
+checksum = "483758ad303d734cec05e5c12b41d7e93e6a6390c5e9dae6bdeb7c1259012d28"
 dependencies = [
  "libc",
 ]
@@ -6787,7 +6787,7 @@ dependencies = [
  "libsecp256k1",
  "log",
  "lz4",
- "memmap2 0.9.5",
+ "memmap2 0.9.7",
  "memoffset 0.9.1",
  "modular-bitfield",
  "num_cpus",
@@ -7260,7 +7260,7 @@ dependencies = [
  "bytemuck",
  "bytemuck_derive",
  "fs_extra",
- "memmap2 0.9.5",
+ "memmap2 0.9.7",
  "modular-bitfield",
  "num_enum",
  "rand 0.8.5",
@@ -10114,7 +10114,7 @@ dependencies = [
  "libsecp256k1",
  "log",
  "lz4",
- "memmap2 0.9.5",
+ "memmap2 0.9.7",
  "memoffset 0.9.1",
  "mockall",
  "modular-bitfield",
