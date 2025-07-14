@@ -562,7 +562,7 @@ pub fn execute(
         }),
         pubsub_config: PubSubConfig {
             enable_block_subscription: run_args.pub_sub_config.enable_block_subscription,
-            enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
+            enable_vote_subscription: run_args.pub_sub_config.enable_vote_subscription,
             max_active_subscriptions: value_t_or_exit!(
                 matches,
                 "rpc_pubsub_max_active_subscriptions",

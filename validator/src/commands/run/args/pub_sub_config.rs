@@ -8,6 +8,7 @@ impl FromClapArgMatches for PubSubConfig {
     fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
         Ok(PubSubConfig {
             enable_block_subscription: matches.is_present("rpc_pubsub_enable_block_subscription"),
+            enable_vote_subscription: matches.is_present("rpc_pubsub_enable_vote_subscription"),
             ..Default::default()
         })
     }
@@ -43,6 +44,23 @@ mod tests {
                 "--enable-rpc-transaction-history", // required by enable-rpc-bigtable-ledger-storage
                 "--rpc-pubsub-enable-block-subscription",
             ],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_enable_vote_subscription() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            pub_sub_config: PubSubConfig {
+                enable_vote_subscription: true,
+                ..default_run_args.pub_sub_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--rpc-pubsub-enable-vote-subscription"],
             expected_args,
         );
     }
