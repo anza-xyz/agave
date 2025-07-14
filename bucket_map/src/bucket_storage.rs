@@ -173,12 +173,9 @@ impl<O: BucketOccupied> BucketStorage<O> {
                 let bytes_new = ((bytes / PAGE_SIZE) + 1) * PAGE_SIZE / cell_size * cell_size;
                 assert!(
                     bytes_new >= bytes,
-                    "allocating less than requested, capacity: {}, bytes: {}, bytes_new: {}, \
-                     full_page_bytes: {}",
-                    capacity.capacity(),
-                    bytes,
-                    bytes_new,
-                    full_page_bytes
+                    "allocating less than requested, capacity: {}, bytes: {bytes}, bytes_new: \
+                     {bytes_new}, full_page_bytes: {full_page_bytes}",
+                    capacity.capacity()
                 );
                 assert_eq!(bytes_new % cell_size, 0);
                 bytes = bytes_new;
