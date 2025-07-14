@@ -4442,7 +4442,7 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+                let instruction_accounts = InstructionAccountViewVector::from_vector(vec![
                     InstructionAccountView::new(
                         index_in_trace.saturating_add(1) as IndexOfAccount,
                         0, // This is incorrect / inconsistent but not required

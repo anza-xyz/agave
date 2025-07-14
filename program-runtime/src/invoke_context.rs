@@ -1318,7 +1318,7 @@ mod tests {
             (Pubkey::new_unique(), dummy_account),
             (program_key, program_account),
         ];
-        let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+        let instruction_accounts = InstructionAccountViewVector::from_vector(vec![
             InstructionAccountView::new(0, 0, 0, false, true),
             InstructionAccountView::new(1, 1, 1, false, false),
         ]);

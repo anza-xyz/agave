@@ -1877,7 +1877,7 @@ mod tests {
 
         mock_create_vm!(_vm, Vec::new(), vec![account_metadata], &mut invoke_context);
 
-        let instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+        let instruction_accounts = InstructionAccountViewVector::from_vector(vec![
             InstructionAccountView::new(1, 0, 0, false, true),
             InstructionAccountView::new(1, 0, 0, false, true),
         ]);

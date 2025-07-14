@@ -88,7 +88,7 @@ impl InstructionAccountViewVector {
         });
     }
 
-    pub fn from_view_vector(vector: Vec<InstructionAccountView>) -> InstructionAccountViewVector {
+    pub fn from_vector(vector: Vec<InstructionAccountView>) -> InstructionAccountViewVector {
         let mut view_owner = Self::with_capacity(vector.len());
         for item in vector {
             view_owner.push(item);

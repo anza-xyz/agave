@@ -1168,7 +1168,7 @@ mod tests {
         );
         let mut instruction_context = InstructionContext::default();
         let instruction_accounts =
-            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+            InstructionAccountViewVector::from_vector(vec![InstructionAccountView::new(
                 1, 1, 0, false, true,
             )]);
         instruction_context.configure(&[0], instruction_accounts, &[]);
@@ -1317,7 +1317,7 @@ mod tests {
         );
         let mut instruction_context = InstructionContext::default();
         let instruction_accounts =
-            InstructionAccountViewVector::from_view_vector(vec![InstructionAccountView::new(
+            InstructionAccountViewVector::from_vector(vec![InstructionAccountView::new(
                 1, 1, 0, false, true,
             )]);
         instruction_context.configure(&[0], instruction_accounts, &[]);

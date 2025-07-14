@@ -293,7 +293,7 @@ mod test {
                 (Pubkey::new_unique(), create_account(42).into_inner()),
                 (system_program::id(), AccountSharedData::default()),
             ];
-            let $instruction_accounts = InstructionAccountViewVector::from_view_vector(vec![
+            let $instruction_accounts = InstructionAccountViewVector::from_vector(vec![
                 InstructionAccountView::new(0, 0, 0, true, true),
                 InstructionAccountView::new(1, 1, 1, false, true),
             ]);
