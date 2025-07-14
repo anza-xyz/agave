@@ -60,7 +60,8 @@ use {
 
 /// Sets the upper bound on the number of batches stored in the retransmit
 /// stage ingress channel.
-/// Allows for a max of 16k batches of up to 64 packets each (NUM_RCVMMSGS).
+/// Allows for a max of 16k batches of up to 64 packets each
+/// (PACKETS_PER_BATCH).
 /// This translates to about 1 GB of RAM for packet storage in the worst case.
 /// In reality this means about 200K shreds since most batches are not full.
 const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
