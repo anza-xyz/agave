@@ -1740,7 +1740,10 @@ mod tests {
                     max_request_body_size: Some(MAX_REQUEST_BODY_SIZE),
                     ..JsonRpcConfig::default()
                 },
-                pub_sub_config: PubSubConfig::default(),
+                pub_sub_config: PubSubConfig {
+                    worker_threads: 4,
+                    ..PubSubConfig::default()
+                },
             }
         }
     }

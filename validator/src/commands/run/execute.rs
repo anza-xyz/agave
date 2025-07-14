@@ -566,7 +566,7 @@ pub fn execute(
             max_active_subscriptions: run_args.pub_sub_config.max_active_subscriptions,
             queue_capacity_items: run_args.pub_sub_config.queue_capacity_items,
             queue_capacity_bytes: run_args.pub_sub_config.queue_capacity_bytes,
-            worker_threads: value_t_or_exit!(matches, "rpc_pubsub_worker_threads", usize),
+            worker_threads: run_args.pub_sub_config.worker_threads,
             notification_threads: value_t!(matches, "rpc_pubsub_notification_threads", usize)
                 .ok()
                 .and_then(NonZeroUsize::new),
