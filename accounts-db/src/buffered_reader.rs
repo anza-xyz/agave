@@ -286,13 +286,9 @@ pub fn large_file_buf_reader(
     if agave_io_uring::io_uring_supported() {
         use crate::io_uring::sequential_file_reader::SequentialFileReader;
 
-        let io_uring_reader = SequentialFileReader::with_capacity(buf_size, &path);
-        match io_uring_reader {
-            Ok(reader) => return Ok(Box::new(reader)),
-            Err(error) => {
-                log::warn!("unable to create io_uring reader: {error}");
-            }
-        }
+        return Ok(Box::new(SequentialFileReader::with_capacity(
+            buf_size, path,
+        )?));
     }
     let file = File::open(path)?;
     Ok(Box::new(BufReader::with_capacity(buf_size, file)))
