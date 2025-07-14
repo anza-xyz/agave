@@ -267,9 +267,7 @@ impl<R: Read> ArchiveChunker<R> {
 }
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
-    trace!(
-        "checked_total_size_sum: {total_size} + {entry_size} < {limit_size}",
-    );
+    trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}",);
     let total_size = total_size.saturating_add(entry_size);
     if total_size > limit_size {
         return Err(UnpackError::Archive(format!(

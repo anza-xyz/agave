@@ -507,8 +507,8 @@ impl AppendVec {
             if result.is_err() {
                 // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
                 info!(
-                    "memory map error: {result:?}. This may be because vm.max_map_count is not set \
-                     correctly."
+                    "memory map error: {result:?}. This may be because vm.max_map_count is not \
+                     set correctly."
                 );
             }
             result?
