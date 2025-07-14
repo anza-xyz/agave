@@ -1672,7 +1672,7 @@ mod tests {
             lamports_to_transfer - fee,
             blockhash,
         );
-        bank2.process_transaction(&tx).unwrap();
+        bank2.process_transaction(tx).unwrap();
         assert_eq!(
             bank2.get_balance(&key1.pubkey()),
             0,

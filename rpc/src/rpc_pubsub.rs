@@ -669,7 +669,7 @@ mod tests {
 
     fn process_transaction_and_notify(
         bank_forks: &RwLock<BankForks>,
-        tx: &Transaction,
+        tx: Transaction,
         subscriptions: &RpcSubscriptions,
         current_slot: Slot,
     ) -> transaction::Result<()> {
@@ -711,11 +711,12 @@ mod tests {
 
         // Test signature subscriptions
         let tx = system_transaction::transfer(&alice, &bob_pubkey, 20, blockhash);
+        let signature = tx.signatures[0];
 
         let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
 
         rpc.signature_subscribe(
-            tx.signatures[0].to_string(),
+            signature.to_string(),
             Some(RpcSignatureSubscribeConfig {
                 commitment: Some(CommitmentConfig::finalized()),
                 ..RpcSignatureSubscribeConfig::default()
@@ -723,7 +724,7 @@ mod tests {
         )
         .unwrap();
 
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 0).unwrap();
+        process_transaction_and_notify(&bank_forks, tx, &rpc_subscriptions, 0).unwrap();
 
         // Test signature confirmation notification
         let response = receiver.recv();
@@ -750,7 +751,7 @@ mod tests {
         let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
 
         rpc.signature_subscribe(
-            tx.signatures[0].to_string(),
+            signature.to_string(),
             Some(RpcSignatureSubscribeConfig {
                 commitment: Some(CommitmentConfig::finalized()),
                 enable_received_notification: Some(true),
@@ -758,7 +759,7 @@ mod tests {
         )
         .unwrap();
         let received_slot = 1;
-        rpc_subscriptions.notify_signatures_received((received_slot, vec![tx.signatures[0]]));
+        rpc_subscriptions.notify_signatures_received((received_slot, vec![signature]));
 
         // Test signature confirmation notification
         let response = receiver.recv();
@@ -784,7 +785,7 @@ mod tests {
         let (rpc, mut receiver) = rpc_pubsub_service::test_connection(&rpc_subscriptions);
 
         rpc.signature_subscribe(
-            tx.signatures[0].to_string(),
+            signature.to_string(),
             Some(RpcSignatureSubscribeConfig {
                 commitment: Some(CommitmentConfig::confirmed()),
                 enable_received_notification: Some(true),
@@ -792,7 +793,7 @@ mod tests {
         )
         .unwrap();
         let received_slot = 2;
-        rpc_subscriptions.notify_signatures_received((received_slot, vec![tx.signatures[0]]));
+        rpc_subscriptions.notify_signatures_received((received_slot, vec![signature]));
 
         // Test signature confirmation notification
         let response = receiver.recv();
@@ -920,7 +921,7 @@ mod tests {
         };
 
         let tx = system_transaction::transfer(&alice, &from.pubkey(), balance, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
+        process_transaction_and_notify(&bank_forks, tx, &rpc_subscriptions, 1).unwrap();
         let authorized = Authorized::auto(&stake_authority.pubkey());
         let ixs = stake_instruction::create_account(
             &from.pubkey(),
@@ -931,7 +932,7 @@ mod tests {
         );
         let message = Message::new(&ixs, Some(&from.pubkey()));
         let tx = Transaction::new(&[&from, &stake_account], message, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
+        process_transaction_and_notify(&bank_forks, tx, &rpc_subscriptions, 1).unwrap();
 
         // Test signature confirmation notification #1
         let account = bank_forks
@@ -974,7 +975,7 @@ mod tests {
         };
         let tx =
             system_transaction::transfer(&alice, &stake_authority.pubkey(), balance, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
+        process_transaction_and_notify(&bank_forks, tx, &rpc_subscriptions, 1).unwrap();
         sleep(Duration::from_millis(200));
         let ix = stake_instruction::authorize(
             &stake_account.pubkey(),
@@ -985,7 +986,7 @@ mod tests {
         );
         let message = Message::new(&[ix], Some(&stake_authority.pubkey()));
         let tx = Transaction::new(&[&stake_authority], message, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
+        process_transaction_and_notify(&bank_forks, tx, &rpc_subscriptions, 1).unwrap();
         sleep(Duration::from_millis(200));
 
         let bank = bank_forks.read().unwrap()[1].clone();
@@ -1045,7 +1046,7 @@ mod tests {
         );
         let message = Message::new(&ixs, Some(&alice.pubkey()));
         let tx = Transaction::new(&[&alice, &nonce_account], message, blockhash);
-        process_transaction_and_notify(&bank_forks, &tx, &rpc_subscriptions, 1).unwrap();
+        process_transaction_and_notify(&bank_forks, tx, &rpc_subscriptions, 1).unwrap();
 
         // Test signature confirmation notification #1
         let account = bank_forks
@@ -1173,7 +1174,7 @@ mod tests {
             .unwrap()
             .get(1)
             .unwrap()
-            .process_transaction(&tx)
+            .process_transaction(tx)
             .unwrap();
         rpc_subscriptions.notify_subscribers(CommitmentSlots::default());
 
@@ -1226,7 +1227,7 @@ mod tests {
             .unwrap()
             .get(1)
             .unwrap()
-            .process_transaction(&tx)
+            .process_transaction(tx)
             .unwrap();
         let commitment_slots = CommitmentSlots {
             slot: 1,

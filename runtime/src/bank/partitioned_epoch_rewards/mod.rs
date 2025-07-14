@@ -879,7 +879,7 @@ mod tests {
                 &validator_vote_keypairs.vote_keypair,
                 None,
             );
-            bank.process_transaction(&vote).unwrap();
+            bank.process_transaction(vote).unwrap();
 
             // Insert a transfer transaction from the mint to new stake account
             let system_tx = system_transaction::transfer(
@@ -888,7 +888,7 @@ mod tests {
                 transfer_amount,
                 bank.last_blockhash(),
             );
-            let system_result = bank.process_transaction(&system_tx);
+            let system_result = bank.process_transaction(system_tx);
 
             // Credits should always succeed
             assert!(system_result.is_ok());
@@ -907,7 +907,7 @@ mod tests {
                 &[&mint_keypair, &new_stake_signer],
                 bank.last_blockhash(),
             );
-            let stake_result = bank.process_transaction(&stake_tx);
+            let stake_result = bank.process_transaction(stake_tx);
 
             if slot == num_slots_in_epoch {
                 // When the bank is at the beginning of the new epoch, i.e. slot

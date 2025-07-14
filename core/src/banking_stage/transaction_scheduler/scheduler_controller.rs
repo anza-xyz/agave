@@ -476,7 +476,7 @@ mod tests {
                 500_000, // just some amount that will always be enough
                 bank.last_blockhash(),
             );
-            bank.process_transaction(&transfer).unwrap();
+            bank.process_transaction(transfer).unwrap();
         }
 
         let transfer = system_instruction::transfer(&from_keypair.pubkey(), to_pubkey, lamports);

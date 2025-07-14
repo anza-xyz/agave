@@ -204,17 +204,17 @@ fn bench_banking(
             mint_total / txes as u64,
             genesis_config.hash(),
         );
-        let x = bank.process_transaction(&fund);
+        let x = bank.process_transaction(fund);
         x.unwrap();
     });
     //sanity check, make sure all the transactions can execute sequentially
-    transactions.iter().for_each(|tx| {
+    transactions.iter().cloned().for_each(|tx| {
         let res = bank.process_transaction(tx);
         assert!(res.is_ok(), "sanity test transactions");
     });
     bank.clear_signatures();
     //sanity check, make sure all the transactions can execute in parallel
-    let res = bank.process_transactions(transactions.iter());
+    let res = bank.process_transactions(transactions.iter().cloned());
     for r in res {
         assert!(r.is_ok(), "sanity parallel execution");
     }

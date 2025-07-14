@@ -253,11 +253,11 @@ fn test_bank_forks_snapshot() {
         |bank, mint_keypair| {
             let key1 = Keypair::new().pubkey();
             let tx = system_transaction::transfer(mint_keypair, &key1, 1, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+            assert_eq!(bank.process_transaction(tx), Ok(()));
 
             let key2 = Keypair::new().pubkey();
             let tx = system_transaction::transfer(mint_keypair, &key2, 0, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+            assert_eq!(bank.process_transaction(tx), Ok(()));
         },
         1,
     );
@@ -370,14 +370,14 @@ fn test_bank_forks_status_cache_snapshot() {
                     1,
                     bank.parent().unwrap().last_blockhash(),
                 );
-                assert_eq!(bank.process_transaction(&tx), Ok(()));
+                assert_eq!(bank.process_transaction(tx), Ok(()));
                 let tx = system_transaction::transfer(
                     mint_keypair,
                     &key2,
                     1,
                     bank.parent().unwrap().last_blockhash(),
                 );
-                assert_eq!(bank.process_transaction(&tx), Ok(()));
+                assert_eq!(bank.process_transaction(tx), Ok(()));
                 goto_end_of_slot(bank);
             },
             *set_root_interval,
@@ -450,11 +450,11 @@ fn test_bank_forks_incremental_snapshot() {
 
             let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 1, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+            assert_eq!(bank.process_transaction(tx), Ok(()));
 
             let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+            assert_eq!(bank.process_transaction(tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
 
@@ -723,11 +723,11 @@ fn test_snapshots_with_background_services(
 
             let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 1, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+            assert_eq!(bank.process_transaction(tx), Ok(()));
 
             let key = solana_pubkey::new_rand();
             let tx = system_transaction::transfer(mint_keypair, &key, 0, bank.last_blockhash());
-            assert_eq!(bank.process_transaction(&tx), Ok(()));
+            assert_eq!(bank.process_transaction(tx), Ok(()));
 
             bank.fill_bank_with_ticks_for_tests();
         }

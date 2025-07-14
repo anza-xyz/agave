@@ -3966,8 +3966,10 @@ impl Bank {
 
     /// Process a Transaction. This is used for unit tests and simply calls the vector
     /// Bank::process_transactions method.
-    pub fn process_transaction(&self, tx: &Transaction) -> Result<()> {
-        self.try_process_transactions(std::iter::once(tx))?[0].clone()
+    pub fn process_transaction<T: Into<VersionedTransaction>>(&self, tx: T) -> Result<()> {
+        self.try_process_transactions(std::iter::once(tx))?
+            .pop()
+            .unwrap()
     }
 
     /// Process a Transaction and store metadata. This is used for tests and the banks services. It
@@ -3997,13 +3999,11 @@ impl Bank {
 
     /// Process multiple transaction in a single batch. This is used for benches and unit tests.
     /// Short circuits if any of the transactions do not pass sanitization checks.
-    pub fn try_process_transactions<'a>(
+    pub fn try_process_transactions<T: Into<VersionedTransaction>>(
         &self,
-        txs: impl Iterator<Item = &'a Transaction>,
+        txs: impl Iterator<Item = T>,
     ) -> Result<Vec<Result<()>>> {
-        let txs = txs
-            .map(|tx| VersionedTransaction::from(tx.clone()))
-            .collect();
+        let txs = txs.map(|tx| tx.into()).collect();
         self.try_process_entry_transactions(txs)
     }
 
@@ -4041,7 +4041,7 @@ impl Bank {
         let blockhash = self.last_blockhash();
         let tx = system_transaction::transfer(keypair, to, n, blockhash);
         let signature = tx.signatures[0];
-        self.process_transaction(&tx).map(|_| signature)
+        self.process_transaction(tx).map(|_| signature)
     }
 
     pub fn read_balance(account: &AccountSharedData) -> u64 {
@@ -6390,9 +6390,9 @@ impl Bank {
     ///
     /// Panics if any of the transactions do not pass sanitization checks.
     #[must_use]
-    pub fn process_transactions<'a>(
+    pub fn process_transactions<T: Into<VersionedTransaction>>(
         &self,
-        txs: impl Iterator<Item = &'a Transaction>,
+        txs: impl Iterator<Item = T>,
     ) -> Vec<Result<()>> {
         self.try_process_transactions(txs).unwrap()
     }

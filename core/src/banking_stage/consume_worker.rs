@@ -1176,7 +1176,7 @@ mod tests {
 
         // Fund the keypairs.
         for tx in &txs {
-            bank.process_transaction(&system_transaction::transfer(
+            bank.process_transaction(system_transaction::transfer(
                 mint_keypair,
                 &tx.account_keys()[0],
                 2,

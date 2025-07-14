@@ -237,7 +237,7 @@ mod tests_core_bpf_migration {
             new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), next_slot);
 
         // Successfully invoke the new BPF builtin program.
-        bank.process_transaction(&Transaction::new(
+        bank.process_transaction(Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(*builtin_id, &[], Vec::new())],
@@ -248,7 +248,7 @@ mod tests_core_bpf_migration {
         .unwrap();
 
         // Successfully invoke the new BPF builtin program via CPI.
-        bank.process_transaction(&Transaction::new(
+        bank.process_transaction(Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(
@@ -277,7 +277,7 @@ mod tests_core_bpf_migration {
         test_context.run_program_checks(&bank, migration_slot);
 
         // Again, successfully invoke the new BPF builtin program.
-        bank.process_transaction(&Transaction::new(
+        bank.process_transaction(Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(*builtin_id, &[], Vec::new())],
@@ -288,7 +288,7 @@ mod tests_core_bpf_migration {
         .unwrap();
 
         // Again, successfully invoke the new BPF builtin program via CPI.
-        bank.process_transaction(&Transaction::new(
+        bank.process_transaction(Transaction::new(
             &vec![&mint_keypair],
             Message::new(
                 &[Instruction::new_with_bytes(

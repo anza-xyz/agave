@@ -714,7 +714,7 @@ mod test {
                 1,
                 root_bank.last_blockhash(),
             );
-            root_bank.process_transaction(&transaction).unwrap();
+            root_bank.process_transaction(transaction.clone()).unwrap();
             let signature = transaction.signatures[0];
             (transaction, signature)
         };
@@ -736,7 +736,9 @@ mod test {
                 2,
                 working_bank.last_blockhash(),
             );
-            working_bank.process_transaction(&transaction).unwrap();
+            working_bank
+                .process_transaction(transaction.clone())
+                .unwrap();
             let signature = transaction.signatures[0];
             (transaction, signature)
         };
@@ -748,7 +750,9 @@ mod test {
                 1,
                 working_bank.last_blockhash(),
             );
-            working_bank.process_transaction(&transaction).unwrap_err();
+            working_bank
+                .process_transaction(transaction.clone())
+                .unwrap_err();
             let signature = transaction.signatures[0];
             (transaction, signature)
         };
@@ -1005,7 +1009,7 @@ mod test {
                 1,
                 root_bank.last_blockhash(),
             );
-            root_bank.process_transaction(&transaction).unwrap();
+            root_bank.process_transaction(transaction.clone()).unwrap();
             let signature = transaction.signatures[0];
             (transaction, signature)
         };
@@ -1037,7 +1041,9 @@ mod test {
                 working_bank.last_blockhash(),
             );
             let signature = transaction.signatures[0];
-            working_bank.process_transaction(&transaction).unwrap();
+            working_bank
+                .process_transaction(transaction.clone())
+                .unwrap();
             (transaction, signature)
         };
 
@@ -1048,7 +1054,9 @@ mod test {
             let transaction =
                 system_transaction::transfer(&mint_keypair, &Pubkey::default(), 1, blockhash);
             let signature = transaction.signatures[0];
-            working_bank.process_transaction(&transaction).unwrap_err();
+            working_bank
+                .process_transaction(transaction.clone())
+                .unwrap_err();
             (transaction, signature)
         };
 

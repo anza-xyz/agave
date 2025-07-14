@@ -167,7 +167,7 @@ fn test_account_subscription() {
         .unwrap()
         .get(1)
         .unwrap()
-        .process_transaction(&tx)
+        .process_transaction(tx)
         .unwrap();
     let commitment_slots = CommitmentSlots {
         slot: 1,
@@ -368,7 +368,7 @@ fn test_program_subscription() {
         .unwrap()
         .get(1)
         .unwrap()
-        .process_transaction(&tx)
+        .process_transaction(tx)
         .unwrap();
     let commitment_slots = CommitmentSlots {
         slot: 1,

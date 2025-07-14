@@ -908,7 +908,7 @@ mod tests {
         // fund another account so we can send 2 good transactions in a single batch.
         let keypair = Keypair::new();
         let fund_tx = system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 2, start_hash);
-        bank.process_transaction(&fund_tx).unwrap();
+        bank.process_transaction(fund_tx.clone()).unwrap();
 
         // good tx, but no verify
         let to = solana_pubkey::new_rand();
@@ -950,7 +950,7 @@ mod tests {
 
         let mut blockhash = start_hash;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
-        bank.process_transaction(&fund_tx).unwrap();
+        bank.process_transaction(fund_tx).unwrap();
         //receive entries + ticks
         loop {
             let entries: Vec<Entry> = entry_receiver
@@ -1252,7 +1252,7 @@ mod tests {
         let keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
         let vote_keypairs = (0..100).map(|_| Keypair::new()).collect_vec();
         for keypair in keypairs.iter() {
-            bank.process_transaction(&system_transaction::transfer(
+            bank.process_transaction(system_transaction::transfer(
                 &mint_keypair,
                 &keypair.pubkey(),
                 20,

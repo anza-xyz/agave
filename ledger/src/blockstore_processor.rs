@@ -3093,13 +3093,13 @@ pub mod tests {
 
         // First, ensure the TX is rejected because of the unregistered last ID
         assert_eq!(
-            bank.process_transaction(&tx),
+            bank.process_transaction(tx.clone()),
             Err(TransactionError::BlockhashNotFound)
         );
 
         // Now ensure the TX is accepted despite pointing to the ID of an empty entry.
         process_entries_for_tests_without_scheduler(&bank, slot_entries).unwrap();
-        assert_eq!(bank.process_transaction(&tx), Ok(()));
+        assert_eq!(bank.process_transaction(tx), Ok(()));
     }
 
     #[test]
@@ -3795,14 +3795,14 @@ pub mod tests {
             1,
             bank.last_blockhash(),
         );
-        assert_eq!(bank.process_transaction(&tx), Ok(()));
+        assert_eq!(bank.process_transaction(tx), Ok(()));
         let tx = system_transaction::transfer(
             &mint_keypair,
             &keypair2.pubkey(),
             1,
             bank.last_blockhash(),
         );
-        assert_eq!(bank.process_transaction(&tx), Ok(()));
+        assert_eq!(bank.process_transaction(tx), Ok(()));
 
         // ensure bank can process 2 entries that do not have a common account and no tick is registered
         let blockhash = bank.last_blockhash();
@@ -3907,7 +3907,7 @@ pub mod tests {
                 0,
                 bank.last_blockhash(),
             );
-            assert_eq!(bank.process_transaction(&create_account_tx), Ok(()));
+            assert_eq!(bank.process_transaction(create_account_tx), Ok(()));
             assert_matches!(
                 bank.transfer(initial_lamports, &mint_keypair, &keypair.pubkey()),
                 Ok(_)
@@ -3975,14 +3975,14 @@ pub mod tests {
             1,
             bank.last_blockhash(),
         );
-        assert_eq!(bank.process_transaction(&tx), Ok(()));
+        assert_eq!(bank.process_transaction(tx), Ok(()));
         let tx = system_transaction::transfer(
             &mint_keypair,
             &keypair2.pubkey(),
             1,
             bank.last_blockhash(),
         );
-        assert_eq!(bank.process_transaction(&tx), Ok(()));
+        assert_eq!(bank.process_transaction(tx), Ok(()));
 
         let blockhash = bank.last_blockhash();
         while blockhash == bank.last_blockhash() {
@@ -4056,12 +4056,12 @@ pub mod tests {
         );
         // First process attempt will fail but still update status cache
         assert_eq!(
-            bank.process_transaction(&tx),
+            bank.process_transaction(tx.clone()),
             Err(TransactionError::ProgramAccountNotFound)
         );
         // Second attempt will be rejected since tx was already in status cache
         assert_eq!(
-            bank.process_transaction(&tx),
+            bank.process_transaction(tx),
             Err(TransactionError::AlreadyProcessed)
         );
 
@@ -4071,13 +4071,13 @@ pub mod tests {
 
         // Should fail with blockhash not found
         assert_eq!(
-            bank.process_transaction(&tx).map(|_| signature),
+            bank.process_transaction(tx.clone()).map(|_| signature),
             Err(TransactionError::BlockhashNotFound)
         );
 
         // Should fail again with blockhash not found
         assert_eq!(
-            bank.process_transaction(&tx).map(|_| signature),
+            bank.process_transaction(tx).map(|_| signature),
             Err(TransactionError::BlockhashNotFound)
         );
     }
@@ -4131,7 +4131,7 @@ pub mod tests {
 
         // fails with simd83 as already processed, succeeds otherwise
         assert_eq!(
-            bank.process_transaction(&test_tx),
+            bank.process_transaction(test_tx),
             if relax_intrabatch_account_locks {
                 Err(TransactionError::AlreadyProcessed)
             } else {

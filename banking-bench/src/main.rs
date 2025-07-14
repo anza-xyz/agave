@@ -397,7 +397,7 @@ fn main() {
                 // Ignore any pesky duplicate signature errors in the case we are using single-payer
                 let sig: [u8; 64] = std::array::from_fn(|_| thread_rng().gen::<u8>());
                 fund.signatures = vec![Signature::from(sig)];
-                bank.process_transaction(&fund).unwrap();
+                bank.process_transaction(fund).unwrap();
             });
     });
 
@@ -408,6 +408,7 @@ fn main() {
             packets_for_single_iteration
                 .transactions
                 .iter()
+                .cloned()
                 .for_each(|tx| {
                     let res = bank.process_transaction(tx);
                     assert!(res.is_ok(), "sanity test transactions error: {res:?}");
@@ -418,8 +419,9 @@ fn main() {
         if write_lock_contention == WriteLockContention::None {
             all_packets.iter().for_each(|packets_for_single_iteration| {
                 //sanity check, make sure all the transactions can execute in parallel
-                let res =
-                    bank.process_transactions(packets_for_single_iteration.transactions.iter());
+                let res = bank.process_transactions(
+                    packets_for_single_iteration.transactions.iter().cloned(),
+                );
                 for r in res {
                     assert!(r.is_ok(), "sanity parallel execution error: {r:?}");
                 }
