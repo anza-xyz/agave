@@ -102,24 +102,22 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::BankHashMismatch(slot, expected, actual) => {
                 write!(
                     f,
-                    "Bank hash mismatch for slot: {} expected: {} actual: {}",
-                    slot, expected, actual
+                    "Bank hash mismatch for slot: {slot} expected: {expected} actual: {actual}"
                 )
             }
             WenRestartError::BlockNotFound(slot) => {
-                write!(f, "Block not found: {}", slot)
+                write!(f, "Block not found: {slot}")
             }
             WenRestartError::BlockNotFull(slot) => {
-                write!(f, "Block not full: {}", slot)
+                write!(f, "Block not full: {slot}")
             }
             WenRestartError::BlockNotFrozenAfterReplay(slot, err) => {
-                write!(f, "Block not frozen after replay: {} {:?}", slot, err)
+                write!(f, "Block not frozen after replay: {slot} {err:?}")
             }
             WenRestartError::BlockNotLinkedToExpectedParent(slot, parent, expected_parent) => {
                 write!(
                     f,
-                    "Block {} is not linked to expected parent {} but to {:?}",
-                    slot, expected_parent, parent
+                    "Block {slot} is not linked to expected parent {expected_parent} but to {parent:?}"
                 )
             }
             WenRestartError::ChildStakeLargerThanParent(
@@ -130,8 +128,7 @@ impl std::fmt::Display for WenRestartError {
             ) => {
                 write!(
                     f,
-                    "Block {} has more stake {} than its parent {} with stake {}",
-                    slot, child_stake, parent, parent_stake
+                    "Block {slot} has more stake {child_stake} than its parent {parent} with stake {parent_stake}"
                 )
             }
             WenRestartError::Exiting => write!(f, "Exiting"),
@@ -160,10 +157,10 @@ impl std::fmt::Display for WenRestartError {
                 )
             }
             WenRestartError::MalformedLastVotedForkSlotsProtobuf(record) => {
-                write!(f, "Malformed last voted fork slots protobuf: {:?}", record)
+                write!(f, "Malformed last voted fork slots protobuf: {record:?}")
             }
             WenRestartError::MalformedProgress(state, missing) => {
-                write!(f, "Malformed progress: {:?} missing {}", state, missing)
+                write!(f, "Malformed progress: {state:?} missing {missing}")
             }
             WenRestartError::MissingLastVotedForkSlots => {
                 write!(f, "Missing last voted fork slots")
@@ -174,12 +171,11 @@ impl std::fmt::Display for WenRestartError {
             WenRestartError::NotEnoughStakeAgreeingWithUs(slot, hash, block_stake_map) => {
                 write!(
                     f,
-                    "Not enough stake agreeing with our slot: {} hash: {}\n {:?}",
-                    slot, hash, block_stake_map,
+                    "Not enough stake agreeing with our slot: {slot} hash: {hash}\n {block_stake_map:?}",
                 )
             }
             WenRestartError::UnexpectedState(state) => {
-                write!(f, "Unexpected state: {:?}", state)
+                write!(f, "Unexpected state: {state:?}")
             }
         }
     }
@@ -257,7 +253,7 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
             if let Err(e) =
                 last_voted_fork_slots_aggregate.aggregate_from_record(key_string, message)
             {
-                error!("Failed to aggregate from record: {:?}", e);
+                error!("Failed to aggregate from record: {e:?}");
             }
         }
     } else {
@@ -294,8 +290,8 @@ pub(crate) fn aggregate_restart_last_voted_fork_slots(
                     progress.conflict_message.insert(
                         from,
                         ConflictMessage {
-                            old_message: format!("{:?}", old_record),
-                            new_message: format!("{:?}", new_record),
+                            old_message: format!("{old_record:?}"),
+                            new_message: format!("{new_record:?}"),
                         },
                     );
                 }
@@ -405,8 +401,7 @@ pub(crate) fn find_heaviest_fork(
         if let Ok(Some(block_meta)) = blockstore.meta(*slot) {
             if block_meta.parent_slot != Some(expected_parent) {
                 if expected_parent == root_slot {
-                    error!("First block {} in repair list not linked to local root {}, this could mean our root is too old",
-                        slot, root_slot);
+                    error!("First block {slot} in repair list not linked to local root {root_slot}, this could mean our root is too old");
                 } else {
                     error!(
                         "Block {} in blockstore is not linked to expected parent from Wen Restart {} but to Block {:?}",
@@ -436,8 +431,7 @@ pub(crate) fn find_heaviest_fork(
         &exit,
     )?;
     info!(
-        "Heaviest fork found: slot: {}, bankhash: {:?}",
-        heaviest_fork_slot, heaviest_fork_bankhash
+        "Heaviest fork found: slot: {heaviest_fork_slot}, bankhash: {heaviest_fork_bankhash:?}"
     );
     Ok((heaviest_fork_slot, heaviest_fork_bankhash))
 }
@@ -720,7 +714,7 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         for message in &aggregate_record.received {
             if let Err(e) = heaviest_fork_aggregate.aggregate_from_record(message) {
                 // Do not abort wen_restart if we got one malformed message.
-                error!("Failed to aggregate from record: {:?}", e);
+                error!("Failed to aggregate from record: {e:?}");
             }
         }
     } else {
@@ -740,11 +734,11 @@ pub(crate) fn aggregate_restart_heaviest_fork(
         }
         let start = timestamp();
         for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor) {
-            info!("Received new heaviest fork: {:?}", new_heaviest_fork);
+            info!("Received new heaviest fork: {new_heaviest_fork:?}");
             let from = new_heaviest_fork.from.to_string();
             match heaviest_fork_aggregate.aggregate(new_heaviest_fork) {
                 HeaviestForkAggregateResult::Inserted(record) => {
-                    info!("Successfully aggregated new heaviest fork: {:?}", record);
+                    info!("Successfully aggregated new heaviest fork: {record:?}");
                     progress
                         .heaviest_fork_aggregate
                         .as_mut()
@@ -757,8 +751,8 @@ pub(crate) fn aggregate_restart_heaviest_fork(
                     progress.conflict_message.insert(
                         from,
                         ConflictMessage {
-                            old_message: format!("{:?}", old_record),
-                            new_message: format!("{:?}", new_record),
+                            old_message: format!("{old_record:?}"),
+                            new_message: format!("{new_record:?}"),
                         },
                     );
                 }
@@ -820,7 +814,7 @@ pub(crate) fn repair_heaviest_fork(
         } else {
             vec![heaviest_slot]
         };
-        info!("wen_restart repair slots: {:?}", to_repair);
+        info!("wen_restart repair slots: {to_repair:?}");
         if to_repair.is_empty() {
             return Ok(()); // All blocks are full
         }
@@ -918,8 +912,7 @@ pub(crate) fn receive_restart_heaviest_fork(
         for new_heaviest_fork in cluster_info.get_restart_heaviest_fork(&mut cursor) {
             if new_heaviest_fork.from == wen_restart_coordinator {
                 info!(
-                    "Received new heaviest fork from coordinator: {} {:?}",
-                    wen_restart_coordinator, new_heaviest_fork
+                    "Received new heaviest fork from coordinator: {wen_restart_coordinator} {new_heaviest_fork:?}"
                 );
                 let coordinator_heaviest_slot = new_heaviest_fork.last_slot;
                 let coordinator_heaviest_hash = new_heaviest_fork.last_slot_hash;
@@ -967,8 +960,7 @@ pub(crate) fn send_and_receive_heaviest_fork(
             Ok(()) => pushfn(coordinator_slot, coordinator_hash),
             Err(e) => {
                 warn!(
-                    "Failed to verify coordinator heaviest fork: {:?}, exit soon",
-                    e
+                    "Failed to verify coordinator heaviest fork: {e:?}, exit soon"
                 );
                 pushfn(my_heaviest_fork_slot, my_heaviest_fork_hash);
                 // flush_push_queue only flushes the messages to crds, doesn't guarantee
@@ -1057,8 +1049,7 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
                             config.exit.clone(),
                         )?;
                         info!(
-                            "Heaviest fork found: slot: {}, bankhash: {}",
-                            slot, bankhash
+                            "Heaviest fork found: slot: {slot}, bankhash: {bankhash}"
                         );
                         HeaviestForkRecord {
                             slot,
@@ -1128,9 +1119,8 @@ pub fn wait_for_wen_restart(config: WenRestartConfig) -> Result<()> {
             } => {
                 error!(
                     "Wen start finished, please remove --wen_restart and restart with \
-                    --wait-for-supermajority {} --expected-bank-hash {} --expected-shred-version {} \
+                    --wait-for-supermajority {slot} --expected-bank-hash {hash} --expected-shred-version {shred_version} \
                     --no-snapshot-fetch",
-                    slot, hash, shred_version,
                 );
                 if config.cluster_info.id() == config.wen_restart_coordinator {
                     aggregate_restart_heaviest_fork(
@@ -1259,8 +1249,7 @@ pub(crate) fn initialize(
             let stdio_err = e.downcast_ref::<std::io::Error>();
             if stdio_err.is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
                 info!(
-                    "wen restart proto file not found at {:?}, write init state",
-                    records_path
+                    "wen restart proto file not found at {records_path:?}, write init state"
                 );
                 let progress = WenRestartProgress {
                     state: RestartState::Init.into(),
@@ -1408,7 +1397,7 @@ pub(crate) fn initialize(
 fn read_wen_restart_records(records_path: &PathBuf) -> Result<WenRestartProgress> {
     let buffer = read(records_path)?;
     let progress = WenRestartProgress::decode(&mut Cursor::new(buffer))?;
-    info!("read record {:?}", progress);
+    info!("read record {progress:?}");
     Ok(progress)
 }
 
@@ -1418,7 +1407,7 @@ pub(crate) fn write_wen_restart_records(
 ) -> Result<()> {
     // overwrite anything if exists
     let mut file = File::create(records_path)?;
-    info!("writing new record {:?}", new_progress);
+    info!("writing new record {new_progress:?}");
     let mut buf = Vec::with_capacity(new_progress.encoded_len());
     new_progress.encode(&mut buf)?;
     file.write_all(&buf)?;
@@ -2052,7 +2041,7 @@ mod tests {
             None,
             &mut timing,
         ) {
-            panic!("process_single_slot failed: {:?}", e);
+            panic!("process_single_slot failed: {e:?}");
         }
 
         {
