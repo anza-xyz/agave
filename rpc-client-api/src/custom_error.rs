@@ -97,6 +97,13 @@ pub struct MinContextSlotNotReachedErrorData {
 pub struct EpochRewardsPeriodActiveErrorData {
     pub current_block_height: u64,
     pub rewards_complete_block_height: u64,
+    pub slot: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotNotEpochBoundaryErrorData {
+    pub slot: u64,
 }
 
 impl From<EncodeError> for RpcCustomError {
@@ -237,6 +244,7 @@ impl From<RpcCustomError> for Error {
                 data: Some(serde_json::json!(EpochRewardsPeriodActiveErrorData {
                     current_block_height,
                     rewards_complete_block_height,
+                    slot,
                 })),
             },
             RpcCustomError::SlotNotEpochBoundary { slot } => Self {
@@ -245,7 +253,7 @@ impl From<RpcCustomError> for Error {
                     "Rewards cannot be found because slot {slot} is not the epoch boundary. This \
                      may be due to gap in the queried node's local ledger or long-term storage"
                 ),
-                data: None,
+                data: Some(serde_json::json!(SlotNotEpochBoundaryErrorData { slot })),
             },
             RpcCustomError::LongTermStorageUnreachable => Self {
                 code: ErrorCode::ServerError(JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE),
