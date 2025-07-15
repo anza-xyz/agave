@@ -994,7 +994,7 @@ where
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
-        trace!("uninstalling: {}", Arc::strong_count(&self));
+        error!("uninstalling: {}", Arc::strong_count(&self));
 
         if self.block_production_supported() {
             self.unregister_banking_stage();
@@ -1018,6 +1018,7 @@ where
                     break pool;
                 }
                 Err(that) => {
+                    error!("retry...");
                     // seems solScCleaner is active... retry later
                     this = that;
                     sleep(Duration::from_millis(100));
@@ -1028,7 +1029,7 @@ where
         // join the cleaner thread as an extra sanity cleaning up.
         pool.cleaner_thread.join().unwrap();
 
-        info!("uninstalled");
+        error!("uninstalled");
     }
 }
 
