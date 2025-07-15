@@ -4,11 +4,16 @@ use {
     log::*,
     serde_derive::{Deserialize, Serialize},
     serde_json::Result,
+    solana_account::{
+        create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
+    },
     solana_bpf_loader_program::{
         create_vm, load_program_from_bytes, syscalls::create_program_runtime_environment_v1,
     },
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
+    solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_program_runtime::{
         invoke_context::InvokeContext,
         loaded_programs::{
@@ -17,19 +22,13 @@ use {
         serialization::serialize_parameters,
         with_mock_invoke_context,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_sbpf::{
         assembler::assemble, elf::Executable, static_analysis::Analysis,
         verifier::RequisiteVerifier,
     },
-    solana_sdk::{
-        account::{create_account_shared_data_for_test, AccountSharedData},
-        account_utils::StateMut,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        pubkey::Pubkey,
-        slot_history::Slot,
-        sysvar,
-    },
+    solana_sdk_ids::{bpf_loader_upgradeable, sysvar},
     solana_transaction_context::{IndexOfAccount, InstructionAccount},
     std::{
         collections::HashMap,
@@ -410,13 +409,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount {
-                index_in_transaction: 0,
-                index_in_caller: 0,
-                index_in_callee: 0,
-                is_signer: false,
-                is_writable: true,
-            });
+            instruction_accounts.push(InstructionAccount::new(0, 0, 0, false, true));
             vec![]
         }
         Err(_) => {
@@ -448,7 +441,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                                 programdata_address,
                             }) = account.state()
                             {
-                                debug!("Program data address {}", programdata_address);
+                                debug!("Program data address {programdata_address}");
                                 if bank
                                     .get_account_with_fixed_root(&programdata_address)
                                     .is_some()
@@ -487,13 +480,13 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         transaction_accounts.push((pubkey, account));
                         idx
                     };
-                    InstructionAccount {
-                        index_in_transaction: txn_acct_index as IndexOfAccount,
-                        index_in_caller: txn_acct_index as IndexOfAccount,
-                        index_in_callee: txn_acct_index as IndexOfAccount,
-                        is_signer: account_info.is_signer.unwrap_or(false),
-                        is_writable: account_info.is_writable.unwrap_or(false),
-                    }
+                    InstructionAccount::new(
+                        txn_acct_index as IndexOfAccount,
+                        txn_acct_index as IndexOfAccount,
+                        txn_acct_index as IndexOfAccount,
+                        account_info.is_signer.unwrap_or(false),
+                        account_info.is_writable.unwrap_or(false),
+                    )
                 })
                 .collect();
             input.instruction_data
@@ -502,7 +495,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
     let program_index: u16 = instruction_accounts.len().try_into().unwrap();
     transaction_accounts.push((
         loader_id,
-        AccountSharedData::new(0, 0, &solana_sdk::native_loader::id()),
+        AccountSharedData::new(0, 0, &solana_sdk_ids::native_loader::id()),
     ));
     transaction_accounts.push((
         program_id, // ID of the loaded program. It can modify accounts with the same owner key
@@ -524,7 +517,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             bank.load_program(&key, false, bank.epoch())
                 .expect("Couldn't find program account"),
         );
-        debug!("Loaded program {}", key);
+        debug!("Loaded program {key}");
     }
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
 

@@ -1,6 +1,6 @@
 use {
     crate::shred::{Shred, ShredType},
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{
         ops::AddAssign,
         time::{Duration, Instant},
@@ -61,6 +61,7 @@ pub struct ShredFetchStats {
     pub(super) shred_version_mismatch: usize,
     pub(super) bad_parent_offset: usize,
     since: Option<Instant>,
+    pub overflow_shreds: usize,
 }
 
 impl ProcessShredsStats {
@@ -185,6 +186,7 @@ impl ShredFetchStats {
             ("bad_shred_type", self.bad_shred_type, i64),
             ("shred_version_mismatch", self.shred_version_mismatch, i64),
             ("bad_parent_offset", self.bad_parent_offset, i64),
+            ("overflow_shreds", self.overflow_shreds, i64),
         );
         *self = Self {
             since: Some(Instant::now()),

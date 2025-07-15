@@ -1,14 +1,12 @@
 #![allow(unused)]
 
 use {
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount},
-        epoch_schedule::EpochSchedule,
-        program_pack::Pack,
-        pubkey::Pubkey,
-        signature::Keypair,
-        system_program,
-    },
+    solana_account::{Account, AccountSharedData, ReadableAccount},
+    solana_epoch_schedule::EpochSchedule,
+    solana_keypair::Keypair,
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
+    solana_system_interface::program as system_program,
     solana_test_validator::{TestValidator, TestValidatorGenesis},
     spl_token::state::{Account as TokenAccount, Mint},
 };

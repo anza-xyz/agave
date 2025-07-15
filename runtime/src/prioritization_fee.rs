@@ -1,7 +1,8 @@
 use {
+    solana_clock::Slot,
     solana_measure::measure_us,
-    solana_sdk::{clock::Slot, pubkey::Pubkey, saturating_add_assign},
-    std::collections::HashMap,
+    solana_pubkey::Pubkey,
+    std::{collections::HashMap, num::Saturating},
 };
 
 #[derive(Debug, Default)]
@@ -14,16 +15,16 @@ struct PrioritizationFeeMetrics {
     relevant_writable_accounts_count: u64,
 
     // Count of transactions that have non-zero prioritization fee.
-    prioritized_transactions_count: u64,
+    prioritized_transactions_count: Saturating<u64>,
 
     // Count of transactions that have zero prioritization fee.
-    non_prioritized_transactions_count: u64,
+    non_prioritized_transactions_count: Saturating<u64>,
 
     // Count of attempted update on finalized PrioritizationFee
-    attempted_update_on_finalized_fee_count: u64,
+    attempted_update_on_finalized_fee_count: Saturating<u64>,
 
     // Total prioritization fees included in this slot.
-    total_prioritization_fee: u64,
+    total_prioritization_fee: Saturating<u64>,
 
     // The minimum prioritization fee of prioritized transactions in this slot.
     min_prioritization_fee: Option<u64>,
@@ -32,30 +33,30 @@ struct PrioritizationFeeMetrics {
     max_prioritization_fee: u64,
 
     // Accumulated time spent on tracking prioritization fee for each slot.
-    total_update_elapsed_us: u64,
+    total_update_elapsed_us: Saturating<u64>,
 }
 
 impl PrioritizationFeeMetrics {
     fn accumulate_total_prioritization_fee(&mut self, val: u64) {
-        saturating_add_assign!(self.total_prioritization_fee, val);
+        self.total_prioritization_fee += val;
     }
 
     fn accumulate_total_update_elapsed_us(&mut self, val: u64) {
-        saturating_add_assign!(self.total_update_elapsed_us, val);
+        self.total_update_elapsed_us += val;
     }
 
     fn increment_attempted_update_on_finalized_fee_count(&mut self, val: u64) {
-        saturating_add_assign!(self.attempted_update_on_finalized_fee_count, val);
+        self.attempted_update_on_finalized_fee_count += val;
     }
 
     fn update_prioritization_fee(&mut self, fee: u64) {
         if fee == 0 {
-            saturating_add_assign!(self.non_prioritized_transactions_count, 1);
+            self.non_prioritized_transactions_count += 1;
             return;
         }
 
         // update prioritized transaction fee metrics.
-        saturating_add_assign!(self.prioritized_transactions_count, 1);
+        self.prioritized_transactions_count += 1;
 
         self.max_prioritization_fee = self.max_prioritization_fee.max(fee);
 
@@ -66,52 +67,60 @@ impl PrioritizationFeeMetrics {
     }
 
     fn report(&self, slot: Slot) {
+        let &PrioritizationFeeMetrics {
+            total_writable_accounts_count,
+            relevant_writable_accounts_count,
+            prioritized_transactions_count: Saturating(prioritized_transactions_count),
+            non_prioritized_transactions_count: Saturating(non_prioritized_transactions_count),
+            attempted_update_on_finalized_fee_count:
+                Saturating(attempted_update_on_finalized_fee_count),
+            total_prioritization_fee: Saturating(total_prioritization_fee),
+            min_prioritization_fee,
+            max_prioritization_fee,
+            total_update_elapsed_us: Saturating(total_update_elapsed_us),
+        } = self;
         datapoint_info!(
             "block_prioritization_fee",
             ("slot", slot as i64, i64),
             (
                 "total_writable_accounts_count",
-                self.total_writable_accounts_count as i64,
+                total_writable_accounts_count as i64,
                 i64
             ),
             (
                 "relevant_writable_accounts_count",
-                self.relevant_writable_accounts_count as i64,
+                relevant_writable_accounts_count as i64,
                 i64
             ),
             (
                 "prioritized_transactions_count",
-                self.prioritized_transactions_count as i64,
+                prioritized_transactions_count as i64,
                 i64
             ),
             (
                 "non_prioritized_transactions_count",
-                self.non_prioritized_transactions_count as i64,
+                non_prioritized_transactions_count as i64,
                 i64
             ),
             (
                 "attempted_update_on_finalized_fee_count",
-                self.attempted_update_on_finalized_fee_count as i64,
+                attempted_update_on_finalized_fee_count as i64,
                 i64
             ),
             (
                 "total_prioritization_fee",
-                self.total_prioritization_fee as i64,
+                total_prioritization_fee as i64,
                 i64
             ),
             (
                 "min_prioritization_fee",
-                self.min_prioritization_fee.unwrap_or(0) as i64,
+                min_prioritization_fee.unwrap_or(0) as i64,
                 i64
             ),
-            (
-                "max_prioritization_fee",
-                self.max_prioritization_fee as i64,
-                i64
-            ),
+            ("max_prioritization_fee", max_prioritization_fee as i64, i64),
             (
                 "total_update_elapsed_us",
-                self.total_update_elapsed_us as i64,
+                total_update_elapsed_us as i64,
                 i64
             ),
         );

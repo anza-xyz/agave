@@ -38,13 +38,13 @@ pub(crate) fn process_message(
                 .unwrap_or(instruction_account_index)
                 as IndexOfAccount;
             let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccount {
-                index_in_transaction: index_in_transaction as IndexOfAccount,
-                index_in_caller: index_in_transaction as IndexOfAccount,
+            instruction_accounts.push(InstructionAccount::new(
+                index_in_transaction as IndexOfAccount,
+                index_in_transaction as IndexOfAccount,
                 index_in_callee,
-                is_signer: message.is_signer(index_in_transaction),
-                is_writable: message.is_writable(index_in_transaction),
-            });
+                message.is_signer(index_in_transaction),
+                message.is_writable(index_in_transaction),
+            ));
         }
 
         let mut compute_units_consumed = 0;
@@ -70,12 +70,16 @@ pub(crate) fn process_message(
 
         *accumulated_consumed_units =
             accumulated_consumed_units.saturating_add(compute_units_consumed);
-        execute_timings.details.accumulate_program(
-            program_id,
-            process_instruction_us,
-            compute_units_consumed,
-            result.is_err(),
-        );
+        // The per_program_timings are only used for metrics reporting at the trace
+        // level, so they should only be accumulated when trace level is enabled.
+        if log::log_enabled!(log::Level::Trace) {
+            execute_timings.details.accumulate_program(
+                program_id,
+                process_instruction_us,
+                compute_units_consumed,
+                result.is_err(),
+            );
+        }
         invoke_context.timings = {
             execute_timings.details.accumulate(&invoke_context.timings);
             ExecuteDetailsTimings::default()
@@ -97,6 +101,7 @@ mod tests {
     use {
         super::*,
         agave_reserved_account_keys::ReservedAccountKeys,
+        ed25519_dalek::ed25519::signature::Signer,
         openssl::{
             ec::{EcGroup, EcKey},
             nid::Nid,
@@ -106,7 +111,7 @@ mod tests {
             Account, AccountSharedData, ReadableAccount, WritableAccount,
             DUMMY_INHERITABLE_ACCOUNT_FIELDS,
         },
-        solana_ed25519_program::new_ed25519_instruction,
+        solana_ed25519_program::new_ed25519_instruction_with_signature,
         solana_hash::Hash,
         solana_instruction::{error::InstructionError, AccountMeta, Instruction},
         solana_message::{AccountKeys, Message, SanitizedMessage},
@@ -121,8 +126,10 @@ mod tests {
         solana_pubkey::Pubkey,
         solana_rent::Rent,
         solana_sdk_ids::{ed25519_program, native_loader, secp256k1_program, system_program},
-        solana_secp256k1_program::new_secp256k1_instruction,
-        solana_secp256r1_program::new_secp256r1_instruction,
+        solana_secp256k1_program::{
+            eth_address_from_pubkey, new_secp256k1_instruction_with_signature,
+        },
+        solana_secp256r1_program::{new_secp256r1_instruction_with_signature, sign_message},
         solana_svm_callback::InvokeContextCallback,
         solana_svm_feature_set::SVMFeatureSet,
         solana_transaction_context::TransactionContext,
@@ -593,19 +600,41 @@ mod tests {
     }
 
     fn secp256k1_instruction_for_test() -> Instruction {
+        let message = b"hello";
         let secret_key = libsecp256k1::SecretKey::random(&mut thread_rng());
-        new_secp256k1_instruction(&secret_key, b"hello")
+        let pubkey = libsecp256k1::PublicKey::from_secret_key(&secret_key);
+        let eth_address = eth_address_from_pubkey(&pubkey.serialize()[1..].try_into().unwrap());
+        let (signature, recovery_id) =
+            solana_secp256k1_program::sign_message(&secret_key.serialize(), &message[..]).unwrap();
+        new_secp256k1_instruction_with_signature(
+            &message[..],
+            &signature,
+            recovery_id,
+            &eth_address,
+        )
     }
 
     fn ed25519_instruction_for_test() -> Instruction {
         let secret_key = ed25519_dalek::Keypair::generate(&mut thread_rng());
-        new_ed25519_instruction(&secret_key, b"hello")
+        let signature = secret_key.sign(b"hello").to_bytes();
+        let pubkey = secret_key.public.to_bytes();
+        new_ed25519_instruction_with_signature(b"hello", &signature, &pubkey)
     }
 
     fn secp256r1_instruction_for_test() -> Instruction {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let secret_key = EcKey::generate(&group).unwrap();
-        new_secp256r1_instruction(b"hello", secret_key).unwrap()
+        let signature = sign_message(b"hello", &secret_key.private_key_to_der().unwrap()).unwrap();
+        let mut ctx = openssl::bn::BigNumContext::new().unwrap();
+        let pubkey = secret_key
+            .public_key()
+            .to_bytes(
+                &group,
+                openssl::ec::PointConversionForm::COMPRESSED,
+                &mut ctx,
+            )
+            .unwrap();
+        new_secp256r1_instruction_with_signature(b"hello", &signature, &pubkey.try_into().unwrap())
     }
 
     #[test]

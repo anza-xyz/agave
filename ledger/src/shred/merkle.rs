@@ -13,23 +13,24 @@ use {
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
             CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, ShredCommonHeader,
-            ShredFlags, ShredVariant, DATA_SHREDS_PER_FEC_BLOCK, SHREDS_PER_FEC_BLOCK,
-            SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
+            ShredFlags, ShredVariant, CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
+            SHREDS_PER_FEC_BLOCK, SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS,
+            SIZE_OF_SIGNATURE,
         },
-        shredder::{self, ReedSolomonCache},
+        shredder::ReedSolomonCache,
     },
     assert_matches::debug_assert_matches,
     itertools::{Either, Itertools},
     rayon::{prelude::*, ThreadPool},
     reed_solomon_erasure::Error::{InvalidIndex, TooFewParityShards},
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_perf::packet::deserialize_from_with_limit,
-    solana_sdk::{
-        clock::Slot,
-        hash::{hashv, Hash},
-        pubkey::Pubkey,
-        signature::{Signature, Signer},
-        signer::keypair::Keypair,
-    },
+    solana_pubkey::Pubkey,
+    solana_sha256_hasher::hashv,
+    solana_signature::Signature,
+    solana_signer::Signer,
     static_assertions::const_assert_eq,
     std::{
         cmp::Ordering,
@@ -992,19 +993,16 @@ fn make_shreds_data<'a>(
         shred
     })
 }
-// Generates coding shreds for the current erasure batch.
+// Generates coding shred blanks for the current erasure batch.
 // Updates ShredCommonHeader.index for coding shreds of the next batch.
-fn make_shreds_code(
+// These have the correct headers, but none of the payloads and signatures.
+fn make_shreds_code_header_only(
     common_header: &mut ShredCommonHeader,
-    num_data_shreds: usize,
-    is_last_in_slot: bool,
 ) -> impl Iterator<Item = ShredCode> + '_ {
     debug_assert_matches!(common_header.shred_variant, ShredVariant::MerkleCode { .. });
-    let erasure_batch_size = shredder::get_erasure_batch_size(num_data_shreds, is_last_in_slot);
-    let num_coding_shreds = erasure_batch_size - num_data_shreds;
     let mut coding_header = CodingShredHeader {
-        num_data_shreds: num_data_shreds as u16,
-        num_coding_shreds: num_coding_shreds as u16,
+        num_data_shreds: DATA_SHREDS_PER_FEC_BLOCK as u16,
+        num_coding_shreds: CODING_SHREDS_PER_FEC_BLOCK as u16,
         position: 0,
     };
     std::iter::repeat_with(move || {
@@ -1017,7 +1015,7 @@ fn make_shreds_code(
         coding_header.position += 1;
         shred
     })
-    .take(num_coding_shreds)
+    .take(CODING_SHREDS_PER_FEC_BLOCK)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1109,14 +1107,7 @@ pub(super) fn make_shreds_from_data(
             )
             .map(Shred::ShredData),
         );
-        shreds.extend(
-            make_shreds_code(
-                &mut common_header_code,
-                DATA_SHREDS_PER_FEC_BLOCK,          // num_data_shreds
-                is_last_in_slot && rest.is_empty(), // is_last_in_slot
-            )
-            .map(Shred::ShredCode),
-        );
+        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
         data = rest;
     }
 
@@ -1149,14 +1140,7 @@ pub(super) fn make_shreds_from_data(
                 .take(DATA_SHREDS_PER_FEC_BLOCK);
             make_shreds_data(&mut common_header_data, data_header, chunks).map(Shred::ShredData)
         });
-        shreds.extend(
-            make_shreds_code(
-                &mut common_header_code,
-                DATA_SHREDS_PER_FEC_BLOCK,
-                is_last_in_slot,
-            )
-            .map(Shred::ShredCode),
-        );
+        shreds.extend(make_shreds_code_header_only(&mut common_header_code).map(Shred::ShredCode));
     }
 
     // Adjust flags for the very last data shred.
@@ -1333,12 +1317,11 @@ mod test {
         rand::{seq::SliceRandom, CryptoRng, Rng},
         rayon::ThreadPoolBuilder,
         reed_solomon_erasure::Error::TooFewShardsPresent,
-        solana_sdk::{
-            packet::PACKET_DATA_SIZE,
-            signature::{Keypair, Signer},
-        },
+        solana_keypair::Keypair,
+        solana_packet::PACKET_DATA_SIZE,
+        solana_signer::Signer,
         std::{cmp::Ordering, collections::HashMap, iter::repeat_with},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     // Total size of a data shred including headers and merkle proof.
@@ -1640,22 +1623,11 @@ mod test {
         }
     }
 
-    #[test_case(0, false, false)]
-    #[test_case(0, false, true)]
-    #[test_case(0, true, false)]
-    #[test_case(0, true, true)]
-    #[test_case(15600, false, false)]
-    #[test_case(15600, false, true)]
-    #[test_case(15600, true, false)]
-    #[test_case(15600, true, true)]
-    #[test_case(31200, false, false)]
-    #[test_case(31200, false, true)]
-    #[test_case(31200, true, false)]
-    #[test_case(31200, true, true)]
-    #[test_case(46800, false, false)]
-    #[test_case(46800, false, true)]
-    #[test_case(46800, true, false)]
-    #[test_case(46800, true, true)]
+    #[test_matrix(
+        [0, 15600, 31200, 46800],
+        [true, false],
+        [true, false]
+    )]
     fn test_make_shreds_from_data(data_size: usize, chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let data_size = data_size.saturating_sub(16);
@@ -1671,10 +1643,10 @@ mod test {
         }
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_make_shreds_from_data_rand(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let reed_solomon_cache = ReedSolomonCache::default();
@@ -1691,10 +1663,10 @@ mod test {
     }
 
     #[ignore]
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_make_shreds_from_data_paranoid(chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let reed_solomon_cache = ReedSolomonCache::default();

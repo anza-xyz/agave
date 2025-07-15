@@ -9,16 +9,32 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     chrono_humanize::{Accuracy, HumanTime, Tense},
     log::*,
+    solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
+    solana_account_info::AccountInfo,
     solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
+    solana_clock::{Epoch, Slot},
     solana_compute_budget::compute_budget::ComputeBudget,
-    solana_instruction::{error::InstructionError, Instruction},
+    solana_fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
+    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_hash::Hash,
+    solana_instruction::{
+        error::{InstructionError, UNSUPPORTED_SYSVAR},
+        Instruction,
+    },
+    solana_keypair::Keypair,
     solana_log_collector::ic_msg,
+    solana_native_token::sol_to_lamports,
+    solana_poh_config::PohConfig,
+    solana_program_entrypoint::{deserialize, SUCCESS},
+    solana_program_error::{ProgramError, ProgramResult},
     solana_program_runtime::{
         invoke_context::BuiltinFunctionWithContext, loaded_programs::ProgramCacheEntry,
         serialization::serialize_parameters, stable_log,
     },
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_runtime::{
         accounts_background_service::SnapshotRequestKind,
         bank::Bank,
@@ -29,23 +45,10 @@ use {
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
     },
-    solana_sdk::{
-        account::{create_account_shared_data_for_test, Account, AccountSharedData},
-        account_info::AccountInfo,
-        clock::{Epoch, Slot},
-        entrypoint::{deserialize, ProgramResult, SUCCESS},
-        fee_calculator::{FeeRateGovernor, DEFAULT_TARGET_LAMPORTS_PER_SIGNATURE},
-        genesis_config::{ClusterType, GenesisConfig},
-        hash::Hash,
-        native_token::sol_to_lamports,
-        poh_config::PohConfig,
-        program_error::{ProgramError, UNSUPPORTED_SYSVAR},
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        stable_layout::stable_instruction::StableInstruction,
-        sysvar::{Sysvar, SysvarId},
-    },
+    solana_signer::Signer,
+    solana_stable_layout::stable_instruction::StableInstruction,
+    solana_sysvar::Sysvar,
+    solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
     solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
     std::{
@@ -105,7 +108,7 @@ fn get_invoke_context<'a, 'b>() -> &'a mut InvokeContext<'b> {
 }
 
 pub fn invoke_builtin_function(
-    builtin_function: solana_sdk::entrypoint::ProcessInstruction,
+    builtin_function: solana_program_entrypoint::ProcessInstruction,
     invoke_context: &mut InvokeContext,
 ) -> Result<u64, Box<dyn std::error::Error>> {
     set_invoke_context(invoke_context);
@@ -239,7 +242,7 @@ fn get_sysvar<T: Default + Sysvar + Sized + serde::de::DeserializeOwned + Clone>
 }
 
 struct SyscallStubs {}
-impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
+impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
     fn sol_log(&self, message: &str) {
         let invoke_context = get_invoke_context();
         ic_msg!(invoke_context, "Program log: {}", message);
@@ -321,7 +324,7 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
                     .set_owner(account_info.owner.as_ref())
                     .unwrap();
             }
-            if instruction_account.is_writable {
+            if instruction_account.is_writable() {
                 account_indices.push((instruction_account.index_in_caller, account_info_index));
             }
         }
@@ -362,7 +365,7 @@ impl solana_sdk::program_stubs::SyscallStubs for SyscallStubs {
 
             // Resize account_info data
             if account_info.data_len() != new_len {
-                account_info.realloc(new_len, false)?;
+                account_info.resize(new_len)?;
             }
 
             // Clone the data
@@ -687,7 +690,7 @@ impl ProgramTest {
                 Account {
                     lamports: Rent::default().minimum_balance(data.len()).max(1),
                     data,
-                    owner: solana_sdk::bpf_loader::id(),
+                    owner: solana_sdk_ids::bpf_loader::id(),
                     executable: true,
                     rent_epoch: 0,
                 },
@@ -791,7 +794,7 @@ impl ProgramTest {
             static ONCE: Once = Once::new();
 
             ONCE.call_once(|| {
-                solana_sdk::program_stubs::set_syscall_stubs(Box::new(SyscallStubs {}));
+                solana_sysvar::program_stubs::set_syscall_stubs(Box::new(SyscallStubs {}));
             });
         }
 
@@ -894,7 +897,7 @@ impl ProgramTest {
             }
             bank.store_account(address, account);
         }
-        bank.set_capitalization();
+        bank.set_capitalization_for_tests(bank.calculate_capitalization_for_tests());
         // Advance beyond slot 0 for a slightly more realistic test environment
         let bank = {
             let bank = Arc::new(bank);

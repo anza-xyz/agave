@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
@@ -18,7 +21,9 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 solana-account-decoder-client-types = { workspace = true }
 solana-commitment-config = { workspace = true }
+solana-instruction = { workspace = true }
 solana-message = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-reward-info = { workspace = true, features = ["serde"] }
 solana-signature = { workspace = true, default-features = false }
 solana-transaction = { workspace = true, features = ["serde"] }
@@ -26,5 +31,5 @@ solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dev-dependencies]
+test-case = { workspace = true }

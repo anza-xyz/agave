@@ -7,18 +7,24 @@
     allow(dead_code, unused_imports)
 )]
 
-use {solana_sdk::signer::keypair::Keypair, std::slice};
+use {solana_keypair::Keypair, std::slice};
 
 extern crate test;
 
 use {
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
+    solana_account::AccountSharedData,
     solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
+    solana_client_traits::SyncClient,
+    solana_instruction::{AccountMeta, Instruction},
     solana_measure::measure::Measure,
+    solana_message::Message,
+    solana_program_entrypoint::SUCCESS,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget, invoke_context::InvokeContext,
         serialization::serialize_parameters,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
@@ -29,17 +35,8 @@ use {
         ebpf::MM_INPUT_START, elf::Executable, memory_region::MemoryRegion,
         verifier::RequisiteVerifier, vm::ContextObject,
     },
-    solana_sdk::{
-        account::AccountSharedData,
-        bpf_loader,
-        client::SyncClient,
-        entrypoint::SUCCESS,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        native_loader,
-        pubkey::Pubkey,
-        signature::Signer,
-    },
+    solana_sdk_ids::{bpf_loader, native_loader},
+    solana_signer::Signer,
     solana_svm_feature_set::SVMFeatureSet,
     solana_transaction_context::InstructionAccount,
     std::{mem, sync::Arc},
@@ -63,13 +60,7 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount {
-            index_in_transaction: 2,
-            index_in_caller: 2,
-            index_in_callee: 0,
-            is_signer: false,
-            is_writable: true,
-        }];
+        let instruction_accounts = vec![InstructionAccount::new(2, 2, 0, false, true)];
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
@@ -335,24 +326,19 @@ fn clone_regions(regions: &[MemoryRegion]) -> Vec<MemoryRegion> {
         regions
             .iter()
             .map(|region| {
-                let mut new_region = if region.writable.get() {
+                let mut new_region = if region.writable {
                     MemoryRegion::new_writable(
-                        slice::from_raw_parts_mut(
-                            region.host_addr.get() as *mut _,
-                            region.len as usize,
-                        ),
+                        slice::from_raw_parts_mut(region.host_addr as *mut _, region.len as usize),
                         region.vm_addr,
                     )
                 } else {
                     MemoryRegion::new_readonly(
-                        slice::from_raw_parts(
-                            region.host_addr.get() as *const _,
-                            region.len as usize,
-                        ),
+                        slice::from_raw_parts(region.host_addr as *const _, region.len as usize),
                         region.vm_addr,
                     )
                 };
-                new_region.cow_callback_payload = region.cow_callback_payload;
+                new_region.access_violation_handler_payload =
+                    region.access_violation_handler_payload;
                 new_region
             })
             .collect()

@@ -12,12 +12,10 @@ use {
     },
     crossbeam_channel::SendError,
     log::*,
+    solana_clock::{BankId, Slot},
+    solana_hash::Hash,
     solana_measure::measure::Measure,
     solana_program_runtime::loaded_programs::{BlockRelation, ForkGraph},
-    solana_sdk::{
-        clock::{BankId, Slot},
-        hash::Hash,
-    },
     solana_unified_scheduler_logic::SchedulingMode,
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
@@ -167,12 +165,11 @@ impl BankForks {
         self.descendants.clone()
     }
 
-    pub fn frozen_banks(&self) -> HashMap<Slot, Arc<Bank>> {
+    pub fn frozen_banks(&self) -> impl Iterator<Item = (Slot, Arc<Bank>)> + '_ {
         self.banks
             .iter()
             .filter(|(_, b)| b.is_frozen())
             .map(|(&k, b)| (k, b.clone_without_scheduler()))
-            .collect()
     }
 
     pub fn active_bank_slots(&self) -> Vec<Slot> {
@@ -365,6 +362,12 @@ impl BankForks {
                     .unwrap()
                     .node_id_to_vote_accounts()
             );
+            // Now we have rooted a bank in a new epoch, there are no needs to
+            // keep the epoch rewards cache for current epoch any longer.
+            info!(
+                "Clearing epoch rewards cache for epoch {old_epoch} after setting root to slot {root}"
+            );
+            root_bank.clear_epoch_rewards_cache();
         }
         let root_tx_count = root_bank
             .parents()
@@ -665,13 +668,12 @@ mod tests {
         },
         assert_matches::assert_matches,
         solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
-        solana_sdk::{
-            clock::UnixTimestamp,
-            epoch_schedule::EpochSchedule,
-            hash::Hash,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-        },
+        solana_clock::UnixTimestamp,
+        solana_epoch_schedule::EpochSchedule,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
+        solana_signer::Signer,
         solana_vote_program::vote_state::BlockTimestamp,
         std::{sync::atomic::Ordering::Relaxed, time::Duration},
     };
@@ -743,8 +745,13 @@ mod tests {
         let bank0 = bank_forks[0].clone();
         let child_bank = Bank::new_from_parent(bank0, &Pubkey::default(), 1);
         bank_forks.insert(child_bank);
-        assert!(bank_forks.frozen_banks().contains_key(&0));
-        assert!(!bank_forks.frozen_banks().contains_key(&1));
+
+        let frozen_slots: HashSet<Slot> = bank_forks
+            .frozen_banks()
+            .map(|(slot, _bank)| slot)
+            .collect();
+        assert!(frozen_slots.contains(&0));
+        assert!(!frozen_slots.contains(&1));
     }
 
     #[test]

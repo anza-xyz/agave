@@ -1,11 +1,16 @@
 use {
-    crate::cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
-    clap::{App, Arg},
+    crate::{
+        bootstrap::RpcBootstrapConfig,
+        cli::{hash_validator, port_range_validator, port_validator, DefaultArgs},
+        commands::{FromClapArgMatches, Result},
+    },
+    clap::{values_t, App, Arg, ArgMatches},
     solana_clap_utils::{
         hidden_unless_forced,
+        input_parsers::keypair_of,
         input_validators::{
-            is_keypair_or_ask_keyword, is_parsable, is_pow2, is_pubkey, is_pubkey_or_keypair,
-            is_slot, is_within_range, validate_cpu_ranges,
+            is_keypair_or_ask_keyword, is_non_zero, is_parsable, is_pow2, is_pubkey,
+            is_pubkey_or_keypair, is_slot, is_within_range, validate_cpu_ranges,
             validate_maximum_full_snapshot_archives_to_retain,
             validate_maximum_incremental_snapshot_archives_to_retain,
         },
@@ -15,17 +20,76 @@ use {
         banking_trace::DirByteLimit,
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
+    solana_keypair::Keypair,
     solana_ledger::use_snapshot_archives_at_startup,
+    solana_pubkey::Pubkey,
     solana_runtime::snapshot_utils::{SnapshotVersion, SUPPORTED_ARCHIVE_COMPRESSION},
     solana_send_transaction_service::send_transaction_service::{
         MAX_BATCH_SEND_RATE_MS, MAX_TRANSACTION_BATCH_SIZE,
     },
+    solana_signer::Signer,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
-    std::str::FromStr,
+    std::{collections::HashSet, net::SocketAddr, str::FromStr},
 };
 
 const EXCLUDE_KEY: &str = "account-index-exclude-key";
 const INCLUDE_KEY: &str = "account-index-include-key";
+
+pub mod rpc_bootstrap_config;
+
+#[derive(Debug, PartialEq)]
+pub struct RunArgs {
+    pub identity_keypair: Keypair,
+    pub logfile: String,
+    pub entrypoints: Vec<SocketAddr>,
+    pub known_validators: Option<HashSet<Pubkey>>,
+    pub rpc_bootstrap_config: RpcBootstrapConfig,
+}
+
+impl FromClapArgMatches for RunArgs {
+    fn from_clap_arg_match(matches: &ArgMatches) -> Result<Self> {
+        let identity_keypair =
+            keypair_of(matches, "identity").ok_or(clap::Error::with_description(
+                "The --identity <KEYPAIR> argument is required",
+                clap::ErrorKind::ArgumentNotFound,
+            ))?;
+
+        let logfile = matches
+            .value_of("logfile")
+            .map(|s| s.into())
+            .unwrap_or_else(|| format!("agave-validator-{}.log", identity_keypair.pubkey()));
+
+        let mut entrypoints = values_t!(matches, "entrypoint", String).unwrap_or_default();
+        // sort() + dedup() to yield a vector of unique elements
+        entrypoints.sort();
+        entrypoints.dedup();
+        let entrypoints = entrypoints
+            .into_iter()
+            .map(|entrypoint| {
+                solana_net_utils::parse_host_port(&entrypoint).map_err(|err| {
+                    crate::commands::Error::Dynamic(Box::<dyn std::error::Error>::from(format!(
+                        "failed to parse entrypoint address: {err}"
+                    )))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let known_validators = validators_set(
+            &identity_keypair.pubkey(),
+            matches,
+            "known_validators",
+            "known validator",
+        )?;
+
+        Ok(RunArgs {
+            identity_keypair,
+            logfile,
+            entrypoints,
+            known_validators,
+            rpc_bootstrap_config: RpcBootstrapConfig::from_clap_arg_match(matches)?,
+        })
+    }
+}
 
 pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 'a> {
     app
@@ -126,7 +190,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .value_name("RPC_URL")
             .requires("entrypoint")
-            .conflicts_with_all(&["no_check_vote_account", "no_voting"])
+            .conflicts_with_all(&["no_voting"])
             .help(
                 "Sanity check vote account state at startup. The JSON RPC endpoint at RPC_URL \
                  must expose `--full-rpc-api`",
@@ -162,7 +226,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
     .arg(
         Arg::with_name("full_rpc_api")
             .long("full-rpc-api")
-            .conflicts_with("minimal_rpc_api")
             .takes_value(false)
             .help("Expose RPC methods for querying chain state and transaction history"),
     )
@@ -350,10 +413,8 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("HOST")
             .takes_value(true)
             .validator(solana_net_utils::is_host)
-            .help(
-                "Gossip DNS name or IP address for the validator to advertise in gossip \
-                 [default: ask --entrypoint, or 127.0.0.1 when --entrypoint is not provided]",
-            ),
+            .hidden(hidden_unless_forced())
+            .help("DEPRECATED: Use --bind-address instead."),
     )
     .arg(
         Arg::with_name("public_tpu_addr")
@@ -440,12 +501,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .takes_value(true)
             .default_value(&default_args.incremental_snapshot_archive_interval_slots)
+            .validator(is_non_zero)
             .help("Number of slots between generating snapshots")
             .long_help(
                 "Number of slots between generating snapshots. \
                  If incremental snapshots are enabled, this sets the incremental snapshot interval. \
                  If incremental snapshots are disabled, this sets the full snapshot interval. \
-                 To disable all snapshot generation, see --no-snapshots.",
+                 Must be greater than zero.",
             ),
     )
     .arg(
@@ -454,10 +516,13 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("NUMBER")
             .takes_value(true)
             .default_value(&default_args.full_snapshot_archive_interval_slots)
+            .validator(is_non_zero)
             .help("Number of slots between generating full snapshots")
             .long_help(
-                "Number of slots between generating full snapshots. Must be a multiple of the \
-                 incremental snapshot interval. Only used when incremental snapshots are enabled.",
+                "Number of slots between generating full snapshots. \
+                 Only used when incremental snapshots are enabled. \
+                 Must be greater than the incremental snapshot interval. \
+                 Must be greater than zero.",
             ),
     )
     .arg(
@@ -784,24 +849,18 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .help("Milliseconds to wait in the TPU receiver for packet coalescing."),
     )
     .arg(
-        Arg::with_name("tpu_use_quic")
-            .long("tpu-use-quic")
-            .takes_value(false)
-            .hidden(hidden_unless_forced())
-            .conflicts_with("tpu_disable_quic")
-            .help("Use QUIC to send transactions."),
-    )
-    .arg(
         Arg::with_name("tpu_disable_quic")
             .long("tpu-disable-quic")
             .takes_value(false)
-            .help("Do not use QUIC to send transactions."),
+            .hidden(hidden_unless_forced())
+            .help("DEPRECATED (UDP support will be dropped): Do not use QUIC to send transactions."),
     )
     .arg(
         Arg::with_name("tpu_enable_udp")
             .long("tpu-enable-udp")
             .takes_value(false)
-            .help("Enable UDP for receiving/sending transactions."),
+            .hidden(hidden_unless_forced())
+            .help("DEPRECATED (UDP support will be dropped): Enable UDP for receiving/sending transactions."),
     )
     .arg(
         Arg::with_name("tpu_connection_pool_size")
@@ -913,8 +972,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .takes_value(true)
             .validator(solana_net_utils::is_host)
             .default_value(&default_args.bind_address)
-            .help("IP address to bind the validator ports"),
-    )
+            .multiple(true)
+            .help("Repeatable. IP addresses to bind the validator ports on. First is primary (used on startup), the rest may be switched to during operation."),
+        )
     .arg(
         Arg::with_name("rpc_bind_address")
             .long("rpc-bind-address")
@@ -1332,27 +1392,9 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_test_skip_rewrites")
-            .long("accounts-db-test-skip-rewrites")
-            .help(
-                "Debug option to skip rewrites for rent-exempt accounts but still add them in \
-                 bank delta hash calculation",
-            )
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("no_skip_initial_accounts_db_clean")
             .long("no-skip-initial-accounts-db-clean")
             .help("Do not skip the initial cleaning of accounts when verifying snapshot bank")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
-        Arg::with_name("accounts_db_squash_storages_method")
-            .long("accounts-db-squash-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["pack", "append"])
-            .help("Squash multiple account storage files together using this method")
             .hidden(hidden_unless_forced()),
     )
     .arg(
@@ -1482,14 +1524,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             ),
     )
     .arg(
-        Arg::with_name("accounts_db_test_hash_calculation")
-            .long("accounts-db-test-hash-calculation")
-            .help(
-                "Enables testing of hash calculation using stores in AccountsHashVerifier. \
-                 This has a computational cost.",
-            ),
-    )
-    .arg(
         Arg::with_name("accounts_shrink_optimize_total_space")
             .long("accounts-shrink-optimize-total-space")
             .takes_value(true)
@@ -1578,6 +1612,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(BlockVerificationMethod::cli_names())
+            .default_value(BlockVerificationMethod::default().into())
             .help(BlockVerificationMethod::cli_message()),
     )
     .arg(
@@ -1586,6 +1621,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("METHOD")
             .takes_value(true)
             .possible_values(BlockProductionMethod::cli_names())
+            .default_value(BlockProductionMethod::default().into())
             .help(BlockProductionMethod::cli_message()),
     )
     .arg(
@@ -1594,6 +1630,7 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .value_name("STRUCT")
             .takes_value(true)
             .possible_values(TransactionStructure::cli_names())
+            .default_value(TransactionStructure::default().into())
             .help(TransactionStructure::cli_message()),
     )
     .arg(
@@ -1678,4 +1715,562 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .requires("retransmit_xdp_cpu_cores")
             .help("EXPERIMENTAL: Enable XDP zero copy. Requires hardware support"),
     )
+    .arg(
+        Arg::with_name("use_connection_cache")
+            .long("use-connection-cache")
+            .takes_value(false)
+            .help(
+                "Use connection-cache crate to send transactions over TPU ports. If not set,\
+                tpu-client-next is used by default.",
+            ),
+    )
+}
+
+fn validators_set(
+    identity_pubkey: &Pubkey,
+    matches: &ArgMatches<'_>,
+    matches_name: &str,
+    arg_name: &str,
+) -> Result<Option<HashSet<Pubkey>>> {
+    if matches.is_present(matches_name) {
+        let validators_set: Option<HashSet<Pubkey>> = values_t!(matches, matches_name, Pubkey)
+            .ok()
+            .map(|validators| validators.into_iter().collect());
+        if let Some(validators_set) = &validators_set {
+            if validators_set.contains(identity_pubkey) {
+                return Err(crate::commands::Error::Dynamic(
+                    Box::<dyn std::error::Error>::from(format!(
+                        "the validator's identity pubkey cannot be a {arg_name}: {}",
+                        identity_pubkey
+                    )),
+                ));
+            }
+        }
+        Ok(validators_set)
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        std::net::{IpAddr, Ipv4Addr},
+    };
+
+    impl Default for RunArgs {
+        fn default() -> Self {
+            let identity_keypair = Keypair::new();
+            let logfile = format!("agave-validator-{}.log", identity_keypair.pubkey());
+            let entrypoints = vec![];
+            let known_validators = None;
+
+            RunArgs {
+                identity_keypair,
+                logfile,
+                entrypoints,
+                known_validators,
+                rpc_bootstrap_config: RpcBootstrapConfig::default(),
+            }
+        }
+    }
+
+    impl Clone for RunArgs {
+        fn clone(&self) -> Self {
+            RunArgs {
+                identity_keypair: self.identity_keypair.insecure_clone(),
+                logfile: self.logfile.clone(),
+                entrypoints: self.entrypoints.clone(),
+                known_validators: self.known_validators.clone(),
+                rpc_bootstrap_config: self.rpc_bootstrap_config.clone(),
+            }
+        }
+    }
+
+    fn verify_args_struct_by_command(
+        default_args: &DefaultArgs,
+        args: Vec<&str>,
+        expected_args: RunArgs,
+    ) {
+        crate::commands::tests::verify_args_struct_by_command::<RunArgs>(
+            add_args(App::new("run_command"), default_args),
+            [&["run_command"], &args[..]].concat(),
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_identity() {
+        let default_args = DefaultArgs::default();
+        let default_run_args = RunArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity_keypair.insecure_clone();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
+
+        let expected_args = RunArgs {
+            identity_keypair: keypair.insecure_clone(),
+            ..default_run_args
+        };
+
+        // short arg
+        {
+            verify_args_struct_by_command(
+                &default_args,
+                vec!["-i", file.to_str().unwrap()],
+                expected_args.clone(),
+            );
+        }
+
+        // long arg
+        {
+            verify_args_struct_by_command(
+                &default_args,
+                vec!["--identity", file.to_str().unwrap()],
+                expected_args.clone(),
+            );
+        }
+    }
+
+    fn verify_args_struct_by_command_run_with_identity_setup(
+        default_run_args: RunArgs,
+        args: Vec<&str>,
+        expected_args: RunArgs,
+    ) {
+        let default_args = DefaultArgs::default();
+
+        // generate a keypair
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file = tmp_dir.path().join("id.json");
+        let keypair = default_run_args.identity_keypair.insecure_clone();
+        solana_keypair::write_keypair_file(&keypair, &file).unwrap();
+
+        let args = [&["--identity", file.to_str().unwrap()], &args[..]].concat();
+        verify_args_struct_by_command(&default_args, args, expected_args);
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_log() {
+        let default_run_args = RunArgs::default();
+
+        // default
+        {
+            let expected_args = RunArgs {
+                logfile: "agave-validator-".to_string()
+                    + &default_run_args.identity_keypair.pubkey().to_string()
+                    + ".log",
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec![],
+                expected_args,
+            );
+        }
+
+        // short arg
+        {
+            let expected_args = RunArgs {
+                logfile: "-".to_string(),
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["-o", "-"],
+                expected_args,
+            );
+        }
+
+        // long arg
+        {
+            let expected_args = RunArgs {
+                logfile: "custom_log.log".to_string(),
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--log", "custom_log.log"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_genesis_fetch() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    no_genesis_fetch: true,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--no-genesis-fetch"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_snapshot_fetch() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    no_snapshot_fetch: true,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--no-snapshot-fetch"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_entrypoints() {
+        // short arg + single entrypoint
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000,
+                )],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["-n", "127.0.0.1:8000"],
+                expected_args,
+            );
+        }
+
+        // long arg + single entrypoint
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000,
+                )],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--entrypoint", "127.0.0.1:8000"],
+                expected_args,
+            );
+        }
+
+        // long arg + multiple entrypoints
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8001),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8002),
+                ],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec![
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                    "--entrypoint",
+                    "127.0.0.1:8001",
+                    "--entrypoint",
+                    "127.0.0.1:8002",
+                ],
+                expected_args,
+            );
+        }
+
+        // long arg + duplicate entrypoints
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8000),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8001),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8002),
+                ],
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec![
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                    "--entrypoint",
+                    "127.0.0.1:8001",
+                    "--entrypoint",
+                    "127.0.0.1:8002",
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                ],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_check_vote_account() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000,
+                )],
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    check_vote_account: Some("https://api.mainnet-beta.solana.com".to_string()),
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    // entrypoint is required for check-vote-account
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                    "--check-vote-account",
+                    "https://api.mainnet-beta.solana.com",
+                ],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_known_validators() {
+        // long arg + single known validator
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--known-validator", &known_validators_pubkey.to_string()],
+                expected_args,
+            );
+        }
+
+        // alias + single known validator
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--trusted-validator", &known_validators_pubkey.to_string()],
+                expected_args,
+            );
+        }
+
+        // long arg + multiple known validators
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey_1 = Pubkey::new_unique();
+            let known_validators_pubkey_2 = Pubkey::new_unique();
+            let known_validators_pubkey_3 = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([
+                known_validators_pubkey_1,
+                known_validators_pubkey_2,
+                known_validators_pubkey_3,
+            ]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--known-validator",
+                    &known_validators_pubkey_1.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_2.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_3.to_string(),
+                ],
+                expected_args,
+            );
+        }
+
+        // long arg + duplicate known validators
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey_1 = Pubkey::new_unique();
+            let known_validators_pubkey_2 = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([
+                known_validators_pubkey_1,
+                known_validators_pubkey_2,
+            ]));
+            let expected_args = RunArgs {
+                known_validators,
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--known-validator",
+                    &known_validators_pubkey_1.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_2.to_string(),
+                    "--known-validator",
+                    &known_validators_pubkey_1.to_string(),
+                ],
+                expected_args,
+            );
+        }
+
+        // use identity pubkey as known validator
+        {
+            let default_args = DefaultArgs::default();
+            let default_run_args = RunArgs::default();
+
+            // generate a keypair
+            let tmp_dir = tempfile::tempdir().unwrap();
+            let file = tmp_dir.path().join("id.json");
+            solana_keypair::write_keypair_file(&default_run_args.identity_keypair, &file).unwrap();
+
+            let matches = add_args(App::new("run_command"), &default_args).get_matches_from(vec![
+                "run_command",
+                "--identity",
+                file.to_str().unwrap(),
+                "--known-validator",
+                &default_run_args.identity_keypair.pubkey().to_string(),
+            ]);
+            let result = RunArgs::from_clap_arg_match(&matches);
+            assert!(result.is_err());
+            let error = result.unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "the validator's identity pubkey cannot be a known validator: {}",
+                    default_run_args.identity_keypair.pubkey()
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_only_known_rpc() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    only_known_rpc: true,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    // --known-validator is required
+                    "--known-validator",
+                    &known_validators_pubkey.to_string(),
+                    "--only-known-rpc",
+                ],
+                expected_args,
+            );
+        }
+
+        // alias
+        {
+            let default_run_args = RunArgs::default();
+            let known_validators_pubkey = Pubkey::new_unique();
+            let known_validators = Some(HashSet::from([known_validators_pubkey]));
+            let expected_args = RunArgs {
+                known_validators,
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    only_known_rpc: true,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    // --known-validator is required
+                    "--known-validator",
+                    &known_validators_pubkey.to_string(),
+                    "--no-untrusted-rpc",
+                ],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_max_genesis_archive_unpacked_size() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let max_genesis_archive_unpacked_size = 1000000000;
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    max_genesis_archive_unpacked_size,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--max-genesis-archive-unpacked-size",
+                    &max_genesis_archive_unpacked_size.to_string(),
+                ],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_incremental_snapshot_fetch() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    incremental_snapshot_fetch: false,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec!["--no-incremental-snapshots"],
+                expected_args,
+            );
+        }
+    }
 }

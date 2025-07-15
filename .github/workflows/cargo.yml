@@ -34,10 +34,26 @@ jobs:
     strategy:
       matrix:
         os:
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
+          - os: macos-latest
+          # musl with dynamic linking
+          - os: ubuntu-latest
+            container: docker.io/rust:1-alpine
+            rustflags: -C target-feature=-crt-static
+          - os: windows-latest
+    runs-on: ${{ matrix.os.os }}
+    container:
+      image: ${{ matrix.os.container }}
+    env:
+      RUSTFLAGS: ${{ matrix.os.rustflags }}
     steps:
+      # Alpine container needs:
+      # * `bash`, to run the scripts.
+      # * `git`, to run the `checkout` action.
+      - if: ${{ contains(matrix.os.container, 'alpine') }}
+        run: |
+          apk update
+          apk add bash git
+
       - uses: actions/checkout@v4
 
       - uses: mozilla-actions/sccache-action@v0.0.9
@@ -53,6 +69,7 @@ jobs:
 
       - shell: bash
         run: |
+          git config --global --add safe.directory "$(pwd)"
           source .github/scripts/install-all-deps.sh ${{ runner.os }}
           source ci/rust-version.sh nightly
           rustup component add clippy --toolchain "$rust_nightly"

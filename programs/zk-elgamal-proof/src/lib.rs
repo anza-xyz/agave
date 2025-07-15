@@ -171,6 +171,20 @@ fn process_close_proof_context(invoke_context: &mut InvokeContext) -> Result<(),
 }
 
 declare_process_instruction!(Entrypoint, 0, |invoke_context| {
+    if invoke_context
+        .get_feature_set()
+        .disable_zk_elgamal_proof_program
+        && !invoke_context
+            .get_feature_set()
+            .reenable_zk_elgamal_proof_program
+    {
+        ic_msg!(
+            invoke_context,
+            "zk-elgamal-proof program is temporarily disabled"
+        );
+        return Err(InstructionError::InvalidInstructionData);
+    }
+
     let transaction_context = &invoke_context.transaction_context;
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let instruction_data = instruction_context.get_instruction_data();

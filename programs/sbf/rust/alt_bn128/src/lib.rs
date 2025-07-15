@@ -1,9 +1,9 @@
 //! Alt_bn128 Syscalls tests
 
-extern crate solana_program;
 use {
     solana_bn254::prelude::{alt_bn128_addition, alt_bn128_multiplication, alt_bn128_pairing},
-    solana_program::{custom_heap_default, custom_panic_default, msg},
+    solana_msg::msg,
+    solana_program_entrypoint::{custom_heap_default, custom_panic_default},
 };
 
 fn alt_bn128_addition_test() {

@@ -5,12 +5,10 @@ use {
         input_validators::{is_keypair, is_url, is_url_or_moniker, is_within_range},
     },
     solana_cli_config::{ConfigInput, CONFIG_FILE},
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        fee_calculator::FeeRateGovernor,
-        pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair},
-    },
+    solana_commitment_config::CommitmentConfig,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_keypair::{read_keypair_file, Keypair},
+    solana_pubkey::Pubkey,
     solana_streamer::quic::DEFAULT_MAX_CONNECTIONS_PER_IPADDR_PER_MINUTE,
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC},
     std::{
@@ -19,7 +17,7 @@ use {
     },
 };
 
-const NUM_LAMPORTS_PER_ACCOUNT_DEFAULT: u64 = solana_sdk::native_token::LAMPORTS_PER_SOL;
+const NUM_LAMPORTS_PER_ACCOUNT_DEFAULT: u64 = solana_native_token::LAMPORTS_PER_SOL;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum ExternalClientType {
@@ -356,7 +354,7 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
             Arg::with_name("tpu_disable_quic")
                 .long("tpu-disable-quic")
                 .takes_value(false)
-                .help("Do not submit transactions via QUIC; only affects TpuClient (default) sends"),
+                .help("DEPRECATED: Do not submit transactions via QUIC; only affects TpuClient (default) sends"),
         )
         .arg(
             Arg::with_name("tpu_connection_pool_size")
@@ -501,6 +499,7 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
     }
 
     if matches.is_present("tpu_disable_quic") {
+        eprintln!("Warning: TPU over UDP is deprecated");
         args.use_quic = false;
     }
 
@@ -641,7 +640,8 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
 mod tests {
     use {
         super::*,
-        solana_sdk::signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
+        solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
+        solana_signer::Signer,
         std::{
             net::{IpAddr, Ipv4Addr},
             time::Duration,

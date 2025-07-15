@@ -4,10 +4,10 @@ use {
     solana_clock::{Epoch, Slot, UnixTimestamp},
     solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
     solana_inflation::Inflation,
-    solana_transaction_error::{TransactionError, TransactionResult as Result},
+    solana_transaction_error::TransactionResult as Result,
     solana_transaction_status_client_types::{
         ConfirmedTransactionStatusWithSignature, TransactionConfirmationStatus, UiConfirmedBlock,
-        UiInnerInstructions, UiTransactionReturnData,
+        UiInnerInstructions, UiTransactionError, UiTransactionReturnData,
     },
     std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr},
     thiserror::Error,
@@ -240,14 +240,14 @@ pub enum RpcSignatureResult {
 #[serde(rename_all = "camelCase")]
 pub struct RpcLogsResponse {
     pub signature: String, // Signature as base58 string
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
     pub logs: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessedSignatureResult {
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -397,10 +397,11 @@ pub struct RpcSignatureConfirmation {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcSimulateTransactionResult {
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
     pub logs: Option<Vec<String>>,
     pub accounts: Option<Vec<Option<UiAccount>>>,
     pub units_consumed: Option<u64>,
+    pub loaded_accounts_data_size: Option<u32>,
     pub return_data: Option<UiTransactionReturnData>,
     pub inner_instructions: Option<Vec<UiInnerInstructions>>,
     pub replacement_blockhash: Option<RpcBlockhash>,
@@ -451,7 +452,7 @@ pub struct RpcTokenAccountBalance {
 pub struct RpcConfirmedTransactionStatusWithSignature {
     pub signature: String,
     pub slot: Slot,
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
     pub memo: Option<String>,
     pub block_time: Option<UnixTimestamp>,
     pub confirmation_status: Option<TransactionConfirmationStatus>,
@@ -506,7 +507,7 @@ impl From<ConfirmedTransactionStatusWithSignature> for RpcConfirmedTransactionSt
         Self {
             signature: signature.to_string(),
             slot,
-            err,
+            err: err.map(Into::into),
             memo,
             block_time,
             confirmation_status: None,

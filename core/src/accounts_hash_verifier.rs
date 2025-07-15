@@ -11,6 +11,7 @@ use {
         },
         sorted_storages::SortedStorages,
     },
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_measure::measure_us,
     solana_runtime::{
         serde_snapshot::BankIncrementalSnapshotPersistence,
@@ -22,9 +23,8 @@ use {
         },
         snapshot_utils,
     },
-    solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
     std::{
-        io::Result as IoResult,
+        io,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc, Mutex,
@@ -217,7 +217,7 @@ impl AccountsHashVerifier {
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
         snapshot_config: &SnapshotConfig,
-    ) -> IoResult<()> {
+    ) -> io::Result<()> {
         let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
             Self::calculate_and_verify_accounts_hash(&accounts_package, snapshot_config)?;
 
@@ -239,21 +239,21 @@ impl AccountsHashVerifier {
     fn calculate_and_verify_accounts_hash(
         accounts_package: &AccountsPackage,
         snapshot_config: &SnapshotConfig,
-    ) -> IoResult<(
+    ) -> io::Result<(
         MerkleOrLatticeAccountsHash,
         Option<BankIncrementalSnapshotPersistence>,
     )> {
         match accounts_package.accounts_hash_algorithm {
             AccountsHashAlgorithm::Merkle => {
                 debug!(
-                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, \
-                     DO merkle-based accounts hash calculation",
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is disabled, DO \
+                     merkle-based accounts hash calculation",
                 );
             }
             AccountsHashAlgorithm::Lattice => {
                 debug!(
-                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, \
-                     SKIP merkle-based accounts hash calculation",
+                    "calculate_and_verify_accounts_hash(): snapshots lt hash is enabled, SKIP \
+                     merkle-based accounts hash calculation",
                 );
                 return Ok((MerkleOrLatticeAccountsHash::Lattice, None));
             }
@@ -284,6 +284,7 @@ impl AccountsHashVerifier {
                     let Some((base_accounts_hash, base_capitalization)) =
                         accounts_db.get_accounts_hash(base_slot)
                     else {
+                        #[rustfmt::skip]
                         panic!(
                             "incremental snapshot requires accounts hash and capitalization from \
                              the full snapshot it is based on\n\
@@ -335,11 +336,14 @@ impl AccountsHashVerifier {
         };
         timings.calc_storage_size_quartiles(&accounts_package.snapshot_storages);
 
+        let epoch = accounts_package
+            .epoch_schedule
+            .get_epoch(accounts_package.slot);
         let calculate_accounts_hash_config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
             ancestors: None,
             epoch_schedule: &accounts_package.epoch_schedule,
-            rent_collector: &accounts_package.rent_collector,
+            epoch,
             store_detailed_debug_info_on_failure: false,
         };
 
@@ -403,11 +407,14 @@ impl AccountsHashVerifier {
                 });
         let sorted_storages = SortedStorages::new_with_slots(incremental_storages, None, None);
 
+        let epoch = accounts_package
+            .epoch_schedule
+            .get_epoch(accounts_package.slot);
         let calculate_accounts_hash_config = CalcAccountsHashConfig {
             use_bg_thread_pool: true,
             ancestors: None,
             epoch_schedule: &accounts_package.epoch_schedule,
-            rent_collector: &accounts_package.rent_collector,
+            epoch,
             store_detailed_debug_info_on_failure: false,
         };
 
@@ -441,7 +448,10 @@ impl AccountsHashVerifier {
             let MerkleOrLatticeAccountsHash::Merkle(AccountsHashKind::Full(accounts_hash)) =
                 merkle_or_lattice_accounts_hash
             else {
-                panic!("EAH requires a full accounts hash, but was given {merkle_or_lattice_accounts_hash:?}");
+                panic!(
+                    "EAH requires a full accounts hash, but was given \
+                     {merkle_or_lattice_accounts_hash:?}"
+                );
             };
             info!(
                 "saving epoch accounts hash, slot: {}, hash: {}",

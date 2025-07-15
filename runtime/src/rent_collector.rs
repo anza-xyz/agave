@@ -10,16 +10,14 @@
 
 use {
     log::*,
-    solana_sdk::{
-        account::AccountSharedData,
-        clock::Epoch,
-        pubkey::Pubkey,
-        rent::{Rent, RentDue},
-        rent_collector::{CollectedInfo, RentCollector},
-        transaction::{Result, TransactionError},
-    },
+    solana_account::AccountSharedData,
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+    solana_rent::{Rent, RentDue},
+    solana_rent_collector::RentCollector,
     solana_svm_rent_collector::{rent_state::RentState, svm_rent_collector::SVMRentCollector},
     solana_transaction_context::IndexOfAccount,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
 };
 
 /// Wrapper around `RentCollector` to allow for overriding of some
@@ -37,10 +35,6 @@ impl RentCollectorWithMetrics {
 }
 
 impl SVMRentCollector for RentCollectorWithMetrics {
-    fn collect_rent(&self, address: &Pubkey, account: &mut AccountSharedData) -> CollectedInfo {
-        self.0.collect_rent(address, account)
-    }
-
     fn get_rent(&self) -> &Rent {
         self.0.get_rent()
     }
@@ -59,7 +53,7 @@ impl SVMRentCollector for RentCollectorWithMetrics {
         account_index: IndexOfAccount,
     ) -> Result<()> {
         submit_rent_state_metrics(pre_rent_state, post_rent_state);
-        if !solana_sdk::incinerator::check_id(address)
+        if !solana_sdk_ids::incinerator::check_id(address)
             && !self.transition_allowed(pre_rent_state, post_rent_state)
         {
             debug!(

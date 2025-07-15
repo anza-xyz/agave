@@ -6,16 +6,18 @@ mod secondary;
 use {
     crate::{
         accounts_index_storage::{AccountsIndexStorage, Startup},
-        accounts_partition::RentPayingAccountsByPartition,
         ancestors::Ancestors,
         bucket_map_holder::Age,
+        bucket_map_holder_stats::BucketMapHolderStats,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         pubkey_bins::PubkeyBinCalculator24,
         rolling_bit_field::RollingBitField,
     },
     account_map_entry::{AccountMapEntry, PreAllocatedAccountMapEntry},
-    in_mem_accounts_index::{InMemAccountsIndex, InsertNewEntryResults, StartupStats},
+    in_mem_accounts_index::{
+        ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
+    },
     iter::{AccountsIndexIterator, AccountsIndexIteratorReturnsItems},
     log::*,
     rand::{thread_rng, Rng},
@@ -37,7 +39,7 @@ use {
         path::PathBuf,
         sync::{
             atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-            Arc, Mutex, OnceLock, RwLock,
+            Arc, Mutex, RwLock,
         },
     },
     thiserror::Error,
@@ -75,12 +77,17 @@ pub type SlotList<T> = Vec<(Slot, T)>;
 pub type RefCount = u64;
 pub type AtomicRefCount = AtomicU64;
 
+/// values returned from `insert_new_if_missing_into_primary_index()`
 #[derive(Default, Debug, PartialEq, Eq)]
-pub(crate) struct GenerateIndexResult<T: IndexValue> {
+pub(crate) struct InsertNewIfMissingIntoPrimaryIndexInfo {
     /// number of accounts inserted in the index
     pub count: usize,
-    /// pubkeys which were present multiple times in the insertion request.
-    pub duplicates: Option<Vec<(Pubkey, (Slot, T))>>,
+    /// Number of accounts added to the index that didn't already exist in the index
+    pub num_did_not_exist: u64,
+    /// Number of accounts added to the index that already existed, and were in-mem
+    pub num_existed_in_mem: u64,
+    /// Number of accounts added to the index that already existed, and were on-disk
+    pub num_existed_on_disk: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +104,15 @@ pub enum ScanFilter {
     /// Similar to `OnlyAbnormal but also check on-disk index to verify the
     /// entry on-disk is indeed normal.
     OnlyAbnormalWithVerify,
+
+    /// Similar to `OnlyAbnormal but mark entries in memory as not found
+    /// if they are normal
+    /// This removes the possibility of any race conditions with index
+    /// flushing and simulates the system running an uncached disk index
+    /// where nothing 'normal' is ever held in the in memory index as far as
+    /// callers are concerned. This could also be a  correct/ideal future api
+    /// to similarly provide consistency and remove race condition behavior.
+    OnlyAbnormalTest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,7 +203,10 @@ pub trait DiskIndexValue:
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum ScanError {
-    #[error("Node detected it replayed bad version of slot {slot:?} with id {bank_id:?}, thus the scan on said slot was aborted")]
+    #[error(
+        "Node detected it replayed bad version of slot {slot:?} with id {bank_id:?}, thus the \
+         scan on said slot was aborted"
+    )]
     SlotRemoved { slot: Slot, bank_id: BankId },
     #[error("scan aborted: {0}")]
     Aborted(String),
@@ -297,9 +316,6 @@ pub struct AccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     pub active_scans: AtomicUsize,
     /// # of slots between latest max and latest scan
     pub max_distance_to_min_scan_slot: AtomicU64,
-
-    /// populated at generate_index time - accounts that could possibly be rent paying
-    pub rent_paying_accounts_by_partition: OnceLock<RentPayingAccountsByPartition>,
 }
 
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
@@ -332,7 +348,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             roots_removed: AtomicUsize::default(),
             active_scans: AtomicUsize::default(),
             max_distance_to_min_scan_slot: AtomicU64::default(),
-            rent_paying_accounts_by_partition: OnceLock::default(),
         }
     }
 
@@ -670,7 +685,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         }
     }
 
-    fn do_unchecked_scan_accounts<F, R>(
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn do_unchecked_scan_accounts<F, R>(
         &self,
         metric_name: &'static str,
         ancestors: &Ancestors,
@@ -714,24 +730,30 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         let mut iterator_elapsed = 0;
         let mut iterator_timer = Measure::start("iterator_elapsed");
 
-        for pubkey_list in self.iter(range.as_ref(), returns_items) {
+        for pubkeys in self.iter(range.as_ref(), returns_items) {
             iterator_timer.stop();
             iterator_elapsed += iterator_timer.as_us();
-            for (pubkey, list) in pubkey_list {
+            for pubkey in pubkeys {
                 num_keys_iterated += 1;
-                let mut read_lock_timer = Measure::start("read_lock");
-                let list_r = &list.slot_list.read().unwrap();
-                read_lock_timer.stop();
-                read_lock_elapsed += read_lock_timer.as_us();
-                let mut latest_slot_timer = Measure::start("latest_slot");
-                if let Some(index) = self.latest_slot(Some(ancestors), list_r, max_root) {
-                    latest_slot_timer.stop();
-                    latest_slot_elapsed += latest_slot_timer.as_us();
-                    let mut load_account_timer = Measure::start("load_account");
-                    func(&pubkey, (&list_r[index].1, list_r[index].0));
-                    load_account_timer.stop();
-                    load_account_elapsed += load_account_timer.as_us();
-                }
+                self.get_and_then(&pubkey, |entry| {
+                    if let Some(list) = entry {
+                        let mut read_lock_timer = Measure::start("read_lock");
+                        let list_r = &list.slot_list.read().unwrap();
+                        read_lock_timer.stop();
+                        read_lock_elapsed += read_lock_timer.as_us();
+                        let mut latest_slot_timer = Measure::start("latest_slot");
+                        if let Some(index) = self.latest_slot(Some(ancestors), list_r, max_root) {
+                            latest_slot_timer.stop();
+                            latest_slot_elapsed += latest_slot_timer.as_us();
+                            let mut load_account_timer = Measure::start("load_account");
+                            func(&pubkey, (&list_r[index].1, list_r[index].0));
+                            load_account_timer.stop();
+                            load_account_elapsed += load_account_timer.as_us();
+                        }
+                    }
+                    let add_to_in_mem_cache = false;
+                    (add_to_in_mem_cache, ())
+                });
                 if config.is_aborted() {
                     return;
                 }
@@ -905,6 +927,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         )
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub(crate) fn unchecked_scan_accounts<F>(
         &self,
         metric_name: &'static str,
@@ -922,24 +945,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
             config,
         );
     }
-
-    /// call func with every pubkey and index visible from a given set of ancestors with range
-    /// Only guaranteed to be safe when called from rent collection
-    pub(crate) fn range_scan_accounts<F, R>(
-        &self,
-        metric_name: &'static str,
-        ancestors: &Ancestors,
-        range: R,
-        config: &ScanConfig,
-        func: F,
-    ) where
-        F: FnMut(&Pubkey, (&T, Slot)),
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        // Only the rent logic should be calling this, which doesn't need the safety checks
-        self.do_unchecked_scan_accounts(metric_name, ancestors, func, Some(range), config);
-    }
-
     /// call func with every pubkey and index visible from a given set of ancestors
     pub(crate) fn index_scan_accounts<F>(
         &self,
@@ -1064,6 +1069,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         });
     }
 
+    pub(crate) fn bucket_map_holder_stats(&self) -> &BucketMapHolderStats {
+        &self.storage.storage.stats
+    }
+
     /// get stats related to startup
     pub(crate) fn get_startup_stats(&self) -> &StartupStats {
         &self.storage.storage.startup_stats
@@ -1152,7 +1161,11 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                             AccountsIndexScanResult::UnrefLog0 => {
                                 let old_ref = locked_entry.unref();
                                 if old_ref != 1 {
-                                    info!("Unexpected unref {pubkey} with {old_ref} {:?}, expect old_ref to be 1", locked_entry.slot_list.read().unwrap());
+                                    info!(
+                                        "Unexpected unref {pubkey} with {old_ref} {:?}, expect \
+                                         old_ref to be 1",
+                                        locked_entry.slot_list.read().unwrap()
+                                    );
                                     datapoint_warn!(
                                         "accounts_db-unexpected-unref-zero",
                                         ("old_ref", old_ref, i64),
@@ -1181,14 +1194,28 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
                         .unwrap()
                         .get_internal(pubkey, internal_callback);
                 }
-                ScanFilter::OnlyAbnormal | ScanFilter::OnlyAbnormalWithVerify => {
-                    let found = lock
-                        .as_ref()
-                        .unwrap()
-                        .get_only_in_mem(pubkey, false, |entry| {
-                            internal_callback(entry);
-                            entry.is_some()
-                        });
+                ScanFilter::OnlyAbnormal
+                | ScanFilter::OnlyAbnormalWithVerify
+                | ScanFilter::OnlyAbnormalTest => {
+                    let found =
+                        lock.as_ref()
+                            .unwrap()
+                            .get_only_in_mem(pubkey, false, |mut entry| {
+                                if entry.is_some() && matches!(filter, ScanFilter::OnlyAbnormalTest)
+                                {
+                                    let local_entry = entry.unwrap();
+                                    if local_entry.ref_count() == 1
+                                        && local_entry.slot_list.read().unwrap().len() == 1
+                                    {
+                                        // Account was found in memory, but is a single ref single slot account
+                                        // For testing purposes, return None as this can be treated like
+                                        // a normal account that was flushed to storage.
+                                        entry = None;
+                                    }
+                                }
+                                internal_callback(entry);
+                                entry.is_some()
+                            });
                     if !found && matches!(filter, ScanFilter::OnlyAbnormalWithVerify) {
                         lock.as_ref().unwrap().get_internal(pubkey, |entry| {
                             assert!(entry.is_some(), "{pubkey}, entry: {entry:?}");
@@ -1334,149 +1361,116 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         self.account_maps.len()
     }
 
-    /// remove the earlier instances of each pubkey when the pubkey exists later in the `Vec`.
-    /// Could also be done with HashSet.
-    /// Returns `HashSet` of duplicate pubkeys.
-    fn remove_older_duplicate_pubkeys(
-        items: &mut Vec<(Pubkey, (Slot, T))>,
-    ) -> Option<Vec<(Pubkey, (Slot, T))>> {
-        if items.len() < 2 {
-            return None;
-        }
-        // stable sort by pubkey.
-        // Earlier entries are overwritten by later entries
-        items.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut duplicates = None::<Vec<(Pubkey, (Slot, T))>>;
-
-        // Iterate the items vec from the end to the beginning. Adjacent duplicated items will be
-        // written to the front of the vec.
-        let n = items.len();
-        let mut last_key = items[n - 1].0;
-        let mut write = n - 1;
-        let mut curr = write;
-
-        while curr > 0 {
-            let curr_item = items[curr - 1];
-
-            if curr_item.0 == last_key {
-                let mut duplicates_insert = duplicates.unwrap_or_default();
-                duplicates_insert.push(curr_item);
-                duplicates = Some(duplicates_insert);
-                curr -= 1;
-            } else {
-                if curr < write {
-                    items[write - 1] = curr_item;
-                }
-                curr -= 1;
-                write -= 1;
-                last_key = curr_item.0;
-            }
-        }
-
-        items.drain(..(write - curr));
-
-        duplicates
-    }
-
     // Same functionally to upsert, but:
     // 1. operates on a batch of items
     // 2. holds the write lock for the duration of adding the items
     // Can save time when inserting lots of new keys.
     // But, does NOT update secondary index
     // This is designed to be called at startup time.
-    // returns (dirty_pubkeys, insertion_time_us, GenerateIndexResult)
+    // returns (insertion_time_us, InsertNewIfMissingIntoPrimaryIndexInfo)
     pub(crate) fn insert_new_if_missing_into_primary_index(
         &self,
         slot: Slot,
-        approx_items_len: usize,
-        items: impl Iterator<Item = (Pubkey, T)>,
-    ) -> (Vec<Pubkey>, u64, GenerateIndexResult<T>) {
-        // big enough so not likely to re-allocate, small enough to not over-allocate by too much
-        // this assumes the largest bin contains twice the expected amount of the average size per bin
-        let bins = self.bins();
-        let expected_items_per_bin = approx_items_len * 2 / bins;
+        mut items: Vec<(Pubkey, T)>,
+    ) -> (u64, InsertNewIfMissingIntoPrimaryIndexInfo) {
+        let mut insert_time = Measure::start("insert_into_primary_index");
+
         let use_disk = self.storage.storage.is_disk_index_enabled();
-        let mut binned = (0..bins)
-            .map(|_| Vec::with_capacity(expected_items_per_bin))
-            .collect::<Vec<_>>();
+
         let mut count = 0;
-        let dirty_pubkeys = items
-            .filter_map(|(pubkey, account_info)| {
-                let pubkey_bin = self.bin_calculator.bin_from_pubkey(&pubkey);
-                // this value is equivalent to what update() below would have created if we inserted a new item
-                let is_zero_lamport = account_info.is_zero_lamport();
-                let result = if is_zero_lamport { Some(pubkey) } else { None };
 
-                binned[pubkey_bin].push((pubkey, (slot, account_info)));
-                result
-            })
-            .collect::<Vec<_>>();
-
-        let insertion_time = AtomicU64::new(0);
+        // accumulated stats after inserting pubkeys into the index
+        let mut num_did_not_exist = 0;
+        let mut num_existed_in_mem = 0;
+        let mut num_existed_on_disk = 0;
 
         // offset bin processing in the 'binned' array by a random amount.
         // This results in calls to insert_new_entry_if_missing_with_lock from different threads starting at different bins to avoid
         // lock contention.
-        let random_offset = thread_rng().gen_range(0..bins);
-        let mut duplicates = Vec::default();
-        (0..bins).for_each(|pubkey_bin| {
-            let pubkey_bin = (pubkey_bin + random_offset) % bins;
-            let mut items = std::mem::take(&mut binned[pubkey_bin]);
-            if items.is_empty() {
-                return;
-            }
+        let bins = self.bins();
+        let random_bin_offset = thread_rng().gen_range(0..bins);
+        let bin_calc = self.bin_calculator;
+        items.sort_unstable_by(|(pubkey_a, _), (pubkey_b, _)| {
+            ((bin_calc.bin_from_pubkey(pubkey_a) + random_bin_offset) % bins)
+                .cmp(&((bin_calc.bin_from_pubkey(pubkey_b) + random_bin_offset) % bins))
+                .then_with(|| pubkey_a.cmp(pubkey_b))
+        });
 
-            let these_duplicates = Self::remove_older_duplicate_pubkeys(&mut items);
-            if let Some(mut these_duplicates) = these_duplicates {
-                duplicates.append(&mut these_duplicates);
+        while !items.is_empty() {
+            let mut start_index = items.len() - 1;
+            let mut last_pubkey = &items[start_index].0;
+            let pubkey_bin = bin_calc.bin_from_pubkey(last_pubkey);
+            // Find the smallest index with the same pubkey bin
+            while start_index > 0 {
+                let next = start_index - 1;
+                let next_pubkey = &items[next].0;
+                assert_ne!(
+                    next_pubkey, last_pubkey,
+                    "Accounts may only be stored once per slot: {slot}"
+                );
+                if bin_calc.bin_from_pubkey(next_pubkey) != pubkey_bin {
+                    break;
+                }
+                start_index = next;
+                last_pubkey = next_pubkey;
             }
 
             let r_account_maps = &self.account_maps[pubkey_bin];
-            let mut insert_time = Measure::start("insert_into_primary_index");
             // count only considers non-duplicate accounts
-            count += items.len();
+            count += items.len() - start_index;
+
+            let items = items.drain(start_index..);
             if use_disk {
-                r_account_maps.startup_insert_only(items.into_iter());
+                r_account_maps.startup_insert_only(slot, items);
             } else {
                 // not using disk buckets, so just write to in-mem
                 // this is no longer the default case
                 let mut duplicates_from_in_memory = vec![];
-                items
-                    .into_iter()
-                    .for_each(|(pubkey, (slot, account_info))| {
-                        let new_entry = PreAllocatedAccountMapEntry::new(
-                            slot,
-                            account_info,
-                            &self.storage.storage,
-                            use_disk,
-                        );
-                        match r_account_maps
-                            .insert_new_entry_if_missing_with_lock(pubkey, new_entry)
-                        {
-                            InsertNewEntryResults::DidNotExist => {}
-                            InsertNewEntryResults::ExistedNewEntryZeroLamports => {}
-                            InsertNewEntryResults::ExistedNewEntryNonZeroLamports(other_slot) => {
-                                if let Some(other_slot) = other_slot {
-                                    duplicates_from_in_memory.push((other_slot, pubkey));
+                items.for_each(|(pubkey, account_info)| {
+                    let new_entry = PreAllocatedAccountMapEntry::new(
+                        slot,
+                        account_info,
+                        &self.storage.storage,
+                        use_disk,
+                    );
+                    match r_account_maps.insert_new_entry_if_missing_with_lock(pubkey, new_entry) {
+                        InsertNewEntryResults::DidNotExist => {
+                            num_did_not_exist += 1;
+                        }
+                        InsertNewEntryResults::Existed {
+                            other_slot,
+                            location,
+                        } => {
+                            if let Some(other_slot) = other_slot {
+                                duplicates_from_in_memory.push((other_slot, pubkey));
+                            }
+                            duplicates_from_in_memory.push((slot, pubkey));
+
+                            match location {
+                                ExistedLocation::InMem => {
+                                    num_existed_in_mem += 1;
                                 }
-                                duplicates_from_in_memory.push((slot, pubkey));
+                                ExistedLocation::OnDisk => {
+                                    num_existed_on_disk += 1;
+                                }
                             }
                         }
-                    });
+                    }
+                });
 
                 r_account_maps
                     .startup_update_duplicates_from_in_memory_only(duplicates_from_in_memory);
             }
-            insert_time.stop();
-            insertion_time.fetch_add(insert_time.as_us(), Ordering::Relaxed);
-        });
+        }
+        insert_time.stop();
 
         (
-            dirty_pubkeys,
-            insertion_time.load(Ordering::Relaxed),
-            GenerateIndexResult {
+            insert_time.as_us(),
+            InsertNewIfMissingIntoPrimaryIndexInfo {
                 count,
-                duplicates: (!duplicates.is_empty()).then_some(duplicates),
+                num_did_not_exist,
+                num_existed_in_mem,
+                num_existed_on_disk,
             },
         )
     }
@@ -1849,57 +1843,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_remove_older_duplicate_pubkeys() {
-        let pk1 = Pubkey::new_from_array([0; 32]);
-        let pk2 = Pubkey::new_from_array([1; 32]);
-        let slot0 = 0;
-        let info2 = 55;
-        let mut items = vec![];
-        let removed = AccountsIndex::<u64, u64>::remove_older_duplicate_pubkeys(&mut items);
-        assert!(items.is_empty());
-        assert!(removed.is_none());
-        let mut items = vec![(pk1, (slot0, 1u64)), (pk2, (slot0, 2))];
-        let expected = items.clone();
-        let removed = AccountsIndex::<u64, u64>::remove_older_duplicate_pubkeys(&mut items);
-        assert_eq!(items, expected);
-        assert!(removed.is_none());
-
-        for dup in 0..3 {
-            for other in 0..dup + 2 {
-                let first_info = 10u64;
-                let mut items = vec![(pk1, (slot0, first_info))];
-                let mut expected_dups = items.clone();
-                for i in 0..dup {
-                    let this_dup = (pk1, (slot0, i + 10u64 + 1));
-                    if i < dup.saturating_sub(1) {
-                        expected_dups.push(this_dup);
-                    }
-                    items.push(this_dup);
-                }
-                let mut expected = vec![*items.last().unwrap()];
-                let other_item = (pk2, (slot0, info2));
-                if other == dup + 1 {
-                    // don't insert
-                } else if other == dup {
-                    expected.push(other_item);
-                    items.push(other_item);
-                } else {
-                    expected.push(other_item);
-                    items.insert(other as usize, other_item);
-                }
-                let result = AccountsIndex::<u64, u64>::remove_older_duplicate_pubkeys(&mut items);
-                assert_eq!(items, expected);
-                if dup != 0 {
-                    expected_dups.reverse();
-                    assert_eq!(result.unwrap(), expected_dups);
-                } else {
-                    assert!(result.is_none());
-                }
-            }
-        }
-    }
-
-    #[test]
     fn test_secondary_index_include_exclude() {
         let pk1 = Pubkey::new_unique();
         let pk2 = Pubkey::new_unique();
@@ -1994,6 +1937,7 @@ pub mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Accounts may only be stored once per slot:")]
     fn test_insert_duplicates() {
         let key = solana_pubkey::new_rand();
         let pubkey = &key;
@@ -2006,15 +1950,7 @@ pub mod tests {
         let account_info2: bool = !account_info;
         let items = vec![(*pubkey, account_info), (*pubkey, account_info2)];
         index.set_startup(Startup::Startup);
-        let (_, _, result) =
-            index.insert_new_if_missing_into_primary_index(slot, items.len(), items.into_iter());
-        assert_eq!(result.count, 1);
-        index.set_startup(Startup::Normal);
-        let index_entry = index.get_cloned(pubkey).unwrap();
-        let slot_list = index_entry.slot_list.read().unwrap();
-        // make sure the one with the correct info is added, and wasn't inserted twice
-        assert_eq!(slot_list.len(), 1);
-        assert_eq!(slot_list[0], (slot, account_info2));
+        let (_, _result) = index.insert_new_if_missing_into_primary_index(slot, items);
     }
 
     #[test]
@@ -2028,8 +1964,7 @@ pub mod tests {
         let items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let (_, _, result) =
-            index.insert_new_if_missing_into_primary_index(slot, items.len(), items.into_iter());
+        let (_, result) = index.insert_new_if_missing_into_primary_index(slot, items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2062,8 +1997,7 @@ pub mod tests {
         let items = vec![(*pubkey, account_info)];
         index.set_startup(Startup::Startup);
         let expected_len = items.len();
-        let (_, _, result) =
-            index.insert_new_if_missing_into_primary_index(slot, items.len(), items.into_iter());
+        let (_, result) = index.insert_new_if_missing_into_primary_index(slot, items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2168,8 +2102,7 @@ pub mod tests {
         index.set_startup(Startup::Startup);
         let items = vec![(key0, account_infos[0]), (key1, account_infos[1])];
         let expected_len = items.len();
-        let (_, _, result) =
-            index.insert_new_if_missing_into_primary_index(slot0, items.len(), items.into_iter());
+        let (_, result) = index.insert_new_if_missing_into_primary_index(slot0, items);
         assert_eq!(result.count, expected_len);
         index.set_startup(Startup::Normal);
 
@@ -2225,11 +2158,7 @@ pub mod tests {
             let items = vec![(key, account_infos[0])];
             index.set_startup(Startup::Startup);
             let expected_len = items.len();
-            let (_, _, result) = index.insert_new_if_missing_into_primary_index(
-                slot0,
-                items.len(),
-                items.into_iter(),
-            );
+            let (_, result) = index.insert_new_if_missing_into_primary_index(slot0, items);
             assert_eq!(result.count, expected_len);
             index.set_startup(Startup::Normal);
         }
@@ -2276,11 +2205,7 @@ pub mod tests {
             let items = vec![(key, account_infos[1])];
             index.set_startup(Startup::Startup);
             let expected_len = items.len();
-            let (_, _, result) = index.insert_new_if_missing_into_primary_index(
-                slot1,
-                items.len(),
-                items.into_iter(),
-            );
+            let (_, result) = index.insert_new_if_missing_into_primary_index(slot1, items);
             assert_eq!(result.count, expected_len);
             index.set_startup(Startup::Normal);
         }
@@ -2470,9 +2395,8 @@ pub mod tests {
                 &mut reclaims,
                 UpsertReclaim::PopulateReclaims,
             );
-            // reclaimed
-            assert!(!reclaims.is_empty());
-            reclaims.clear();
+            // No reclaims, since the entry replaced was cached
+            assert!(reclaims.is_empty());
             index.upsert(
                 slot,
                 slot,
@@ -2575,101 +2499,6 @@ pub mod tests {
         index.add_root(root_slot);
 
         (index, pubkeys)
-    }
-
-    fn run_test_range(
-        index: &AccountsIndex<bool, bool>,
-        pubkeys: &[Pubkey],
-        start_bound: Bound<usize>,
-        end_bound: Bound<usize>,
-    ) {
-        // Exclusive `index_start`
-        let (pubkey_start, index_start) = match start_bound {
-            Unbounded => (Unbounded, 0),
-            Included(i) => (Included(pubkeys[i]), i),
-            Excluded(i) => (Excluded(pubkeys[i]), i + 1),
-        };
-
-        // Exclusive `index_end`
-        let (pubkey_end, index_end) = match end_bound {
-            Unbounded => (Unbounded, pubkeys.len()),
-            Included(i) => (Included(pubkeys[i]), i + 1),
-            Excluded(i) => (Excluded(pubkeys[i]), i),
-        };
-        let pubkey_range = (pubkey_start, pubkey_end);
-
-        let ancestors = Ancestors::default();
-        let mut scanned_keys = HashSet::new();
-        index.range_scan_accounts(
-            "",
-            &ancestors,
-            pubkey_range,
-            &ScanConfig::default(),
-            |pubkey, _index| {
-                scanned_keys.insert(*pubkey);
-            },
-        );
-
-        let mut expected_len = 0;
-        for key in &pubkeys[index_start..index_end] {
-            expected_len += 1;
-            assert!(scanned_keys.contains(key));
-        }
-
-        assert_eq!(scanned_keys.len(), expected_len);
-    }
-
-    fn run_test_range_indexes(
-        index: &AccountsIndex<bool, bool>,
-        pubkeys: &[Pubkey],
-        start: Option<usize>,
-        end: Option<usize>,
-    ) {
-        let start_options = start
-            .map(|i| vec![Included(i), Excluded(i)])
-            .unwrap_or_else(|| vec![Unbounded]);
-        let end_options = end
-            .map(|i| vec![Included(i), Excluded(i)])
-            .unwrap_or_else(|| vec![Unbounded]);
-
-        for start in &start_options {
-            for end in &end_options {
-                run_test_range(index, pubkeys, *start, *end);
-            }
-        }
-    }
-
-    #[test]
-    fn test_range_scan_accounts() {
-        let (index, mut pubkeys) = setup_accounts_index_keys(3 * ITER_BATCH_SIZE);
-        pubkeys.sort();
-
-        run_test_range_indexes(&index, &pubkeys, None, None);
-
-        run_test_range_indexes(&index, &pubkeys, Some(ITER_BATCH_SIZE), None);
-
-        run_test_range_indexes(&index, &pubkeys, None, Some(2 * ITER_BATCH_SIZE));
-
-        run_test_range_indexes(
-            &index,
-            &pubkeys,
-            Some(ITER_BATCH_SIZE),
-            Some(2 * ITER_BATCH_SIZE),
-        );
-
-        run_test_range_indexes(
-            &index,
-            &pubkeys,
-            Some(ITER_BATCH_SIZE),
-            Some(2 * ITER_BATCH_SIZE - 1),
-        );
-
-        run_test_range_indexes(
-            &index,
-            &pubkeys,
-            Some(ITER_BATCH_SIZE - 1_usize),
-            Some(2 * ITER_BATCH_SIZE + 1),
-        );
     }
 
     fn run_test_scan_accounts(num_pubkeys: usize) {

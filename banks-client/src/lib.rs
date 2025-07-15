@@ -12,20 +12,21 @@ pub use {
 use {
     borsh::BorshDeserialize,
     futures::future::join_all,
+    solana_account::{from_account, Account},
     solana_banks_interface::{
         BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation,
     },
-    solana_program::{
-        clock::Slot, hash::Hash, program_pack::Pack, pubkey::Pubkey, rent::Rent, sysvar::Sysvar,
-    },
-    solana_sdk::{
-        account::{from_account, Account},
-        commitment_config::CommitmentLevel,
-        message::Message,
-        signature::Signature,
-        transaction::{self, VersionedTransaction},
-    },
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentLevel,
+    solana_hash::Hash,
+    solana_message::Message,
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_signature::Signature,
+    solana_sysvar::Sysvar,
+    solana_transaction::versioned::VersionedTransaction,
     tarpc::{
         client::{self, NewClient, RequestDispatch},
         context::{self, Context},
@@ -37,6 +38,10 @@ use {
 };
 
 mod error;
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 // This exists only for backward compatibility
 pub trait BanksClientExt {}
@@ -532,9 +537,9 @@ mod tests {
             bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
             genesis_utils::create_genesis_config,
         },
-        solana_sdk::{
-            message::Message, signature::Signer, system_instruction, transaction::Transaction,
-        },
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::Transaction,
         std::sync::{Arc, RwLock},
         tarpc::transport,
         tokio::{
@@ -564,7 +569,7 @@ mod tests {
         ));
         let bank_forks = BankForks::new_rw_arc(bank);
 
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let instruction = system_instruction::transfer(&mint_pubkey, &bob_pubkey, 1);
         let message = Message::new(&[instruction], Some(&mint_pubkey));
@@ -604,7 +609,7 @@ mod tests {
         let bank_forks = BankForks::new_rw_arc(bank);
 
         let mint_pubkey = &genesis.mint_keypair.pubkey();
-        let bob_pubkey = solana_sdk::pubkey::new_rand();
+        let bob_pubkey = solana_pubkey::new_rand();
         let instruction = system_instruction::transfer(mint_pubkey, &bob_pubkey, 1);
         let message = Message::new(&[instruction], Some(mint_pubkey));
 

@@ -9,6 +9,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
@@ -30,32 +36,50 @@ serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
+solana-account  = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
+solana-genesis-config = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
+solana-inflation = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
+solana-loader-v3-interface = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
+solana-message = { workspace = true }
+solana-native-token = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true }
 solana-sbpf = { workspace = true, features = ["debugger"] }
-solana-sdk = { version = "=2.2.2", features = ["openssl-vendored"] }
+solana-sdk-ids = { workspace = true }
+solana-shred-version = { workspace = true }
+solana-signature = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
@@ -69,14 +93,8 @@ tokio = { workspace = true, features = ["full"] }
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
 
-[dev-dependencies]
-assert_cmd = { workspace = true }
-
-[features]
-dev-context-only-utils = []
-
 [target."cfg(unix)".dependencies]
 signal-hook = { workspace = true }
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dev-dependencies]
+assert_cmd = { workspace = true }

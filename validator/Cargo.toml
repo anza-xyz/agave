@@ -10,6 +10,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 agave-geyser-plugin-interface = { workspace = true }
 chrono = { workspace = true, features = ["default", "serde"] }
@@ -24,7 +27,7 @@ jsonrpc-core = { workspace = true }
 jsonrpc-core-client = { workspace = true, features = ["ipc"] }
 jsonrpc-derive = { workspace = true }
 jsonrpc-ipc-server = { workspace = true }
-lazy_static = { workspace = true }
+libc = { workspace = true }
 libloading = { workspace = true }
 log = { workspace = true }
 num_cpus = { workspace = true }
@@ -33,53 +36,56 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
+solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
 solana-download-utils = { workspace = true }
 solana-entry = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-faucet = { workspace = true }
 solana-genesis-utils = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
+solana-inflation = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-logger = "=2.3.1"
 solana-metrics = { workspace = true }
+solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { version = "=2.2.2", features = ["openssl-vendored"] }
+solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
+solana-signer = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
+solana-system-interface = { workspace = true }
 solana-test-validator = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-turbine = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
+solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 symlink = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-
-[dev-dependencies]
-assert_cmd = { workspace = true }
-predicates = { workspace = true }
-solana-account-decoder = { workspace = true }
-solana-program-option = { workspace = true }
-solana-program-pack = { workspace = true }
-solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-spl-generic-token = { workspace = true }
-spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
-tempfile = { workspace = true }
 
 [target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
 jemallocator = { workspace = true }
@@ -88,5 +94,15 @@ jemallocator = { workspace = true }
 libc = { workspace = true }
 signal-hook = { workspace = true }
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+pretty_assertions = { workspace = true }
+solana-account-decoder = { workspace = true }
+solana-program-option = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-time-utils = { workspace = true }
+spl-generic-token = { workspace = true }
+spl-token-2022 = { workspace = true, features = ["no-entrypoint"] }
+tempfile = { workspace = true }

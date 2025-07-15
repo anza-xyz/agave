@@ -1,7 +1,7 @@
 use {
     super::{stake_weighted_slot_leaders, IdentityKeyedLeaderSchedule, LeaderScheduleVariant},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_sdk::clock::Epoch,
     solana_vote::vote_account::VoteAccountsHashMap,
     std::{collections::HashMap, ops::Index, sync::Arc},
 };

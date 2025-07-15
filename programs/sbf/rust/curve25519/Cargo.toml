@@ -8,12 +8,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-solana-curve25519 = { workspace = true }
-solana-program = { workspace = true }
-
 [lib]
 crate-type = ["cdylib"]
+
+[dependencies]
+solana-curve25519 = { workspace = true }
+solana-msg = { workspace = true }
+solana-program-entrypoint = { workspace = true }
 
 [lints]
 workspace = true

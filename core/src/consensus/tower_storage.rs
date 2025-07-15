@@ -3,10 +3,9 @@ use {
         tower1_14_11::Tower1_14_11, tower1_7_14::SavedTower1_7_14, Result, Tower, TowerError,
         TowerVersions,
     },
-    solana_sdk::{
-        pubkey::Pubkey,
-        signature::{Signature, Signer},
-    },
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_signer::Signer,
     std::{
         fs::{self, File},
         io::{self, BufReader},
@@ -265,7 +264,7 @@ impl EtcdTowerStorage {
 
         Ok(Self {
             client: tokio::sync::Mutex::new(client),
-            instance_id: solana_sdk::timing::timestamp().to_le_bytes(),
+            instance_id: solana_time_utils::timestamp().to_le_bytes(),
             runtime,
         })
     }
@@ -293,7 +292,7 @@ impl TowerStorage for EtcdTowerStorage {
         self.runtime
             .block_on(async { self.client.lock().await.txn(txn).await })
             .map_err(|err| {
-                error!("Failed to acquire etcd instance lock: {}", err);
+                error!("Failed to acquire etcd instance lock: {err}");
                 Self::etdc_to_tower_error(err)
             })?;
 
@@ -309,7 +308,7 @@ impl TowerStorage for EtcdTowerStorage {
             .runtime
             .block_on(async { self.client.lock().await.txn(txn).await })
             .map_err(|err| {
-                error!("Failed to read etcd saved tower: {}", err);
+                error!("Failed to read etcd saved tower: {err}");
                 Self::etdc_to_tower_error(err)
             })?;
 
@@ -354,7 +353,7 @@ impl TowerStorage for EtcdTowerStorage {
             .runtime
             .block_on(async { self.client.lock().await.txn(txn).await })
             .map_err(|err| {
-                error!("Failed to write etcd saved tower: {}", err);
+                error!("Failed to write etcd saved tower: {err}");
                 err
             })
             .map_err(Self::etdc_to_tower_error)?;
@@ -377,7 +376,8 @@ pub mod test {
             tower1_7_14::{SavedTower1_7_14, Tower1_7_14},
             BlockhashStatus, Tower,
         },
-        solana_sdk::{hash::Hash, signature::Keypair},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_vote::vote_transaction::VoteTransaction,
         solana_vote_program::vote_state::{
             BlockTimestamp, LandedVote, Vote, VoteState, VoteState1_14_11, MAX_LOCKOUT_HISTORY,

@@ -9,7 +9,8 @@
 
 use {
     crate::{bank::Bank, bank_forks::BankForks, root_bank_cache::RootBankCache},
-    solana_sdk::{clock::Slot, hash::Hash},
+    solana_clock::Slot,
+    solana_hash::Hash,
     std::{
         collections::BTreeMap,
         sync::{Arc, Mutex, MutexGuard, RwLock},
@@ -51,7 +52,7 @@ impl BankHashCache {
     /// Should only be used after `slots_dumped` is acquired from `dumped_slot_subscription` to
     /// guarantee synchronicity with `self.bank_forks`. Multiple calls to `hash` will only be
     /// consistent with each other if `slots_dumped` was not released in between, as otherwise a dump
-    /// could have occured inbetween.
+    /// could have occurred inbetween.
     pub fn hash(&mut self, slot: Slot, slots_dumped: &mut MutexGuard<bool>) -> Option<Hash> {
         if **slots_dumped {
             // We could be smarter and keep a fork cache to only clear affected slots from the cache,

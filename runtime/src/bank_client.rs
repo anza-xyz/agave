@@ -1,35 +1,38 @@
 use {
     crate::bank::Bank,
     crossbeam_channel::{unbounded, Receiver, Sender},
-    solana_sdk::{
-        account::Account,
-        client::{AsyncClient, Client, SyncClient},
-        commitment_config::CommitmentConfig,
-        epoch_info::EpochInfo,
-        hash::Hash,
-        instruction::Instruction,
-        message::{Message, SanitizedMessage},
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
-        signers::Signers,
-        system_instruction,
-        sysvar::{Sysvar, SysvarId},
-        transaction::{self, Transaction, VersionedTransaction},
-        transport::{Result, TransportError},
-    },
+    solana_account::Account,
+    solana_client_traits::{AsyncClient, Client, SyncClient},
+    solana_commitment_config::CommitmentConfig,
+    solana_epoch_info::EpochInfo,
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_message::{Message, SanitizedMessage},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
+    solana_signer::{signers::Signers, Signer},
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::Sysvar,
+    solana_sysvar_id::SysvarId,
+    solana_transaction::{versioned::VersionedTransaction, Transaction},
+    solana_transaction_error::{TransportError, TransportResult as Result},
     std::{
         io,
-        sync::{Arc, Mutex},
+        sync::Arc,
         thread::{sleep, Builder},
         time::{Duration, Instant},
     },
 };
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 #[cfg(feature = "dev-context-only-utils")]
-use {crate::bank_forks::BankForks, solana_sdk::clock, std::sync::RwLock};
+use {crate::bank_forks::BankForks, solana_clock as clock, std::sync::RwLock};
 
 pub struct BankClient {
     bank: Arc<Bank>,
-    transaction_sender: Mutex<Sender<VersionedTransaction>>,
+    transaction_sender: Sender<VersionedTransaction>,
 }
 
 impl Client for BankClient {
@@ -44,7 +47,7 @@ impl AsyncClient for BankClient {
         transaction: VersionedTransaction,
     ) -> Result<Signature> {
         let signature = transaction.signatures.first().cloned().unwrap_or_default();
-        let transaction_sender = self.transaction_sender.lock().unwrap();
+        let transaction_sender = self.transaction_sender.clone();
         transaction_sender.send(transaction).unwrap();
         Ok(signature)
     }
@@ -250,7 +253,6 @@ impl BankClient {
 
     pub fn new_shared(bank: Arc<Bank>) -> Self {
         let (transaction_sender, transaction_receiver) = unbounded();
-        let transaction_sender = Mutex::new(transaction_sender);
         let thread_bank = bank.clone();
         Builder::new()
             .name("solBankClient".to_string())
@@ -299,11 +301,8 @@ impl BankClient {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{
-            genesis_config::create_genesis_config, instruction::AccountMeta,
-            native_token::sol_to_lamports,
-        },
+        super::*, solana_genesis_config::create_genesis_config, solana_instruction::AccountMeta,
+        solana_native_token::sol_to_lamports,
     };
 
     #[test]

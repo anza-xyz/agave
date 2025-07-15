@@ -5,7 +5,7 @@ use {
         snapshot_hash::SnapshotHash,
         snapshot_utils::{self, ArchiveFormat, Result},
     },
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     std::{cmp::Ordering, path::PathBuf},
 };
 

@@ -9,11 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 base64 = { workspace = true }
 bincode = { workspace = true }
 # Update this borsh dependency to the workspace version once
-lazy_static = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }
 solana-packet = { workspace = true }
@@ -24,8 +26,7 @@ solana-signature = { workspace = true }
 [dev-dependencies]
 solana-hash = { workspace = true }
 solana-keypair = { workspace = true }
+solana-packet = { workspace = true, features = ["dev-context-only-utils"] }
+solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-system-transaction = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

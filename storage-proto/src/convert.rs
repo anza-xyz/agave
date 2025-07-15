@@ -1,5 +1,5 @@
 use {
-    crate::{StoredExtendedRewards, StoredTransactionStatusMeta},
+    crate::{StoredExtendedRewards, StoredTransactionError, StoredTransactionStatusMeta},
     solana_account_decoder::parse_token::{real_number_string_trimmed, UiTokenAmount},
     solana_hash::{Hash, HASH_BYTES},
     solana_instruction::error::InstructionError,
@@ -283,6 +283,20 @@ impl From<generated::Transaction> for VersionedTransaction {
                 .unwrap(),
             message: value.message.expect("message is required").into(),
         }
+    }
+}
+
+impl From<TransactionError> for generated::TransactionError {
+    fn from(value: TransactionError) -> Self {
+        let stored_error = StoredTransactionError::from(value).0;
+        Self { err: stored_error }
+    }
+}
+
+impl From<generated::TransactionError> for TransactionError {
+    fn from(value: generated::TransactionError) -> Self {
+        let stored_error = StoredTransactionError(value.err);
+        stored_error.into()
     }
 }
 

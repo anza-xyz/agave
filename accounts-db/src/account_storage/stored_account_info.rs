@@ -1,4 +1,7 @@
-use {solana_account::ReadableAccount, solana_clock::Epoch, solana_pubkey::Pubkey};
+use {
+    crate::is_zero_lamport::IsZeroLamport, solana_account::ReadableAccount, solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+};
 
 /// Account type with fields that reference into a storage
 ///
@@ -97,5 +100,11 @@ impl<'storage> StoredAccountInfoWithoutData<'storage> {
             executable: other_stored_account.executable,
             rent_epoch: other_stored_account.rent_epoch,
         }
+    }
+}
+
+impl IsZeroLamport for StoredAccountInfoWithoutData<'_> {
+    fn is_zero_lamport(&self) -> bool {
+        self.lamports == 0
     }
 }

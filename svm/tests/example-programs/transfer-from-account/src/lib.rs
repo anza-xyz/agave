@@ -1,15 +1,18 @@
-use solana_program::{
-    account_info::{AccountInfo, next_account_info}, entrypoint, entrypoint::ProgramResult, pubkey::Pubkey,
-    program::invoke, system_instruction,
+use {
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_program::program::invoke,
+    solana_program_entrypoint::entrypoint,
+    solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey,
+    solana_system_interface::instruction as system_instruction,
 };
 
 entrypoint!(process_instruction);
 
-
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],
-    _data: &[u8]
+    _data: &[u8],
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     let payer = next_account_info(accounts_iter)?;

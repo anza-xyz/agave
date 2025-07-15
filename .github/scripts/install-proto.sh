@@ -12,7 +12,11 @@ case "$os_name" in
 "macOS")
   brew install protobuf
   ;;
-"Linux") ;;
+"Linux")
+  if grep "Alpine" /etc/os-release ; then
+    apk add protoc
+  fi
+  ;;
 *)
   echo "Unknown Operating System"
   ;;

@@ -4,9 +4,13 @@ extern crate test;
 
 use {
     rand::{seq::SliceRandom, Rng},
+    solana_clock::Slot,
+    solana_cluster_type::ClusterType,
     solana_gossip::contact_info::ContactInfo,
-    solana_ledger::shred::{Shred, ShredFlags},
-    solana_sdk::{clock::Slot, genesis_config::ClusterType, pubkey::Pubkey},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+    solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::{
         cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},
@@ -14,8 +18,6 @@ use {
     },
     test::Bencher,
 };
-
-const NUM_SIMULATED_SHREDS: usize = 4;
 
 fn make_cluster_nodes<R: Rng>(
     rng: &mut R,
@@ -27,25 +29,31 @@ fn make_cluster_nodes<R: Rng>(
     (nodes, cluster_nodes)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn get_retransmit_peers_deterministic(
     cluster_nodes: &ClusterNodes<RetransmitStage>,
     slot: Slot,
     slot_leader: &Pubkey,
-    num_simulated_shreds: usize,
 ) {
-    let parent_offset = u16::from(slot != 0);
-    for i in 0..num_simulated_shreds {
-        let index = i as u32;
-        let shred = Shred::new_from_data(
-            slot,
-            index,
-            parent_offset,
-            &[],
-            ShredFlags::empty(),
-            0,
-            0,
-            0,
-        );
+    let keypair = Keypair::new();
+    let merkle_root = Some(Hash::default());
+    let reed_solomon_cache = ReedSolomonCache::default();
+    let mut stats = ProcessShredsStats::default();
+    let parent_slot = if slot > 0 { slot - 1 } else { 0 };
+    let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
+
+    let shreds = shredder.make_merkle_shreds_from_entries(
+        &keypair,
+        &[],  // entries
+        true, // is_last_in_slot
+        merkle_root,
+        0, // next_shred_index
+        0, // next_code_index
+        &reed_solomon_cache,
+        &mut stats,
+    );
+
+    for shred in shreds {
         let _retransmit_peers = cluster_nodes.get_retransmit_addrs(
             slot_leader,
             &shred.id(),
@@ -60,9 +68,7 @@ fn get_retransmit_peers_deterministic_wrapper(b: &mut Bencher, unstaked_ratio: O
     let (nodes, cluster_nodes) = make_cluster_nodes(&mut rng, unstaked_ratio);
     let slot_leader = *nodes[1..].choose(&mut rng).unwrap().pubkey();
     let slot = rand::random::<u64>();
-    b.iter(|| {
-        get_retransmit_peers_deterministic(&cluster_nodes, slot, &slot_leader, NUM_SIMULATED_SHREDS)
-    });
+    b.iter(|| get_retransmit_peers_deterministic(&cluster_nodes, slot, &slot_leader));
 }
 
 #[bench]

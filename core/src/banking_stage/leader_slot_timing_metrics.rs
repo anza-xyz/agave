@@ -1,11 +1,10 @@
 use {
-    solana_poh::transaction_recorder::RecordTransactionsTimings, solana_sdk::clock::Slot,
+    solana_clock::Slot, solana_poh::transaction_recorder::RecordTransactionsTimings,
     solana_timings::ExecuteTimings, std::time::Instant,
 };
 
 #[derive(Default, Debug)]
 pub struct LeaderExecuteAndCommitTimings {
-    pub collect_balances_us: u64,
     pub load_execute_us: u64,
     pub freeze_lock_us: u64,
     pub record_us: u64,
@@ -17,7 +16,6 @@ pub struct LeaderExecuteAndCommitTimings {
 
 impl LeaderExecuteAndCommitTimings {
     pub fn accumulate(&mut self, other: &LeaderExecuteAndCommitTimings) {
-        self.collect_balances_us += other.collect_balances_us;
         self.load_execute_us += other.load_execute_us;
         self.freeze_lock_us += other.freeze_lock_us;
         self.record_us += other.record_us;
@@ -32,7 +30,6 @@ impl LeaderExecuteAndCommitTimings {
         datapoint_info!(
             "banking_stage-leader_slot_vote_execute_and_commit_timings",
             ("slot", slot as i64, i64),
-            ("collect_balances_us", self.collect_balances_us as i64, i64),
             ("load_execute_us", self.load_execute_us as i64, i64),
             ("freeze_lock_us", self.freeze_lock_us as i64, i64),
             ("record_us", self.record_us as i64, i64),

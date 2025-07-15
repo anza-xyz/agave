@@ -6,10 +6,8 @@ use {
     },
     bitflags::bitflags,
     serde::{Deserialize, Deserializer, Serialize, Serializer},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-    },
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
     std::{
         collections::BTreeSet,
         ops::{Range, RangeBounds},
@@ -53,9 +51,84 @@ impl Default for ConnectedFlags {
     }
 }
 
+/// Legacy completed data indexes type; de/serialization is inefficient for a BTreeSet.
+///
+/// Replaced by [`CompletedDataIndexesV2`].
+pub type CompletedDataIndexesV1 = BTreeSet<u32>;
+/// A fixed size BitVec offers fast lookup and fast de/serialization.
+///
+/// Supersedes [`CompletedDataIndexesV1`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(transparent)]
+pub struct CompletedDataIndexesV2 {
+    index: BitVec<MAX_DATA_SHREDS_PER_SLOT>,
+}
+
+// API for CompletedDataIndexesV2 that mirrors BTreeSet<u32> to make migration easier.
+// This allows CompletedDataIndexesV2 to be a drop-in replacement for CompletedDataIndexesV1.
+impl CompletedDataIndexesV2 {
+    #[inline]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.index.iter_ones().map(|i| i as u32)
+    }
+
+    /// Only needed for V1 / V2 test compatibility.
+    ///
+    /// TODO: Remove once the migration is complete.
+    #[cfg(test)]
+    #[inline]
+    pub fn into_iter(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.iter()
+    }
+
+    #[inline]
+    pub fn insert(&mut self, index: u32) {
+        self.index.insert_unchecked(index as usize);
+    }
+
+    #[inline]
+    pub fn contains(&self, index: &u32) -> bool {
+        self.index.contains(*index as usize)
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    #[inline]
+    pub fn range<R>(&self, bounds: R) -> impl DoubleEndedIterator<Item = u32> + '_
+    where
+        R: RangeBounds<u32>,
+    {
+        let start = bounds.start_bound().map(|&b| b as usize);
+        let end = bounds.end_bound().map(|&b| b as usize);
+        self.index.range((start, end)).iter_ones().map(|i| i as u32)
+    }
+}
+
+impl FromIterator<u32> for CompletedDataIndexesV2 {
+    fn from_iter<T: IntoIterator<Item = u32>>(iter: T) -> Self {
+        let index = iter.into_iter().map(|i| i as usize).collect();
+        CompletedDataIndexesV2 { index }
+    }
+}
+
+impl From<CompletedDataIndexesV2> for CompletedDataIndexesV1 {
+    fn from(value: CompletedDataIndexesV2) -> Self {
+        value.iter().collect()
+    }
+}
+
+impl From<CompletedDataIndexesV1> for CompletedDataIndexesV2 {
+    fn from(value: CompletedDataIndexesV1) -> Self {
+        value.into_iter().collect()
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 /// The Meta column family
-pub struct SlotMeta {
+pub struct SlotMetaBase<T> {
     /// The number of slots above the root (the genesis block). The first
     /// slot has slot 0.
     pub slot: Slot,
@@ -84,8 +157,68 @@ pub struct SlotMeta {
     pub connected_flags: ConnectedFlags,
     /// Shreds indices which are marked data complete.  That is, those that have the
     /// [`ShredFlags::DATA_COMPLETE_SHRED`][`crate::shred::ShredFlags::DATA_COMPLETE_SHRED`] set.
-    pub completed_data_indexes: BTreeSet<u32>,
+    pub completed_data_indexes: T,
 }
+
+pub type SlotMetaV1 = SlotMetaBase<CompletedDataIndexesV1>;
+pub type SlotMetaV2 = SlotMetaBase<CompletedDataIndexesV2>;
+
+impl From<SlotMetaV1> for SlotMetaV2 {
+    fn from(value: SlotMetaV1) -> Self {
+        SlotMetaV2 {
+            slot: value.slot,
+            consumed: value.consumed,
+            received: value.received,
+            first_shred_timestamp: value.first_shred_timestamp,
+            last_index: value.last_index,
+            parent_slot: value.parent_slot,
+            next_slots: value.next_slots,
+            connected_flags: value.connected_flags,
+            completed_data_indexes: value.completed_data_indexes.into(),
+        }
+    }
+}
+
+impl From<SlotMetaV2> for SlotMetaV1 {
+    fn from(value: SlotMetaV2) -> Self {
+        SlotMetaV1 {
+            slot: value.slot,
+            consumed: value.consumed,
+            received: value.received,
+            first_shred_timestamp: value.first_shred_timestamp,
+            last_index: value.last_index,
+            parent_slot: value.parent_slot,
+            next_slots: value.next_slots,
+            connected_flags: value.connected_flags,
+            completed_data_indexes: value.completed_data_indexes.into(),
+        }
+    }
+}
+
+// We need to maintain both formats during migration,
+// as both formats will need to be supported when reading
+// from rocksdb until the migration is complete.
+//
+// Swap these types to migrate to the new format.
+//
+// For example, to enable the new format,
+//
+// ```
+// pub type SlotMeta = SlotMetaV2;
+// pub type CompletedDataIndexes = CompletedDataIndexesV2;
+// pub type SlotMetaFallback = SlotMetaV1;
+// ```
+//
+// To enable the old format,
+//
+// ```
+// pub type SlotMeta = SlotMetaV1;
+// pub type CompletedDataIndexes = CompletedDataIndexesV1;
+// pub type SlotMetaFallback = SlotMetaV2;
+// ```
+pub type SlotMeta = SlotMetaV1;
+pub type CompletedDataIndexes = CompletedDataIndexesV1;
+pub type SlotMetaFallback = SlotMetaV2;
 
 // Serde implementation of serialize and deserialize for Option<u64>
 // where None is represented as u64::MAX; for backward compatibility.

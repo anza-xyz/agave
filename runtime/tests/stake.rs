@@ -1,31 +1,29 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use {
+    solana_account::{from_account, state_traits::StateMut},
     solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
+    solana_client_traits::SyncClient,
+    solana_clock::Slot,
+    solana_epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_message::Message,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
         bank_forks::BankForks,
         genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
     },
-    solana_sdk::{
-        account::from_account,
-        account_utils::StateMut,
-        client::SyncClient,
-        clock::Slot,
-        epoch_schedule::{EpochSchedule, MINIMUM_SLOTS_PER_EPOCH},
-        hash::Hash,
-        message::Message,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        stake::{
-            self, instruction as stake_instruction,
-            state::{Authorized, Lockup, StakeStateV2},
-        },
-        sysvar::{self, stake_history::StakeHistory},
+    solana_signer::Signer,
+    solana_stake_interface::{
+        self as stake, instruction as stake_instruction,
+        state::{Authorized, Lockup, StakeStateV2},
     },
     solana_stake_program::stake_state,
+    solana_sysvar::{self as sysvar, stake_history::StakeHistory},
     solana_vote_program::{
         vote_instruction,
         vote_state::{TowerSync, VoteInit, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},

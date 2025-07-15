@@ -5,7 +5,6 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
     agave_feature_set::{self as feature_set, FeatureSet},
-    lazy_static::lazy_static,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         address_lookup_table, bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
@@ -50,7 +49,7 @@ impl ReservedAccountKeys {
     /// designate a feature id, it's already activated and should be inserted
     /// into the active set. If it does have a feature id, insert the key and
     /// its feature id into the inactive map.
-    fn new(reserved_accounts: &[ReservedAccount]) -> Self {
+    pub fn new(reserved_accounts: &[ReservedAccount]) -> Self {
         Self {
             active: reserved_accounts
                 .iter()
@@ -114,20 +113,20 @@ impl ReservedAccountKeys {
 /// write-lockable by transactions. If a feature id is set, the account will
 /// become read-only only after the feature has been activated.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-struct ReservedAccount {
+pub struct ReservedAccount {
     key: Pubkey,
     feature_id: Option<Pubkey>,
 }
 
 impl ReservedAccount {
-    fn new_pending(key: Pubkey, feature_id: Pubkey) -> Self {
+    pub fn new_pending(key: Pubkey, feature_id: Pubkey) -> Self {
         Self {
             key,
             feature_id: Some(feature_id),
         }
     }
 
-    fn new_active(key: Pubkey) -> Self {
+    pub fn new_active(key: Pubkey) -> Self {
         Self {
             key,
             feature_id: None,
@@ -138,54 +137,55 @@ impl ReservedAccount {
 // New reserved accounts should be added in alphabetical order and must specify
 // a feature id for activation. Reserved accounts cannot be removed from this
 // list without breaking consensus.
-lazy_static! {
-    static ref RESERVED_ACCOUNTS: Vec<ReservedAccount> = [
-        // builtin programs
-        ReservedAccount::new_pending(address_lookup_table::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_active(bpf_loader::id()),
-        ReservedAccount::new_active(bpf_loader_deprecated::id()),
-        ReservedAccount::new_active(bpf_loader_upgradeable::id()),
-        ReservedAccount::new_pending(compute_budget::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_active(config::id()),
-        ReservedAccount::new_pending(ed25519_program::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_active(feature::id()),
-        ReservedAccount::new_pending(loader_v4::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_pending(secp256k1_program::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_pending(secp256r1_program::id(), feature_set::enable_secp256r1_precompile::id()),
-        #[allow(deprecated)]
-        ReservedAccount::new_active(stake::config::id()),
-        ReservedAccount::new_active(stake::id()),
-        ReservedAccount::new_active(system_program::id()),
-        ReservedAccount::new_active(vote::id()),
-        ReservedAccount::new_pending(zk_elgamal_proof_program::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_pending(zk_token_proof_program::id(), feature_set::add_new_reserved_account_keys::id()),
-
-        // sysvars
-        ReservedAccount::new_active(sysvar::clock::id()),
-        ReservedAccount::new_pending(sysvar::epoch_rewards::id(), feature_set::add_new_reserved_account_keys::id()),
-        ReservedAccount::new_active(sysvar::epoch_schedule::id()),
-        #[allow(deprecated)]
-        ReservedAccount::new_active(sysvar::fees::id()),
-        ReservedAccount::new_active(sysvar::instructions::id()),
-        ReservedAccount::new_pending(sysvar::last_restart_slot::id(), feature_set::add_new_reserved_account_keys::id()),
-        #[allow(deprecated)]
-        ReservedAccount::new_active(sysvar::recent_blockhashes::id()),
-        ReservedAccount::new_active(sysvar::rent::id()),
-        ReservedAccount::new_active(sysvar::rewards::id()),
-        ReservedAccount::new_active(sysvar::slot_hashes::id()),
-        ReservedAccount::new_active(sysvar::slot_history::id()),
-        ReservedAccount::new_active(sysvar::stake_history::id()),
-
-        // other
-        ReservedAccount::new_active(native_loader::id()),
-        ReservedAccount::new_pending(sysvar::id(), feature_set::add_new_reserved_account_keys::id()),
-    ].to_vec();
-}
+static RESERVED_ACCOUNTS: std::sync::LazyLock<Vec<ReservedAccount>> =
+    std::sync::LazyLock::new(|| {
+        vec![
+            // builtin programs
+            ReservedAccount::new_active(address_lookup_table::id()),
+            ReservedAccount::new_active(bpf_loader::id()),
+            ReservedAccount::new_active(bpf_loader_deprecated::id()),
+            ReservedAccount::new_active(bpf_loader_upgradeable::id()),
+            ReservedAccount::new_active(compute_budget::id()),
+            ReservedAccount::new_active(config::id()),
+            ReservedAccount::new_active(ed25519_program::id()),
+            ReservedAccount::new_active(feature::id()),
+            ReservedAccount::new_active(loader_v4::id()),
+            ReservedAccount::new_active(secp256k1_program::id()),
+            ReservedAccount::new_pending(
+                secp256r1_program::id(),
+                feature_set::enable_secp256r1_precompile::id(),
+            ),
+            #[allow(deprecated)]
+            ReservedAccount::new_active(stake::config::id()),
+            ReservedAccount::new_active(stake::id()),
+            ReservedAccount::new_active(system_program::id()),
+            ReservedAccount::new_active(vote::id()),
+            ReservedAccount::new_active(zk_elgamal_proof_program::id()),
+            ReservedAccount::new_active(zk_token_proof_program::id()),
+            // sysvars
+            ReservedAccount::new_active(sysvar::clock::id()),
+            ReservedAccount::new_active(sysvar::epoch_rewards::id()),
+            ReservedAccount::new_active(sysvar::epoch_schedule::id()),
+            #[allow(deprecated)]
+            ReservedAccount::new_active(sysvar::fees::id()),
+            ReservedAccount::new_active(sysvar::instructions::id()),
+            ReservedAccount::new_active(sysvar::last_restart_slot::id()),
+            #[allow(deprecated)]
+            ReservedAccount::new_active(sysvar::recent_blockhashes::id()),
+            ReservedAccount::new_active(sysvar::rent::id()),
+            ReservedAccount::new_active(sysvar::rewards::id()),
+            ReservedAccount::new_active(sysvar::slot_hashes::id()),
+            ReservedAccount::new_active(sysvar::slot_history::id()),
+            ReservedAccount::new_active(sysvar::stake_history::id()),
+            // other
+            ReservedAccount::new_active(native_loader::id()),
+            ReservedAccount::new_active(sysvar::id()),
+        ]
+    });
 
 #[cfg(test)]
 mod tests {
-    #![allow(deprecated)]
-    use {super::*, solana_message::legacy::BUILTIN_PROGRAMS_KEYS, solana_sysvar::ALL_IDS};
+    use super::*;
 
     #[test]
     fn test_is_reserved() {
@@ -245,16 +245,5 @@ mod tests {
         assert!(reserved_account_keys.is_reserved(&active_reserved_key));
         assert!(reserved_account_keys.is_reserved(&pending_reserved_keys[0]));
         assert!(reserved_account_keys.is_reserved(&pending_reserved_keys[1]));
-    }
-
-    #[test]
-    fn test_static_list_compat() {
-        let mut static_set = HashSet::new();
-        static_set.extend(ALL_IDS.iter().cloned());
-        static_set.extend(BUILTIN_PROGRAMS_KEYS.iter().cloned());
-
-        let initial_active_set = ReservedAccountKeys::default().active;
-
-        assert_eq!(initial_active_set, static_set);
     }
 }

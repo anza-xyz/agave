@@ -21,19 +21,17 @@ use {
     },
     crate::replay_stage::DUPLICATE_THRESHOLD,
     chrono::prelude::*,
+    solana_clock::{Slot, UnixTimestamp},
+    solana_hash::Hash,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{self, Blockstore},
     },
+    solana_pubkey::Pubkey,
     solana_runtime::{bank::Bank, bank_forks::BankForks, commitment::VOTE_THRESHOLD_SIZE},
-    solana_sdk::{
-        clock::{Slot, UnixTimestamp},
-        hash::Hash,
-        instruction::Instruction,
-        pubkey::Pubkey,
-        signature::Keypair,
-        slot_history::{Check, SlotHistory},
-    },
+    solana_slot_history::{Check, SlotHistory},
     solana_vote::{vote_account::VoteAccountsHashMap, vote_transaction::VoteTransaction},
     solana_vote_program::{
         vote_error::VoteError,
@@ -364,10 +362,14 @@ impl Tower {
         vote_account: &Pubkey,
     ) -> Self {
         let root_bank = bank_forks.root_bank();
+        let frozen_banks: Vec<_> = bank_forks
+            .frozen_banks()
+            .map(|(_slot, bank)| bank)
+            .collect();
         let (_progress, heaviest_subtree_fork_choice) =
             crate::replay_stage::ReplayStage::initialize_progress_and_fork_choice(
                 root_bank.deref(),
-                bank_forks.frozen_banks().values().cloned().collect(),
+                frozen_banks,
                 node_pubkey,
                 vote_account,
                 vec![],
@@ -405,7 +407,7 @@ impl Tower {
             if voted_stake == 0 {
                 continue;
             }
-            trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
+            trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
             let mut vote_state = TowerVoteState::from(account.vote_state_view());
             for vote in &vote_state.votes {
                 lockout_intervals
@@ -416,7 +418,7 @@ impl Tower {
 
             if key == *vote_account_pubkey {
                 my_latest_landed_vote = vote_state.nth_recent_lockout(0).map(|l| l.slot());
-                debug!("vote state {:?}", vote_state);
+                debug!("vote state {vote_state:?}");
                 debug!(
                     "observed slot {}",
                     vote_state
@@ -576,8 +578,8 @@ impl Tower {
         if let Some(last_voted_slot) = self.last_vote.last_voted_slot() {
             if heaviest_slot_on_same_fork <= last_voted_slot {
                 warn!(
-                    "Trying to refresh timestamp for vote on {last_voted_slot} \
-                     using smaller heaviest bank {heaviest_slot_on_same_fork}"
+                    "Trying to refresh timestamp for vote on {last_voted_slot} using smaller \
+                     heaviest bank {heaviest_slot_on_same_fork}"
                 );
                 return;
             }
@@ -959,7 +961,7 @@ impl Tower {
                      vote({last_voted_slot}), meaning some inconsistency between saved tower and \
                      ledger."
                 );
-                warn!("{}", message);
+                warn!("{message}");
                 datapoint_warn!("tower_warn", ("warn", message, String));
             }
             &empty_ancestors
@@ -1114,8 +1116,8 @@ impl Tower {
                             last_vote_ancestors,
                         )
                         .expect(
-                            "candidate_slot and switch_slot exist in descendants map, \
-                             so they must exist in ancestors map",
+                            "candidate_slot and switch_slot exist in descendants map, so they \
+                             must exist in ancestors map",
                         )
                 }
             {
@@ -1253,11 +1255,7 @@ impl Tower {
         );
         let new_check = Some((switch_slot, decision.clone()));
         if new_check != self.last_switch_threshold_check {
-            trace!(
-                "new switch threshold check: slot {}: {:?}",
-                switch_slot,
-                decision,
-            );
+            trace!("new switch threshold check: slot {switch_slot}: {decision:?}",);
             self.last_switch_threshold_check = new_check;
         }
         decision
@@ -1470,7 +1468,7 @@ impl Tower {
                     "For some reason, we're REPROCESSING slots which has already been voted and \
                      ROOTED by us; VOTING will be SUSPENDED UNTIL {last_voted_slot}!",
                 );
-                error!("{}", message);
+                error!("{message}");
                 datapoint_error!("tower_error", ("error", message, String));
 
                 // Let's pass-through adjust_lockouts_with_slot_history just for sanitization,
@@ -1569,7 +1567,7 @@ impl Tower {
         }
 
         // Check for errors if not anchored
-        info!("adjusted tower's anchored slot: {:?}", anchored_slot);
+        info!("adjusted tower's anchored slot: {anchored_slot:?}");
         if anchored_slot.is_none() {
             // this error really shouldn't happen unless ledger/tower is corrupted
             return Err(TowerError::FatallyInconsistent(
@@ -1735,9 +1733,8 @@ pub fn reconcile_blockstore_roots_with_external_source(
             .collect();
         if !new_roots.is_empty() {
             info!(
-                "Reconciling slots as root based on external root: {:?} (external: {:?}, \
-                 blockstore: {})",
-                new_roots, external_source, last_blockstore_root
+                "Reconciling slots as root based on external root: {new_roots:?} (external: \
+                 {external_source:?}, blockstore: {last_blockstore_root})"
             );
 
             // Unfortunately, we can't supply duplicate-confirmed hashes,
@@ -1759,10 +1756,9 @@ pub fn reconcile_blockstore_roots_with_external_source(
             // That's because we might have a chance of recovering properly with
             // newer snapshot.
             warn!(
-                "Couldn't find any ancestor slots from external source ({:?}) towards blockstore \
-                 root ({}); blockstore pruned or only tower moved into new ledger or just hard \
-                 fork?",
-                external_source, last_blockstore_root,
+                "Couldn't find any ancestor slots from external source ({external_source:?}) \
+                 towards blockstore root ({last_blockstore_root}); blockstore pruned or only \
+                 tower moved into new ledger or just hard fork?",
             );
         }
     }
@@ -1782,16 +1778,14 @@ pub mod test {
             vote_simulator::VoteSimulator,
         },
         itertools::Itertools,
+        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
+        solana_clock::Slot,
+        solana_hash::Hash,
         solana_ledger::{blockstore::make_slot_entries, get_tmp_ledger_path_auto_delete},
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-            clock::Slot,
-            hash::Hash,
-            pubkey::Pubkey,
-            signature::Signer,
-            slot_history::SlotHistory,
-        },
+        solana_signer::Signer,
+        solana_slot_history::SlotHistory,
         solana_vote::vote_account::VoteAccount,
         solana_vote_program::vote_state::{
             process_slot_vote_unchecked, Vote, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
@@ -3413,7 +3407,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_all_rooted_with_too_old() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
@@ -3539,7 +3533,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_too_old_tower() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower.record_vote(0, Hash::default());
@@ -3595,7 +3589,7 @@ pub mod test {
 
     #[test]
     fn test_adjust_lockouts_after_replay_out_of_order() {
-        use solana_sdk::slot_history::MAX_ENTRIES;
+        use solana_slot_history::MAX_ENTRIES;
 
         let mut tower = Tower::new_for_tests(10, 0.9);
         tower

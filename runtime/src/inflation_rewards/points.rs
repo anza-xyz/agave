@@ -1,11 +1,11 @@
 //! Information about points calculation based on stake state.
 
 use {
+    solana_clock::Epoch,
+    solana_instruction::error::InstructionError,
     solana_pubkey::Pubkey,
-    solana_sdk::{
-        clock::Epoch, instruction::InstructionError, sysvar::stake_history::StakeHistory,
-    },
     solana_stake_program::stake_state::{Delegation, Stake, StakeStateV2},
+    solana_sysvar::stake_history::StakeHistory,
     solana_vote::vote_state_view::VoteStateView,
     std::cmp::Ordering,
 };
@@ -207,8 +207,7 @@ pub(crate) fn calculate_stake_points_and_credits(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_sdk::native_token::sol_to_lamports,
-        solana_vote_program::vote_state::VoteState,
+        super::*, solana_native_token::sol_to_lamports, solana_vote_program::vote_state::VoteState,
     };
 
     fn new_stake(

@@ -5,11 +5,11 @@ use {
         calculate_stake_points_and_credits, CalculatedStakePoints, InflationPointCalculationEvent,
         PointValue, SkippedReason,
     },
-    solana_sdk::{
-        clock::Epoch, instruction::InstructionError, stake::instruction::StakeError,
-        sysvar::stake_history::StakeHistory,
-    },
+    solana_clock::Epoch,
+    solana_instruction::error::InstructionError,
+    solana_stake_interface::error::StakeError,
     solana_stake_program::stake_state::{Stake, StakeStateV2},
+    solana_sysvar::stake_history::StakeHistory,
     solana_vote::vote_state_view::VoteStateView,
 };
 
@@ -255,8 +255,8 @@ fn commission_split(commission: u8, on: u64) -> (u64, u64, bool) {
 #[cfg(test)]
 mod tests {
     use {
-        self::points::null_tracer, super::*, solana_program::stake::state::Delegation,
-        solana_pubkey::Pubkey, solana_sdk::native_token::sol_to_lamports,
+        self::points::null_tracer, super::*, solana_native_token::sol_to_lamports,
+        solana_pubkey::Pubkey, solana_stake_interface::state::Delegation,
         solana_vote_program::vote_state::VoteState, test_case::test_case,
     };
 

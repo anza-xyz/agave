@@ -10,13 +10,41 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[badges]
-codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+dev-context-only-utils = [
+    "solana-perf/dev-context-only-utils",
+    "solana-runtime/dev-context-only-utils",
+    "solana-streamer/dev-context-only-utils",
+]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-accounts-db/frozen-abi",
+    "solana-bloom/frozen-abi",
+    "solana-compute-budget/frozen-abi",
+    "solana-cost-model/frozen-abi",
+    "solana-frozen-abi/frozen-abi",
+    "solana-gossip/frozen-abi",
+    "solana-ledger/frozen-abi",
+    "solana-packet/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-program-runtime/frozen-abi",
+    "solana-runtime/frozen-abi",
+    "solana-short-vec/frozen-abi",
+    "solana-signature/frozen-abi",
+    "solana-svm/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
 
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 agave-feature-set = { workspace = true }
 agave-transaction-view = { workspace = true }
+agave-verified-packet-receiver = { workspace = true }
 ahash = { workspace = true }
 anyhow = { workspace = true }
 arrayvec = { workspace = true }
@@ -30,11 +58,11 @@ chrono = { workspace = true, features = ["default", "serde"] }
 conditional-mod = { workspace = true }
 crossbeam-channel = { workspace = true }
 dashmap = { workspace = true, features = ["rayon", "raw-api"] }
+derive_more = { workspace = true }
 etcd-client = { workspace = true, features = ["tls"] }
 futures = { workspace = true }
 histogram = { workspace = true }
 itertools = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 lru = { workspace = true }
 min-max-heap = { workspace = true }
@@ -51,58 +79,91 @@ serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_derive = { workspace = true }
 slab = { workspace = true }
+solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
+solana-bincode = { workspace = true }
 solana-bloom = { workspace = true }
 solana-builtins-default-costs = { workspace = true }
 solana-client = { workspace = true }
+solana-clock = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-instruction = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-fee = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-fee-structure = { workspace = true }
 solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
+solana-genesis-config = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hard-forks = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
+solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-nonce = { workspace = true }
+solana-nonce-account = { workspace = true }
+solana-packet = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
+solana-poh-config = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-quic-client = { workspace = true }
+solana-quic-definitions = { workspace = true }
 solana-rayon-threadlimit = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sanitize = { workspace = true }
-solana-sdk = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 solana-short-vec = { workspace = true }
+solana-shred-version = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-slot-hashes = { workspace = true }
+solana-slot-history = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-system-transaction = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-timings = { workspace = true }
 solana-tls-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
 solana-tpu-client-next = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-turbine = { workspace = true }
 solana-unified-scheduler-pool = { workspace = true }
+solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
-solana-vortexor-receiver = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
 solana-wen-restart = { workspace = true }
-static_assertions ={ workspace = true }
+static_assertions = { workspace = true }
 strum = { workspace = true, features = ["derive"] }
 strum_macros = { workspace = true }
 sys-info = { workspace = true }
@@ -112,14 +173,22 @@ tokio = { workspace = true, features = ["full"] }
 tokio-util = { workspace = true }
 trees = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+sysctl = { workspace = true }
+
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 criterion = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
+solana-account = { workspace = true, features = ["dev-context-only-utils"] }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-bpf-loader-program = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
 solana-compute-budget-program = { workspace = true }
 solana-core = { path = ".", features = ["dev-context-only-utils"] }
 solana-cost-model = { workspace = true, features = ["dev-context-only-utils"] }
@@ -130,7 +199,6 @@ solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh = { workspace = true, features = ["dev-context-only-utils"] }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-rpc = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-stake-program = { workspace = true }
 solana-system-program = { workspace = true }
 solana-unified-scheduler-logic = { workspace = true }
@@ -142,33 +210,8 @@ spl-memo = { workspace = true, features = ["no-entrypoint"] }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
 
-[target."cfg(unix)".dependencies]
-sysctl = { workspace = true }
-
-[features]
-dev-context-only-utils = [
-    "solana-perf/dev-context-only-utils",
-    "solana-runtime/dev-context-only-utils",
-    "solana-streamer/dev-context-only-utils",
-]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-accounts-db/frozen-abi",
-    "solana-bloom/frozen-abi",
-    "solana-compute-budget/frozen-abi",
-    "solana-cost-model/frozen-abi",
-    "solana-gossip/frozen-abi",
-    "solana-ledger/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-program-runtime/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-svm/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
+[badges]
+codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
 
 [[bench]]
 name = "banking_stage"
@@ -183,8 +226,9 @@ name = "sigverify_stage"
 name = "receive_and_buffer"
 harness = false
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[[bench]]
+name = "scheduler"
+harness = false
 
 [lints]
 workspace = true

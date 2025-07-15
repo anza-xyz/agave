@@ -1,8 +1,8 @@
 use {
     rand::distributions::{Distribution, WeightedIndex},
     rand_chacha::{rand_core::SeedableRng, ChaChaRng},
+    solana_clock::Epoch,
     solana_pubkey::Pubkey,
-    solana_sdk::clock::Epoch,
     std::{collections::HashMap, convert::identity, ops::Index, sync::Arc},
 };
 

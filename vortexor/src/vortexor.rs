@@ -4,16 +4,19 @@ use {
         banking_trace::TracedSender, sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
     },
-    solana_net_utils::{bind_in_range_with_config, bind_more_with_config, SocketConfig},
+    solana_keypair::Keypair,
+    solana_net_utils::sockets::{
+        multi_bind_in_range_with_config, SocketConfiguration as SocketConfig,
+    },
     solana_perf::packet::PacketBatch,
-    solana_sdk::{quic::NotifyKeyUpdate, signature::Keypair},
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_streamer::{
         nonblocking::quic::DEFAULT_WAIT_FOR_CHUNK_TIMEOUT,
         quic::{spawn_server_multi, EndpointKeyUpdater, QuicServerParams},
         streamer::StakedNodes,
     },
     std::{
-        net::UdpSocket,
+        net::{SocketAddr, UdpSocket},
         sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
@@ -56,26 +59,27 @@ impl Vortexor {
     pub fn create_tpu_sockets(
         bind_address: std::net::IpAddr,
         dynamic_port_range: (u16, u16),
+        tpu_address: Option<SocketAddr>,
+        tpu_forward_address: Option<SocketAddr>,
         num_quic_endpoints: usize,
     ) -> TpuSockets {
-        let quic_config = SocketConfig::default().reuseport(true);
+        let quic_config = SocketConfig::default();
 
-        let (_, tpu_quic) =
-            bind_in_range_with_config(bind_address, dynamic_port_range, quic_config)
-                .expect("expected bind to succeed");
-
-        let tpu_quic_port = tpu_quic.local_addr().unwrap().port();
-        let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints, quic_config).unwrap();
-
-        let (_, tpu_quic_fwd) = bind_in_range_with_config(
+        let tpu_quic = bind_sockets(
             bind_address,
-            (tpu_quic_port.saturating_add(1), dynamic_port_range.1),
+            dynamic_port_range,
+            tpu_address,
+            num_quic_endpoints,
             quic_config,
-        )
-        .expect("expected bind to succeed");
+        );
 
-        let tpu_quic_fwd =
-            bind_more_with_config(tpu_quic_fwd, num_quic_endpoints, quic_config).unwrap();
+        let tpu_quic_fwd = bind_sockets(
+            bind_address,
+            dynamic_port_range,
+            tpu_forward_address,
+            num_quic_endpoints,
+            quic_config,
+        );
 
         TpuSockets {
             tpu_quic,
@@ -84,7 +88,7 @@ impl Vortexor {
     }
 
     pub fn create_sigverify_stage(
-        tpu_receiver: Receiver<solana_perf::packet::PacketBatch>,
+        tpu_receiver: Receiver<PacketBatch>,
         non_vote_sender: TracedSender,
     ) -> SigVerifyStage {
         let verifier = TransactionSigVerifier::new(non_vote_sender, None);
@@ -176,4 +180,23 @@ impl Vortexor {
         }
         Ok(())
     }
+}
+
+/// Binds the sockets to the specified address and port range if address is Some.
+/// If the address is None, it binds to the specified bind_address and port range.
+fn bind_sockets(
+    bind_address: std::net::IpAddr,
+    port_range: (u16, u16),
+    address: Option<SocketAddr>,
+    num_quic_endpoints: usize,
+    quic_config: SocketConfig,
+) -> Vec<UdpSocket> {
+    let (bind_address, port_range) = address
+        .map(|addr| (addr.ip(), (addr.port(), addr.port().saturating_add(1))))
+        .unwrap_or((bind_address, port_range));
+
+    let (_, sockets) =
+        multi_bind_in_range_with_config(bind_address, port_range, quic_config, num_quic_endpoints)
+            .expect("expected bind to succeed");
+    sockets
 }

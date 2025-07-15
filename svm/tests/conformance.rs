@@ -4,30 +4,28 @@ use {
         transaction_builder::SanitizedTransactionBuilder,
     },
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
-    lazy_static::lazy_static,
     prost::Message,
+    solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_clock::Clock,
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
+    solana_instruction::AccountMeta,
     solana_log_collector::LogCollector,
+    solana_message::SanitizedMessage,
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::{ProgramCacheEntry, ProgramCacheForTxBatch},
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        clock::Clock,
-        epoch_schedule::EpochSchedule,
-        hash::Hash,
-        instruction::AccountMeta,
-        message::SanitizedMessage,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::Signature,
-        sysvar::{last_restart_slot, SysvarId},
-    },
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_signature::Signature,
     solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
+    solana_sysvar::last_restart_slot,
+    solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
         ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
@@ -59,14 +57,13 @@ const fn feature_u64(feature: &Pubkey) -> u64 {
         | ((feature_id[7] as u64) << 56)
 }
 
-lazy_static! {
-    static ref INDEXED_FEATURES: HashMap<u64, Pubkey> = {
+static INDEXED_FEATURES: std::sync::LazyLock<HashMap<u64, Pubkey>> =
+    std::sync::LazyLock::new(|| {
         FEATURE_NAMES
-            .iter()
-            .map(|(pubkey, _)| (feature_u64(pubkey), *pubkey))
+            .keys()
+            .map(|pubkey| (feature_u64(pubkey), *pubkey))
             .collect()
-    };
-}
+    });
 
 fn setup() -> PathBuf {
     let mut dir = env::current_dir().unwrap();
@@ -386,13 +383,13 @@ fn execute_fixture_as_instr(
             .position(|idx| *idx == *index_txn)
             .unwrap_or(instruction_acct_idx);
 
-        instruction_accounts.push(InstructionAccount {
-            index_in_transaction: *index_txn as IndexOfAccount,
-            index_in_caller: *index_txn as IndexOfAccount,
-            index_in_callee: index_in_callee as IndexOfAccount,
-            is_signer: sanitized_message.is_signer(*index_txn as usize),
-            is_writable: sanitized_message.is_writable(*index_txn as usize),
-        });
+        instruction_accounts.push(InstructionAccount::new(
+            *index_txn as IndexOfAccount,
+            *index_txn as IndexOfAccount,
+            index_in_callee as IndexOfAccount,
+            sanitized_message.is_signer(*index_txn as usize),
+            sanitized_message.is_writable(*index_txn as usize),
+        ));
     }
 
     let mut compute_units_consumed = 0u64;

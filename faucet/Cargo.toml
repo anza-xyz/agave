@@ -9,32 +9,8 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-bincode = { workspace = true }
-clap = { workspace = true }
-crossbeam-channel = { workspace = true }
-log = { workspace = true }
-serde = { workspace = true }
-serde_derive = { workspace = true }
-solana-clap-utils = { workspace = true }
-solana-cli-config = { workspace = true }
-solana-hash = "=2.2.1"
-solana-instruction = "=2.2.1"
-solana-keypair = "=2.2.1"
-solana-logger = "=2.3.1"
-solana-message = "=2.3.0"
-solana-metrics = { workspace = true }
-solana-native-token = "=2.2.1"
-solana-packet = "=2.2.1"
-solana-pubkey = { version = "=2.3.0", features = ["rand"] }
-solana-signer = "=2.2.1"
-solana-system-interface = "=1.0"
-solana-system-transaction = "=2.2.1"
-solana-transaction = "=2.2.2"
-solana-version = { workspace = true }
-spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [lib]
 crate-type = ["lib"]
@@ -44,5 +20,29 @@ name = "solana_faucet"
 name = "solana-faucet"
 path = "src/bin/faucet.rs"
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[dependencies]
+bincode = { workspace = true }
+clap = { workspace = true }
+crossbeam-channel = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_derive = { workspace = true }
+solana-clap-utils = { workspace = true }
+solana-cli-config = { workspace = true }
+solana-hash = "=2.3.0"
+solana-instruction = "=2.3.0"
+solana-keypair = "=2.2.1"
+solana-logger = "=2.3.1"
+solana-message = "=2.4.0"
+solana-metrics = { workspace = true }
+solana-native-token = "=2.2.2"
+solana-packet = "=2.2.1"
+solana-pubkey = { version = "=2.4.0", features = ["rand"] }
+solana-signer = "=2.2.1"
+solana-system-interface = "=1.0"
+solana-system-transaction = "=2.2.1"
+solana-transaction = "=2.2.3"
+solana-version = { workspace = true }
+spl-memo = { version = "=6.0.0", features = ["no-entrypoint"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

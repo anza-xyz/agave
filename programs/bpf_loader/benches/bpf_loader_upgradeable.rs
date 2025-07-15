@@ -3,12 +3,12 @@ use {
     solana_account::{state_traits::StateMut, AccountSharedData},
     solana_bpf_loader_program::Entrypoint,
     solana_instruction::AccountMeta,
-    solana_program::{
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        loader_upgradeable_instruction::UpgradeableLoaderInstruction,
+    solana_loader_v3_interface::{
+        instruction::UpgradeableLoaderInstruction, state::UpgradeableLoaderState,
     },
     solana_program_runtime::invoke_context::mock_process_instruction,
     solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
 };
 
 #[derive(Default)]

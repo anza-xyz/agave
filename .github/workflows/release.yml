@@ -47,6 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.VERSION_BUMP_PAT }}
 
       - name: Parse Info
         id: parse_info

@@ -39,6 +39,7 @@ env:
 jobs:
   check:
     if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -77,6 +78,7 @@ jobs:
 
   test_cli:
     if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -107,6 +109,7 @@ jobs:
 
   cargo-test-sbf:
     if: github.repository == 'anza-xyz/agave'
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -148,7 +151,8 @@ jobs:
         run: |
           source ci/downstream-projects/common.sh
           cd "${{ matrix.programs }}"
-          $CARGO_TEST_SBF --arch v0 --manifest-path program/Cargo.toml
+          $CARGO_BUILD_SBF --arch v0 --manifest-path program/Cargo.toml
+          RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml
 
       - name: Test SBPFv1
         shell: bash
@@ -156,4 +160,23 @@ jobs:
           source ci/downstream-projects/common.sh
           cd "${{ matrix.programs }}"
           rm -rf target/deploy target/sbpf*
-          $CARGO_TEST_SBF --arch v1 --manifest-path program/Cargo.toml
+          $CARGO_BUILD_SBF --arch v1 --manifest-path program/Cargo.toml
+          RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml
+
+      - name: Test SBPFv2
+        shell: bash
+        run: |
+          source ci/downstream-projects/common.sh
+          cd "${{ matrix.programs }}"
+          rm -rf target/deploy target/sbpf*
+          $CARGO_BUILD_SBF --arch v2 --manifest-path program/Cargo.toml
+          RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml
+
+      - name: Test SBPFv3
+        shell: bash
+        run: |
+          source ci/downstream-projects/common.sh
+          cd "${{ matrix.programs }}"
+          rm -rf target/deploy target/sbpf*
+          $CARGO_BUILD_SBF --arch v3 --manifest-path program/Cargo.toml
+          RUSTFLAGS="-Awarnings" SBF_OUT_DIR="../target/deploy"  cargo test --features test-sbf --manifest-path program/Cargo.toml

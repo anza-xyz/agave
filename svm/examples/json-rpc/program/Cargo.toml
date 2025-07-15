@@ -1,6 +1,6 @@
 [package]
 name = "json-rpc-example-program"
-version = "2.3.0"
+version = "3.0.0"
 edition = "2021"
 
 [features]
@@ -10,7 +10,10 @@ frozen-abi = []
 
 [dependencies]
 borsh = "0.9"
-solana-program = { path = "../../../../sdk/program", version = "=2.2.0" }
+solana-account-info = "2.3.0"
+solana-program-entrypoint = "2.3.0"
+solana-msg = "2.2.1"
+solana-pubkey = "2.4.0"
 
 [lib]
 name = "program"

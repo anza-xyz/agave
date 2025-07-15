@@ -305,7 +305,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let instruction =
         limited_deserialize(instruction_data, solana_packet::PACKET_DATA_SIZE as u64)?;
 
-    trace!("process_instruction: {:?}", instruction);
+    trace!("process_instruction: {instruction:?}");
 
     let signers = instruction_context.get_signers(transaction_context)?;
     match instruction {
@@ -542,28 +542,6 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
 
 #[cfg(test)]
 mod tests {
-    #[allow(deprecated)]
-    use solana_sdk::{
-        account::{
-            self, create_account_shared_data_with_fields, to_account, Account, AccountSharedData,
-            ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
-        },
-        fee_calculator::FeeCalculator,
-        hash::{hash, Hash},
-        instruction::{AccountMeta, Instruction, InstructionError},
-        nonce::{
-            self,
-            state::{
-                Data as NonceData, DurableNonce, State as NonceState, Versions as NonceVersions,
-            },
-        },
-        nonce_account, system_instruction, system_program,
-        sysvar::{
-            self,
-            recent_blockhashes::{IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES},
-            rent::Rent,
-        },
-    };
     use {
         super::*,
         bincode::serialize,
@@ -572,6 +550,29 @@ mod tests {
             invoke_context::mock_process_instruction, with_mock_invoke_context,
         },
         std::collections::BinaryHeap,
+    };
+    #[allow(deprecated)]
+    use {
+        solana_account::{
+            self as account, create_account_shared_data_with_fields, to_account, Account,
+            AccountSharedData, ReadableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
+        },
+        solana_fee_calculator::FeeCalculator,
+        solana_hash::Hash,
+        solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+        solana_nonce::{
+            self as nonce,
+            state::{Data as NonceData, DurableNonce, State as NonceState},
+            versions::Versions as NonceVersions,
+        },
+        solana_nonce_account as nonce_account,
+        solana_sha256_hasher::hash,
+        solana_system_interface::{instruction as system_instruction, program as system_program},
+        solana_sysvar::{
+            self as sysvar,
+            recent_blockhashes::{IntoIterSorted, IterItem, RecentBlockhashes, MAX_ENTRIES},
+            rent::Rent,
+        },
     };
 
     impl From<Pubkey> for Address {
@@ -1114,7 +1115,7 @@ mod tests {
             &bincode::serialize(&SystemInstruction::CreateAccount {
                 lamports: 50,
                 space: 2,
-                owner: sysvar::id(),
+                owner: solana_sdk_ids::sysvar::id(),
             })
             .unwrap(),
             vec![(from, from_account), (to, to_account)],
@@ -1175,7 +1176,9 @@ mod tests {
         let nonce = Pubkey::new_unique();
         let nonce_account = AccountSharedData::new_data(
             42,
-            &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data::default())),
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(
+                nonce::state::Data::default(),
+            )),
             &system_program::id(),
         )
         .unwrap();
@@ -1253,7 +1256,7 @@ mod tests {
         // assign to sysvar instead of system_program
         process_instruction(
             &bincode::serialize(&SystemInstruction::Assign {
-                owner: sysvar::id(),
+                owner: solana_sdk_ids::sysvar::id(),
             })
             .unwrap(),
             vec![(pubkey, account)],
@@ -1450,7 +1453,7 @@ mod tests {
         let from = Pubkey::new_unique();
         let from_account = AccountSharedData::new_data(
             100,
-            &nonce::state::Versions::new(nonce::State::Initialized(nonce::state::Data {
+            &nonce::versions::Versions::new(nonce::state::State::Initialized(nonce::state::Data {
                 authority: from,
                 ..nonce::state::Data::default()
             })),
@@ -2049,7 +2052,7 @@ mod tests {
             let account = AccountSharedData::new(100, size, &system_program::id());
             let accounts = process_instruction(
                 &bincode::serialize(&SystemInstruction::Assign {
-                    owner: solana_sdk::native_loader::id(),
+                    owner: solana_sdk_ids::native_loader::id(),
                 })
                 .unwrap(),
                 vec![(pubkey, account.clone())],
@@ -2060,7 +2063,7 @@ mod tests {
                 }],
                 Ok(()),
             );
-            assert_eq!(accounts[0].owner(), &solana_sdk::native_loader::id());
+            assert_eq!(accounts[0].owner(), &solana_sdk_ids::native_loader::id());
             assert_eq!(accounts[0].lamports(), 100);
 
             let pubkey2 = Pubkey::new_unique();
@@ -2087,7 +2090,7 @@ mod tests {
                 ],
                 Ok(()),
             );
-            assert_eq!(accounts[1].owner(), &solana_sdk::native_loader::id());
+            assert_eq!(accounts[1].owner(), &solana_sdk_ids::native_loader::id());
             assert_eq!(accounts[1].lamports(), 150);
         }
     }

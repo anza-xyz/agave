@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_download_utils"
+
 [dependencies]
 log = { workspace = true }
 solana-clock = { workspace = true }
@@ -18,10 +25,3 @@ solana-runtime = { workspace = true }
 
 [dev-dependencies]
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_download_utils"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

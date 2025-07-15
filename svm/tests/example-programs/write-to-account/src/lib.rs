@@ -1,10 +1,10 @@
-use solana_program::{
-    account_info::{next_account_info, AccountInfo},
-    entrypoint,
-    entrypoint::ProgramResult,
-    incinerator, msg,
-    program_error::ProgramError,
-    pubkey::Pubkey,
+use {
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_msg::msg,
+    solana_program_entrypoint::entrypoint,
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::incinerator,
 };
 
 entrypoint!(process_instruction);
@@ -50,7 +50,7 @@ fn process_instruction(
         // reallocate account
         3 => {
             let new_size = usize::from_le_bytes(data[1..9].try_into().unwrap());
-            target_account_info.realloc(new_size, false)?;
+            target_account_info.realloc(new_size, true)?;
         }
         // bad ixn
         _ => {

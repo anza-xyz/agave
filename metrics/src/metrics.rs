@@ -4,7 +4,6 @@ use {
     crate::{counter::CounterPoint, datapoint::DataPoint},
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     gethostname::gethostname,
-    lazy_static::lazy_static,
     log::*,
     solana_cluster_type::ClusterType,
     solana_sha256_hasher::hash,
@@ -390,23 +389,19 @@ impl Drop for MetricsAgent {
 }
 
 fn get_singleton_agent() -> &'static MetricsAgent {
-    lazy_static! {
-        static ref AGENT: MetricsAgent = MetricsAgent::default();
-    };
-
+    static AGENT: std::sync::LazyLock<MetricsAgent> =
+        std::sync::LazyLock::new(MetricsAgent::default);
     &AGENT
 }
 
-lazy_static! {
-    static ref HOST_ID: Arc<RwLock<String>> = {
-        Arc::new(RwLock::new({
-            let hostname: String = gethostname()
-                .into_string()
-                .unwrap_or_else(|_| "".to_string());
-            format!("{}", hash(hostname.as_bytes()))
-        }))
-    };
-}
+static HOST_ID: std::sync::LazyLock<RwLock<String>> = std::sync::LazyLock::new(|| {
+    RwLock::new({
+        let hostname: String = gethostname()
+            .into_string()
+            .unwrap_or_else(|_| "".to_string());
+        format!("{}", hash(hostname.as_bytes()))
+    })
+});
 
 pub fn set_host_id(host_id: String) {
     info!("host id: {}", host_id);

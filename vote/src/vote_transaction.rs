@@ -11,7 +11,7 @@ use {
 #[cfg_attr(
     feature = "frozen-abi",
     derive(AbiExample, AbiEnumVisitor),
-    frozen_abi(digest = "5tNdc77vxH68VdiV2CNwXRhcJzDMk2ncYXYw3JQdMYhd")
+    frozen_abi(digest = "FpMQMRgU1GJS1jyt69r2aHYRa8etuhzNkcDiw5oKtCiv")
 )]
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub enum VoteTransaction {

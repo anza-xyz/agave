@@ -27,6 +27,7 @@
 
 use {
     crate::{
+        cluster_info_metrics::{last_four_chars, should_report_message_signature},
         contact_info::ContactInfo,
         crds_data::CrdsData,
         crds_entry::CrdsEntry,
@@ -44,7 +45,6 @@ use {
     solana_clock::Slot,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_signature::Signature,
     std::{
         cmp::Ordering,
         collections::{hash_map, BTreeMap, HashMap, VecDeque},
@@ -57,12 +57,11 @@ const CRDS_SHARDS_BITS: u32 = 12;
 // Number of vote slots to track in an lru-cache for metrics.
 const VOTE_SLOTS_METRICS_CAP: usize = 100;
 // Required number of leading zero bits for crds signature to get reported to influx
-// mean new push messages received per minute per node
-//      testnet: ~500k,
-//      mainnet: ~280k
+// mean new CrdsValues received per minute per node
+//      testnet/mainnet: ~680k as of 2025-06-06
 // target: 1 signature reported per minute
-// log2(500k) = ~18.9.
-const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
+// log2(680k) = ~19.375.
+pub(crate) const SIGNATURE_SAMPLE_LEADING_ZEROS: u32 = 19;
 
 pub struct Crds {
     /// Stores the map of labels and values
@@ -492,15 +491,20 @@ impl Crds {
         // used when purging old values. If the origin does not exist in the
         // table, fallback to exhaustive update on all associated records.
         let origin = CrdsValueLabel::ContactInfo(*pubkey);
-        if let Some(origin) = self.table.get_mut(&origin) {
-            if origin.local_timestamp < now {
-                origin.local_timestamp = now;
+        match self.table.get_mut(&origin) {
+            Some(origin) => {
+                if origin.local_timestamp < now {
+                    origin.local_timestamp = now;
+                }
             }
-        } else if let Some(indices) = self.records.get(pubkey) {
-            for index in indices {
-                let entry = self.table.index_mut(*index);
-                if entry.local_timestamp < now {
-                    entry.local_timestamp = now;
+            None => {
+                if let Some(indices) = self.records.get(pubkey) {
+                    for index in indices {
+                        let entry = self.table.index_mut(*index);
+                        if entry.local_timestamp < now {
+                            entry.local_timestamp = now;
+                        }
+                    }
                 }
             }
         }
@@ -712,22 +716,23 @@ impl CrdsDataStats {
             return;
         };
 
-        if should_report_message_signature(entry.value.signature()) {
+        if should_report_message_signature(entry.value.signature(), SIGNATURE_SAMPLE_LEADING_ZEROS)
+        {
             datapoint_info!(
                 "gossip_crds_sample",
                 (
                     "origin",
-                    entry.value.pubkey().to_string().get(..8),
+                    last_four_chars(&entry.value.pubkey().to_string()),
                     Option<String>
                 ),
                 (
                     "signature",
-                    entry.value.signature().to_string().get(..8),
+                    last_four_chars(&entry.value.signature().to_string()),
                     Option<String>
                 ),
                 (
                     "from",
-                    from.to_string().get(..8),
+                    last_four_chars(&from.to_string()),
                     Option<String>
                 )
             );
@@ -777,15 +782,6 @@ impl CrdsStats {
             GossipRoute::PullResponse => self.pull.record_fail(entry),
         }
     }
-}
-
-/// check if first SIGNATURE_SAMPLE_LEADING_ZEROS bits of signature are 0
-#[inline]
-fn should_report_message_signature(signature: &Signature) -> bool {
-    let Some(Ok(bytes)) = signature.as_ref().get(..8).map(<[u8; 8]>::try_from) else {
-        return false;
-    };
-    u64::from_le_bytes(bytes).trailing_zeros() >= SIGNATURE_SAMPLE_LEADING_ZEROS
 }
 
 #[cfg(test)]

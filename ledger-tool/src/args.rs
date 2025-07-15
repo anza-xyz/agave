@@ -1,8 +1,9 @@
 use {
     crate::LEDGER_TOOL_DIRECTORY,
     clap::{value_t, value_t_or_exit, values_t, values_t_or_exit, Arg, ArgMatches},
+    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
     solana_accounts_db::{
-        accounts_db::{AccountsDb, AccountsDbConfig, CreateAncientStorage},
+        accounts_db::{AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{AccountsIndexConfig, IndexLimitMb, ScanFilter},
         utils::create_and_canonicalize_directories,
@@ -12,12 +13,13 @@ use {
         input_parsers::pubkeys_of,
         input_validators::{is_parsable, is_pow2, is_within_range},
     },
+    solana_cli_output::CliAccountNewConfig,
+    solana_clock::Slot,
     solana_ledger::{
         blockstore_processor::ProcessOptions,
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_runtime::runtime_config::RuntimeConfig,
-    solana_sdk::clock::Slot,
     std::{
         collections::HashSet,
         num::NonZeroUsize,
@@ -69,13 +71,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .long("accounts-db-skip-shrink")
             .help(
                 "Enables faster starting of ledger-tool by skipping shrink. This option is for \
-                use during testing.",
+                 use during testing.",
             ),
         Arg::with_name("accounts_db_verify_refcounts")
             .long("accounts-db-verify-refcounts")
             .help(
                 "Debug option to scan all AppendVecs and verify account index refcounts prior to \
-                clean",
+                 clean",
             )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_scan_filter_for_shrinking")
@@ -84,19 +86,13 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
             .possible_values(&["all", "only-abnormal", "only-abnormal-with-verify"])
             .help(
                 "Debug option to use different type of filtering for accounts index scan in \
-                shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is the default. \
-                \"only-abnormal\" will scan in-memory accounts index only for abnormal entries and \
-                skip scanning on-disk accounts index by assuming that on-disk accounts index contains \
-                only normal accounts index entry. \"only-abnormal-with-verify\" is similar to \
-                \"only-abnormal\", which will scan in-memory index for abnormal entries, but will also \
-                verify that on-disk account entries are indeed normal.",
-            )
-            .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_test_skip_rewrites")
-            .long("accounts-db-test-skip-rewrites")
-            .help(
-                "Debug option to skip rewrites for rent-exempt accounts but still add them in \
-                 bank delta hash calculation",
+                 shrinking. \"all\" will scan both in-memory and on-disk accounts index, which is \
+                 the default. \"only-abnormal\" will scan in-memory accounts index only for \
+                 abnormal entries and skip scanning on-disk accounts index by assuming that \
+                 on-disk accounts index contains only normal accounts index entry. \
+                 \"only-abnormal-with-verify\" is similar to \"only-abnormal\", which will scan \
+                 in-memory index for abnormal entries, but will also verify that on-disk account \
+                 entries are indeed normal.",
             )
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_skip_initial_hash_calculation")
@@ -112,13 +108,6 @@ pub fn accounts_db_args<'a, 'b>() -> Box<[Arg<'a, 'b>]> {
                 "AppendVecs that are older than (slots_per_epoch - SLOT-OFFSET) are squashed \
                  together.",
             )
-            .hidden(hidden_unless_forced()),
-        Arg::with_name("accounts_db_squash_storages_method")
-            .long("accounts-db-squash-storages-method")
-            .value_name("METHOD")
-            .takes_value(true)
-            .possible_values(&["pack", "append"])
-            .help("Squash multiple account storage files together using this method")
             .hidden(hidden_unless_forced()),
         Arg::with_name("accounts_db_access_storages_method")
             .long("accounts-db-access-storages-method")
@@ -242,8 +231,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         UseSnapshotArchivesAtStartup
     );
     let accounts_db_skip_shrink = arg_matches.is_present("accounts_db_skip_shrink");
-    let accounts_db_test_hash_calculation =
-        arg_matches.is_present("accounts_db_test_hash_calculation");
     let verify_index = arg_matches.is_present("verify_accounts_index");
     let limit_load_slot_count_from_snapshot =
         value_t!(arg_matches, "limit_load_slot_count_from_snapshot", usize).ok();
@@ -261,7 +248,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         runtime_config,
         accounts_db_config,
         accounts_db_skip_shrink,
-        accounts_db_test_hash_calculation,
         verify_index,
         limit_load_slot_count_from_snapshot,
         on_halt_store_hash_raw_data_for_debug,
@@ -321,17 +307,6 @@ pub fn get_accounts_db_config(
         .pop()
         .unwrap();
 
-    let create_ancient_storage = arg_matches
-        .value_of("accounts_db_squash_storages_method")
-        .map(|method| match method {
-            "pack" => CreateAncientStorage::Pack,
-            "append" => CreateAncientStorage::Append,
-            _ => {
-                // clap will enforce one of the above values is given
-                unreachable!("invalid value given to accounts-db-squash-storages-method")
-            }
-        })
-        .unwrap_or_default();
     let storage_access = arg_matches
         .value_of("accounts_db_access_storages_method")
         .map(|method| match method {
@@ -382,9 +357,6 @@ pub fn get_accounts_db_config(
         .ok(),
         exhaustively_verify_refcounts: arg_matches.is_present("accounts_db_verify_refcounts"),
         skip_initial_hash_calc: arg_matches.is_present("accounts_db_skip_initial_hash_calculation"),
-        test_skip_rewrites_but_include_in_bank_hash: arg_matches
-            .is_present("accounts_db_test_skip_rewrites"),
-        create_ancient_storage,
         storage_access,
         scan_filter_for_shrinking,
         enable_experimental_accumulator_hash: !arg_matches
@@ -395,6 +367,37 @@ pub fn get_accounts_db_config(
             .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_hash_threads,
         ..AccountsDbConfig::default()
+    }
+}
+
+pub(crate) fn parse_encoding_format(matches: &ArgMatches<'_>) -> UiAccountEncoding {
+    match matches.value_of("encoding") {
+        Some("jsonParsed") => UiAccountEncoding::JsonParsed,
+        Some("base64") => UiAccountEncoding::Base64,
+        Some("base64+zstd") => UiAccountEncoding::Base64Zstd,
+        _ => UiAccountEncoding::Base64,
+    }
+}
+
+pub(crate) fn parse_account_output_config(matches: &ArgMatches<'_>) -> CliAccountNewConfig {
+    let data_encoding = parse_encoding_format(matches);
+    let output_account_data = !matches.is_present("no_account_data");
+    let data_slice_config = if output_account_data {
+        // None yields the entire account in the slice
+        None
+    } else {
+        // usize::MAX is a sentinel that will yield an
+        // empty data slice. Because of this, length is
+        // ignored so any value will do
+        let offset = usize::MAX;
+        let length = 0;
+        Some(UiDataSliceConfig { offset, length })
+    };
+
+    CliAccountNewConfig {
+        data_encoding,
+        data_slice_config,
+        ..CliAccountNewConfig::default()
     }
 }
 

@@ -1,13 +1,17 @@
 #![allow(unused)]
 
 #[allow(deprecated)]
-use solana_sdk::sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
+use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_bpf_loader_program::syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
-        SyscallLog, SyscallMemcpy, SyscallMemset, SyscallSetReturnData,
+        SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
+        SyscallSetReturnData,
     },
+    solana_clock::{Clock, Slot, UnixTimestamp},
     solana_fee_structure::{FeeDetails, FeeStructure},
+    solana_loader_v3_interface::{self as bpf_loader_upgradeable, state::UpgradeableLoaderState},
     solana_program_runtime::{
         execution_budget::{SVMTransactionExecutionBudget, SVMTransactionExecutionCost},
         invoke_context::InvokeContext,
@@ -17,21 +21,14 @@ use {
             vm::Config,
         },
     },
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader, bpf_loader_deprecated,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        clock::{Clock, UnixTimestamp},
-        compute_budget, loader_v4, native_loader,
-        pubkey::Pubkey,
-        rent::Rent,
-        slot_hashes::Slot,
-        sysvar::SysvarId,
-    },
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, compute_budget, loader_v4},
     solana_svm::transaction_processor::TransactionBatchProcessor,
     solana_svm_callback::{AccountState, InvokeContextCallback, TransactionProcessingCallback},
     solana_svm_feature_set::SVMFeatureSet,
     solana_svm_transaction::svm_message::SVMMessage,
+    solana_sysvar_id::SysvarId,
     solana_type_overrides::sync::{Arc, RwLock},
     std::{
         cmp::Ordering,
@@ -91,7 +88,13 @@ impl TransactionProcessingCallback for MockBankCallback {
     }
 
     fn add_builtin_account(&self, name: &str, program_id: &Pubkey) {
-        let account_data = native_loader::create_loadable_account_with_fields(name, (5000, 0));
+        let account_data = AccountSharedData::from(Account {
+            lamports: 5000,
+            data: name.as_bytes().to_vec(),
+            owner: solana_sdk_ids::native_loader::id(),
+            executable: true,
+            rent_epoch: 0,
+        });
 
         self.account_shared_data
             .write()
@@ -221,7 +224,7 @@ pub fn deploy_program_with_upgrade_authority(
     let mut account_data = AccountSharedData::default();
     let buffer = bincode::serialize(&state).unwrap();
     account_data.set_lamports(rent.minimum_balance(buffer.len()));
-    account_data.set_owner(bpf_loader_upgradeable::id());
+    account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
     account_data.set_executable(true);
     account_data.set_data(buffer);
     mock_bank
@@ -247,7 +250,7 @@ pub fn deploy_program_with_upgrade_authority(
     header.append(&mut complement);
     header.append(&mut buffer);
     account_data.set_lamports(rent.minimum_balance(header.len()));
-    account_data.set_owner(bpf_loader_upgradeable::id());
+    account_data.set_owner(solana_sdk_ids::bpf_loader_upgradeable::id());
     account_data.set_data(header);
     mock_bank
         .account_shared_data
@@ -268,7 +271,7 @@ pub fn register_builtins(
     let loader_v3_name = "solana_bpf_loader_upgradeable_program";
     batch_processor.add_builtin(
         mock_bank,
-        bpf_loader_upgradeable::id(),
+        solana_sdk_ids::bpf_loader_upgradeable::id(),
         loader_v3_name,
         ProgramCacheEntry::new_builtin(
             DEPLOYMENT_SLOT,
@@ -350,7 +353,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: true,
+        enable_stack_frame_gaps: false,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: true,
@@ -360,7 +363,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         sanitize_user_provided_values: true,
         enabled_sbpf_versions: SBPFVersion::V0..=SBPFVersion::V3,
         optimize_rodata: false,
-        aligned_memory_mapping: true,
+        aligned_memory_mapping: false,
     };
 
     // These functions are system calls the compile contract calls during execution, so they
@@ -377,6 +380,12 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         .expect("Registration failed");
     loader
         .register_function("sol_memset_", SyscallMemset::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memcmp_", SyscallMemcmp::vm)
+        .expect("Registration failed");
+    loader
+        .register_function("sol_memmove_", SyscallMemmove::vm)
         .expect("Registration failed");
     loader
         .register_function("sol_invoke_signed_rust", SyscallInvokeSignedRust::vm)

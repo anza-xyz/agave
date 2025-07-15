@@ -34,7 +34,7 @@ rust-v0:
 	cp -r target/sbpf-solana-solana/release/* target/deploy
 
 rust-new:
-	RUSTFLAGS="-C instrument-coverage=no" cargo +solana build --release --target sbpf$(VER)-solana-solana --workspace --features dynamic-frames ; \
+	RUSTFLAGS="-C instrument-coverage=no" cargo +solana build --release --target sbpf$(VER)-solana-solana --workspace ; \
 	cp -r target/sbpf$(VER)-solana-solana/release/* target/deploy
 
 .PHONY: test-v3

@@ -17,12 +17,17 @@ use {
         validator_configs::*,
     },
     log::*,
+    solana_account::AccountSharedData,
     solana_accounts_db::utils::create_accounts_run_and_snapshot_dirs,
+    solana_clock::{self as clock, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
     solana_core::{
         consensus::{tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD},
+        snapshot_packager_service::SnapshotPackagerService,
         validator::{is_snapshot_config_valid, ValidatorConfig},
     },
     solana_gossip::gossip_service::discover_validators,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         blockstore::{Blockstore, PurgeType},
@@ -30,25 +35,18 @@ use {
         blockstore_options::{AccessType, BlockstoreOptions},
         leader_schedule::{FixedSchedule, IdentityKeyedLeaderSchedule, LeaderSchedule},
     },
+    solana_native_token::LAMPORTS_PER_SOL,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_runtime::{
-        snapshot_bank_utils::DISABLED_SNAPSHOT_ARCHIVE_INTERVAL, snapshot_config::SnapshotConfig,
-    },
-    solana_sdk::{
-        account::AccountSharedData,
-        clock::{self, Slot, DEFAULT_MS_PER_SLOT, DEFAULT_TICKS_PER_SLOT},
-        hash::Hash,
-        native_token::LAMPORTS_PER_SOL,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
+    solana_runtime::{snapshot_config::SnapshotConfig, snapshot_utils::SnapshotInterval},
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_turbine::broadcast_stage::BroadcastStageType,
     static_assertions,
     std::{
         collections::HashSet,
         fs, iter,
-        num::NonZeroUsize,
+        num::{NonZeroU64, NonZeroUsize},
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -464,7 +462,7 @@ pub fn test_faulty_node(
         // Use a fixed leader schedule so that only the faulty node gets leader slots.
         let validator_to_slots = vec![(
             validator_keys[0].0.as_ref().pubkey(),
-            solana_sdk::clock::DEFAULT_DEV_SLOTS_PER_EPOCH as usize,
+            solana_clock::DEFAULT_DEV_SLOTS_PER_EPOCH as usize,
         )];
         let leader_schedule = create_custom_leader_schedule(validator_to_slots.into_iter());
         FixedSchedule {
@@ -536,15 +534,12 @@ pub struct SnapshotValidatorConfig {
 
 impl SnapshotValidatorConfig {
     pub fn new(
-        full_snapshot_archive_interval_slots: Slot,
-        incremental_snapshot_archive_interval_slots: Slot,
+        full_snapshot_archive_interval: SnapshotInterval,
+        incremental_snapshot_archive_interval: SnapshotInterval,
         num_account_paths: usize,
     ) -> SnapshotValidatorConfig {
-        // Interval values must be nonzero
-        assert!(full_snapshot_archive_interval_slots > 0);
-        assert!(incremental_snapshot_archive_interval_slots > 0);
         // Ensure that some snapshots will be created
-        assert!(full_snapshot_archive_interval_slots != DISABLED_SNAPSHOT_ARCHIVE_INTERVAL);
+        assert_ne!(full_snapshot_archive_interval, SnapshotInterval::Disabled);
 
         // Create the snapshot config
         let _ = fs::create_dir_all(farf_dir());
@@ -552,8 +547,8 @@ impl SnapshotValidatorConfig {
         let full_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let incremental_snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
         let snapshot_config = SnapshotConfig {
-            full_snapshot_archive_interval_slots,
-            incremental_snapshot_archive_interval_slots,
+            full_snapshot_archive_interval,
+            incremental_snapshot_archive_interval,
             full_snapshot_archives_dir: full_snapshot_archives_dir.path().to_path_buf(),
             incremental_snapshot_archives_dir: incremental_snapshot_archives_dir
                 .path()
@@ -573,6 +568,11 @@ impl SnapshotValidatorConfig {
         let validator_config = ValidatorConfig {
             snapshot_config,
             account_paths: account_storage_paths,
+            validator_exit_backpressure: [(
+                SnapshotPackagerService::NAME.to_string(),
+                Arc::new(AtomicBool::new(false)),
+            )]
+            .into(),
             ..ValidatorConfig::default_for_test()
         };
 
@@ -587,12 +587,12 @@ impl SnapshotValidatorConfig {
 }
 
 pub fn setup_snapshot_validator_config(
-    snapshot_interval_slots: Slot,
+    snapshot_interval_slots: NonZeroU64,
     num_account_paths: usize,
 ) -> SnapshotValidatorConfig {
     SnapshotValidatorConfig::new(
-        snapshot_interval_slots,
-        DISABLED_SNAPSHOT_ARCHIVE_INTERVAL,
+        SnapshotInterval::Slots(snapshot_interval_slots),
+        SnapshotInterval::Disabled,
         num_account_paths,
     )
 }

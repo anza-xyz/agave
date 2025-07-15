@@ -1,27 +1,27 @@
 #![cfg(test)]
 use {
+    solana_account::Account,
+    solana_clock::{Slot, MAX_PROCESSING_AGE},
     solana_compute_budget::compute_budget_limits::MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
+    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_cost_model::cost_model::CostModel,
+    solana_genesis_config::{create_genesis_config, GenesisConfig},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_message::Message,
+    solana_native_token::sol_to_lamports,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::Account,
-        bpf_loader,
-        bpf_loader_upgradeable::UpgradeableLoaderState,
-        clock::{Slot, MAX_PROCESSING_AGE},
-        compute_budget::ComputeBudgetInstruction,
-        genesis_config::{create_genesis_config, GenesisConfig},
-        instruction::{AccountMeta, Instruction, InstructionError},
-        message::Message,
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        system_instruction::{self},
-        transaction::{Result, Transaction, TransactionError},
-    },
+    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, secp256k1_program},
+    solana_signer::Signer,
     solana_svm::transaction_processor::ExecutionRecordingConfig,
+    solana_system_interface::instruction as system_instruction,
     solana_timings::ExecuteTimings,
+    solana_transaction::Transaction,
+    solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::sync::{Arc, RwLock},
 };
 
@@ -109,7 +109,6 @@ impl TestSetup {
             .load_execute_and_commit_transactions(
                 &batch,
                 MAX_PROCESSING_AGE,
-                false,
                 ExecutionRecordingConfig::new_single_setting(false),
                 &mut ExecuteTimings::default(),
                 None,
@@ -125,7 +124,8 @@ impl TestSetup {
             },
             Err(err) => {
                 unreachable!(
-                    "All test Transactions should be well-formatted for execution and commit, err: '{}'", err
+                    "All test Transactions should be well-formatted for execution and commit, \
+                     err: '{err}'",
                 );
             }
         }
@@ -184,7 +184,7 @@ impl TestSetup {
                 Account {
                     lamports,
                     data,
-                    owner: solana_sdk::bpf_loader_upgradeable::id(),
+                    owner: bpf_loader_upgradeable::id(),
                     ..Default::default()
                 },
             );
@@ -201,13 +201,13 @@ impl TestSetup {
                 Account {
                     lamports,
                     data: vec![0; space],
-                    owner: solana_sdk::bpf_loader_upgradeable::id(),
+                    owner: bpf_loader_upgradeable::id(),
                     ..Default::default()
                 },
             );
         }
 
-        solana_sdk::bpf_loader_upgradeable::deploy_with_max_program_len(
+        solana_loader_v3_interface::instruction::deploy_with_max_program_len(
             &payer_address,
             &program_address,
             &buffer_address,
@@ -403,7 +403,7 @@ fn test_builtin_ix_precompiled() {
     assert_eq!(
         expected,
         test_setup.execute_test_transaction(&[Instruction::new_with_bincode(
-            solana_sdk::secp256k1_program::id(),
+            secp256k1_program::id(),
             &[0u8],
             // Add a dummy account to generate a unique transaction
             vec![AccountMeta::new_readonly(Pubkey::new_unique(), false)]

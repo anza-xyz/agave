@@ -1,9 +1,10 @@
 use {
+    solana_clock::Slot,
     solana_ledger::{
         blockstore::Blockstore,
         shred::{Nonce, SIZE_OF_NONCE},
     },
-    solana_sdk::{clock::Slot, packet::Packet},
+    solana_packet::Packet,
     std::{io, net::SocketAddr},
 };
 
@@ -45,14 +46,13 @@ pub fn repair_response_packet_from_bytes(
 mod test {
     use {
         super::*,
+        solana_keypair::Keypair,
         solana_ledger::{
             shred::{Shred, ShredFlags},
             sigverify_shreds::{verify_shred_cpu, LruCache},
         },
-        solana_sdk::{
-            packet::PacketFlags,
-            signature::{Keypair, Signer},
-        },
+        solana_packet::PacketFlags,
+        solana_signer::Signer,
         std::{
             collections::HashMap,
             net::{IpAddr, Ipv4Addr},
@@ -87,14 +87,14 @@ mod test {
         packet.meta_mut().flags |= PacketFlags::REPAIR;
 
         let leader_slots = HashMap::from([(slot, keypair.pubkey())]);
-        assert!(verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
         let wrong_keypair = Keypair::new();
         let leader_slots = HashMap::from([(slot, wrong_keypair.pubkey())]);
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
 
         let leader_slots = HashMap::new();
-        assert!(!verify_shred_cpu(&packet, &leader_slots, &cache));
+        assert!(!verify_shred_cpu((&packet).into(), &leader_slots, &cache));
     }
 
     #[test]

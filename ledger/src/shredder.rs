@@ -4,16 +4,17 @@ use {
     },
     itertools::Itertools,
     lazy_lru::LruCache,
-    lazy_static::lazy_static,
     rayon::{prelude::*, ThreadPool},
     reed_solomon_erasure::{
         galois_8::ReedSolomon,
         Error::{InvalidIndex, TooFewDataShards, TooFewShardsPresent},
     },
+    solana_clock::Slot,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_rayon_threadlimit::get_thread_count,
-    solana_sdk::{clock::Slot, hash::Hash, signature::Keypair},
     std::{
         borrow::Borrow,
         fmt::Debug,
@@ -21,13 +22,13 @@ use {
     },
 };
 
-lazy_static! {
-    static ref PAR_THREAD_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
+static PAR_THREAD_POOL: std::sync::LazyLock<ThreadPool> = std::sync::LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
         .num_threads(get_thread_count())
         .thread_name(|i| format!("solShredder{i:02}"))
         .build()
-        .unwrap();
-}
+        .unwrap()
+});
 
 // Maps number of data shreds to the optimal erasure batch size which has the
 // same recovery probabilities as a 32:32 erasure batch.
@@ -258,6 +259,7 @@ impl Shredder {
                 .into_iter()
                 .zip(next_code_index)
                 .flat_map(|(shreds, next_code_index)| {
+                    #[allow(deprecated)]
                     Shredder::generate_coding_shreds(&shreds, next_code_index, reed_solomon_cache)
                 })
                 .collect()
@@ -267,6 +269,7 @@ impl Shredder {
                     .into_par_iter()
                     .zip(next_code_index)
                     .flat_map(|(shreds, next_code_index)| {
+                        #[allow(deprecated)]
                         Shredder::generate_coding_shreds(
                             &shreds,
                             next_code_index,
@@ -293,6 +296,7 @@ impl Shredder {
     }
 
     /// Generates coding shreds for the data shreds in the current FEC set
+    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
     pub fn generate_coding_shreds<T: Borrow<Shred>>(
         data: &[T],
         next_code_index: u32,
@@ -343,6 +347,7 @@ impl Shredder {
             .enumerate()
             .map(|(i, parity)| {
                 let index = next_code_index + u32::try_from(i).unwrap();
+                #[allow(deprecated)]
                 Shred::new_from_parity_shard(
                     slot,
                     index,
@@ -545,15 +550,15 @@ mod tests {
         },
         assert_matches::assert_matches,
         rand::{seq::SliceRandom, Rng},
-        solana_sdk::{
-            hash::{hash, Hash},
-            pubkey::Pubkey,
-            shred_version,
-            signature::{Signature, Signer},
-            system_transaction,
-        },
+        solana_hash::Hash,
+        solana_pubkey::Pubkey,
+        solana_sha256_hasher::hash,
+        solana_shred_version as shred_version,
+        solana_signature::Signature,
+        solana_signer::Signer,
+        solana_system_transaction as system_transaction,
         std::{collections::HashSet, convert::TryInto, iter::repeat_with, sync::Arc},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     fn verify_test_code_shred(shred: &Shred, index: u32, slot: Slot, pk: &Pubkey, verify: bool) {
@@ -655,18 +660,18 @@ mod tests {
         assert_eq!(entries, deshred_entries);
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_data_shredder(chained: bool, is_last_in_slot: bool) {
         run_test_data_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_deserialize_shred_payload(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(
@@ -704,10 +709,10 @@ mod tests {
         }
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_shred_reference_tick(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
@@ -746,10 +751,10 @@ mod tests {
         assert_eq!(deserialized_shred.reference_tick(), 5);
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_shred_reference_tick_overflow(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let slot = 1;
@@ -843,10 +848,10 @@ mod tests {
         }
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_data_and_code_shredder(chained: bool, is_last_in_slot: bool) {
         run_test_data_and_code_shredder(0x1234_5678_9abc_def0, chained, is_last_in_slot);
     }
@@ -1088,13 +1093,13 @@ mod tests {
         let mut rng = rand::thread_rng();
         let txs = repeat_with(|| {
             let from_pubkey = Pubkey::new_unique();
-            let instruction = solana_sdk::system_instruction::transfer(
+            let instruction = solana_system_interface::instruction::transfer(
                 &from_pubkey,
                 &Pubkey::new_unique(), // to
                 rng.gen(),             // lamports
             );
-            let message = solana_sdk::message::Message::new(&[instruction], Some(&from_pubkey));
-            let mut tx = solana_sdk::transaction::Transaction::new_unsigned(message);
+            let message = solana_message::Message::new(&[instruction], Some(&from_pubkey));
+            let mut tx = solana_transaction::Transaction::new_unsigned(message);
             // Also randomize the signatre bytes.
             let mut signature = [0u8; 64];
             rng.fill(&mut signature[..]);
@@ -1165,10 +1170,10 @@ mod tests {
         }
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_shred_version(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());
@@ -1203,10 +1208,10 @@ mod tests {
             .any(|s| s.version() != version));
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_shred_fec_set_index(chained: bool, is_last_in_slot: bool) {
         let keypair = Arc::new(Keypair::new());
         let hash = hash(Hash::default().as_ref());

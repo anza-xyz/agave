@@ -7,25 +7,23 @@
 
 use {
     agave_feature_set::stake_raise_minimum_delegation_to_1_sol,
+    solana_account::Account as SolanaAccount,
+    solana_instruction::Instruction,
+    solana_keypair::Keypair,
+    solana_program_error::{ProgramError, ProgramResult},
     solana_program_test::*,
-    solana_sdk::{
-        account::Account as SolanaAccount,
-        entrypoint::ProgramResult,
-        instruction::Instruction,
-        program_error::ProgramError,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        signers::Signers,
-        stake::{
-            self,
-            instruction::{self as ixn, StakeError},
-            program as stake_program,
-            state::{Authorized, Lockup, Meta, Stake, StakeStateV2},
-        },
-        system_instruction, system_program,
-        sysvar::{clock::Clock, stake_history::StakeHistory},
-        transaction::{Transaction, TransactionError},
+    solana_pubkey::Pubkey,
+    solana_signer::{signers::Signers, Signer},
+    solana_stake_interface::{
+        self as stake,
+        error::StakeError,
+        instruction as ixn, program as stake_program,
+        state::{Authorized, Lockup, Meta, Stake, StakeStateV2},
     },
+    solana_system_interface::{instruction as system_instruction, program as system_program},
+    solana_sysvar::{clock::Clock, stake_history::StakeHistory},
+    solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
     solana_vote_program::{
         self, vote_instruction,
         vote_state::{VoteInit, VoteState, VoteStateVersions},
@@ -273,7 +271,7 @@ async fn process_instruction<T: Signers + ?Sized>(
                 TransactionError::InsufficientFundsForRent { .. } => {
                     Err(ProgramError::InsufficientFunds)
                 }
-                _ => panic!("couldnt convert {:?} to ProgramError", e),
+                _ => panic!("couldnt convert {e:?} to ProgramError"),
             }
         }
     }

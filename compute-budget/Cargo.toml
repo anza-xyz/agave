@@ -9,6 +9,10 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[features]
+dev-context-only-utils = ["dep:qualifier_attr"]
+frozen-abi = ["dep:solana-frozen-abi", "solana-fee-structure/frozen-abi"]
+
 [dependencies]
 qualifier_attr = { workspace = true, optional = true }
 solana-fee-structure = { workspace = true }
@@ -16,10 +20,6 @@ solana-frozen-abi = { workspace = true, optional = true, features = [
     "frozen-abi",
 ] }
 solana-program-runtime = { workspace = true }
-
-[features]
-dev-context-only-utils = ["dep:qualifier_attr"]
-frozen-abi = ["dep:solana-frozen-abi", "solana-fee-structure/frozen-abi"]
 
 [lints]
 workspace = true

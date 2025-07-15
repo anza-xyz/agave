@@ -6,7 +6,7 @@ use {
     solana_gossip::restart_crds_values::RestartHeaviestFork,
     solana_hash::Hash,
     solana_pubkey::Pubkey,
-    solana_runtime::epoch_stakes::EpochStakes,
+    solana_runtime::epoch_stakes::VersionedEpochStakes,
     std::{
         collections::{HashMap, HashSet},
         str::FromStr,
@@ -18,7 +18,7 @@ pub(crate) struct HeaviestForkAggregate {
     my_pubkey: Pubkey,
     // We use the epoch_stakes of the Epoch our heaviest bank is in. Proceed and exit only if
     // enough validator agree with me.
-    epoch_stakes: EpochStakes,
+    epoch_stakes: VersionedEpochStakes,
     heaviest_forks: HashMap<Pubkey, RestartHeaviestFork>,
     block_stake_map: HashMap<(Slot, Hash), u64>,
     active_peers: HashSet<Pubkey>,
@@ -36,7 +36,7 @@ pub enum HeaviestForkAggregateResult {
 impl HeaviestForkAggregate {
     pub(crate) fn new(
         my_shred_version: u16,
-        epoch_stakes: &EpochStakes,
+        epoch_stakes: &VersionedEpochStakes,
         my_heaviest_fork_slot: Slot,
         my_heaviest_fork_hash: Hash,
         my_pubkey: &Pubkey,
@@ -109,10 +109,7 @@ impl HeaviestForkAggregate {
         let from = &received_heaviest_fork.from;
         let sender_stake = self.epoch_stakes.node_id_to_stake(from).unwrap_or(0);
         if sender_stake == 0 {
-            warn!(
-                "Gossip should not accept zero-stake RestartLastVotedFork from {:?}",
-                from
-            );
+            warn!("Gossip should not accept zero-stake RestartLastVotedFork from {from:?}");
             return HeaviestForkAggregateResult::ZeroStakeIgnored;
         }
         if from == &self.my_pubkey {
@@ -120,8 +117,9 @@ impl HeaviestForkAggregate {
         }
         if received_heaviest_fork.shred_version != self.my_shred_version {
             warn!(
-                "Gossip should not accept RestartLastVotedFork with different shred version {} from {:?}",
-                received_heaviest_fork.shred_version, from
+                "Gossip should not accept RestartLastVotedFork with different shred version {} \
+                 from {from:?}",
+                received_heaviest_fork.shred_version
             );
             return HeaviestForkAggregateResult::Malformed;
         }
@@ -184,9 +182,10 @@ mod tests {
             heaviest_fork_aggregate::{HeaviestForkAggregate, HeaviestForkAggregateResult},
             solana::wen_restart_proto::HeaviestForkRecord,
         },
+        solana_clock::Slot,
         solana_gossip::restart_crds_values::RestartHeaviestFork,
         solana_hash::Hash,
-        solana_program::{clock::Slot, pubkey::Pubkey},
+        solana_pubkey::Pubkey,
         solana_runtime::{
             bank::Bank,
             genesis_utils::{

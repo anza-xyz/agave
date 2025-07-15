@@ -58,16 +58,16 @@ pub fn command<'a>() -> App<'a, 'a> {
         .about("Manage and view geyser plugins")
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .setting(AppSettings::InferSubcommands)
-        .subcommand(SubCommand::with_name("list").about("List all current running gesyer plugins"))
+        .subcommand(SubCommand::with_name("list").about("List all current running geyser plugins"))
         .subcommand(
             SubCommand::with_name("unload")
-                .about("Unload a particular gesyer plugin. You must specify the gesyer plugin name")
+                .about("Unload a particular geyser plugin. You must specify the geyser plugin name")
                 .arg(&name_arg),
         )
         .subcommand(
             SubCommand::with_name("reload")
                 .about(
-                    "Reload a particular gesyer plugin. You must specify the gesyer plugin name \
+                    "Reload a particular geyser plugin. You must specify the geyser plugin name \
                      and the new config path",
                 )
                 .arg(&name_arg)
@@ -76,7 +76,7 @@ pub fn command<'a>() -> App<'a, 'a> {
         .subcommand(
             SubCommand::with_name("load")
                 .about(
-                    "Load a new gesyer plugin. You must specify the config path. Fails if \
+                    "Load a new geyser plugin. You must specify the config path. Fails if \
                      overwriting (use reload)",
                 )
                 .arg(&config_arg),

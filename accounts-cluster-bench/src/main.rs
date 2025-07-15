@@ -12,23 +12,23 @@ use {
         rpc_client::SerializableTransaction, rpc_config::RpcBlockConfig,
         rpc_request::MAX_GET_CONFIRMED_BLOCKS_RANGE, transaction_executor::TransactionExecutor,
     },
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_gossip::gossip_service::discover,
+    solana_hash::Hash,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, Keypair},
     solana_measure::measure::Measure,
+    solana_message::Message,
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::request::TokenAccountsFilter,
-    solana_sdk::{
-        clock::Slot,
-        commitment_config::CommitmentConfig,
-        hash::Hash,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        program_pack::Pack,
-        pubkey::Pubkey,
-        signature::{read_keypair_file, Keypair, Signature, Signer},
-        system_instruction, system_program,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
+    solana_transaction::Transaction,
     solana_transaction_status::UiTransactionEncoding,
     spl_generic_token::token,
     spl_token::state::Account,
@@ -46,6 +46,10 @@ use {
         time::{Duration, Instant},
     },
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub const MAX_RPC_CALL_RETRIES: usize = 5;
 
@@ -1416,7 +1420,8 @@ pub mod test {
             validator_configs::make_identical_validator_configs,
         },
         solana_measure::measure::Measure,
-        solana_sdk::{native_token::sol_to_lamports, poh_config::PohConfig},
+        solana_native_token::sol_to_lamports,
+        solana_poh_config::PohConfig,
         solana_test_validator::TestValidator,
         spl_token::{
             solana_program::program_pack::Pack,

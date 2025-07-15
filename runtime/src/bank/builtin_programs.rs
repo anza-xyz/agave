@@ -1,9 +1,8 @@
 #[cfg(test)]
 mod tests {
     use {
-        crate::bank::*,
-        agave_feature_set::FeatureSet,
-        solana_sdk::{ed25519_program, genesis_config::create_genesis_config},
+        crate::bank::*, agave_feature_set::FeatureSet,
+        solana_genesis_config::create_genesis_config, solana_sdk_ids::ed25519_program,
     };
 
     #[test]
@@ -21,7 +20,7 @@ mod tests {
             if precompile.program_id == ed25519_program::id() {
                 bank.add_precompiled_account_with_owner(
                     &precompile.program_id,
-                    solana_sdk::system_program::id(),
+                    solana_system_interface::program::id(),
                 );
             } else {
                 bank.add_precompiled_account(&precompile.program_id);
@@ -72,25 +71,23 @@ mod tests_core_bpf_migration {
             Bank,
         },
         agave_feature_set::FeatureSet,
+        solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
         solana_builtins::{
             core_bpf_migration::CoreBpfMigrationConfig,
             prototype::{BuiltinPrototype, StatelessBuiltinPrototype},
             BUILTINS,
         },
+        solana_epoch_schedule::EpochSchedule,
+        solana_feature_gate_interface::{self as feature, Feature},
+        solana_instruction::{AccountMeta, Instruction},
+        solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
+        solana_message::Message,
+        solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::loaded_programs::ProgramCacheEntry,
-        solana_sdk::{
-            account::{AccountSharedData, ReadableAccount, WritableAccount},
-            bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-            epoch_schedule::EpochSchedule,
-            feature::{self, Feature},
-            instruction::{AccountMeta, Instruction},
-            message::Message,
-            native_loader,
-            native_token::LAMPORTS_PER_SOL,
-            pubkey::Pubkey,
-            signature::Signer,
-            transaction::Transaction,
-        },
+        solana_pubkey::Pubkey,
+        solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
+        solana_signer::Signer,
+        solana_transaction::Transaction,
         std::{fs::File, io::Read, sync::Arc},
         test_case::test_case,
     };
@@ -98,8 +95,7 @@ mod tests_core_bpf_migration {
     // CPI mockup to test CPI to newly migrated programs.
     mod cpi_mockup {
         use {
-            solana_program_runtime::declare_process_instruction,
-            solana_sdk::instruction::Instruction,
+            solana_instruction::Instruction, solana_program_runtime::declare_process_instruction,
         };
 
         declare_process_instruction!(Entrypoint, 0, |invoke_context| {

@@ -6,20 +6,22 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     itertools::Itertools,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_epoch_schedule::EpochSchedule,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_keypair::Keypair,
     solana_ledger::shred::{self, should_discard_shred, ShredFetchStats},
+    solana_packet::{Meta, PACKET_DATA_SIZE},
     solana_perf::packet::{
-        Packet, PacketBatch, PacketBatchRecycler, PacketFlags, PACKETS_PER_BATCH,
+        PacketBatch, PacketBatchRecycler, PacketFlags, PacketRef, PinnedPacketBatch,
+        PACKETS_PER_BATCH,
     },
+    solana_pubkey::Pubkey,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        epoch_schedule::EpochSchedule,
-        packet::{Meta, PACKET_DATA_SIZE},
-        pubkey::Pubkey,
-        signature::Keypair,
+    solana_streamer::{
+        evicting_sender::EvictingSender,
+        streamer::{self, ChannelSend, PacketBatchReceiver, StreamerReceiveStats},
     },
-    solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
     std::{
         net::{SocketAddr, UdpSocket},
         sync::{
@@ -42,6 +44,14 @@ pub(crate) struct ShredFetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+/// Ingress limit for the shred fetch channel (in terms of packet _batches_).
+///
+/// The general case sees shred and repair ingress in the hundreds of packet batches per second.
+/// However, in the case of catch-up, we may see upwards of 8k packet batches per second, which would
+/// suggest a roughly 16k packet batch limit for ample headroom. We're setting it to 4x that amount
+/// to future proof for increases of CU limits (e.g., a future 100k CU limit).
+pub(crate) const SHRED_FETCH_CHANNEL_SIZE: usize = 1024 * 64;
+
 #[derive(Clone)]
 struct RepairContext {
     repair_socket: Arc<UdpSocket>,
@@ -54,7 +64,7 @@ impl ShredFetchStage {
     fn modify_packets(
         recvr: PacketBatchReceiver,
         recvr_stats: Option<Arc<StreamerReceiveStats>>,
-        sendr: Sender<PacketBatch>,
+        sendr: EvictingSender<PacketBatch>,
         bank_forks: &RwLock<BankForks>,
         shred_version: u16,
         name: &'static str,
@@ -117,17 +127,21 @@ impl ShredFetchStage {
                     );
                 }
                 // Discard packets if repair nonce does not verify.
-                let now = solana_sdk::timing::timestamp();
+                let now = solana_time_utils::timestamp();
                 let mut outstanding_repair_requests =
                     repair_context.outstanding_repair_requests.write().unwrap();
                 packet_batch
                     .iter_mut()
                     .filter(|packet| !packet.meta().discard())
-                    .for_each(|packet| {
+                    .for_each(|mut packet| {
                         // Have to set repair flag here so that the nonce is
                         // taken off the shred's payload.
                         packet.meta_mut().flags |= PacketFlags::REPAIR;
-                        if !verify_repair_nonce(packet, now, &mut outstanding_repair_requests) {
+                        if !verify_repair_nonce(
+                            packet.as_ref(),
+                            now,
+                            &mut outstanding_repair_requests,
+                        ) {
                             packet.meta_mut().set_discard(true);
                         }
                     });
@@ -145,10 +159,10 @@ impl ShredFetchStage {
                 )
             };
             let turbine_disabled = turbine_disabled.load(Ordering::Relaxed);
-            for packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
+            for mut packet in packet_batch.iter_mut().filter(|p| !p.meta().discard()) {
                 if turbine_disabled
                     || should_discard_shred(
-                        packet,
+                        packet.as_ref(),
                         last_root,
                         max_slot,
                         shred_version,
@@ -166,8 +180,13 @@ impl ShredFetchStage {
                     stats.report();
                 }
             }
-            if sendr.send(packet_batch).is_err() {
-                break;
+            if let Err(send_err) = sendr.try_send(packet_batch) {
+                match send_err {
+                    crossbeam_channel::TrySendError::Full(v) => {
+                        stats.overflow_shreds += v.len();
+                    }
+                    _ => unreachable!("EvictingSender holds on to both ends of the channel"),
+                }
             }
         }
     }
@@ -178,7 +197,7 @@ impl ShredFetchStage {
         modifier_thread_name: &'static str,
         sockets: Vec<Arc<UdpSocket>>,
         exit: Arc<AtomicBool>,
-        sender: Sender<PacketBatch>,
+        sender: EvictingSender<PacketBatch>,
         recycler: PacketBatchRecycler,
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
@@ -188,7 +207,8 @@ impl ShredFetchStage {
         repair_context: Option<RepairContext>,
         turbine_disabled: Arc<AtomicBool>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
-        let (packet_sender, packet_receiver) = unbounded();
+        let (packet_sender, packet_receiver) =
+            EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
         let receiver_stats = Arc::new(StreamerReceiveStats::new(receiver_name));
         let streamers = sockets
             .into_iter()
@@ -201,10 +221,10 @@ impl ShredFetchStage {
                     packet_sender.clone(),
                     recycler.clone(),
                     receiver_stats.clone(),
-                    None,  // coalesce
-                    true,  // use_pinned_memory
-                    None,  // in_vote_only_mode
-                    false, // is_staked_service
+                    Some(Duration::from_millis(5)), // coalesce
+                    true,                           // use_pinned_memory
+                    None,                           // in_vote_only_mode
+                    false,                          // is_staked_service
                 )
             })
             .collect();
@@ -233,7 +253,7 @@ impl ShredFetchStage {
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_response_quic_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
         repair_socket: Arc<UdpSocket>,
-        sender: Sender<PacketBatch>,
+        sender: EvictingSender<PacketBatch>,
         shred_version: u16,
         bank_forks: Arc<RwLock<BankForks>>,
         cluster_info: Arc<ClusterInfo>,
@@ -377,8 +397,8 @@ impl RepairContext {
 // Returns false if repair nonce is invalid and packet should be discarded.
 #[must_use]
 fn verify_repair_nonce(
-    packet: &Packet,
-    now: u64, // solana_sdk::timing::timestamp()
+    packet: PacketRef,
+    now: u64, // solana_time_utils::timestamp()
     outstanding_repair_requests: &mut OutstandingShredRepairs,
 ) -> bool {
     debug_assert!(packet.meta().flags.contains(PacketFlags::REPAIR));
@@ -405,8 +425,11 @@ pub(crate) fn receive_quic_datagrams(
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
-        let mut packet_batch =
-            PacketBatch::new_with_recycler(&recycler, PACKETS_PER_BATCH, "receive_quic_datagrams");
+        let mut packet_batch = PinnedPacketBatch::new_with_recycler(
+            &recycler,
+            PACKETS_PER_BATCH,
+            "receive_quic_datagrams",
+        );
         unsafe {
             packet_batch.set_len(PACKETS_PER_BATCH);
         };
@@ -430,7 +453,7 @@ pub(crate) fn receive_quic_datagrams(
             .count();
         if size > 0 {
             packet_batch.truncate(size);
-            if sender.send(packet_batch).is_err() {
+            if sender.send(packet_batch.into()).is_err() {
                 return; // The receiver end of the channel is disconnected.
             }
         }

@@ -1,6 +1,15 @@
-#![allow(clippy::arithmetic_side_effects)]
-
 //! The `net_utils` module assists with networking
+
+// Activate some of the Rust 2024 lints to make the future migration easier.
+#![warn(if_let_rescope)]
+#![warn(keyword_idents_2024)]
+#![warn(missing_unsafe_on_extern)]
+#![warn(rust_2024_guarded_string_incompatible_syntax)]
+#![warn(rust_2024_incompatible_pat)]
+#![warn(tail_expr_drop_order)]
+#![warn(unsafe_attr_outside_unsafe)]
+#![warn(unsafe_op_in_unsafe_fn)]
+
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod sockets;
@@ -12,14 +21,13 @@ pub use ip_echo_server::{
     ip_echo_server, IpEchoServer, DEFAULT_IP_ECHO_SERVER_THREADS, MAX_PORT_COUNT_PER_MESSAGE,
     MINIMUM_IP_ECHO_SERVER_THREADS,
 };
-#[cfg(feature = "dev-context-only-utils")]
-use tokio::net::UdpSocket as TokioUdpSocket;
 use {
+    crate::sockets::{udp_socket_with_config, PLATFORM_SUPPORTS_SOCKET_CONFIGS},
     ip_echo_client::{ip_echo_server_request, ip_echo_server_request_with_binding},
     ip_echo_server::IpEchoServerMessage,
     log::*,
     rand::{thread_rng, Rng},
-    socket2::{Domain, SockAddr, Socket, Type},
+    socket2::SockAddr,
     std::{
         io::{self},
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket},
@@ -44,6 +52,10 @@ pub(crate) const IP_ECHO_SERVER_RESPONSE_LENGTH: usize = HEADER_LENGTH + 23;
 
 /// Determine the public IP address of this machine by asking an ip_echo_server at the given
 /// address.
+#[deprecated(
+    since = "3.0.0",
+    note = "Use `get_public_ip_addr_with_binding` instead"
+)]
 pub fn get_public_ip_addr(ip_echo_server_addr: &SocketAddr) -> Result<IpAddr, String> {
     let fut = ip_echo_server_request(*ip_echo_server_addr, IpEchoServerMessage::default());
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -106,25 +118,6 @@ pub fn get_cluster_shred_version_with_binding(
 // Limit the maximum number of port verify threads to something reasonable
 // in case the port ranges provided are very large.
 const MAX_PORT_VERIFY_THREADS: usize = 64;
-
-/// Checks if all of the provided TCP/UDP ports are reachable by the machine at
-/// `ip_echo_server_addr`. Tests must complete within timeout provided.
-/// Tests will run concurrently when possible, using up to 64 threads for IO.
-/// This function assumes that all sockets are bound to the same IP, and will panic otherwise
-#[deprecated(
-    since = "2.2.0",
-    note = "use `verify_all_reachable_udp` and `verify_all_reachable_tcp` instead"
-)]
-pub fn verify_reachable_ports(
-    ip_echo_server_addr: &SocketAddr,
-    tcp_listeners: Vec<(u16, TcpListener)>,
-    udp_sockets: &[&UdpSocket],
-) -> bool {
-    verify_all_reachable_tcp(
-        ip_echo_server_addr,
-        tcp_listeners.into_iter().map(|(_, l)| l).collect(),
-    ) && verify_all_reachable_udp(ip_echo_server_addr, udp_sockets)
-}
 
 /// Checks if all of the provided UDP ports are reachable by the machine at
 /// `ip_echo_server_addr`. Tests must complete within timeout provided.
@@ -246,6 +239,10 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please use the equivalent struct from solana-net-utils::sockets"
+)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SocketConfig {
     reuseport: bool,
@@ -253,6 +250,7 @@ pub struct SocketConfig {
     send_buffer_size: Option<usize>,
 }
 
+#[allow(deprecated)]
 impl SocketConfig {
     pub fn reuseport(mut self, reuseport: bool) -> Self {
         self.reuseport = reuseport;
@@ -282,40 +280,12 @@ impl SocketConfig {
     }
 }
 
-#[cfg(any(windows, target_os = "ios"))]
-fn udp_socket_with_config(_config: SocketConfig) -> io::Result<Socket> {
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-    Ok(sock)
-}
-
-#[cfg(not(any(windows, target_os = "ios")))]
-fn udp_socket_with_config(config: SocketConfig) -> io::Result<Socket> {
-    use nix::sys::socket::{setsockopt, sockopt::ReusePort};
-    let SocketConfig {
-        reuseport,
-        recv_buffer_size,
-        send_buffer_size,
-    } = config;
-
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
-
-    // Set buffer sizes
-    if let Some(recv_buffer_size) = recv_buffer_size {
-        sock.set_recv_buffer_size(recv_buffer_size)?;
-    }
-
-    if let Some(send_buffer_size) = send_buffer_size {
-        sock.set_send_buffer_size(send_buffer_size)?;
-    }
-
-    if reuseport {
-        setsockopt(&sock, ReusePort, &true).ok();
-    }
-
-    Ok(sock)
-}
-
-// Find a port in the given range with a socket config that is available for both TCP and UDP
+#[deprecated(
+    since = "2.3.2",
+    note = "Please use the equivalent from solana-net-utils::sockets"
+)]
+#[allow(deprecated)]
+/// Find a port in the given range with a socket config that is available for both TCP and UDP
 pub fn bind_common_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
@@ -332,36 +302,29 @@ pub fn bind_common_in_range_with_config(
     )))
 }
 
-// Find a port in the given range that is available for both TCP and UDP
-#[deprecated(
-    since = "2.2.0",
-    note = "use `bind_common_in_range_with_config` instead"
-)]
-pub fn bind_common_in_range(
-    ip_addr: IpAddr,
-    range: PortRange,
-) -> io::Result<(u16, (UdpSocket, TcpListener))> {
-    bind_common_in_range_with_config(ip_addr, range, SocketConfig::default())
-}
-
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
-    let config = SocketConfig::default();
-    bind_in_range_with_config(ip_addr, range, config)
+    let config = sockets::SocketConfiguration::default();
+    sockets::bind_in_range_with_config(ip_addr, range, config)
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please use the equivalent from solana-net-utils::sockets"
+)]
+#[allow(deprecated)]
 pub fn bind_in_range_with_config(
     ip_addr: IpAddr,
     range: PortRange,
     config: SocketConfig,
 ) -> io::Result<(u16, UdpSocket)> {
-    let sock = udp_socket_with_config(config)?;
+    let socket = udp_socket_with_config(config.into())?;
 
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
 
-        if sock.bind(&SockAddr::from(addr)).is_ok() {
-            let sock: UdpSocket = sock.into();
-            return Result::Ok((sock.local_addr().unwrap().port(), sock));
+        if socket.bind(&SockAddr::from(addr)).is_ok() {
+            let udp_socket: UdpSocket = socket.into();
+            return Result::Ok((udp_socket.local_addr().unwrap().port(), udp_socket));
         }
     }
 
@@ -370,23 +333,29 @@ pub fn bind_in_range_with_config(
     )))
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please use the equivalent from solana-net-utils::sockets"
+)]
+#[allow(deprecated)]
 pub fn bind_with_any_port_with_config(
     ip_addr: IpAddr,
     config: SocketConfig,
 ) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = udp_socket_with_config(config.into())?;
     let addr = SocketAddr::new(ip_addr, 0);
-    match sock.bind(&SockAddr::from(addr)) {
+    let bind = sock.bind(&SockAddr::from(addr));
+    match bind {
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
 }
 
-#[deprecated(since = "2.2.0", note = "use `bind_with_any_port_with_config` instead")]
-pub fn bind_with_any_port(ip_addr: IpAddr) -> io::Result<UdpSocket> {
-    bind_with_any_port_with_config(ip_addr, SocketConfig::default())
-}
-
+#[deprecated(
+    since = "2.3.2",
+    note = "Please use the equivalent from solana-net-utils::sockets"
+)]
+#[allow(deprecated)]
 /// binds num sockets to the same port in a range with config
 pub fn multi_bind_in_range_with_config(
     ip_addr: IpAddr,
@@ -394,138 +363,68 @@ pub fn multi_bind_in_range_with_config(
     config: SocketConfig,
     mut num: usize,
 ) -> io::Result<(u16, Vec<UdpSocket>)> {
-    if !config.reuseport {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SocketConfig.reuseport must be true for multi_bind_in_range_with_config",
-        ));
-    }
-    if cfg!(windows) && num != 1 {
+    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket in windows ({} requested)",
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({} requested)",
             num
         );
         num = 1;
     }
-    let mut sockets = Vec::with_capacity(num);
-
-    const NUM_TRIES: usize = 100;
-    let mut port = 0;
-    let mut error = None;
-    for _ in 0..NUM_TRIES {
-        port = {
-            let (port, _) = bind_in_range(ip_addr, range)?;
-            port
-        }; // drop the probe, port should be available... briefly.
-
-        for _ in 0..num {
-            let sock = bind_to_with_config(ip_addr, port, config);
-            if let Ok(sock) = sock {
-                sockets.push(sock);
-            } else {
-                error = Some(sock);
-                break;
-            }
-        }
-        if sockets.len() == num {
-            break;
-        } else {
-            sockets.clear();
-        }
-    }
-    if sockets.len() != num {
-        error.unwrap()?;
-    }
+    let (port, socket) = bind_in_range_with_config(ip_addr, range, config)?;
+    let sockets = bind_more_with_config(socket, num, config)?;
     Ok((port, sockets))
 }
 
-// binds many sockets to the same port in a range
-// Note: The `mut` modifier for `num` is unused but kept for compatibility with the public API.
 #[deprecated(
-    since = "2.2.0",
-    note = "use `multi_bind_in_range_with_config` instead"
+    since = "2.3.2",
+    note = "Please use the eqiuvalent from solana-net-utils::sockets"
 )]
-#[allow(unused_mut)]
-pub fn multi_bind_in_range(
-    ip_addr: IpAddr,
-    range: PortRange,
-    mut num: usize,
-) -> io::Result<(u16, Vec<UdpSocket>)> {
-    let config = SocketConfig::default().reuseport(true);
-    multi_bind_in_range_with_config(ip_addr, range, config, num)
-}
-
+#[allow(deprecated)]
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseport: bool) -> io::Result<UdpSocket> {
-    let config = SocketConfig::default().reuseport(reuseport);
+    let config = SocketConfig {
+        reuseport,
+        ..Default::default()
+    };
     bind_to_with_config(ip_addr, port, config)
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub async fn bind_to_async(
-    ip_addr: IpAddr,
-    port: u16,
-    reuseport: bool,
-) -> io::Result<TokioUdpSocket> {
-    let config = SocketConfig::default().reuseport(reuseport);
-    let socket = bind_to_with_config_non_blocking(ip_addr, port, config)?;
-    TokioUdpSocket::from_std(socket)
-}
-
 pub fn bind_to_localhost() -> io::Result<UdpSocket> {
-    bind_to(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
-}
-
-#[cfg(feature = "dev-context-only-utils")]
-pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(
-        IpAddr::V4(Ipv4Addr::LOCALHOST),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
-    .await
+    let config = sockets::SocketConfiguration::default();
+    sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, config)
 }
 
 pub fn bind_to_unspecified() -> io::Result<UdpSocket> {
-    bind_to(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
+    let config = sockets::SocketConfiguration::default();
+    sockets::bind_to_with_config(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0, config)
 }
 
-#[cfg(feature = "dev-context-only-utils")]
-pub async fn bind_to_unspecified_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(
-        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        /*port:*/ 0,
-        /*reuseport:*/ false,
-    )
-    .await
-}
-
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function in favor of sockets::bind_to_with_config"
+)]
+#[allow(deprecated)]
 pub fn bind_to_with_config(
     ip_addr: IpAddr,
     port: u16,
     config: SocketConfig,
 ) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
-
+    let sock = udp_socket_with_config(config.into())?;
     let addr = SocketAddr::new(ip_addr, port);
-
     sock.bind(&SockAddr::from(addr)).map(|_| sock.into())
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function, it is easy to misuse"
+)]
+#[allow(deprecated)]
 pub fn bind_to_with_config_non_blocking(
     ip_addr: IpAddr,
     port: u16,
     config: SocketConfig,
 ) -> io::Result<UdpSocket> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = udp_socket_with_config(config.into())?;
 
     let addr = SocketAddr::new(ip_addr, port);
 
@@ -534,19 +433,28 @@ pub fn bind_to_with_config_non_blocking(
     Ok(sock.into())
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function in favor of sockets::bind_common_with_config"
+)]
 /// binds both a UdpSocket and a TcpListener
 pub fn bind_common(ip_addr: IpAddr, port: u16) -> io::Result<(UdpSocket, TcpListener)> {
-    let config = SocketConfig::default();
-    bind_common_with_config(ip_addr, port, config)
+    let config = sockets::SocketConfiguration::default();
+    sockets::bind_common_with_config(ip_addr, port, config)
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function in favor of sockets::bind_common_with_config"
+)]
+#[allow(deprecated)]
 /// binds both a UdpSocket and a TcpListener on the same port
 pub fn bind_common_with_config(
     ip_addr: IpAddr,
     port: u16,
     config: SocketConfig,
 ) -> io::Result<(UdpSocket, TcpListener)> {
-    let sock = udp_socket_with_config(config)?;
+    let sock = udp_socket_with_config(config.into())?;
 
     let addr = SocketAddr::new(ip_addr, port);
     let sock_addr = SockAddr::from(addr);
@@ -554,16 +462,31 @@ pub fn bind_common_with_config(
         .and_then(|_| TcpListener::bind(addr).map(|listener| (sock.into(), listener)))
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+)]
+#[allow(deprecated)]
 pub fn bind_two_in_range_with_offset(
     ip_addr: IpAddr,
     range: PortRange,
     offset: u16,
 ) -> io::Result<((u16, UdpSocket), (u16, UdpSocket))> {
-    let sock1_config = SocketConfig::default();
-    let sock2_config = SocketConfig::default();
-    bind_two_in_range_with_offset_and_config(ip_addr, range, offset, sock1_config, sock2_config)
+    let sock_config = sockets::SocketConfiguration::default();
+    sockets::bind_two_in_range_with_offset_and_config(
+        ip_addr,
+        range,
+        offset,
+        sock_config,
+        sock_config,
+    )
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+)]
+#[allow(deprecated)]
 pub fn bind_two_in_range_with_offset_and_config(
     ip_addr: IpAddr,
     range: PortRange,
@@ -576,12 +499,14 @@ pub fn bind_two_in_range_with_offset_and_config(
             "range too small to find two ports with the correct offset".to_string(),
         ));
     }
+
     for port in range.0..range.1 {
-        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
+        let first_bind = bind_to_with_config(ip_addr, port, sock1_config);
+        if let Ok(first_bind) = first_bind {
             if range.1.saturating_sub(port) >= offset {
-                if let Ok(second_bind) =
-                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config)
-                {
+                let second_bind =
+                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config);
+                if let Ok(second_bind) = second_bind {
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
@@ -625,9 +550,11 @@ pub fn find_available_ports_in_range<const N: usize>(
         .take(range.len()) // never take the same value twice
         .peekable();
     let mut num = 0;
+    let config = sockets::SocketConfiguration::default();
     while num < N {
         let port_to_try = next_port_to_try.next().unwrap(); // this unwrap never fails since we exit earlier
-        match bind_common(ip_addr, port_to_try) {
+        let bind = sockets::bind_common_with_config(ip_addr, port_to_try, config);
+        match bind {
             Ok(_) => {
                 result[num] = port_to_try;
                 num = num.saturating_add(1);
@@ -642,20 +569,36 @@ pub fn find_available_ports_in_range<const N: usize>(
     Ok(result)
 }
 
+#[deprecated(
+    since = "2.3.2",
+    note = "Please avoid this function, in favor of sockets::bind_more_with_config"
+)]
+#[allow(deprecated)]
 pub fn bind_more_with_config(
     socket: UdpSocket,
     num: usize,
     config: SocketConfig,
 ) -> io::Result<Vec<UdpSocket>> {
-    let addr = socket.local_addr().unwrap();
-    let ip = addr.ip();
-    let port = addr.port();
-    std::iter::once(Ok(socket))
-        .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
-        .collect()
+    if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
+        if num > 1 {
+            warn!(
+                "bind_more_with_config() only supports 1 socket on this platform ({} requested)",
+                num
+            );
+        }
+        Ok(vec![socket])
+    } else {
+        let addr = socket.local_addr().unwrap();
+        let ip = addr.ip();
+        let port = addr.port();
+        std::iter::once(Ok(socket))
+            .chain((1..num).map(|_| bind_to_with_config(ip, port, config)))
+            .collect()
+    }
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use {
         super::*,
@@ -866,7 +809,11 @@ mod tests {
 
         let server_ip_echo_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr(&server_ip_echo_addr).unwrap(),
+            get_public_ip_addr_with_binding(
+                &server_ip_echo_addr,
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+            )
+            .unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
         assert_eq!(get_cluster_shred_version(&server_ip_echo_addr).unwrap(), 42);
@@ -893,7 +840,11 @@ mod tests {
 
         let ip_echo_server_addr = server_udp_socket.local_addr().unwrap();
         assert_eq!(
-            get_public_ip_addr(&ip_echo_server_addr).unwrap(),
+            get_public_ip_addr_with_binding(
+                &ip_echo_server_addr,
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+            )
+            .unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
         assert_eq!(
@@ -988,7 +939,11 @@ mod tests {
         );
 
         assert_eq!(
-            get_public_ip_addr(&ip_echo_server_addr).unwrap(),
+            get_public_ip_addr_with_binding(
+                &ip_echo_server_addr,
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+            )
+            .unwrap(),
             parse_host("127.0.0.1").unwrap(),
         );
 
@@ -1029,6 +984,49 @@ mod tests {
         assert!(
             result.is_err(),
             "Expected an error when reuseport is not set to true"
+        );
+    }
+
+    #[test]
+    fn test_verify_udp_multiple_ips_reachable() {
+        solana_logger::setup();
+        let config = SocketConfig::default();
+        let ip_a = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let ip_b = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+
+        let server_ports = sockets::localhost_port_range_for_tests();
+        let (_srv_udp_port, (srv_udp_sock, srv_tcp_listener)) =
+            bind_common_in_range_with_config(ip_a, server_ports, config).unwrap();
+
+        let ip_echo_server_addr = srv_udp_sock.local_addr().unwrap();
+        let _runtime = ip_echo_server(
+            srv_tcp_listener,
+            DEFAULT_IP_ECHO_SERVER_THREADS,
+            /*shred_version=*/ Some(42),
+        );
+
+        let mut udp_sockets = Vec::new();
+        let (_p1, (sock_a, _tl_a)) = bind_common_in_range_with_config(
+            ip_a,
+            sockets::localhost_port_range_for_tests(),
+            config,
+        )
+        .unwrap();
+        let (_p2, (sock_b, _tl_b)) = bind_common_in_range_with_config(
+            ip_b,
+            sockets::localhost_port_range_for_tests(),
+            config,
+        )
+        .unwrap();
+
+        udp_sockets.push(sock_a);
+        udp_sockets.push(sock_b);
+
+        let socket_refs: Vec<&UdpSocket> = udp_sockets.iter().collect();
+
+        assert!(
+            verify_all_reachable_udp(&ip_echo_server_addr, &socket_refs),
+            "all UDP ports on both 127.0.0.1 and 127.0.0.2 should be reachable"
         );
     }
 }

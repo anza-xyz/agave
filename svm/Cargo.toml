@@ -9,6 +9,28 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_svm"
+
+[features]
+dev-context-only-utils = ["dep:qualifier_attr"]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-program-runtime/frozen-abi",
+]
+shuttle-test = [
+    "solana-type-overrides/shuttle-test",
+    "solana-program-runtime/shuttle-test",
+    "solana-bpf-loader-program/shuttle-test",
+    "solana-loader-v4-program/shuttle-test",
+]
+svm-internal = []
+
 [dependencies]
 ahash = { workspace = true }
 itertools = { workspace = true }
@@ -29,7 +51,7 @@ solana-frozen-abi-macro = { workspace = true, optional = true, features = [
 solana-hash = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
-solana-loader-v3-interface = { workspace = true }
+solana-loader-v3-interface = { workspace = true, features = ["bincode"] }
 solana-loader-v4-interface = { workspace = true }
 solana-loader-v4-program = { workspace = true }
 solana-log-collector = { workspace = true }
@@ -37,25 +59,26 @@ solana-measure = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-nonce-account = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-pack = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["metrics"] }
 solana-pubkey = { workspace = true }
 solana-rent = { workspace = true }
 solana-rent-collector = { workspace = true }
-solana-rent-debits = { workspace = true }
 solana-sdk-ids = { workspace = true }
+solana-slot-hashes = { workspace = true }
 solana-svm-callback = { workspace = true }
 solana-svm-feature-set = { workspace = true }
 solana-svm-rent-collector = { workspace = true }
 solana-svm-transaction = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-sysvar-id = { workspace = true }
 solana-timings = { workspace = true }
 solana-transaction-context = { workspace = true }
 solana-transaction-error = { workspace = true }
 solana-type-overrides = { workspace = true }
+spl-generic-token = { workspace = true }
 thiserror = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_svm"
 
 [dev-dependencies]
 agave-feature-set = { workspace = true }
@@ -63,7 +86,6 @@ agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
 bincode = { workspace = true }
 ed25519-dalek = { workspace = true }
-lazy_static = { workspace = true }
 libsecp256k1 = { workspace = true }
 openssl = { workspace = true }
 prost = { workspace = true }
@@ -82,13 +104,12 @@ solana-logger = { workspace = true }
 solana-native-token = { workspace = true }
 solana-precompile-error = { workspace = true }
 solana-program-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-pubkey = { workspace = true }
+solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sbpf = { workspace = true }
-solana-sdk = { workspace = true, features = ["dev-context-only-utils"] }
 solana-secp256k1-program = { workspace = true }
 solana-secp256r1-program = { workspace = true, features = ["openssl-vendored"] }
-solana-signature = { workspace = true }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
 solana-svm = { path = ".", features = ["dev-context-only-utils", "svm-internal"] }
@@ -96,28 +117,10 @@ solana-svm-conformance = { workspace = true }
 solana-system-program = { workspace = true }
 solana-system-transaction = { workspace = true }
 solana-sysvar = { workspace = true }
-solana-transaction = { workspace = true }
+solana-transaction = { workspace = true, features = ["dev-context-only-utils"] }
 solana-transaction-context = { workspace = true, features = ["dev-context-only-utils"] }
+spl-token = { workspace = true }
 test-case = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = ["dep:qualifier_attr"]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-program-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
-]
-shuttle-test = [
-    "solana-type-overrides/shuttle-test",
-    "solana-program-runtime/shuttle-test",
-    "solana-bpf-loader-program/shuttle-test",
-    "solana-loader-v4-program/shuttle-test",
-]
-svm-internal = []
 
 [lints]
 workspace = true

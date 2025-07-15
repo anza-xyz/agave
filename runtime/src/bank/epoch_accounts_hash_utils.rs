@@ -2,43 +2,13 @@
 
 use {
     crate::bank::Bank,
-    agave_feature_set as feature_set,
-    solana_sdk::{
-        clock::{Epoch, Slot},
-        vote::state::MAX_LOCKOUT_HISTORY,
-    },
+    solana_clock::{Epoch, Slot},
 };
 
 /// Is the EAH enabled this Epoch?
 #[must_use]
-pub fn is_enabled_this_epoch(bank: &Bank) -> bool {
-    // If the accounts lt hash feature is enabled, then the EAH is disabled.
-    if bank
-        .feature_set
-        .is_active(&feature_set::accounts_lt_hash::id())
-    {
-        return false;
-    }
-
-    // The EAH calculation "start" is based on when a bank is *rooted*, and "stop" is based on when a
-    // bank is *frozen*.  Banks are rooted after exceeding the maximum lockout, so there is a delay
-    // of at least `maximum lockout` number of slots the EAH calculation must take into
-    // consideration.  To ensure an EAH calculation has started by the time that calculation is
-    // needed, the calculation interval must be at least `maximum lockout` plus some buffer to
-    // handle when banks are not rooted every single slot.
-    const MINIMUM_CALCULATION_INTERVAL: u64 =
-        (MAX_LOCKOUT_HISTORY as u64).saturating_add(CALCULATION_INTERVAL_BUFFER);
-    // The calculation buffer is a best-attempt at median worst-case for how many bank ancestors can
-    // accumulate before the bank is rooted.
-    // [brooks] On Wed Oct 26 12:15:21 2022, over the previous 6 hour period against mainnet-beta,
-    // I saw multiple validators reporting metrics in the 120s for `total_parent_banks`.  The mean
-    // is 2 to 3, but a number of nodes also reported values in the low 20s.  A value of 150 should
-    // capture the majority of validators, and will not be an issue for clusters running with
-    // normal slots-per-epoch; this really will only affect tests and epoch schedule warmup.
-    const CALCULATION_INTERVAL_BUFFER: u64 = 150;
-
-    let calculation_interval = calculation_interval(bank);
-    calculation_interval >= MINIMUM_CALCULATION_INTERVAL
+pub fn is_enabled_this_epoch(_bank: &Bank) -> bool {
+    false
 }
 
 /// Calculation of the EAH occurs once per epoch.  All nodes in the cluster must agree on which
@@ -154,16 +124,15 @@ pub struct CalculationInfo {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{epoch_schedule::EpochSchedule, genesis_config::GenesisConfig},
+        super::*, solana_epoch_schedule::EpochSchedule, solana_genesis_config::GenesisConfig,
         test_case::test_case,
     };
 
     #[test_case(     32 => false)] // minimum slots per epoch
     #[test_case(    361 => false)] // below minimum slots per epoch *for EAH*
     #[test_case(    362 => false)] // minimum slots per epoch *for EAH*
-    #[test_case(  8_192 => true)] // default dev slots per epoch
-    #[test_case(432_000 => true)] // default slots per epoch
+    #[test_case(  8_192 => false)] // default dev slots per epoch
+    #[test_case(432_000 => false)] // default slots per epoch
     fn test_is_enabled_this_epoch(slots_per_epoch: u64) -> bool {
         let genesis_config = GenesisConfig {
             epoch_schedule: EpochSchedule::custom(slots_per_epoch, slots_per_epoch, false),

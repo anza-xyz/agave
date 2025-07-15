@@ -4,31 +4,43 @@ use {
     base64::{prelude::BASE64_STANDARD, Engine},
     crossbeam_channel::Receiver,
     log::*,
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_index::AccountsIndexConfig,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         utils::create_accounts_run_and_snapshot_dirs,
     },
     solana_cli_output::CliAccount,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
+    solana_commitment_config::CommitmentConfig,
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_core::{
         admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
         consensus::tower_storage::TowerStorage,
         validator::{Validator, ValidatorConfig, ValidatorStartProgress, ValidatorTpuConfig},
     },
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::FeeRateGovernor,
     solana_geyser_plugin_manager::{
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
         contact_info::Protocol,
-        socketaddr,
     },
+    solana_inflation::Inflation,
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
         blockstore::create_new_ledger, blockstore_options::LedgerColumnOptions,
         create_new_tmp_ledger,
     },
-    solana_net_utils::PortRange,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_message::Message,
+    solana_native_token::sol_to_lamports,
+    solana_net_utils::{find_available_ports_in_range, PortRange},
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client::{nonblocking, rpc_client::RpcClient},
     solana_rpc_client_api::request::MAX_MULTIPLE_ACCOUNTS,
@@ -37,24 +49,14 @@ use {
         genesis_utils::{self, create_genesis_config_with_leader_ex_no_features},
         runtime_config::RuntimeConfig,
         snapshot_config::SnapshotConfig,
+        snapshot_utils::SnapshotInterval,
     },
-    solana_sdk::{
-        account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-        bpf_loader_upgradeable::UpgradeableLoaderState,
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        commitment_config::CommitmentConfig,
-        epoch_schedule::EpochSchedule,
-        exit::Exit,
-        fee_calculator::FeeRateGovernor,
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
-    },
-    solana_streamer::socket::SocketAddrSpace,
+    solana_sdk_ids::address_lookup_table,
+    solana_signer::Signer,
+    solana_streamer::{quic::DEFAULT_QUIC_ENDPOINTS, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
+    solana_transaction::Transaction,
+    solana_validator_exit::Exit,
     std::{
         collections::{HashMap, HashSet},
         ffi::OsStr,
@@ -62,6 +64,7 @@ use {
         fs::{self, remove_dir_all, File},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
+        num::{NonZero, NonZeroU64},
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, RwLock},
@@ -99,7 +102,7 @@ impl Default for TestValidatorNodeConfig {
         #[cfg(debug_assertions)]
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
-            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port_range.0),
+            gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
             port_range,
             bind_ip_addr,
         }
@@ -119,6 +122,7 @@ pub struct TestValidatorGenesis {
     upgradeable_programs: Vec<UpgradeableProgramInfo>,
     ticks_per_slot: Option<u64>,
     epoch_schedule: Option<EpochSchedule>,
+    inflation: Option<Inflation>,
     node_config: TestValidatorNodeConfig,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
@@ -151,6 +155,7 @@ impl Default for TestValidatorGenesis {
             upgradeable_programs: Vec::<UpgradeableProgramInfo>::default(),
             ticks_per_slot: Option::<u64>::default(),
             epoch_schedule: Option::<EpochSchedule>::default(),
+            inflation: Option::<Inflation>::default(),
             node_config: TestValidatorNodeConfig::default(),
             validator_exit: Arc::<RwLock<Exit>>::default(),
             start_progress: Arc::<RwLock<ValidatorStartProgress>>::default(),
@@ -175,7 +180,7 @@ fn try_transform_program_data(
     address: &Pubkey,
     account: &mut AccountSharedData,
 ) -> Result<(), String> {
-    if account.owner() == &solana_sdk::bpf_loader_upgradeable::id() {
+    if account.owner() == &solana_sdk_ids::bpf_loader_upgradeable::id() {
         let programdata_offset = UpgradeableLoaderState::size_of_programdata_metadata();
         let programdata_meta = account.data().get(0..programdata_offset).ok_or(format!(
             "Failed to get upgradeable programdata data from {address}"
@@ -247,6 +252,11 @@ impl TestValidatorGenesis {
 
     pub fn epoch_schedule(&mut self, epoch_schedule: EpochSchedule) -> &mut Self {
         self.epoch_schedule = Some(epoch_schedule);
+        self
+    }
+
+    pub fn inflation(&mut self, inflation: Inflation) -> &mut Self {
+        self.inflation = Some(inflation);
         self
     }
 
@@ -373,6 +383,55 @@ impl TestValidatorGenesis {
         )
     }
 
+    pub fn deep_clone_address_lookup_table_accounts<T>(
+        &mut self,
+        addresses: T,
+        rpc_client: &RpcClient,
+    ) -> Result<&mut Self, String>
+    where
+        T: IntoIterator<Item = Pubkey>,
+    {
+        const LOOKUP_TABLE_META_SIZE: usize = 56;
+        let addresses: Vec<Pubkey> = addresses.into_iter().collect();
+        let mut alt_entries: Vec<Pubkey> = Vec::new();
+
+        for chunk in addresses.chunks(MAX_MULTIPLE_ACCOUNTS) {
+            info!("Fetching {:?} over RPC...", chunk);
+            let responses = rpc_client
+                .get_multiple_accounts(chunk)
+                .map_err(|err| format!("Failed to fetch: {err}"))?;
+            for (address, res) in chunk.iter().zip(responses) {
+                if let Some(account) = res {
+                    if address_lookup_table::check_id(account.owner()) {
+                        let raw_addresses_data = account
+                            .data()
+                            .get(LOOKUP_TABLE_META_SIZE..)
+                            .ok_or(format!("Failed to get addresses data from {address}"))?;
+
+                        if raw_addresses_data.len() % std::mem::size_of::<Pubkey>() != 0 {
+                            return Err(format!("Invalid alt account data length for {address}"));
+                        }
+
+                        for address_slice in
+                            raw_addresses_data.chunks_exact(std::mem::size_of::<Pubkey>())
+                        {
+                            // safe because size was checked earlier
+                            let address = Pubkey::try_from(address_slice).unwrap();
+                            alt_entries.push(address);
+                        }
+                        self.add_account(*address, AccountSharedData::from(account));
+                    } else {
+                        return Err(format!("Account {address} is not an address lookup table"));
+                    }
+                } else {
+                    return Err(format!("Failed to fetch {address}"));
+                }
+            }
+        }
+
+        self.clone_accounts(alt_entries, rpc_client, true)
+    }
+
     pub fn clone_programdata_accounts<T>(
         &mut self,
         addresses: T,
@@ -441,7 +500,7 @@ impl TestValidatorGenesis {
                 .for_each(|(maybe_account, feature_id)| {
                     if maybe_account
                         .as_ref()
-                        .and_then(solana_sdk::feature::from_account)
+                        .and_then(solana_feature_gate_interface::from_account)
                         .and_then(|feature| feature.activated_at)
                         .is_none()
                     {
@@ -581,7 +640,7 @@ impl TestValidatorGenesis {
 
         self.upgradeable_programs.push(UpgradeableProgramInfo {
             program_id,
-            loader: solana_sdk::bpf_loader_upgradeable::id(),
+            loader: solana_sdk_ids::bpf_loader_upgradeable::id(),
             upgrade_authority: Pubkey::default(),
             program_path,
         });
@@ -658,6 +717,22 @@ impl TestValidatorGenesis {
     ) -> (TestValidator, Keypair) {
         let mint_keypair = Keypair::new();
         self.start_with_mint_address(mint_keypair.pubkey(), socket_addr_space)
+            .inspect(|test_validator| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .enable_time()
+                    .build()
+                    .unwrap();
+                let upgradeable_program_ids: Vec<&Pubkey> = self
+                    .upgradeable_programs
+                    .iter()
+                    .map(|p| &p.program_id)
+                    .collect();
+                runtime.block_on(test_validator.wait_for_upgradeable_programs_deployed(
+                    &upgradeable_program_ids,
+                    &mint_keypair,
+                ));
+            })
             .map(|test_validator| (test_validator, mint_keypair))
             .unwrap_or_else(|err| panic!("Test validator failed to start: {err}"))
     }
@@ -677,6 +752,14 @@ impl TestValidatorGenesis {
         match TestValidator::start(mint_keypair.pubkey(), self, socket_addr_space, None) {
             Ok(test_validator) => {
                 test_validator.wait_for_nonzero_fees().await;
+                let upgradeable_program_ids: Vec<&Pubkey> = self
+                    .upgradeable_programs
+                    .iter()
+                    .map(|p| &p.program_id)
+                    .collect();
+                test_validator
+                    .wait_for_upgradeable_programs_deployed(&upgradeable_program_ids, &mint_keypair)
+                    .await;
                 (test_validator, mint_keypair)
             }
             Err(err) => panic!("Test validator failed to start: {err}"),
@@ -764,7 +847,7 @@ impl TestValidator {
             .read()
             .unwrap()
             .root_bank()
-            .set_startup_verification_complete();
+            .set_initial_accounts_hash_verification_completed();
     }
 
     /// Initialize the ledger directory
@@ -857,7 +940,7 @@ impl TestValidator {
             validator_identity_lamports,
             config.fee_rate_governor.clone(),
             config.rent.clone(),
-            solana_sdk::genesis_config::ClusterType::Development,
+            solana_cluster_type::ClusterType::Development,
             accounts.into_iter().collect(),
         );
         genesis_config.epoch_schedule = config
@@ -868,6 +951,10 @@ impl TestValidator {
 
         if let Some(ticks_per_slot) = config.ticks_per_slot {
             genesis_config.ticks_per_slot = ticks_per_slot;
+        }
+
+        if let Some(inflation) = config.inflation {
+            genesis_config.inflation = inflation;
         }
 
         for feature in feature_set {
@@ -945,18 +1032,35 @@ impl TestValidator {
                 .to_str()
                 .unwrap(),
         )?;
-
-        let mut node = Node::new_single_bind(
-            &validator_identity.pubkey(),
-            &config.node_config.gossip_addr,
-            config.node_config.port_range,
-            config.node_config.bind_ip_addr,
-        );
-        if let Some((rpc, rpc_pubsub)) = config.rpc_ports {
-            let addr = node.info.gossip().unwrap().ip();
-            node.info.set_rpc((addr, rpc)).unwrap();
-            node.info.set_rpc_pubsub((addr, rpc_pubsub)).unwrap();
-        }
+        let node = {
+            let bind_ip_addr = config.node_config.bind_ip_addr;
+            let validator_node_config = NodeConfig {
+                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                gossip_port: config.node_config.gossip_addr.port(),
+                port_range: config.node_config.port_range,
+                advertised_ip: bind_ip_addr,
+                public_tpu_addr: None,
+                public_tpu_forwards_addr: None,
+                num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+                num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+                num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
+                    .expect("Number of QUIC endpoints can not be zero"),
+                vortexor_receiver_addr: None,
+            };
+            let mut node =
+                Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
+            let (rpc, rpc_pubsub) = config.rpc_ports.unwrap_or_else(|| {
+                let rpc_ports: [u16; 2] =
+                    find_available_ports_in_range(bind_ip_addr, config.node_config.port_range)
+                        .unwrap();
+                (rpc_ports[0], rpc_ports[1])
+            });
+            node.info.set_rpc((bind_ip_addr, rpc)).unwrap();
+            node.info
+                .set_rpc_pubsub((bind_ip_addr, rpc_pubsub))
+                .unwrap();
+            node
+        };
 
         let vote_account_address = validator_vote_account.pubkey();
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());
@@ -1012,8 +1116,10 @@ impl TestValidator {
             ],
             run_verification: false, // Skip PoH verification of ledger on startup for speed
             snapshot_config: SnapshotConfig {
-                full_snapshot_archive_interval_slots: 100,
-                incremental_snapshot_archive_interval_slots: Slot::MAX,
+                full_snapshot_archive_interval: SnapshotInterval::Slots(
+                    NonZeroU64::new(100).unwrap(),
+                ),
+                incremental_snapshot_archive_interval: SnapshotInterval::Disabled,
                 bank_snapshots_dir: ledger_path.join("snapshot"),
                 full_snapshot_archives_dir: ledger_path.to_path_buf(),
                 incremental_snapshot_archives_dir: ledger_path.to_path_buf(),
@@ -1109,6 +1215,62 @@ impl TestValidator {
         }
     }
 
+    /// programs added to genesis ain't immediately usable. Actively check "Program
+    /// is not deployed" error for their availibility.
+    async fn wait_for_upgradeable_programs_deployed(
+        &self,
+        upgradeable_programs: &[&Pubkey],
+        payer: &Keypair,
+    ) {
+        let rpc_client = nonblocking::rpc_client::RpcClient::new_with_commitment(
+            self.rpc_url.clone(),
+            CommitmentConfig::processed(),
+        );
+
+        let mut deployed = vec![false; upgradeable_programs.len()];
+        const MAX_ATTEMPTS: u64 = 10;
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+            for (program_id, is_deployed) in upgradeable_programs.iter().zip(deployed.iter_mut()) {
+                if *is_deployed {
+                    continue;
+                }
+
+                let transaction = Transaction::new_signed_with_payer(
+                    &[Instruction {
+                        program_id: **program_id,
+                        accounts: vec![],
+                        data: vec![],
+                    }],
+                    Some(&payer.pubkey()),
+                    &[&payer],
+                    blockhash,
+                );
+                match rpc_client.send_transaction(&transaction).await {
+                    Ok(_) => *is_deployed = true,
+                    Err(e) => {
+                        if format!("{:?}", e).contains("Program is not deployed") {
+                            debug!("{:?} - not deployed", program_id);
+                        } else {
+                            // Assuming all other other errors could only occur *after*
+                            // program is deployed for usability.
+                            *is_deployed = true;
+                            debug!("{:?} - Unexpected error: {:?}", program_id, e);
+                        }
+                    }
+                }
+            }
+            if deployed.iter().all(|&deployed| deployed) {
+                return;
+            }
+
+            println!("Waiting for programs to be fully deployed {} ...", attempt);
+            sleep(Duration::from_millis(DEFAULT_MS_PER_SLOT)).await;
+        }
+        panic!("Timeout waiting for program to become usable");
+    }
+
     /// Return the validator's TPU address
     pub fn tpu(&self) -> &SocketAddr {
         &self.tpu
@@ -1185,7 +1347,7 @@ impl Drop for TestValidator {
 
 #[cfg(test)]
 mod test {
-    use {super::*, solana_sdk::feature::Feature};
+    use {super::*, solana_feature_gate_interface::Feature};
 
     #[test]
     fn get_health() {
@@ -1195,7 +1357,7 @@ mod test {
         rpc_client.get_health().expect("health");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn nonblocking_get_health() {
         let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
         test_validator.set_startup_verification_complete_for_tests();
@@ -1203,20 +1365,72 @@ mod test {
         rpc_client.get_health().await.expect("health");
     }
 
-    #[tokio::test]
+    #[test]
+    fn test_upgradeable_program_deploayment() {
+        let program_id = Pubkey::new_unique();
+        let (test_validator, payer) = TestValidatorGenesis::default()
+            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .start();
+        let rpc_client = test_validator.get_rpc_client();
+
+        let blockhash = rpc_client.get_latest_blockhash().unwrap();
+        let transaction = Transaction::new_signed_with_payer(
+            &[Instruction {
+                program_id,
+                accounts: vec![],
+                data: vec![],
+            }],
+            Some(&payer.pubkey()),
+            &[&payer],
+            blockhash,
+        );
+
+        assert!(rpc_client
+            .send_and_confirm_transaction(&transaction)
+            .is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_nonblocking_upgradeable_program_deploayment() {
+        let program_id = Pubkey::new_unique();
+        let (test_validator, payer) = TestValidatorGenesis::default()
+            .add_program("../programs/bpf-loader-tests/noop", program_id)
+            .start_async()
+            .await;
+        let rpc_client = test_validator.get_async_rpc_client();
+
+        let blockhash = rpc_client.get_latest_blockhash().await.unwrap();
+        let transaction = Transaction::new_signed_with_payer(
+            &[Instruction {
+                program_id,
+                accounts: vec![],
+                data: vec![],
+            }],
+            Some(&payer.pubkey()),
+            &[&payer],
+            blockhash,
+        );
+
+        assert!(rpc_client
+            .send_and_confirm_transaction(&transaction)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[should_panic]
     async fn document_tokio_panic() {
         // `start()` blows up when run within tokio
         let (_test_validator, _payer) = TestValidatorGenesis::default().start();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_deactivate_features() {
         let mut control = FeatureSet::default().inactive().clone();
         let mut deactivate_features = Vec::new();
         [
-            solana_sdk::feature_set::deprecate_rewards_sysvar::id(),
-            solana_sdk::feature_set::disable_fees_sysvar::id(),
+            agave_feature_set::deprecate_rewards_sysvar::id(),
+            agave_feature_set::disable_fees_sysvar::id(),
         ]
         .into_iter()
         .for_each(|feature| {
@@ -1254,10 +1468,10 @@ mod test {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_override_feature_account() {
-        let with_deactivate_flag = solana_sdk::feature_set::deprecate_rewards_sysvar::id();
-        let without_deactivate_flag = solana_sdk::feature_set::disable_fees_sysvar::id();
+        let with_deactivate_flag = agave_feature_set::deprecate_rewards_sysvar::id();
+        let without_deactivate_flag = agave_feature_set::disable_fees_sysvar::id();
 
         let owner = Pubkey::new_unique();
         let account = || AccountSharedData::new(100_000, 0, &owner);
@@ -1287,17 +1501,17 @@ mod test {
 
         // The second one should be a feature account.
         let feature_account = our_accounts[1].as_ref().unwrap();
-        assert_eq!(feature_account.owner, solana_sdk::feature::id());
+        assert_eq!(feature_account.owner, solana_sdk_ids::feature::id());
         let feature_state: Feature = bincode::deserialize(feature_account.data()).unwrap();
         assert!(feature_state.activated_at.is_some());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_core_bpf_programs() {
         let (test_validator, _payer) = TestValidatorGenesis::default()
             .deactivate_features(&[
                 // Don't migrate the stake program.
-                solana_sdk::feature_set::migrate_stake_program_to_core_bpf::id(),
+                agave_feature_set::migrate_stake_program_to_core_bpf::id(),
             ])
             .start_async()
             .await;

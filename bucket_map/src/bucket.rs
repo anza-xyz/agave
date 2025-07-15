@@ -287,7 +287,6 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
         random: u64,
         is_resizing: bool,
     ) -> Result<u64, BucketMapError> {
-        let mut m = Measure::start("bucket_create_key");
         let ix = Self::bucket_index_ix(key, random) % index.capacity();
         for i in ix..ix + index.max_search() {
             let ii = i % index.capacity();
@@ -298,19 +297,8 @@ impl<'b, T: Clone + Copy + PartialEq + std::fmt::Debug + 'static> Bucket<T> {
             // These fields will be overwritten after allocation by callers.
             // Since this part of the mmapped file could have previously been used by someone else, there can be garbage here.
             IndexEntryPlaceInBucket::new(ii).init(index, key);
-            //debug!(                "INDEX ALLOC {:?} {} {} {}",                key, ii, index.capacity, elem_uid            );
-            m.stop();
-            index
-                .stats
-                .find_index_entry_mut_us
-                .fetch_add(m.as_us(), Ordering::Relaxed);
             return Ok(ii);
         }
-        m.stop();
-        index
-            .stats
-            .find_index_entry_mut_us
-            .fetch_add(m.as_us(), Ordering::Relaxed);
         Err(BucketMapError::IndexNoSpace(index.contents.capacity()))
     }
 

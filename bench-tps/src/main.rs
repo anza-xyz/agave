@@ -8,16 +8,15 @@ use {
         send_batch::{generate_durable_nonce_accounts, generate_keypairs},
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_commitment_config::CommitmentConfig,
+    solana_fee_calculator::FeeRateGovernor,
     solana_genesis::Base64Account,
+    solana_keypair::Keypair,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        commitment_config::CommitmentConfig,
-        fee_calculator::FeeRateGovernor,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_program,
-    },
+    solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
+    solana_system_interface::program as system_program,
     solana_tps_client::TpsClient,
     solana_tpu_client::tpu_client::{TpuClient, TpuClientConfig},
     std::{
@@ -30,6 +29,10 @@ use {
         sync::{Arc, RwLock},
     },
 };
+
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 /// Number of signatures for all transactions in ~1 week at ~100K TPS
 pub const NUM_SIGNATURES_FOR_TXS: u64 = 100_000 * 60 * 60 * 24 * 7;

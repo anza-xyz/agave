@@ -330,6 +330,7 @@ Add
 
 ```
 LimitNOFILE=1000000
+LimitMEMLOCK=2000000000
 ```
 
 to the `[Service]` section of your systemd service file, if you use one,
@@ -337,6 +338,7 @@ otherwise add
 
 ```
 DefaultLimitNOFILE=1000000
+DefaultLimitMEMLOCK=2000000000
 ```
 
 to the `[Manager]` section of `/etc/systemd/system.conf`.
@@ -349,6 +351,8 @@ sudo systemctl daemon-reload
 sudo bash -c "cat >/etc/security/limits.d/90-solana-nofiles.conf <<EOF
 # Increase process file descriptor count limit
 * - nofile 1000000
+# Increase memory locked limit (kB)
+* - memlock 2000000
 EOF"
 ```
 

@@ -33,7 +33,6 @@ pub(crate) use real::*;
 #[cfg(test)]
 mod real {
     use {
-        lazy_static::lazy_static,
         log::trace,
         std::{
             cmp::Ordering::{Equal, Greater, Less},
@@ -146,10 +145,8 @@ mod real {
         }
     }
 
-    lazy_static! {
-        static ref THREAD_REGISTRY: Mutex<HashMap<ThreadId, Arc<Progress>>> =
-            Mutex::new(HashMap::new());
-    }
+    static THREAD_REGISTRY: std::sync::LazyLock<Mutex<HashMap<ThreadId, Arc<Progress>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
     #[must_use]
     pub(crate) struct ActiveProgress(Arc<Progress>, ThreadId);

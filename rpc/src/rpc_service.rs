@@ -17,48 +17,101 @@ use {
     },
     regex::Regex,
     solana_client::connection_cache::{ConnectionCache, Protocol},
+    solana_genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         bigtable_upload::ConfirmedBlockUploadConfig,
         bigtable_upload_service::BigTableUploadService, blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
     },
     solana_metrics::inc_new_counter_info,
+    solana_native_token::lamports_to_sol,
     solana_perf::thread::renice_this_thread,
     solana_poh::poh_recorder::PohRecorder,
     solana_quic_definitions::NotifyKeyUpdate,
     solana_runtime::{
-        bank::Bank, bank_forks::BankForks, commitment::BlockCommitmentCache,
+        bank::Bank,
+        bank_forks::BankForks,
+        commitment::BlockCommitmentCache,
         non_circulating_supply::calculate_non_circulating_supply,
         prioritization_fee_cache::PrioritizationFeeCache,
-        snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_config::SnapshotConfig,
-        snapshot_utils,
-    },
-    solana_sdk::{
-        exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
-        native_token::lamports_to_sol, signature::Keypair,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_config::SnapshotConfig,
+        snapshot_utils::{self, SnapshotInterval},
     },
     solana_send_transaction_service::{
         send_transaction_service::{self, SendTransactionService},
         transaction_client::{ConnectionCacheClient, TpuClientNextClient, TransactionClient},
     },
     solana_storage_bigtable::CredentialType,
+    solana_validator_exit::Exit,
     std::{
         net::{SocketAddr, UdpSocket},
         path::{Path, PathBuf},
+        pin::Pin,
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, RwLock,
         },
+        task::{Context, Poll},
         thread::{self, Builder, JoinHandle},
+        time::{Duration, Instant},
     },
     tokio::runtime::{Builder as TokioBuilder, Handle as RuntimeHandle, Runtime as TokioRuntime},
-    tokio_util::codec::{BytesCodec, FramedRead},
+    tokio_util::{
+        bytes::Bytes,
+        codec::{BytesCodec, FramedRead},
+        sync::CancellationToken,
+    },
 };
 
 const FULL_SNAPSHOT_REQUEST_PATH: &str = "/snapshot.tar.bz2";
 const INCREMENTAL_SNAPSHOT_REQUEST_PATH: &str = "/incremental-snapshot.tar.bz2";
 const LARGEST_ACCOUNTS_CACHE_DURATION: u64 = 60 * 60 * 2;
+/// Default minimum snapshot download speed is 10 MB/s
+/// Full snapshots are ~90 GB, incremental are ~1 GB today but both will increase over time
+/// Full: 120 GB / 10 MB/s = 12,000 seconds -> ~30k slots
+const FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS: Duration = Duration::from_secs(12_000);
+/// Incremental: 2.5 GB / 10 MB/s = 250 seconds -> ~625 slots
+const FALLBACK_INCREMENTAL_SNAPSHOT_TIMEOUT_SECS: Duration = Duration::from_secs(250);
+
+enum SnapshotKind {
+    Full,
+    Incremental,
+}
+
+struct TimeoutStream<S> {
+    inner: S,
+    deadline: Instant,
+}
+
+impl<S> TimeoutStream<S> {
+    fn new(inner: S, timeout: Duration) -> Self {
+        Self {
+            inner,
+            deadline: Instant::now() + timeout,
+        }
+    }
+}
+
+impl<S> Stream for TimeoutStream<S>
+where
+    S: Stream<Item = std::io::Result<Bytes>> + Unpin,
+{
+    type Item = std::io::Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if Instant::now() >= self.deadline {
+            return Poll::Ready(Some(Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "snapshot transfer deadline exceeded",
+            ))));
+        }
+        Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
 
 pub struct JsonRpcService {
     thread_hdl: JoinHandle<()>,
@@ -163,14 +216,14 @@ impl RpcRequestMiddleware {
         tokio::fs::File::open(path).await
     }
 
-    fn find_snapshot_file<P>(&self, stem: P) -> PathBuf
+    fn find_snapshot_file<P>(&self, stem: P) -> (PathBuf, SnapshotKind)
     where
         P: AsRef<Path>,
     {
-        let root = if self
+        let is_full = self
             .full_snapshot_archive_path_regex
-            .is_match(Path::new("").join(&stem).to_str().unwrap())
-        {
+            .is_match(Path::new("").join(&stem).to_str().unwrap());
+        let root = if is_full {
             &self
                 .snapshot_config
                 .as_ref()
@@ -184,37 +237,74 @@ impl RpcRequestMiddleware {
                 .incremental_snapshot_archives_dir
         };
         let local_path = root.join(&stem);
-        if local_path.exists() {
+        let path = if local_path.exists() {
             local_path
         } else {
             // remote snapshot archive path
             snapshot_utils::build_snapshot_archives_remote_dir(root).join(stem)
-        }
+        };
+        (
+            path,
+            if is_full {
+                SnapshotKind::Full
+            } else {
+                SnapshotKind::Incremental
+            },
+        )
     }
 
     fn process_file_get(&self, path: &str) -> RequestMiddlewareAction {
-        let filename = {
+        let (filename, snapshot_type) = {
             let stem = Self::strip_leading_slash(path).expect("path already verified");
             match path {
                 DEFAULT_GENESIS_DOWNLOAD_PATH => {
                     inc_new_counter_info!("rpc-get_genesis", 1);
-                    self.ledger_path.join(stem)
+                    (self.ledger_path.join(stem), None)
                 }
                 _ => {
                     inc_new_counter_info!("rpc-get_snapshot", 1);
-                    self.find_snapshot_file(stem)
+                    let (path, snapshot_type) = self.find_snapshot_file(stem);
+                    (path, Some(snapshot_type))
                 }
             }
         };
-
         let file_length = std::fs::metadata(&filename)
             .map(|m| m.len())
             .unwrap_or(0)
             .to_string();
         info!("get {} -> {:?} ({} bytes)", path, filename, file_length);
+
+        if cfg!(not(test)) {
+            assert!(
+                self.snapshot_config.is_some(),
+                "snapshot_config should never be None outside of tests"
+            );
+        }
+        let snapshot_timeout = self.snapshot_config.as_ref().and_then(|config| {
+            snapshot_type.map(|st| {
+                let interval = match st {
+                    SnapshotKind::Full => config.full_snapshot_archive_interval,
+                    SnapshotKind::Incremental => config.incremental_snapshot_archive_interval,
+                };
+                let computed = match interval {
+                    SnapshotInterval::Disabled => Duration::ZERO,
+                    SnapshotInterval::Slots(slots) => Duration::from_millis(
+                        slots
+                            .get()
+                            .saturating_mul(solana_clock::DEFAULT_MS_PER_SLOT),
+                    ),
+                };
+                let fallback = match st {
+                    SnapshotKind::Full => FALLBACK_FULL_SNAPSHOT_TIMEOUT_SECS,
+                    SnapshotKind::Incremental => FALLBACK_INCREMENTAL_SNAPSHOT_TIMEOUT_SECS,
+                };
+                std::cmp::max(computed, fallback)
+            })
+        });
+
         RequestMiddlewareAction::Respond {
             should_validate_hosts: true,
-            response: Box::pin(async {
+            response: Box::pin(async move {
                 match Self::open_no_follow(filename).await {
                     Err(err) => Ok(if err.kind() == std::io::ErrorKind::NotFound {
                         Self::not_found()
@@ -224,8 +314,11 @@ impl RpcRequestMiddleware {
                     Ok(file) => {
                         let stream =
                             FramedRead::new(file, BytesCodec::new()).map_ok(|b| b.freeze());
-                        let body = hyper::Body::wrap_stream(stream);
-
+                        let body = if let Some(timeout) = snapshot_timeout {
+                            hyper::Body::wrap_stream(TimeoutStream::new(stream, timeout))
+                        } else {
+                            hyper::Body::wrap_stream(stream)
+                        };
                         Ok(hyper::Response::builder()
                             .header(hyper::header::CONTENT_LENGTH, file_length)
                             .body(body)
@@ -396,7 +489,6 @@ pub struct JsonRpcServiceConfig<'a> {
     pub max_slots: Arc<MaxSlots>,
     pub leader_schedule_cache: Arc<LeaderScheduleCache>,
     pub max_complete_transaction_status_slot: Arc<AtomicU64>,
-    pub max_complete_rewards_slot: Arc<AtomicU64>,
     pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     pub client_option: ClientOption<'a>,
 }
@@ -409,7 +501,7 @@ pub struct JsonRpcServiceConfig<'a> {
 ///   requires a reference to a [`Keypair`].
 pub enum ClientOption<'a> {
     ConnectionCache(Arc<ConnectionCache>),
-    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle),
+    TpuClientNext(&'a Keypair, UdpSocket, RuntimeHandle, CancellationToken),
 }
 
 impl JsonRpcService {
@@ -460,13 +552,17 @@ impl JsonRpcService {
                     config.leader_schedule_cache,
                     client.clone(),
                     config.max_complete_transaction_status_slot,
-                    config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
                     runtime,
                 )?;
                 Ok(json_rpc_service)
             }
-            ClientOption::TpuClientNext(identity_keypair, tpu_client_socket, client_runtime) => {
+            ClientOption::TpuClientNext(
+                identity_keypair,
+                tpu_client_socket,
+                client_runtime,
+                cancel,
+            ) => {
                 let my_tpu_address = config
                     .cluster_info
                     .my_contact_info()
@@ -483,6 +579,7 @@ impl JsonRpcService {
                     config.send_transaction_service_config.leader_forward_count,
                     Some(identity_keypair),
                     tpu_client_socket,
+                    cancel,
                 );
 
                 let json_rpc_service = Self::new_with_client(
@@ -505,7 +602,6 @@ impl JsonRpcService {
                     config.leader_schedule_cache,
                     client,
                     config.max_complete_transaction_status_slot,
-                    config.max_complete_rewards_slot,
                     config.prioritization_fee_cache,
                     runtime,
                 )?;
@@ -536,7 +632,6 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         connection_cache: Arc<ConnectionCache>,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Result<Self, String> {
         let runtime = service_runtime(
@@ -584,7 +679,6 @@ impl JsonRpcService {
             leader_schedule_cache,
             client.clone(),
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
             runtime,
         )?;
@@ -619,7 +713,6 @@ impl JsonRpcService {
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         client: Client,
         max_complete_transaction_status_slot: Arc<AtomicU64>,
-        max_complete_rewards_slot: Arc<AtomicU64>,
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
@@ -672,7 +765,6 @@ impl JsonRpcService {
                                 blockstore.clone(),
                                 block_commitment_cache.clone(),
                                 max_complete_transaction_status_slot.clone(),
-                                max_complete_rewards_slot.clone(),
                                 ConfirmedBlockUploadConfig::default(),
                                 exit_bigtable_ledger_upload_service.clone(),
                             )))
@@ -713,7 +805,6 @@ impl JsonRpcService {
             max_slots,
             leader_schedule_cache,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             prioritization_fee_cache,
             Arc::clone(&runtime),
         );
@@ -866,16 +957,14 @@ mod tests {
     use {
         super::*,
         crate::rpc::{create_validator_exit, tests::new_test_cluster_info},
+        solana_genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
         },
         solana_rpc_client_api::config::RpcContextConfig,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
-            signature::Signer,
-        },
+        solana_signer::Signer,
         std::{
             io::Write,
             net::{IpAddr, Ipv4Addr},
@@ -895,9 +984,10 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let cluster_info = Arc::new(new_test_cluster_info());
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         let rpc_addr = SocketAddr::new(
             ip_addr,
-            solana_net_utils::find_available_port_in_range(ip_addr, (10000, 65535)).unwrap(),
+            solana_net_utils::find_available_port_in_range(ip_addr, port_range).unwrap(),
         );
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -930,7 +1020,6 @@ mod tests {
             Arc::new(MaxSlots::default()),
             Arc::new(LeaderScheduleCache::default()),
             connection_cache,
-            Arc::new(AtomicU64::default()),
             Arc::new(AtomicU64::default()),
             Arc::new(PrioritizationFeeCache::default()),
         )
@@ -1045,49 +1134,57 @@ mod tests {
         assert!(!rrm.is_file_get_path("/incremental-snapshot.tar.bz2"));
 
         assert!(!rrm.is_file_get_path(
-            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm.is_file_get_path(
-            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
-            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
-        ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
-        assert!(rrm_with_snapshot_config
+        assert!(rrm_with_snapshot_config.is_file_get_path(
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.lz4"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+        ));
+        assert!(!rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"));
-        assert!(rrm_with_snapshot_config
+        assert!(!rrm_with_snapshot_config
             .is_file_get_path("/snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
 
-        assert!(rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
-        ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(rrm_with_snapshot_config.is_file_get_path(
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.lz4"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.gz"
         ));
-        assert!(rrm_with_snapshot_config.is_file_get_path(
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
             "/incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
         ));
 
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/snapshot-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-notaslotnumber-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.bz2"
+            "/incremental-snapshot-100-notaslotnumber-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
 
-        assert!(!rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar"));
+        assert!(
+            !rrm_with_snapshot_config.is_file_get_path("../../../test/snapshot-123-xxx.tar.zst")
+        );
         assert!(!rrm_with_snapshot_config
-            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar"));
+            .is_file_get_path("../../../test/incremental-snapshot-123-456-xxx.tar.zst"));
 
         assert!(!rrm.is_file_get_path("/"));
         assert!(!rrm.is_file_get_path("//"));
@@ -1103,20 +1200,23 @@ mod tests {
         assert!(!rrm.is_file_get_path("..//"));
         assert!(!rrm.is_file_get_path("🎣"));
 
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
-        assert!(!rrm_with_snapshot_config
-            .is_file_get_path("/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "//snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "/./snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
         assert!(!rrm_with_snapshot_config.is_file_get_path(
-            "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar"
+            "/../snapshot-100-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "//incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/./incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
+        ));
+        assert!(!rrm_with_snapshot_config.is_file_get_path(
+            "/../incremental-snapshot-100-200-AvFf9oS8A8U78HdjT9YG2sTTThLHJZmhaMn2g8vkWYnr.tar.zst"
         ));
     }
 

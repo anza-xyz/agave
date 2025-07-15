@@ -11,7 +11,7 @@ use {
         input_validators::{is_amount, is_rfc3339_datetime, is_valid_pubkey, is_valid_signer},
     },
     solana_cli_config::CONFIG_FILE,
-    solana_sdk::native_token::sol_to_lamports,
+    solana_native_token::sol_to_lamports,
     std::{ffi::OsString, process::exit},
 };
 
@@ -141,6 +141,7 @@ where
         .arg(
             Arg::with_name("config_file")
                 .long("config")
+                .global(true)
                 .takes_value(true)
                 .value_name("FILEPATH")
                 .default_value(default_config_file)
@@ -153,6 +154,25 @@ where
                 .takes_value(true)
                 .value_name("URL")
                 .help("RPC entrypoint address. i.e. http://api.devnet.solana.com"),
+        )
+        .arg(
+            Arg::with_name("commitment")
+                .long("commitment")
+                .global(true)
+                .takes_value(true)
+                .value_name("COMMITMENT_LEVEL")
+                .possible_values(&["processed", "confirmed", "finalized"])
+                .hide_possible_values(true)
+                .help(
+                    "Return information at the selected commitment level \
+                     [possible values: processed, confirmed, finalized]",
+                ),
+        )
+        .arg(
+            Arg::with_name("no_wait")
+                .long("no-wait")
+                .global(true)
+                .help("Send transactions without waiting for confirmation"),
         )
         .subcommand(
             SubCommand::with_name("new")
@@ -243,11 +263,6 @@ where
                 .arg(new_custodian_arg())
                 .arg(num_accounts_arg())
                 .arg(
-                    Arg::with_name("no_wait")
-                        .long("no-wait")
-                        .help("Send transactions without waiting for confirmation"),
-                )
-                .arg(
                     Arg::with_name("unlock_years")
                         .long("unlock-years")
                         .takes_value(true)
@@ -288,6 +303,7 @@ fn parse_new_args(matches: &ArgMatches<'_>) -> NewArgs<String, String> {
         stake_authority: value_t_or_exit!(matches, "stake_authority", String),
         withdraw_authority: value_t_or_exit!(matches, "withdraw_authority", String),
         index: value_t_or_exit!(matches, "index", usize),
+        no_wait: matches.is_present("no_wait"),
     }
 }
 
@@ -313,6 +329,7 @@ fn parse_authorize_args(matches: &ArgMatches<'_>) -> AuthorizeArgs<String, Strin
         new_stake_authority: value_t_or_exit!(matches, "new_stake_authority", String),
         new_withdraw_authority: value_t_or_exit!(matches, "new_withdraw_authority", String),
         num_accounts: value_t_or_exit!(matches, "num_accounts", usize),
+        no_wait: matches.is_present("no_wait"),
     }
 }
 
@@ -337,6 +354,7 @@ fn parse_rebase_args(matches: &ArgMatches<'_>) -> RebaseArgs<String, String> {
         new_base_keypair: value_t_or_exit!(matches, "new_base_keypair", String),
         stake_authority: value_t_or_exit!(matches, "stake_authority", String),
         num_accounts: value_t_or_exit!(matches, "num_accounts", usize),
+        no_wait: matches.is_present("no_wait"),
     }
 }
 
@@ -355,6 +373,7 @@ where
     let matches = get_matches(args);
     let config_file = matches.value_of("config_file").unwrap().to_string();
     let url = matches.value_of("url").map(|x| x.to_string());
+    let commitment = matches.value_of("commitment").map(|x| x.to_string());
 
     let command = match matches.subcommand() {
         ("new", Some(matches)) => Command::New(parse_new_args(matches)),
@@ -373,6 +392,7 @@ where
     Args {
         config_file,
         url,
+        commitment,
         command,
     }
 }

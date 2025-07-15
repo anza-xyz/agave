@@ -2,16 +2,14 @@ use {
     log::*,
     rand::{thread_rng, Rng},
     rayon::prelude::*,
+    solana_account::{AccountSharedData, WritableAccount},
     solana_accounts_db::{
         accounts_db::{AccountsDb, LoadHint},
         accounts_hash::AccountHash,
         ancestors::Ancestors,
     },
-    solana_sdk::{
-        account::{AccountSharedData, WritableAccount},
-        clock::Slot,
-        hash::Hash,
-    },
+    solana_clock::Slot,
+    solana_hash::Hash,
     std::{collections::HashSet, time::Instant},
 };
 
@@ -63,7 +61,7 @@ fn test_bad_bank_hash() {
             .iter()
             .map(|idx| (&accounts_keys[*idx].0, &accounts_keys[*idx].1))
             .collect();
-        db.store_cached((some_slot, &account_refs[..]), None);
+        db.store_cached((some_slot, &account_refs[..]));
         for pass in 0..2 {
             for (key, account) in &account_refs {
                 if pass == 1 {

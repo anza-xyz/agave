@@ -4,13 +4,14 @@ use {
         ProgressBar,
     },
     console::style,
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_core::validator::ValidatorStartProgress,
+    solana_native_token::Sol,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{client_error, request, response::RpcContactInfo},
-    solana_sdk::{
-        clock::Slot, commitment_config::CommitmentConfig, exit::Exit, native_token::Sol,
-        pubkey::Pubkey,
-    },
+    solana_validator_exit::Exit,
     std::{
         net::SocketAddr,
         path::{Path, PathBuf},
@@ -277,7 +278,7 @@ fn get_validator_stats(
                     request::RpcResponseErrorData::NodeUnhealthy {
                         num_slots_behind: Some(num_slots_behind),
                     },
-            }) = &err.kind
+            }) = err.kind()
             {
                 format!("{num_slots_behind} slots behind")
             } else {

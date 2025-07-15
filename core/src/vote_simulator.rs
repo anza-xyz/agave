@@ -18,6 +18,9 @@ use {
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     crossbeam_channel::unbounded,
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank,
         bank_forks::BankForks,
@@ -25,7 +28,7 @@ use {
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
     },
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signer},
+    solana_signer::Signer,
     solana_vote::vote_transaction,
     solana_vote_program::vote_state::{Lockout, TowerSync},
     std::{
@@ -139,9 +142,8 @@ impl VoteSimulator {
                         .any(|lockout| lockout.slot() == parent));
                 }
             }
-            while new_bank.tick_height() < new_bank.max_tick_height() {
-                new_bank.register_unique_tick();
-            }
+
+            new_bank.fill_bank_with_ticks_for_tests();
             if !visit.node().has_no_child() || is_frozen {
                 new_bank.set_block_id(Some(Hash::new_unique()));
                 new_bank.freeze();
@@ -172,8 +174,7 @@ impl VoteSimulator {
             .read()
             .unwrap()
             .frozen_banks()
-            .values()
-            .cloned()
+            .map(|(_slot, bank)| bank)
             .collect();
 
         let _ = ReplayStage::compute_bank_stats(
@@ -396,9 +397,7 @@ pub fn initialize_state(
         bank0.transfer(10_000, &mint_keypair, pubkey).unwrap();
     }
 
-    while bank0.tick_height() < bank0.max_tick_height() {
-        bank0.register_unique_tick();
-    }
+    bank0.fill_bank_with_ticks_for_tests();
     bank0.freeze();
     let mut progress = ProgressMap::default();
     progress.insert(

@@ -2,8 +2,7 @@ use {
     crate::{
         blockstore::Blockstore,
         blockstore_processor::{
-            self, BlockMetaSender, BlockstoreProcessorError, ProcessOptions,
-            TransactionStatusSender,
+            self, BlockstoreProcessorError, ProcessOptions, TransactionStatusSender,
         },
         entry_notifier_service::EntryNotifierSender,
         leader_schedule_cache::LeaderScheduleCache,
@@ -11,6 +10,7 @@ use {
     },
     log::*,
     solana_accounts_db::accounts_update_notifier_interface::AccountsUpdateNotifier,
+    solana_genesis_config::GenesisConfig,
     solana_runtime::{
         bank_forks::BankForks,
         snapshot_archive_info::{
@@ -21,7 +21,6 @@ use {
         snapshot_hash::{FullSnapshotHash, IncrementalSnapshotHash, StartingSnapshotHashes},
         snapshot_utils,
     },
-    solana_sdk::genesis_config::GenesisConfig,
     std::{
         path::PathBuf,
         result,
@@ -40,7 +39,7 @@ pub enum BankForksUtilsError {
          incremental snapshot archive: {incremental_snapshot_archive}"
     )]
     BankFromSnapshotsArchive {
-        source: snapshot_utils::SnapshotError,
+        source: Box<snapshot_utils::SnapshotError>,
         full_snapshot_archive: String,
         incremental_snapshot_archive: String,
     },
@@ -85,7 +84,6 @@ pub fn load(
     snapshot_config: &SnapshotConfig,
     process_options: ProcessOptions,
     transaction_status_sender: Option<&TransactionStatusSender>,
-    block_meta_sender: Option<&BlockMetaSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -96,7 +94,7 @@ pub fn load(
         account_paths,
         snapshot_config,
         &process_options,
-        block_meta_sender,
+        transaction_status_sender,
         entry_notification_sender,
         accounts_update_notifier,
         exit,
@@ -107,7 +105,6 @@ pub fn load(
         &leader_schedule_cache,
         &process_options,
         transaction_status_sender,
-        block_meta_sender,
         entry_notification_sender,
         None, // snapshot_controller
     )
@@ -123,7 +120,7 @@ pub fn load_bank_forks(
     account_paths: Vec<PathBuf>,
     snapshot_config: &SnapshotConfig,
     process_options: &ProcessOptions,
-    block_meta_sender: Option<&BlockMetaSender>,
+    transaction_status_sender: Option<&TransactionStatusSender>,
     entry_notification_sender: Option<&EntryNotifierSender>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
@@ -191,7 +188,7 @@ pub fn load_bank_forks(
                 blockstore,
                 account_paths,
                 process_options,
-                block_meta_sender,
+                transaction_status_sender,
                 entry_notification_sender,
                 accounts_update_notifier,
                 exit,
@@ -201,7 +198,7 @@ pub fn load_bank_forks(
                 .read()
                 .unwrap()
                 .root_bank()
-                .set_startup_verification_complete();
+                .set_initial_accounts_hash_verification_completed();
 
             (bank_forks, None)
         };
@@ -314,16 +311,16 @@ fn bank_forks_from_snapshot(
             process_options.debug_keys.clone(),
             None,
             process_options.limit_load_slot_count_from_snapshot,
-            process_options.accounts_db_test_hash_calculation,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
             process_options.verify_index,
+            false, // verify_index. This will be removed separately.
             process_options.accounts_db_config.clone(),
             accounts_update_notifier,
             exit,
         )
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsArchive {
-            source: err,
+            source: Box::new(err),
             full_snapshot_archive: full_snapshot_archive_info.path().display().to_string(),
             incremental_snapshot_archive: incremental_snapshot_archive_info
                 .as_ref()

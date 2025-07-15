@@ -1,16 +1,15 @@
 use {
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_program::program::invoke,
+    solana_program_error::ProgramResult,
     solana_program_test::{processor, ProgramTest},
-    solana_sdk::{
-        account_info::{next_account_info, AccountInfo},
-        entrypoint::ProgramResult,
-        instruction::{AccountMeta, Instruction},
-        program::invoke,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_instruction,
-        sysvar::rent,
-        transaction::Transaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_signer::Signer,
+    solana_system_interface::instruction as system_instruction,
+    solana_sysvar::rent,
+    solana_transaction::Transaction,
 };
 
 fn process_instruction(

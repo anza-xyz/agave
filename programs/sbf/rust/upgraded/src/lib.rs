@@ -1,11 +1,11 @@
 //! Example Rust-based SBF upgraded program
 
-extern crate solana_program;
-use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, msg, pubkey::Pubkey, sysvar::clock,
+use {
+    solana_account_info::AccountInfo, solana_msg::msg, solana_program_error::ProgramResult,
+    solana_pubkey::Pubkey, solana_sysvar::clock,
 };
 
-solana_program::entrypoint_no_alloc!(process_instruction);
+solana_program_entrypoint::entrypoint_no_alloc!(process_instruction);
 fn process_instruction(
     _program_id: &Pubkey,
     accounts: &[AccountInfo],

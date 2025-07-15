@@ -9,6 +9,27 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[[bin]]
+name = "solana-gossip"
+path = "src/main.rs"
+
+[features]
+frozen-abi = [
+    "dep:solana-frozen-abi",
+    "dep:solana-frozen-abi-macro",
+    "solana-bloom/frozen-abi",
+    "solana-ledger/frozen-abi",
+    "solana-perf/frozen-abi",
+    "solana-runtime/frozen-abi",
+    "solana-short-vec/frozen-abi",
+    "solana-version/frozen-abi",
+    "solana-vote/frozen-abi",
+    "solana-vote-program/frozen-abi",
+]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 arrayvec = { workspace = true }
@@ -34,41 +55,41 @@ siphasher = { workspace = true }
 solana-bloom = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
-solana-clock = "=2.2.1"
+solana-clock = "=2.2.2"
 solana-connection-cache = { workspace = true }
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"
-solana-frozen-abi = { version = "=2.2.2", optional = true, features = [
+solana-frozen-abi = { version = "=2.3.0", optional = true, features = [
     "frozen-abi",
 ] }
 solana-frozen-abi-macro = { version = "=2.2.1", optional = true, features = [
     "frozen-abi",
 ] }
-solana-hash = "=2.2.1"
+solana-hash = "=2.3.0"
 solana-keypair = "=2.2.1"
 solana-ledger = { workspace = true }
 solana-logger = "=2.3.1"
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
-solana-native-token = "=2.2.1"
+solana-native-token = "=2.2.2"
 solana-net-utils = { workspace = true }
 solana-packet = "=2.2.1"
 solana-perf = { workspace = true }
-solana-pubkey = { version = "=2.3.0", features = ["rand"] }
+solana-pubkey = { version = "=2.4.0", features = ["rand"] }
 solana-quic-definitions = "=2.2.1"
 solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-runtime = { workspace = true }
 solana-sanitize = "=2.2.1"
-solana-serde-varint = "=2.2.1"
+solana-serde-varint = "=2.2.2"
 solana-sha256-hasher = "=2.2.1"
 solana-short-vec = "=2.2.1"
-solana-signature = { version = "=2.2.1", default-features = false }
+solana-signature = { version = "=2.3.0", default-features = false }
 solana-signer = "=2.2.1"
 solana-streamer = { workspace = true }
 solana-time-utils = "=2.2.1"
 solana-tpu-client = { workspace = true }
-solana-transaction = "=2.2.2"
+solana-transaction = "=2.2.3"
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -86,26 +107,11 @@ serial_test = { workspace = true }
 solana-net-utils = { workspace = true, features = ["dev-context-only-utils"] }
 solana-perf = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-solana-sdk = { workspace = true }
+solana-signature = { version = "=2.3.0", features = ["rand"] }
 solana-system-transaction = { workspace = true }
 solana-vote-interface = { workspace = true }
 static_assertions = { workspace = true }
 test-case = { workspace = true }
-
-[features]
-frozen-abi = [
-    "dep:solana-frozen-abi",
-    "dep:solana-frozen-abi-macro",
-    "solana-bloom/frozen-abi",
-    "solana-ledger/frozen-abi",
-    "solana-perf/frozen-abi",
-    "solana-runtime/frozen-abi",
-    "solana-sdk/frozen-abi",
-    "solana-short-vec/frozen-abi",
-    "solana-version/frozen-abi",
-    "solana-vote/frozen-abi",
-    "solana-vote-program/frozen-abi",
-]
 
 [[bench]]
 name = "crds"
@@ -119,13 +125,6 @@ name = "crds_shards"
 [[bench]]
 name = "weighted_shuffle"
 harness = false
-
-[[bin]]
-name = "solana-gossip"
-path = "src/main.rs"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
 
 [lints]
 workspace = true

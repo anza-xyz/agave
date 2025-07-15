@@ -6,15 +6,13 @@ use {
     bincode::serialize,
     crossbeam_channel::Receiver,
     solana_client::connection_cache::ConnectionCache,
+    solana_clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
     solana_connection_cache::client_connection::ClientConnection,
     solana_gossip::cluster_info::ClusterInfo,
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
-    solana_sdk::{
-        clock::{Slot, FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET},
-        transaction::Transaction,
-        transport::TransportError,
-    },
+    solana_transaction::Transaction,
+    solana_transaction_error::TransportError,
     std::{
         net::SocketAddr,
         sync::{Arc, RwLock},
@@ -115,7 +113,7 @@ impl VotingService {
         if let VoteOp::PushVote { saved_tower, .. } = &vote_op {
             let mut measure = Measure::start("tower storage save");
             if let Err(err) = tower_storage.store(saved_tower) {
-                error!("Unable to save tower to storage: {:?}", err);
+                error!("Unable to save tower to storage: {err:?}");
                 std::process::exit(1);
             }
             measure.stop();

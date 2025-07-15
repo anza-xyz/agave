@@ -21,7 +21,7 @@ use {
     dashmap::DashMap,
     log::*,
     serde_derive::Serialize,
-    solana_account_decoder::{UiAccountEncoding, UiDataSliceConfig},
+    solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
     solana_accounts_db::{
         accounts_db::CalcAccountsHashDataSource,
         accounts_index::{ScanConfig, ScanOrder},
@@ -34,13 +34,18 @@ use {
             is_within_range,
         },
     },
-    solana_cli_output::{CliAccount, CliAccountNewConfig, OutputFormat},
+    solana_cli_output::{CliAccount, OutputFormat},
+    solana_clock::{Epoch, Slot},
     solana_core::{
         banking_simulation::{BankingSimulator, BankingTraceEvents},
         system_monitor_service::{SystemMonitorService, SystemMonitorStatsReportConfig},
         validator::{BlockProductionMethod, BlockVerificationMethod, TransactionStructure},
     },
     solana_cost_model::{cost_model::CostModel, cost_tracker::CostTracker},
+    solana_feature_gate_interface::{self as feature, Feature},
+    solana_genesis_config::ClusterType,
+    solana_inflation::Inflation,
+    solana_instruction::TRANSACTION_LEVEL_STACK_HEIGHT,
     solana_ledger::{
         blockstore::{banking_trace_path, create_new_ledger, Blockstore},
         blockstore_options::{AccessType, LedgerColumnOptions},
@@ -49,6 +54,10 @@ use {
         },
     },
     solana_measure::{measure::Measure, measure_time},
+    solana_message::SimpleAddressLoader,
+    solana_native_token::{lamports_to_sol, sol_to_lamports, Sol},
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_runtime::{
         bank::{
             bank_hash_details::{self, SlotDetails, TransactionDetails},
@@ -65,22 +74,11 @@ use {
         },
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount, WritableAccount},
-        account_utils::StateMut,
-        clock::{Epoch, Slot},
-        feature::{self, Feature},
-        genesis_config::ClusterType,
-        inflation::Inflation,
-        native_token::{lamports_to_sol, sol_to_lamports, Sol},
-        pubkey::Pubkey,
-        rent::Rent,
-        shred_version::compute_shred_version,
-        stake::{self, state::StakeStateV2},
-        system_program,
-        transaction::{MessageHash, SimpleAddressLoader},
-    },
+    solana_shred_version::compute_shred_version,
+    solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_stake_program::stake_state,
+    solana_system_interface::program as system_program,
+    solana_transaction::sanitized::MessageHash,
     solana_transaction_status::parse_ui_instruction,
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_vote::vote_state_view::VoteStateView,
@@ -113,15 +111,6 @@ mod ledger_path;
 mod ledger_utils;
 mod output;
 mod program;
-
-fn parse_encoding_format(matches: &ArgMatches<'_>) -> UiAccountEncoding {
-    match matches.value_of("encoding") {
-        Some("jsonParsed") => UiAccountEncoding::JsonParsed,
-        Some("base64") => UiAccountEncoding::Base64,
-        Some("base64+zstd") => UiAccountEncoding::Base64Zstd,
-        _ => UiAccountEncoding::Base64,
-    }
-}
 
 fn render_dot(dot: String, output_file: &str, output_format: &str) -> io::Result<()> {
     let mut child = Command::new("dot")
@@ -204,7 +193,10 @@ struct GraphConfig {
 #[allow(clippy::cognitive_complexity)]
 fn graph_forks(bank_forks: &BankForks, config: &GraphConfig) -> String {
     let frozen_banks = bank_forks.frozen_banks();
-    let mut fork_slots: HashSet<_> = frozen_banks.keys().cloned().collect();
+    let mut fork_slots: HashSet<_> = bank_forks
+        .frozen_banks()
+        .map(|(slot, _bank)| slot)
+        .collect();
     for (_, bank) in frozen_banks {
         for parent in bank.parents() {
             fork_slots.remove(&parent.slot());
@@ -484,7 +476,7 @@ fn compute_slot_cost(
                     &reserved_account_keys.active,
                 )
                 .map_err(|err| {
-                    warn!("Failed to compute cost of transaction: {:?}", err);
+                    warn!("Failed to compute cost of transaction: {err:?}");
                 })
                 .ok()
             })
@@ -532,13 +524,17 @@ fn minimize_bank_for_snapshot(
     let total_accounts_len = transaction_account_set.len();
     info!("Added {total_accounts_len} accounts from transactions. {transaction_accounts_measure}");
 
-    SnapshotMinimizer::minimize(bank, snapshot_slot, ending_slot, transaction_account_set);
+    SnapshotMinimizer::minimize(bank, snapshot_slot, transaction_account_set);
     possibly_incomplete
 }
 
 fn assert_capitalization(bank: &Bank) {
-    let debug_verify = true;
-    assert!(bank.calculate_and_verify_capitalization(debug_verify));
+    let calculated = bank.calculate_capitalization_for_tests();
+    let expected = bank.capitalization();
+    assert_eq!(
+        calculated, expected,
+        "Capitalization mismatch: calculated: {calculated} != expected: {expected}",
+    );
 }
 
 fn load_banking_trace_events_or_exit(ledger_path: &Path) -> BankingTraceEvents {
@@ -626,7 +622,7 @@ fn setup_slot_recording(
             // So open-code the conflicts_with() here
             eprintln!(
                 "error: The argument '--verify-slots <FILENAME>' cannot be used with \
-                '--record-slots <FILENAME>'"
+                 '--record-slots <FILENAME>'"
             );
             exit(1);
         }
@@ -725,8 +721,12 @@ fn setup_slot_recording(
                         ..
                     } = slots.lock().unwrap().remove(0);
                     if bank.slot() != expected_slot || bank.hash().to_string() != expected_hash {
-                        error!("Expected slot: {expected_slot} hash: {expected_hash} got slot: {} hash: {}",
-                                    bank.slot(), bank.hash());
+                        error!(
+                            "Expected slot: {expected_slot} hash: {expected_hash} got slot: {} \
+                             hash: {}",
+                            bank.slot(),
+                            bank.hash()
+                        );
                     } else {
                         info!("Expected slot: {expected_slot} hash: {expected_hash} correct");
                     }
@@ -763,7 +763,13 @@ fn record_transactions(
                     let instructions = message
                         .instructions()
                         .iter()
-                        .map(|ix| parse_ui_instruction(ix, &message.account_keys(), None))
+                        .map(|ix| {
+                            parse_ui_instruction(
+                                ix,
+                                &message.account_keys(),
+                                Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
+                            )
+                        })
                         .collect();
 
                     let is_simple_vote_tx = tx.is_simple_vote_transaction();
@@ -824,9 +830,6 @@ fn main() {
     let accounts_db_config_args = accounts_db_args();
     let snapshot_config_args = snapshot_args();
 
-    let accounts_db_test_hash_calculation_arg = Arg::with_name("accounts_db_test_hash_calculation")
-        .long("accounts-db-test-hash-calculation")
-        .help("Enable hash calculation test");
     let halt_at_slot_arg = Arg::with_name("halt_at_slot")
         .long("halt-at-slot")
         .value_name("SLOT")
@@ -982,6 +985,7 @@ fn main() {
                 .value_name("METHOD")
                 .takes_value(true)
                 .possible_values(BlockVerificationMethod::cli_names())
+                .default_value(BlockVerificationMethod::default().into())
                 .global(true)
                 .help(BlockVerificationMethod::cli_message()),
         )
@@ -1043,7 +1047,7 @@ fn main() {
         .subcommand(
             SubCommand::with_name("genesis-hash")
                 .about("Prints the ledger's genesis hash")
-                .arg(&load_genesis_config_arg)
+                .arg(&load_genesis_config_arg),
         )
         .subcommand(
             SubCommand::with_name("modify-genesis")
@@ -1071,7 +1075,7 @@ fn main() {
                 .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
-                .arg(&hard_forks_arg)
+                .arg(&hard_forks_arg),
         )
         .subcommand(
             SubCommand::with_name("bank-hash")
@@ -1079,7 +1083,7 @@ fn main() {
                 .arg(&load_genesis_config_arg)
                 .args(&accounts_db_config_args)
                 .args(&snapshot_config_args)
-                .arg(&halt_at_slot_arg)
+                .arg(&halt_at_slot_arg),
         )
         .subcommand(
             SubCommand::with_name("verify")
@@ -1092,7 +1096,6 @@ fn main() {
                 .arg(&verify_index_arg)
                 .arg(&halt_at_slot_store_hash_raw_data)
                 .arg(&hard_forks_arg)
-                .arg(&accounts_db_test_hash_calculation_arg)
                 .arg(&os_memory_stats_reporting_arg)
                 .arg(&allow_dead_slots_arg)
                 .arg(&debug_key_arg)
@@ -1125,8 +1128,8 @@ fn main() {
                         .requires("enable_rpc_transaction_history")
                         .takes_value(false)
                         .help(
-                            "Include CPI inner instructions, logs, and return data in the historical \
-                             transaction info stored",
+                            "Include CPI inner instructions, logs, and return data in the \
+                             historical transaction info stored",
                         ),
                 )
                 .arg(
@@ -1152,9 +1155,7 @@ fn main() {
                     Arg::with_name("print_bank_hash")
                         .long("print-bank-hash")
                         .takes_value(false)
-                        .help(
-                            "After verifying the ledger, print the working bank's hash"
-                        ),
+                        .help("After verifying the ledger, print the working bank's hash"),
                 )
                 .arg(
                     Arg::with_name("write_bank_file")
@@ -1191,7 +1192,10 @@ fn main() {
                             "enable_rpc_transaction_history",
                             "geyser_plugin_config",
                         ])
-                        .help("In addition to the bank hash, optionally include accounts and/or transactions details for the slot"),
+                        .help(
+                            "In addition to the bank hash, optionally include accounts and/or \
+                             transactions details for the slot",
+                        ),
                 )
                 .arg(
                     Arg::with_name("abort_on_invalid_block")
@@ -1213,8 +1217,8 @@ fn main() {
                         .takes_value(false)
                         .help(
                             "Enable override of blockhashes and bank hashes from banking trace \
-                             event files to correctly verify blocks produced by \
-                             the simulate-block-production subcommand",
+                             event files to correctly verify blocks produced by the \
+                             simulate-block-production subcommand",
                         ),
                 ),
         )
@@ -1289,7 +1293,7 @@ fn main() {
                         .takes_value(true)
                         .help(
                             "Output directory for the snapshot \
-                            [default: --snapshot-archive-path if present else --ledger directory]",
+                             [default: --snapshot-archive-path if present else --ledger directory]",
                         ),
                 )
                 .arg(
@@ -1459,10 +1463,10 @@ fn main() {
                         .takes_value(true)
                         .help("The compression level to use when archiving with zstd")
                         .long_help(
-                            "The compression level to use when archiving with zstd. \
-                             Higher compression levels generally produce higher \
-                             compression ratio at the expense of speed and memory. \
-                             See the zstd manpage for more information."
+                            "The compression level to use when archiving with zstd. Higher \
+                             compression levels generally produce higher compression ratio at the \
+                             expense of speed and memory. See the zstd manpage for more \
+                             information.",
                         ),
                 )
                 .arg(
@@ -1484,7 +1488,17 @@ fn main() {
                         .value_name("METHOD")
                         .takes_value(true)
                         .possible_values(BlockProductionMethod::cli_names())
+                        .default_value(BlockProductionMethod::default().into())
                         .help(BlockProductionMethod::cli_message()),
+                )
+                .arg(
+                    Arg::with_name("transaction_struct")
+                        .long("transaction-structure")
+                        .value_name("STRUCT")
+                        .takes_value(true)
+                        .possible_values(TransactionStructure::cli_names())
+                        .default_value(TransactionStructure::default().into())
+                        .help(TransactionStructure::cli_message()),
                 )
                 .arg(
                     Arg::with_name("first_simulated_slot")
@@ -1493,7 +1507,7 @@ fn main() {
                         .validator(is_slot)
                         .takes_value(true)
                         .required(true)
-                        .help("Start simulation at the given slot")
+                        .help("Start simulation at the given slot"),
                 )
                 .arg(
                     Arg::with_name("no_block_cost_limits")
@@ -1543,7 +1557,7 @@ fn main() {
                         .multiple(true)
                         .help(
                             "Limit output to accounts corresponding to the specified pubkey(s), \
-                            may be specified multiple times",
+                             may be specified multiple times",
                         ),
                 )
                 .arg(
@@ -1678,24 +1692,7 @@ fn main() {
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
 
                     if output_accounts {
-                        let data_encoding = parse_encoding_format(arg_matches);
-                        let output_account_data = !arg_matches.is_present("no_account_data");
-                        let data_slice_config = if output_account_data {
-                            // None yields the entire account in the slice
-                            None
-                        } else {
-                            // usize::MAX is a sentinel that will yield an
-                            // empty data slice. Because of this, length is
-                            // ignored so any value will do
-                            let offset = usize::MAX;
-                            let length = 0;
-                            Some(UiDataSliceConfig { offset, length })
-                        };
-                        let cli_account_config = CliAccountNewConfig {
-                            data_encoding,
-                            data_slice_config,
-                            ..CliAccountNewConfig::default()
-                        };
+                        let output_config = parse_account_output_config(arg_matches);
 
                         let accounts: Vec<_> = genesis_config
                             .accounts
@@ -1704,7 +1701,7 @@ fn main() {
                                 CliAccount::new_with_config(
                                     &pubkey,
                                     &AccountSharedData::from(account),
-                                    &cli_account_config,
+                                    &output_config,
                                 )
                             })
                             .collect();
@@ -1783,8 +1780,8 @@ fn main() {
                 }
                 ("bank-hash", Some(_)) => {
                     eprintln!(
-                        "The bank-hash command has been deprecated, use \
-                        agave-ledger-tool verify --print-bank-hash ... instead"
+                        "The bank-hash command has been deprecated, use agave-ledger-tool verify \
+                         --print-bank-hash ... instead"
                     );
                 }
                 ("verify", Some(arg_matches)) => {
@@ -1984,9 +1981,9 @@ fn main() {
                     let minimum_stake_lamports = rent.minimum_balance(StakeStateV2::size_of());
                     if bootstrap_validator_stake_lamports < minimum_stake_lamports {
                         eprintln!(
-                        "Error: insufficient --bootstrap-validator-stake-lamports. Minimum amount \
-                         is {minimum_stake_lamports}"
-                    );
+                            "Error: insufficient --bootstrap-validator-stake-lamports. Minimum \
+                             amount is {minimum_stake_lamports}"
+                        );
                         exit(1);
                     }
                     let bootstrap_validator_pubkeys =
@@ -2053,9 +2050,9 @@ fn main() {
                         .is_none()
                     {
                         eprintln!(
-                        "Error: snapshot slot {snapshot_slot} does not exist in blockstore or is \
-                         not full.",
-                    );
+                            "Error: snapshot slot {snapshot_slot} does not exist in blockstore or \
+                             is not full.",
+                        );
                         exit(1);
                     }
                     process_options.halt_at_slot = Some(snapshot_slot);
@@ -2065,7 +2062,7 @@ fn main() {
                         if ending_slot <= snapshot_slot {
                             eprintln!(
                                 "Error: ending_slot ({ending_slot}) must be greater than \
-                             snapshot_slot ({snapshot_slot})"
+                                 snapshot_slot ({snapshot_slot})"
                             );
                             exit(1);
                         }
@@ -2334,28 +2331,23 @@ fn main() {
                         if let Some(warp_slot) = warp_slot {
                             if warp_slot < minimum_warp_slot {
                                 eprintln!(
-                                    "Error: --warp-slot too close.  Must be >= \
-                                         {minimum_warp_slot}"
+                                    "Error: --warp-slot too close.  Must be >= {minimum_warp_slot}"
                                 );
                                 exit(1);
                             }
                         } else {
-                            warn!("Warping to slot {}", minimum_warp_slot);
+                            warn!("Warping to slot {minimum_warp_slot}");
                             warp_slot = Some(minimum_warp_slot);
                         }
                     }
 
                     if child_bank_required {
-                        while !bank.is_complete() {
-                            bank.register_unique_tick();
-                        }
+                        bank.fill_bank_with_ticks_for_tests();
                     }
 
                     let pre_capitalization = bank.capitalization();
-
-                    bank.set_capitalization();
-
-                    let post_capitalization = bank.capitalization();
+                    let post_capitalization = bank.calculate_capitalization_for_tests();
+                    bank.set_capitalization_for_tests(post_capitalization);
 
                     let capitalization_message = if pre_capitalization != post_capitalization {
                         let amount = if pre_capitalization > post_capitalization {
@@ -2417,15 +2409,15 @@ fn main() {
                         if starting_snapshot_hashes.is_none() {
                             eprintln!(
                                 "Unable to create incremental snapshot without a base full \
-                                     snapshot"
+                                 snapshot"
                             );
                             exit(1);
                         }
                         let full_snapshot_slot = starting_snapshot_hashes.unwrap().full.0 .0;
                         if bank.slot() <= full_snapshot_slot {
                             eprintln!(
-                                "Unable to create incremental snapshot: Slot must be greater \
-                                     than full snapshot slot. slot: {}, full snapshot slot: {}",
+                                "Unable to create incremental snapshot: Slot must be greater than \
+                                 full snapshot slot. slot: {}, full snapshot slot: {}",
                                 bank.slot(),
                                 full_snapshot_slot,
                             );
@@ -2448,8 +2440,8 @@ fn main() {
                             });
 
                         println!(
-                            "Successfully created incremental snapshot for slot {}, hash {}, \
-                                 base slot: {}: {}",
+                            "Successfully created incremental snapshot for slot {}, hash {}, base \
+                             slot: {}: {}",
                             bank.slot(),
                             bank.hash(),
                             full_snapshot_slot,
@@ -2483,9 +2475,9 @@ fn main() {
                                 bank.epoch_schedule().get_epoch(ending_slot.unwrap());
                             if starting_epoch != ending_epoch {
                                 warn!(
-                                    "Minimized snapshot range crosses epoch boundary ({} to \
-                                         {}). Bank hashes after {} will not match replays from a \
-                                         full snapshot",
+                                    "Minimized snapshot range crosses epoch boundary ({} to {}). \
+                                     Bank hashes after {} will not match replays from a full \
+                                     snapshot",
                                     starting_epoch,
                                     ending_epoch,
                                     bank.epoch_schedule().get_last_slot_in_epoch(starting_epoch)
@@ -2494,9 +2486,9 @@ fn main() {
 
                             if minimize_snapshot_possibly_incomplete {
                                 warn!(
-                                    "Minimized snapshot may be incomplete due to missing \
-                                         accounts from CPI'd address lookup table extensions. \
-                                         This may lead to mismatched bank hashes while replaying."
+                                    "Minimized snapshot may be incomplete due to missing accounts \
+                                     from CPI'd address lookup table extensions. This may lead to \
+                                     mismatched bank hashes while replaying."
                                 );
                             }
                         }
@@ -2526,17 +2518,19 @@ fn main() {
                     let simulator = BankingSimulator::new(banking_trace_events, slot);
                     let Some(parent_slot) = simulator.parent_slot() else {
                         eprintln!(
-                            "Couldn't determine parent_slot of first_simulated_slot: {slot} \
-                             due to missing banking_trace_event data."
+                            "Couldn't determine parent_slot of first_simulated_slot: {slot} due \
+                             to missing banking_trace_event data."
                         );
                         exit(1);
                     };
                     process_options.halt_at_slot = Some(parent_slot);
 
+                    // PrimaryForMaintenance needed over Secondary to purge any
+                    // existing simulated shreds from previous runs
                     let blockstore = Arc::new(open_blockstore(
                         &ledger_path,
                         arg_matches,
-                        AccessType::Primary, // needed for purging already existing simulated block shreds...
+                        AccessType::PrimaryForMaintenance,
                     ));
                     let genesis_config = open_genesis_config_by(&ledger_path, arg_matches);
                     let LoadAndProcessLedgerOutput { bank_forks, .. } =
@@ -2548,17 +2542,18 @@ fn main() {
                             None, // transaction status sender
                         );
 
-                    let block_production_method = value_t!(
+                    let block_production_method = value_t_or_exit!(
                         arg_matches,
                         "block_production_method",
                         BlockProductionMethod
-                    )
-                    .unwrap_or_default();
+                    );
                     let transaction_struct =
-                        value_t!(arg_matches, "transaction_struct", TransactionStructure)
-                            .unwrap_or_default();
+                        value_t_or_exit!(arg_matches, "transaction_struct", TransactionStructure);
 
-                    info!("Using: block-production-method: {block_production_method} transaction-structure: {transaction_struct}");
+                    info!(
+                        "Using: block-production-method: {block_production_method} \
+                         transaction-structure: {transaction_struct}"
+                    );
 
                     match simulator.start(
                         genesis_config,
@@ -2593,9 +2588,12 @@ fn main() {
                     let bank = bank_forks.read().unwrap().working_bank();
 
                     let include_sysvars = arg_matches.is_present("include_sysvars");
-                    let include_account_contents = !arg_matches.is_present("no_account_contents");
-                    let include_account_data = !arg_matches.is_present("no_account_data");
-                    let account_data_encoding = parse_encoding_format(arg_matches);
+                    let output_config = if arg_matches.is_present("no_account_contents") {
+                        None
+                    } else {
+                        Some(parse_account_output_config(arg_matches))
+                    };
+
                     let mode = if let Some(pubkeys) = pubkeys_of(arg_matches, "account") {
                         info!("Scanning individual accounts: {pubkeys:?}");
                         AccountsOutputMode::Individual(pubkeys)
@@ -2608,10 +2606,8 @@ fn main() {
                     };
                     let config = AccountsOutputConfig {
                         mode,
+                        output_config,
                         include_sysvars,
-                        include_account_contents,
-                        include_account_data,
-                        account_data_encoding,
                     };
                     let output_format =
                         OutputFormat::from_matches(arg_matches, "output_format", false);
@@ -2651,8 +2647,10 @@ fn main() {
 
                     if arg_matches.is_present("recalculate_capitalization") {
                         println!("Recalculating capitalization");
-                        let old_capitalization = bank.set_capitalization();
-                        if old_capitalization == bank.capitalization() {
+                        let old_capitalization = bank.capitalization();
+                        let new_capitalization = bank.calculate_capitalization_for_tests();
+                        bank.set_capitalization_for_tests(new_capitalization);
+                        if old_capitalization == new_capitalization {
                             eprintln!("Capitalization was identical: {}", Sol(old_capitalization));
                         }
                     }
@@ -2693,11 +2691,6 @@ fn main() {
                         let next_epoch = base_bank
                             .epoch_schedule()
                             .get_first_slot_in_epoch(warp_epoch);
-                        // disable eager rent collection because this creates many unrelated
-                        // rent collection account updates
-                        base_bank
-                            .lazy_rent_collection
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
 
                         let feature_account_balance = std::cmp::max(
                             genesis_config.rent.minimum_balance(Feature::size_of()),
@@ -2743,13 +2736,13 @@ fn main() {
                             if store_failed_count >= 1 {
                                 // we have no choice; maybe locally created blank cluster with
                                 // not-Development cluster type.
-                                let old_cap = base_bank.set_capitalization();
-                                let new_cap = base_bank.capitalization();
+                                let old_cap = base_bank.capitalization();
+                                let new_cap = base_bank.calculate_capitalization_for_tests();
+                                base_bank.set_capitalization_for_tests(new_cap);
                                 warn!(
-                                    "Skewing capitalization a bit to enable \
-                                         credits_auto_rewind as requested: increasing {} from {} \
-                                         to {}",
-                                    feature_account_balance, old_cap, new_cap,
+                                    "Skewing capitalization a bit to enable credits_auto_rewind \
+                                     as requested: increasing {feature_account_balance} from \
+                                     {old_cap} to {new_cap}",
                                 );
                                 assert_eq!(
                                     old_cap + feature_account_balance * store_failed_count,
@@ -2962,7 +2955,7 @@ fn main() {
                         for (pubkey, warped_account) in all_accounts {
                             // Don't output sysvars; it's always updated but not related to
                             // inflation.
-                            if solana_sdk::sysvar::check_id(warped_account.owner()) {
+                            if solana_sdk_ids::sysvar::check_id(warped_account.owner()) {
                                 continue;
                             }
 
@@ -3109,7 +3102,7 @@ fn main() {
                                 }
                                 overall_delta += delta;
                             } else {
-                                error!("new account!?: {}", pubkey);
+                                error!("new account!?: {pubkey}");
                             }
                         }
                         if overall_delta > 0 {
@@ -3127,7 +3120,6 @@ fn main() {
 
                         assert_capitalization(&bank);
                         println!("Inflation: {:?}", bank.inflation());
-                        println!("RentCollector: {:?}", bank.rent_collector());
                         println!("Capitalization: {}", Sol(bank.capitalization()));
                     }
                 }
@@ -3160,5 +3152,5 @@ fn main() {
         }
     };
     measure_total_execution_time.stop();
-    info!("{}", measure_total_execution_time);
+    info!("{measure_total_execution_time}");
 }

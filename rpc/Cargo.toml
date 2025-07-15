@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_rpc"
+
+[features]
+dev-context-only-utils = ["solana-rpc/dev-context-only-utils"]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 base64 = { workspace = true }
@@ -30,17 +40,29 @@ serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
 soketto = { workspace = true }
+solana-account = { workspace = true }
 solana-account-decoder = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-client = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-entry = { workspace = true }
+solana-epoch-info = { workspace = true }
+solana-epoch-rewards-hasher = { workspace = true }
+solana-epoch-schedule = { workspace = true }
 solana-faucet = { workspace = true }
+solana-genesis-config = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true }
 solana-metrics = { workspace = true }
+solana-native-token = { workspace = true }
 solana-perf = { workspace = true }
 solana-poh = { workspace = true }
+solana-poh-config = { workspace = true }
 solana-program-pack = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-quic-definitions = { workspace = true }
@@ -48,15 +70,24 @@ solana-rayon-threadlimit = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
 solana-runtime-transaction = { workspace = true }
-solana-sdk = { workspace = true }
 solana-send-transaction-service = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
+solana-slot-history = { workspace = true }
 solana-stake-program = { workspace = true }
 solana-storage-bigtable = { workspace = true }
 solana-streamer = { workspace = true }
 solana-svm = { workspace = true }
+solana-system-interface = { workspace = true }
+solana-system-transaction = { workspace = true }
+solana-sysvar = { workspace = true }
+solana-time-utils = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-transaction = { workspace = true }
 solana-transaction-context = { workspace = true }
+solana-transaction-error = { workspace = true }
 solana-transaction-status = { workspace = true }
+solana-validator-exit = { workspace = true }
 solana-version = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
@@ -71,29 +102,29 @@ tokio-util = { workspace = true, features = ["codec", "compat"] }
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 serial_test = { workspace = true }
+solana-address-lookup-table-interface = { workspace = true }
+solana-compute-budget-interface = { workspace = true }
+solana-fee-calculator = { workspace = true }
+solana-fee-structure = { workspace = true }
+solana-instruction = { workspace = true }
 solana-log-collector = { workspace = true }
 solana-net-utils = { workspace = true }
+solana-nonce = { workspace = true }
+solana-nonce-account = { workspace = true }
 solana-program-option = { workspace = true }
 solana-program-runtime = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc = { path = ".", features = ["dev-context-only-utils"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-runtime-transaction = { workspace = true, features = [
     "dev-context-only-utils",
 ] }
+solana-sdk-ids = { workspace = true }
 solana-send-transaction-service = { workspace = true, features = ["dev-context-only-utils"] }
+solana-sha256-hasher = { workspace = true }
+solana-stake-interface = { workspace = true }
 solana-stake-program = { workspace = true }
+solana-vote-interface = { workspace = true }
 spl-pod = { workspace = true }
 symlink = { workspace = true }
 test-case = { workspace = true }
-
-[features]
-dev-context-only-utils = [
-    "solana-rpc/dev-context-only-utils",
-]
-
-[lib]
-crate-type = ["lib"]
-name = "solana_rpc"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
