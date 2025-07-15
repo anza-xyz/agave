@@ -443,7 +443,7 @@ fn retransmit_shred(
             RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
                 Ok(()) => num_addrs,
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    error!("retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed", num_addrs);
+                    error!("retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{num_addrs} packets failed");
                     num_addrs - num_failed
                 }
             },
