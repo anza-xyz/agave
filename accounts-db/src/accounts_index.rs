@@ -1259,14 +1259,23 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
 
     /// log any secondary index counts, if non-zero
     pub(crate) fn log_secondary_indexes(&self) {
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         if !self.program_id_index.index.is_empty() {
             info!("secondary index: {:?}", AccountIndex::ProgramId);
             self.program_id_index.log_contents();
         }
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         if !self.spl_token_mint_index.index.is_empty() {
             info!("secondary index: {:?}", AccountIndex::SplTokenMint);
             self.spl_token_mint_index.log_contents();
         }
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         if !self.spl_token_owner_index.index.is_empty() {
             info!("secondary index: {:?}", AccountIndex::SplTokenOwner);
             self.spl_token_owner_index.log_contents();

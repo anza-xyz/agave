@@ -115,7 +115,11 @@ impl AccountStorage {
 
     /// initialize the storage map to 'all_storages'
     pub fn initialize(&mut self, all_storages: AccountStorageMap) {
-        assert!(self.map.is_empty());
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
+        let is_empty = self.map.is_empty();
+        assert!(is_empty);
         assert!(self.no_shrink_in_progress());
         self.map.extend(all_storages)
     }

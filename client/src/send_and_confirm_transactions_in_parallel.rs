@@ -177,6 +177,9 @@ fn create_transaction_confirmation_task(
         let mut last_block_height = current_block_height.load(Ordering::Relaxed);
 
         loop {
+            // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+            // breaking existing code.
+            #[allow(clippy::disallowed_methods)]
             if !unconfirmed_transaction_map.is_empty() {
                 let current_block_height = current_block_height.load(Ordering::Relaxed);
                 let transactions_to_verify: Vec<Signature> = unconfirmed_transaction_map
@@ -416,6 +419,9 @@ async fn confirm_transactions_till_block_height_and_resend_unexpired_transaction
         }
 
         // wait till all transactions are confirmed or we have surpassed max processing age for the last sent transaction
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         while !unconfirmed_transaction_map.is_empty()
             && current_block_height.load(Ordering::Relaxed) <= max_valid_block_height
         {
@@ -596,6 +602,9 @@ pub async fn send_and_confirm_transactions_in_parallel_v2<T: Signers + ?Sized>(
         )
         .await;
 
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         if unconfirmed_transasction_map.is_empty() {
             break;
         }
@@ -609,6 +618,9 @@ pub async fn send_and_confirm_transactions_in_parallel_v2<T: Signers + ?Sized>(
 
     block_data_task.abort();
     transaction_confirming_task.abort();
+    // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+    // breaking existing code.
+    #[allow(clippy::disallowed_methods)]
     if unconfirmed_transasction_map.is_empty() {
         let mut transaction_errors = vec![None; messages.len()];
         for iterator in error_map.iter() {

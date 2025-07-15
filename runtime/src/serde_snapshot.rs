@@ -1027,8 +1027,12 @@ where
         next_append_vec_id,
     } = storage_and_next_append_vec_id;
 
+    #[allow(clippy::disallowed_methods)]
+    // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+    // breaking existing code.
+    let is_storage_empty = storage.is_empty();
     assert!(
-        !storage.is_empty(),
+        !is_storage_empty,
         "At least one storage entry must exist from deserializing stream"
     );
 

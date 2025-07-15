@@ -94,6 +94,9 @@ impl SecondaryIndexEntry for DashMapSecondaryIndexEntry {
     }
 
     fn is_empty(&self) -> bool {
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         self.account_keys.is_empty()
     }
 
