@@ -745,7 +745,8 @@ pub mod test {
         }
 
         trace!(
-            "[broadcast_ledger] max_tick_height: {max_tick_height}, start_tick_height: {start_tick_height}, ticks_per_slot: {ticks_per_slot}",
+            "[broadcast_ledger] max_tick_height: {max_tick_height}, start_tick_height: \
+             {start_tick_height}, ticks_per_slot: {ticks_per_slot}",
         );
 
         let mut entries = vec![];

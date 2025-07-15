@@ -227,9 +227,7 @@ async fn run_server(
                 ));
             }
             Err(error) => {
-                debug!(
-                    "Error while accepting incoming connection: {error:?} from {remote_addr}"
-                );
+                debug!("Error while accepting incoming connection: {error:?} from {remote_addr}");
             }
         }
     }
