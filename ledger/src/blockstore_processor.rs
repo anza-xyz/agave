@@ -19,7 +19,7 @@ use {
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_clock::{Slot, MAX_PROCESSING_AGE},
-    solana_cost_model::{cost_model::CostModel, transaction_cost::{TransactionCost}},
+    solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
     solana_entry::entry::{
         self, create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers,
     },
@@ -242,14 +242,8 @@ pub fn execute_batch<'a>(
     let tx_costs = if block_verification {
         // Block verification (including unified scheduler) case;
         // collect and check transaction costs
-        let tx_costs_with_index: Vec<_> = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions())
-            .into_iter()
-            .zip(transaction_indexes.iter())
-            .map(|(tx_cost, index)| (tx_cost, *index))
-            .collect();
-
-        check_block_cost_limits(bank, &tx_costs_with_index)
-            .map(|_| tx_costs_with_index.into_iter().map(|(tx_cost, _)| tx_cost).collect())
+        let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
+        check_block_cost_limits(bank, &tx_costs, transaction_indexes.as_ref()).map(|_| tx_costs)
     } else if record_transaction_meta {
         // Unified scheduler block production case;
         // the scheduler will track costs elsewhere but costs are recalculated
@@ -350,14 +344,29 @@ fn get_transaction_costs<'a, Tx: TransactionWithMeta>(
 
 fn check_block_cost_limits<Tx: TransactionWithMeta>(
     bank: &Bank,
-    tx_costs: &Vec<(Option<TransactionCost<'_, Tx>>, usize)>,
+    tx_costs: &Vec<Option<TransactionCost<'_, Tx>>>,
+    tx_indexes: &[usize],
 ) -> Result<()> {
-    let mut cost_tracker = bank.write_cost_tracker().unwrap();
-    tx_costs
+    let tx_costs_with_indexes: Vec<_> = tx_costs.iter().zip(tx_indexes).collect();
+    let mut sorted_by_index = tx_costs_with_indexes
         .iter()
-        .filter_map(|(opt, idx)| opt.as_ref().map(|cost| (cost, *idx)))
-        .try_for_each(|(cost, idx)| {
-            cost_tracker.try_add(&cost, idx).map(|_| ())
+        .map(|(_, tx_idx)| *tx_idx)
+        .enumerate()
+        .collect::<Vec<_>>();
+    sorted_by_index.sort_by_key(|(_, tx_idx)| *tx_idx);
+
+    sorted_by_index
+        .iter()
+        .map(|(idx, _)| tx_costs_with_indexes[*idx])
+        .filter_map(|(opt, idx)| opt.as_ref().map(|cost| (cost, idx)))
+        .try_for_each(|(tx_cost, tx_idx)| {
+            bank.cost_tracker_latch.wait_until(*tx_idx);
+            let res = bank
+                .write_cost_tracker()
+                .unwrap()
+                .try_stage_and_commit(tx_cost, *tx_idx);
+            bank.cost_tracker_latch.task_done();
+            res.map(|_| ())
         })
         .map_err(TransactionError::from)
 }
@@ -2337,7 +2346,7 @@ pub mod tests {
         assert_matches::assert_matches,
         rand::{thread_rng, Rng},
         solana_account::{AccountSharedData, WritableAccount},
-        solana_cost_model::transaction_cost::{TransactionCost},
+        solana_cost_model::transaction_cost::TransactionCost,
         solana_entry::entry::{create_ticks, next_entry, next_entry_mut},
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
@@ -5411,17 +5420,19 @@ pub mod tests {
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
 
-        let mut tx_costs_with_index = vec![(None, 0), (Some(tx_cost), 1), (None, 2)];
+        let mut tx_costs = vec![None, Some(tx_cost), None];
+        let mut tx_indexes = vec![0, 1, 2];
         // The transaction will fit when added the first time
-        assert!(check_block_cost_limits(&bank, &tx_costs_with_index).is_ok());
+        assert!(check_block_cost_limits(&bank, &tx_costs, &tx_indexes).is_ok());
         // But adding a second time will exceed the block limit
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            check_block_cost_limits(&bank, &tx_costs_with_index)
+            check_block_cost_limits(&bank, &tx_costs, &tx_indexes)
         );
 
         // Adding another None will noop (even though the block is already full)
-        tx_costs_with_index.truncate(1);
-        assert!(check_block_cost_limits(&bank, &tx_costs_with_index).is_ok());
+        tx_costs.truncate(1);
+        tx_indexes.truncate(1);
+        assert!(check_block_cost_limits(&bank, &tx_costs, &tx_indexes).is_ok());
     }
 }

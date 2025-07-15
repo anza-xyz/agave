@@ -7,6 +7,7 @@ use {
     },
     itertools::Itertools,
     solana_clock::MAX_PROCESSING_AGE,
+    solana_cost_model::cost_model::CostModel,
     solana_fee::FeeFeatures,
     solana_fee_structure::FeeBudgetLimits,
     solana_measure::measure_us,
@@ -334,6 +335,30 @@ impl Consumer {
             attempted_processing_count: processing_results.len() as u64,
         };
 
+        let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
+        execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
+
+        let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        let processing_results: Vec<_> = processing_results
+            .into_iter()
+            .zip(batch.sanitized_transactions())
+            .map(|(res, tx)| {
+                res.and_then(|processed| {
+                    let cost = CostModel::calculate_cost_for_executed_transaction(
+                        tx,
+                        processed.executed_units(),
+                        processed.loaded_accounts_data_size(),
+                        &bank.feature_set,
+                    );
+
+                    cost_tracker
+                        .try_stage_next(&cost)
+                        .map(|_| processed)
+                        .map_err(TransactionError::from)
+                })
+            })
+            .collect();
+
         let (processed_transactions, processing_results_to_transactions_us) =
             measure_us!(processing_results
                 .iter()
@@ -346,9 +371,6 @@ impl Consumer {
                     }
                 })
                 .collect_vec());
-
-        let (freeze_lock, freeze_lock_us) = measure_us!(bank.freeze_lock());
-        execute_and_commit_timings.freeze_lock_us = freeze_lock_us;
 
         let (record_transactions_summary, record_us) = measure_us!(self
             .transaction_recorder
@@ -368,6 +390,8 @@ impl Consumer {
         };
 
         if let Err(recorder_err) = record_transactions_result {
+            bank.write_cost_tracker().unwrap().reset_staged();
+
             retryable_transaction_indexes.extend(processing_results.iter().enumerate().filter_map(
                 |(index, processing_result)| processing_result.was_processed().then_some(index),
             ));
@@ -386,6 +410,9 @@ impl Consumer {
                 max_prioritization_fees,
             };
         }
+
+        // commit changes to cost tracker now that record completed successfully
+        bank.write_cost_tracker().unwrap().commit_staged();
 
         let (commit_time_us, commit_transaction_statuses) =
             if processed_counts.processed_transactions_count != 0 {

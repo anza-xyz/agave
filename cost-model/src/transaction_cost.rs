@@ -26,11 +26,6 @@ pub enum TransactionCost<'a, Tx> {
     Transaction(UsageCostDetails<'a, Tx>),
 }
 
-#[derive(Debug)]
-pub enum TransactionCostWithIndex<'a, Tx> {
-    Transaction(TransactionCost<'a, Tx>, usize),
-}
-
 impl<Tx> TransactionCost<'_, Tx> {
     pub fn sum(&self) -> u64 {
         #![allow(clippy::assertions_on_constants)]
@@ -114,7 +109,7 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
             .filter_map(|(index, key)| transaction.is_writable(index).then_some(key))
     }
 
-    pub fn read_accounts(&self) -> impl Iterator<Item = &Pubkey> {
+    pub fn readonly_accounts(&self) -> impl Iterator<Item = &Pubkey> {
         let transaction = match self {
             Self::SimpleVote { transaction } => transaction,
             Self::Transaction(usage_cost) => usage_cost.transaction,

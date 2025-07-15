@@ -7987,6 +7987,7 @@ dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
  "ahash 0.8.11",
+ "im",
  "itertools 0.12.1",
  "log",
  "rand 0.8.5",
