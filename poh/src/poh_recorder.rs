@@ -743,7 +743,7 @@ impl PohRecorder {
         if self.start_slot_was_mine_or_previous_leader(next_leader_slot) {
             // Planning to build off block produced by the leader previous to
             // me. Check if they've completed all of their slots.
-            return self.building_off_previous_leader_last_block(my_pubkey, next_leader_slot);
+            return self.can_skip_grace_for_previous_leader(my_pubkey, next_leader_slot);
         }
 
         if !self.is_new_reset_bank_pending(next_leader_slot) {
@@ -774,12 +774,16 @@ impl PohRecorder {
         )
     }
 
-    // Check if the last slot PoH reset onto was the previous leader's last slot.
-    fn building_off_previous_leader_last_block(
+    // Checks to see if we're able to skip grace ticks for the previous leader.
+    // We only need to respect grace ticks while previous leader is building
+    // their last slot. We determine this by seeing if our start slot (the slot
+    // we last reset onto) is the second to last slot for the previous leader.
+    fn can_skip_grace_for_previous_leader(
         &self,
         my_pubkey: &Pubkey,
         next_leader_slot: Slot,
     ) -> bool {
+        let mut seen_previous_leader_slot = false;
         // Walk backwards from the slot before our next leader slot.
         for slot in
             (next_leader_slot.saturating_sub(NUM_CONSECUTIVE_LEADER_SLOTS)..next_leader_slot).rev()
@@ -791,12 +795,20 @@ impl PohRecorder {
                 continue;
             };
 
-            // If the leader for this slot is not me, then it's the previous
-            // leader's last slot.
-            if leader_for_slot != *my_pubkey {
-                // Check if the last slot PoH reset onto was the previous leader's last slot.
-                return slot == self.start_slot();
+            if leader_for_slot == *my_pubkey {
+                // This is me... keep going.
+                continue;
             }
+
+            if !seen_previous_leader_slot {
+                // First slot we've seen from prior leader. Keep going.
+                seen_previous_leader_slot = true;
+                continue;
+            }
+
+            // We've identified the previous leader's second to last slot. Now
+            // see if this is what we're building off of.
+            return slot != self.start_slot();
         }
         false
     }
@@ -1816,15 +1828,29 @@ mod tests {
             poh_recorder.tick();
         }
 
-        // False, because the PoH was reset on slot 0, which is a block produced
-        // by previous leader A, so a grace period must be given.
-        assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+        // True, because we don't need to respect grace ticks unless previous
+        // leader is producing their last slot.
+        assert!(poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
 
-        // Reset onto Leader A's last slot.
-        for _ in leader_a_start_slot + 1..leader_b_start_slot {
+        // Reset onto Leader A's second to last slot.
+        for _ in leader_a_start_slot + 1..leader_a_end_slot {
             let child_slot = bank.slot() + 1;
             bank = Arc::new(Bank::new_from_parent(bank, &leader_a_pubkey, child_slot));
         }
+        poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
+
+        // Tick through Leader A's remaining slot.
+        for _ in poh_recorder.tick_height..ticks_in_leader_slot_set {
+            poh_recorder.tick();
+        }
+
+        // False, because we need to respect grace ticks when previous
+        // leader is producing their last slot.
+        assert!(!poh_recorder.reached_leader_tick(&leader_b_pubkey, leader_b_start_tick));
+
+        // Reset onto Leader A's last slot.
+        let child_slot = bank.slot() + 1;
+        bank = Arc::new(Bank::new_from_parent(bank, &leader_a_pubkey, child_slot));
         poh_recorder.reset(bank.clone(), Some((leader_b_start_slot, leader_b_end_slot)));
 
         // True, because the PoH was reset the last slot produced by the
