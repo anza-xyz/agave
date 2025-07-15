@@ -223,8 +223,6 @@ impl AccountsHashVerifier {
 
         Self::save_epoch_accounts_hash(&accounts_package, &merkle_or_lattice_accounts_hash);
 
-        Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
-
         Self::submit_for_packaging(
             accounts_package,
             pending_snapshot_packages,
@@ -348,13 +346,31 @@ impl AccountsHashVerifier {
         };
 
         let slot = accounts_package.slot;
-        let ((accounts_hash, lamports), measure_hash_us) =
-            measure_us!(accounts_package.accounts.accounts_db.update_accounts_hash(
-                &calculate_accounts_hash_config,
-                &sorted_storages,
-                slot,
-                timings,
-            ));
+        let ((accounts_hash, lamports), measure_hash_us) = measure_us!(match accounts_package
+            .package_kind
+        {
+            AccountsPackageKind::AccountsHashVerifier | AccountsPackageKind::EpochAccountsHash => {
+                accounts_package
+                    .accounts
+                    .accounts_db
+                    .calculate_accounts_hash(
+                        &calculate_accounts_hash_config,
+                        &sorted_storages,
+                        timings,
+                    )
+            }
+            AccountsPackageKind::Snapshot(_) => {
+                accounts_package
+                    .accounts
+                    .accounts_db
+                    .update_accounts_hash_and_purge_old_hashes(
+                        &calculate_accounts_hash_config,
+                        &sorted_storages,
+                        slot,
+                        timings,
+                    )
+            }
+        });
 
         if accounts_package.expected_capitalization != lamports {
             // before we assert, run the hash calc again. This helps track down whether it could have been a failure in a race condition possibly with shrink.
@@ -462,37 +478,6 @@ impl AccountsHashVerifier {
                 .accounts_db
                 .epoch_accounts_hash_manager
                 .set_valid((*accounts_hash).into(), accounts_package.slot);
-        }
-    }
-
-    fn purge_old_accounts_hashes(
-        accounts_package: &AccountsPackage,
-        snapshot_config: &SnapshotConfig,
-    ) {
-        let should_purge = match (
-            snapshot_config.should_generate_snapshots(),
-            accounts_package.package_kind,
-        ) {
-            (false, _) => {
-                // If we are *not* generating snapshots, then it is safe to purge every time.
-                true
-            }
-            (true, AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)) => {
-                // If we *are* generating snapshots, then only purge old accounts hashes after
-                // handling full snapshot packages.  This is because handling incremental snapshot
-                // packages requires the accounts hash from the latest full snapshot, and if we
-                // purged after every package, we'd remove the accounts hash needed by the next
-                // incremental snapshot.
-                true
-            }
-            (true, _) => false,
-        };
-
-        if should_purge {
-            accounts_package
-                .accounts
-                .accounts_db
-                .purge_old_accounts_hashes(accounts_package.slot);
         }
     }
 
