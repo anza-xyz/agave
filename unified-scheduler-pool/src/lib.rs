@@ -2317,7 +2317,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                //banking_stage_helper.abort_scheduler();
+                                banking_stage_helper.abort_scheduler();
                                 handler_context.banking_packet_receiver = never();
                                 continue;
                             };
