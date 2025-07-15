@@ -7,7 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
-        sync::{atomic::Ordering::Relaxed, Arc, RwLock},
+        sync::{Arc, RwLock},
         time::{Duration, Instant},
     },
 };
@@ -138,9 +138,7 @@ impl DecisionMaker {
 
 impl BankingStageMonitor for DecisionMaker {
     fn status(&mut self) -> BankingStageStatus {
-        if self.poh_recorder.read().unwrap().is_exited.load(Relaxed) {
-            BankingStageStatus::Exited
-        } else if matches!(
+        if matches!(
             self.make_consume_or_forward_decision(),
             BufferedPacketsDecision::Forward,
         ) {
