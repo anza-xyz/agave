@@ -551,6 +551,10 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
+                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
+                    exiting = true;
+                    scheduler_pool.unregister_banking_stage();
+                }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
@@ -835,8 +839,7 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        self.banking_stage_handler_context.lock().unwrap().take();
-        //.unwrap();
+        self.banking_stage_handler_context.lock().unwrap().take().unwrap();
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
@@ -990,10 +993,6 @@ where
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
         error!("uninstalling: {}", Arc::strong_count(&self));
-
-        if self.block_production_supported() {
-            self.unregister_banking_stage();
-        }
 
         // Drop all schedulers in the pool
         for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
