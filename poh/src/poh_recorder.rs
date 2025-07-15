@@ -39,8 +39,8 @@ use {
     thiserror::Error,
 };
 
-pub const GRACE_TICKS_FACTOR: u64 = 2;
-pub const MAX_GRACE_SLOTS: u64 = 2;
+pub const GRACE_TICKS_FACTOR: u64 = 4;
+pub const MAX_GRACE_SLOTS: u64 = 1;
 
 #[derive(Error, Debug, Clone)]
 pub enum PohRecorderError {
