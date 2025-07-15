@@ -3,6 +3,8 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng, Rng},
     rayon::prelude::*,
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentConfig,
     solana_core::validator::{ValidatorConfig, ValidatorStartProgress},
     solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
     solana_genesis_utils::download_then_check_genesis_hash,
@@ -12,23 +14,20 @@ use {
         crds_data,
         gossip_service::GossipService,
     },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_metrics::datapoint_info,
+    solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_runtime::{
         snapshot_archive_info::SnapshotArchiveInfoGetter, snapshot_package::SnapshotKind,
         snapshot_utils,
     },
-    solana_sdk::{
-        clock::Slot,
-        commitment_config::CommitmentConfig,
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-    },
-    solana_streamer::socket::SocketAddrSpace,
+    solana_signer::Signer,
+    solana_streamer::{atomic_udp_socket::AtomicUdpSocket, socket::SocketAddrSpace},
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
-        net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
+        net::{SocketAddr, TcpListener, TcpStream},
         path::Path,
         process::exit,
         sync::{
@@ -57,7 +56,7 @@ pub const MAX_RPC_CONNECTIONS_EVALUATED_PER_ITERATION: usize = 32;
 
 pub const PING_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct RpcBootstrapConfig {
     pub no_genesis_fetch: bool,
     pub no_snapshot_fetch: bool,
@@ -78,7 +77,9 @@ fn verify_reachable_ports(
             .map(|addr| socket_addr_space.check(addr))
             .unwrap_or_default()
     };
-    let mut udp_sockets = vec![&node.sockets.gossip, &node.sockets.repair];
+
+    let gossip_socket = node.sockets.gossip.load();
+    let mut udp_sockets = vec![&gossip_socket, &node.sockets.repair];
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
@@ -142,7 +143,7 @@ fn start_gossip_node(
     cluster_entrypoints: &[ContactInfo],
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_socket: UdpSocket,
+    gossip_socket: AtomicUdpSocket,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
@@ -612,7 +613,7 @@ pub fn rpc_bootstrap(
                     .info
                     .gossip()
                     .expect("Operator must spin up node with valid gossip address"),
-                node.sockets.gossip.try_clone().unwrap(),
+                node.sockets.gossip.clone(),
                 validator_config
                     .expected_shred_version
                     .expect("expected_shred_version should not be None"),

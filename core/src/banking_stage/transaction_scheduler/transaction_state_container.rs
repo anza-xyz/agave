@@ -7,10 +7,10 @@ use {
     itertools::MinMaxResult,
     min_max_heap::MinMaxHeap,
     slab::{Slab, VacantEntry},
+    solana_packet::PACKET_DATA_SIZE,
     solana_runtime_transaction::{
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
-    solana_sdk::packet::PACKET_DATA_SIZE,
     std::sync::Arc,
 };
 
@@ -191,6 +191,7 @@ impl<Tx: TransactionWithMeta> StateContainer<Tx> for TransactionStateContainer<T
 impl<Tx: TransactionWithMeta> TransactionStateContainer<Tx> {
     /// Insert a new transaction into the container's queues and maps.
     /// Returns `true` if a packet was dropped due to capacity limits.
+    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     pub(crate) fn insert_new_transaction(
         &mut self,
         transaction: Tx,
@@ -345,16 +346,17 @@ mod tests {
         super::*,
         crate::banking_stage::scheduler_messages::MaxAge,
         agave_transaction_view::transaction_view::SanitizedTransactionView,
+        solana_compute_budget_interface::ComputeBudgetInstruction,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_message::Message,
         solana_perf::packet::Packet,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            compute_budget::ComputeBudgetInstruction,
-            hash::Hash,
-            message::Message,
-            signature::Keypair,
-            signer::Signer,
-            system_instruction,
-            transaction::{MessageHash, SanitizedTransaction, Transaction},
+        solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_transaction::{
+            sanitized::{MessageHash, SanitizedTransaction},
+            Transaction,
         },
         std::collections::HashSet,
     };

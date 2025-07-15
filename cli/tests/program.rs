@@ -6,6 +6,8 @@ use {
     agave_feature_set::enable_alt_bn128_syscall,
     assert_matches::assert_matches,
     serde_json::Value,
+    solana_account::{state_traits::StateMut, ReadableAccount},
+    solana_borsh::v1::try_from_slice_unchecked,
     solana_cli::{
         cli::{process_command, CliCommand, CliConfig},
         program::{ProgramCliCommand, CLOSE_PROGRAM_WARNING},
@@ -15,27 +17,24 @@ use {
     solana_cli_output::{parse_sign_only_reply_string, OutputFormat},
     solana_client::rpc_config::RpcSendTransactionConfig,
     solana_commitment_config::CommitmentConfig,
+    solana_compute_budget_interface::ComputeBudgetInstruction,
     solana_faucet::faucet::run_local_faucet,
+    solana_fee_calculator::FeeRateGovernor,
+    solana_keypair::Keypair,
+    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc::rpc::JsonRpcConfig,
     solana_rpc_client::rpc_client::{GetConfirmedSignaturesForAddress2Config, RpcClient},
     solana_rpc_client_api::config::RpcTransactionConfig,
     solana_rpc_client_nonce_utils::blockhash_query::BlockhashQuery,
-    solana_sdk::{
-        account::ReadableAccount,
-        account_utils::StateMut,
-        borsh1::try_from_slice_unchecked,
-        bpf_loader_upgradeable::{self, UpgradeableLoaderState},
-        compute_budget::{self, ComputeBudgetInstruction},
-        fee_calculator::FeeRateGovernor,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, NullSigner, Signature, Signer},
-        system_program,
-        transaction::Transaction,
-    },
-    solana_sdk_ids::loader_v4,
+    solana_sdk_ids::{bpf_loader_upgradeable, compute_budget, loader_v4},
+    solana_signature::Signature,
+    solana_signer::{null_signer::NullSigner, Signer},
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::program as system_program,
     solana_test_validator::TestValidatorGenesis,
+    solana_transaction::Transaction,
     solana_transaction_status::UiTransactionEncoding,
     std::{
         env,
@@ -1444,9 +1443,10 @@ fn test_cli_program_extend_program() {
     file.read_to_end(&mut new_program_data).unwrap();
     let new_max_len = new_program_data.len();
     let additional_bytes = (new_max_len - max_len) as u32;
-    config.signers = vec![&keypair];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
         program_pubkey: program_keypair.pubkey(),
+        authority_signer_index: 1,
         additional_bytes: additional_bytes - 1,
     });
     process_command(&config).unwrap();
@@ -1492,9 +1492,10 @@ fn test_cli_program_extend_program() {
     wait_n_slots(&rpc_client, 1);
 
     // Extend 1 last byte
-    config.signers = vec![&keypair];
-    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgram {
+    config.signers = vec![&keypair, &upgrade_authority];
+    config.command = CliCommand::Program(ProgramCliCommand::ExtendProgramChecked {
         program_pubkey: program_keypair.pubkey(),
+        authority_signer_index: 1,
         additional_bytes: 1,
     });
     process_command(&config).unwrap();

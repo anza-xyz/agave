@@ -8,12 +8,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
-[dependencies]
-blake3 = { workspace = true }
-solana-program = { workspace = true }
-
 [lib]
 crate-type = ["cdylib"]
+
+[dependencies]
+blake3 = { workspace = true }
+solana-blake3-hasher = { workspace = true }
+solana-keccak-hasher = { workspace = true }
+solana-msg = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-sha256-hasher = { workspace = true }
 
 [lints]
 workspace = true

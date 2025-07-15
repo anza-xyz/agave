@@ -8,6 +8,12 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[features]
+metrics = ["dep:solana-metrics"]
+
 [dependencies]
 async-trait = { workspace = true }
 log = { workspace = true }
@@ -18,7 +24,7 @@ solana-clock = { workspace = true }
 solana-connection-cache = { workspace = true }
 solana-keypair = { workspace = true }
 solana-measure = { workspace = true }
-solana-metrics ={ workspace = true, optional = true }
+solana-metrics = { workspace = true, optional = true }
 solana-quic-definitions = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-streamer = { workspace = true }
@@ -38,9 +44,3 @@ solana-net-utils = { workspace = true }
 solana-pubkey = { workspace = true }
 solana-signer = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-metrics =["dep:solana-metrics"]

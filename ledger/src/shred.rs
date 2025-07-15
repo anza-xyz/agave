@@ -55,6 +55,8 @@ pub(crate) use self::{
     merkle_tree::{PROOF_ENTRIES_FOR_32_32_BATCH, SIZE_OF_MERKLE_ROOT},
     payload::serde_bytes_payload,
 };
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
 pub use {
     self::{
         payload::Payload,
@@ -71,14 +73,15 @@ use {
     num_enum::{IntoPrimitive, TryFromPrimitive},
     rayon::ThreadPool,
     serde::{Deserialize, Serialize},
+    solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
-    solana_perf::packet::Packet,
-    solana_sdk::{
-        clock::Slot,
-        hash::{hashv, Hash},
-        pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer, SIGNATURE_BYTES},
-    },
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_perf::packet::PacketRef,
+    solana_pubkey::Pubkey,
+    solana_sha256_hasher::hashv,
+    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signer::Signer,
     static_assertions::const_assert_eq,
     std::{fmt::Debug, time::Instant},
     thiserror::Error,
@@ -107,9 +110,8 @@ pub const SIZE_OF_NONCE: usize = std::mem::size_of::<Nonce>();
 
 /// The following constants are computed by hand, and hardcoded.
 /// `test_shred_constants` ensures that the values are correct.
-/// Constants are used over lazy_static for performance reasons.
 const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
-const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
+pub const SIZE_OF_DATA_SHRED_HEADERS: usize = 88;
 const SIZE_OF_CODING_SHRED_HEADERS: usize = 89;
 const SIZE_OF_SIGNATURE: usize = SIGNATURE_BYTES;
 
@@ -410,9 +412,10 @@ impl Shred {
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    // Only for tests.
-    dispatch!(pub fn set_index(&mut self, index: u32));
-    dispatch!(pub fn set_slot(&mut self, slot: Slot));
+    #[deprecated(since = "2.3.0")]
+    pub fn set_index(&mut self, _index: u32) {}
+    #[deprecated(since = "2.3.0")]
+    pub fn set_slot(&mut self, _slot: Slot) {}
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
@@ -420,6 +423,16 @@ impl Shred {
         let size = payload.len();
         packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
         packet.meta_mut().size = size;
+    }
+
+    #[cfg(any(test, feature = "dev-context-only-utils"))]
+    pub fn to_packet(&self) -> BytesPacket {
+        let buffer: &[u8] = match self.payload() {
+            Payload::Shared(bytes) => bytes.as_ref(),
+            Payload::Unique(bytes) => bytes.as_ref(),
+        };
+        let buffer = Bytes::copy_from_slice(buffer);
+        BytesPacket::new(buffer, Meta::default())
     }
 
     // TODO: Should this sanitize output?
@@ -470,6 +483,7 @@ impl Shred {
         })
     }
 
+    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
     pub fn new_from_parity_shard(
         slot: Slot,
         index: u32,
@@ -865,14 +879,17 @@ pub(crate) fn make_merkle_shreds_from_entries(
 
 // Accepts shreds in the slot range [root + 1, max_slot].
 #[must_use]
-pub fn should_discard_shred(
-    packet: &Packet,
+pub fn should_discard_shred<'a, P>(
+    packet: P,
     root: Slot,
     max_slot: Slot,
     shred_version: u16,
     drop_unchained_merkle_shreds: impl Fn(Slot) -> bool,
     stats: &mut ShredFetchStats,
-) -> bool {
+) -> bool
+where
+    P: Into<PacketRef<'a>>,
+{
     debug_assert!(root < max_slot);
     let shred = match layout::get_shred(packet) {
         None => {
@@ -1033,9 +1050,10 @@ mod tests {
         rand::Rng,
         rand_chacha::{rand_core::SeedableRng, ChaChaRng},
         rayon::ThreadPoolBuilder,
-        solana_sdk::{shred_version, signature::Signer, signer::keypair::keypair_from_seed},
+        solana_keypair::keypair_from_seed,
+        solana_signer::Signer,
         std::io::{Cursor, Seek, SeekFrom, Write},
-        test_case::test_case,
+        test_case::{test_case, test_matrix},
     };
 
     const SIZE_OF_SHRED_INDEX: usize = 4;
@@ -1159,19 +1177,19 @@ mod tests {
             0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0x5a, 0x5a,
             0xa5, 0xa5, 0x5a, 0x5a,
         ];
-        let version = shred_version::version_from_hash(&Hash::new_from_array(hash));
+        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
         assert_eq!(version, 1);
         let hash = [
             0xa5u8, 0xa5, 0x5a, 0x5a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0,
         ];
-        let version = shred_version::version_from_hash(&Hash::new_from_array(hash));
+        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
         assert_eq!(version, 0xffff);
         let hash = [
             0xa5u8, 0xa5, 0x5a, 0x5a, 0xa5, 0xa5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         ];
-        let version = shred_version::version_from_hash(&Hash::new_from_array(hash));
+        let version = solana_shred_version::version_from_hash(&Hash::new_from_array(hash));
         assert_eq!(version, 0x5a5b);
     }
 
@@ -1197,10 +1215,10 @@ mod tests {
         );
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_should_discard_shred(chained: bool, is_last_in_slot: bool) {
         solana_logger::setup();
         let mut rng = rand::thread_rng();
@@ -1744,48 +1762,6 @@ mod tests {
     }
 
     #[test]
-    fn test_serde_compat_shred_code() {
-        const SEED: &str = "4jfjh3UZVyaEgvyG9oQmNyFY9yHDmbeH9eUhnBKkrcrN";
-        const PAYLOAD: &str = "3xGsXwzkPpLFuKwbbfKMUxt1B6VqQPzbvvAkxRNCX9kNEP\
-        sa2VifwGBtFuNm3CWXdmQizDz5vJjDHu6ZqqaBCSfrHurag87qAXwTtjNPhZzKEew5pLc\
-        aY6cooiAch2vpfixNYSDjnirozje5cmUtGuYs1asXwsAKSN3QdWHz3XGParWkZeUMAzRV\
-        1UPEDZ7vETKbxeNixKbzZzo47Lakh3C35hS74ocfj23CWoW1JpkETkXjUpXcfcv6cS";
-        let mut rng = {
-            let seed = <[u8; 32]>::try_from(bs58_decode(SEED)).unwrap();
-            ChaChaRng::from_seed(seed)
-        };
-        let mut parity_shard = vec![0u8; legacy::SIZE_OF_ERASURE_ENCODED_SLICE];
-        rng.fill(&mut parity_shard[..]);
-        let mut seed = [0u8; Keypair::SECRET_KEY_LENGTH];
-        rng.fill(&mut seed[..]);
-        let keypair = keypair_from_seed(&seed).unwrap();
-        let mut shred = Shred::new_from_parity_shard(
-            141945197, // slot
-            23418,     // index
-            &parity_shard,
-            21259, // fec_set_index
-            32,    // num_data_shreds
-            58,    // num_coding_shreds
-            43,    // position
-            47298, // version
-        );
-        shred.sign(&keypair);
-        assert!(shred.verify(&keypair.pubkey()));
-        assert_matches!(shred.sanitize(), Ok(()));
-        let mut payload = bs58_decode(PAYLOAD);
-        payload.extend({
-            let skip = payload.len() - SIZE_OF_CODING_SHRED_HEADERS;
-            parity_shard.iter().skip(skip).copied()
-        });
-        let mut packet = Packet::default();
-        packet.buffer_mut()[..payload.len()].copy_from_slice(&payload);
-        packet.meta_mut().size = payload.len();
-        assert_eq!(shred.bytes_to_store(), payload);
-        assert_eq!(shred, Shred::new_from_serialized_shred(payload).unwrap());
-        verify_shred_layout(&shred, &packet);
-    }
-
-    #[test]
     fn test_shred_flags() {
         fn make_shred(is_last_data: bool, is_last_in_slot: bool, reference_tick: u8) -> Shred {
             let flags = if is_last_in_slot {
@@ -1892,10 +1868,10 @@ mod tests {
         assert!(flags.contains(ShredFlags::LAST_SHRED_IN_SLOT));
     }
 
-    #[test_case(false, false)]
-    #[test_case(false, true)]
-    #[test_case(true, false)]
-    #[test_case(true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false]
+    )]
     fn test_is_shred_duplicate(chained: bool, is_last_in_slot: bool) {
         fn fill_retransmitter_signature<R: Rng>(
             rng: &mut R,

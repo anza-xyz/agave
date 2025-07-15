@@ -280,6 +280,6 @@ impl<SecondaryIndexEntryType: SecondaryIndexEntry + Default + Sync + Send>
             .iter()
             .rev()
             .take(20)
-            .for_each(|(v, k)| info!("owner: {}, accounts: {}", k, v));
+            .for_each(|(v, k)| info!("owner: {k}, accounts: {v}"));
     }
 }

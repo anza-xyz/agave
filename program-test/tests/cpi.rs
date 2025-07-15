@@ -1,19 +1,17 @@
 use {
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_msg::msg,
+    solana_program::{instruction::get_stack_height, program::invoke},
+    solana_program_entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
     solana_program_test::{processor, ProgramTest},
-    solana_sdk::{
-        account_info::{next_account_info, AccountInfo},
-        entrypoint::{ProgramResult, MAX_PERMITTED_DATA_INCREASE},
-        instruction::{get_stack_height, AccountMeta, Instruction},
-        msg,
-        program::invoke,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::Signer,
-        signer::keypair::Keypair,
-        system_instruction, system_program,
-        sysvar::Sysvar,
-        transaction::Transaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_signer::Signer,
+    solana_system_interface::{instruction as system_instruction, program as system_program},
+    solana_sysvar::Sysvar,
+    solana_transaction::Transaction,
 };
 
 // Process instruction to invoke into another program

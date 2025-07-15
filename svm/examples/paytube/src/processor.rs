@@ -2,13 +2,13 @@
 
 use {
     solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_fee_structure::FeeDetails,
     solana_program_runtime::{
         execution_budget::SVMTransactionExecutionBudget,
         loaded_programs::{BlockRelation, ForkGraph, ProgramCacheEntry},
     },
-    solana_sdk::{clock::Slot, transaction},
     solana_svm::{
         account_loader::CheckedTransactionDetails, transaction_processor::TransactionBatchProcessor,
     },
@@ -17,6 +17,10 @@ use {
     solana_system_program::system_processor,
     std::sync::{Arc, RwLock},
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 /// In order to use the `TransactionBatchProcessor`, another trait - Solana
 /// Program Runtime's `ForkGraph` - must be implemented, to tell the batch
@@ -77,7 +81,7 @@ pub(crate) fn create_transaction_batch_processor<CB: TransactionProcessingCallba
     // Add the BPF Loader v2 builtin, for the SPL Token program.
     processor.add_builtin(
         callbacks,
-        solana_sdk::bpf_loader::id(),
+        solana_sdk_ids::bpf_loader::id(),
         "solana_bpf_loader_program",
         ProgramCacheEntry::new_builtin(
             0,

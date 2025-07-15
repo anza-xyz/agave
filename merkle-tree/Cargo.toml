@@ -9,6 +9,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_merkle_tree"
+
 [dependencies]
 fast-math = { workspace = true }
 solana-hash = { workspace = true }
@@ -16,10 +23,3 @@ solana-sha256-hasher = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_merkle_tree"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

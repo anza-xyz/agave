@@ -629,9 +629,12 @@ impl UsageQueueInner {
 
 const_assert_eq!(mem::size_of::<TokenCell<UsageQueueInner>>(), 40);
 
-/// Scheduler's internal data for each address ([`Pubkey`](`solana_sdk::pubkey::Pubkey`)). Very
+/// Scheduler's internal data for each address ([`Pubkey`](`solana_pubkey::Pubkey`)). Very
 /// opaque wrapper type; no methods just with [`::clone()`](Clone::clone) and
 /// [`::default()`](Default::default).
+///
+/// It's the higher layer's responsibility to ensure to associate the same instance of UsageQueue
+/// for given Pubkey at the time of [task](Task) creation.
 #[derive(Debug, Clone, Default)]
 pub struct UsageQueue(Arc<TokenCell<UsageQueueInner>>);
 const_assert_eq!(mem::size_of::<UsageQueue>(), 8);
@@ -927,13 +930,15 @@ impl SchedulingStateMachine {
     /// Rewind the inactive state machine to be initialized
     ///
     /// This isn't called _reset_ to indicate this isn't safe to call this at any given moment.
-    /// This panics if the state machine hasn't properly been finished (i.e.  there should be no
+    /// This panics if the state machine hasn't properly been finished (i.e. there should be no
     /// active task) to uphold invariants of [`UsageQueue`]s.
     ///
     /// This method is intended to reuse SchedulingStateMachine instance (to avoid its `unsafe`
     /// [constructor](SchedulingStateMachine::exclusively_initialize_current_thread_for_scheduling)
     /// as much as possible) and its (possibly cached) associated [`UsageQueue`]s for processing
     /// other slots.
+    ///
+    /// There's a related method called [`clear_and_reinitialize()`](Self::clear_and_reinitialize).
     pub fn reinitialize(&mut self) {
         assert!(self.has_no_active_task());
         assert_eq!(self.running_task_count.current(), 0);
@@ -955,6 +960,39 @@ impl SchedulingStateMachine {
         handled_task_count.reset_to_zero();
         unblocked_task_count.reset_to_zero();
         total_task_count.reset_to_zero();
+    }
+
+    /// Clear all buffered tasks and immediately rewind the state machine to be initialized
+    ///
+    /// This method _may_ panic if there are tasks which has been scheduled but hasn't been
+    /// descheduled yet (called active tasks). This is due to the invocation of
+    /// [`reinitialize()`](Self::reinitialize) at last. On the other hand, it's guaranteed not to
+    /// panic otherwise. That's because the first clearing step effectively relaxes the runtime
+    /// invariant of `reinitialize()` by making the state machine _inactive_ beforehand. After a
+    /// successful operation, this method returns the number of cleared tasks.
+    ///
+    /// Somewhat surprisingly, the clearing logic is same as the normal (de-)scheduling operation
+    /// because it is still the fastest way to just clear all tasks, under the consideration of
+    /// potential later use of [`UsageQueue`]s. That's because `state_machine` doesn't maintain _the
+    /// global list_ of tasks. Maintaining such one would incur a needless overhead on scheduling,
+    /// which isn't strictly needed otherwise.
+    ///
+    /// Moreover, the descheduling operation is rather heavily optimized to begin with. All
+    /// collection ops are just O(1) over total N of addresses accessed by all active tasks with
+    /// no amortized mem ops.
+    ///
+    /// Whatever the algorithm is chosen, the ultimate goal of this operation is to clear all usage
+    /// queues. Toward to that end, one may create a temporary hash set over [`UsageQueue`]s on the
+    /// fly alternatively. However, that would be costlier than the above usual descheduling
+    /// approach due to extra mem ops and many lookups/insertions.
+    pub fn clear_and_reinitialize(&mut self) -> usize {
+        let mut count = ShortCounter::zero();
+        while let Some(task) = self.schedule_next_unblocked_task() {
+            self.deschedule_task(&task);
+            count.increment_self();
+        }
+        self.reinitialize();
+        count.current().try_into().unwrap()
     }
 
     /// Creates a new instance of [`SchedulingStateMachine`] with its `unsafe` fields created as

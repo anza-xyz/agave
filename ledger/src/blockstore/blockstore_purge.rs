@@ -1,6 +1,6 @@
 use {
     super::*,
-    solana_sdk::message::AccountKeys,
+    solana_message::AccountKeys,
     std::{cmp::max, time::Instant},
 };
 
@@ -123,11 +123,7 @@ impl Blockstore {
                     slot,
                     from_slot..=to_slot
                 );
-                self.put_meta_bytes(
-                    slot,
-                    &bincode::serialize(&meta).expect("couldn't update meta"),
-                )
-                .expect("couldn't update meta");
+                self.put_meta(slot, &meta).expect("couldn't update meta");
             }
             time.stop();
             total_retain_us += time.as_us();
@@ -528,11 +524,10 @@ pub mod tests {
         },
         bincode::serialize,
         solana_entry::entry::next_entry_mut,
-        solana_sdk::{
-            hash::{hash, Hash},
-            message::Message,
-            transaction::Transaction,
-        },
+        solana_hash::Hash,
+        solana_message::Message,
+        solana_sha256_hasher::hash,
+        solana_transaction::Transaction,
         test_case::test_case,
     };
 

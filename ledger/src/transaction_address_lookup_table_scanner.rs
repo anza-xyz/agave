@@ -1,18 +1,16 @@
 use {
     agave_reserved_account_keys::ReservedAccountKeys,
     bincode::deserialize,
-    lazy_static::lazy_static,
-    solana_sdk::{
-        address_lookup_table::{self, instruction::ProgramInstruction},
-        pubkey::Pubkey,
-        transaction::SanitizedVersionedTransaction,
+    solana_address_lookup_table_interface::{
+        self as address_lookup_table, instruction::ProgramInstruction,
     },
+    solana_pubkey::Pubkey,
+    solana_transaction::versioned::sanitized::SanitizedVersionedTransaction,
     std::collections::HashSet,
 };
 
-lazy_static! {
-    static ref RESERVED_IDS_SET: HashSet<Pubkey> = ReservedAccountKeys::new_all_activated().active;
-}
+static RESERVED_IDS_SET: std::sync::LazyLock<HashSet<Pubkey>> =
+    std::sync::LazyLock::new(|| ReservedAccountKeys::new_all_activated().active);
 
 pub struct ScannedLookupTableExtensions {
     pub possibly_incomplete: bool,

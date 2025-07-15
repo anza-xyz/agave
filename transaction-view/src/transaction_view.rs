@@ -166,6 +166,11 @@ impl<const SANITIZED: bool, D: TransactionData> TransactionView<SANITIZED, D> {
     pub fn message_data(&self) -> &[u8] {
         &self.data()[usize::from(self.frame.message_offset())..]
     }
+
+    #[inline]
+    pub fn into_inner_data(self) -> D {
+        self.data
+    }
 }
 
 // Implementation that relies on sanitization checks having been run.

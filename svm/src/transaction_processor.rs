@@ -3,8 +3,8 @@ use qualifier_attr::{field_qualifiers, qualifiers};
 use {
     crate::{
         account_loader::{
-            collect_rent_from_account, load_transaction, validate_fee_payer, AccountLoader,
-            CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
+            load_transaction, update_rent_exempt_status_for_account, validate_fee_payer,
+            AccountLoader, CheckedTransactionDetails, LoadedTransaction, TransactionCheckResult,
             TransactionLoadResult, ValidatedTransactionDetails,
         },
         account_overrides::AccountOverrides,
@@ -13,6 +13,7 @@ use {
         program_loader::{get_program_modification_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::TransactionAccountStateInfo,
+        transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
@@ -76,6 +77,9 @@ pub struct LoadAndExecuteSanitizedTransactionsOutput {
     /// could not be processed. Note processed transactions can still have a
     /// failure result meaning that the transaction will be rolled back.
     pub processing_results: Vec<TransactionProcessingResult>,
+    /// Balances accumulated for TransactionStatusSender when
+    /// transaction balance recording is enabled.
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 /// Configuration of the recording capabilities for transaction execution
@@ -84,6 +88,7 @@ pub struct ExecutionRecordingConfig {
     pub enable_cpi_recording: bool,
     pub enable_log_recording: bool,
     pub enable_return_data_recording: bool,
+    pub enable_transaction_balance_recording: bool,
 }
 
 impl ExecutionRecordingConfig {
@@ -92,6 +97,7 @@ impl ExecutionRecordingConfig {
             enable_return_data_recording: option,
             enable_log_recording: option,
             enable_cpi_recording: option,
+            enable_transaction_balance_recording: option,
         }
     }
 }
@@ -341,6 +347,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             }
             program_accounts_map
         });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
 
         let (mut program_cache_for_tx_batch, program_cache_us) = measure_us!({
             let program_cache_for_tx_batch = self.replenish_program_cache(
@@ -358,11 +366,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     processing_results: (0..sanitized_txs.len())
                         .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
                         .collect(),
+                    // If we abort the batch and balance recording is enabled, no balances should be
+                    // collected. If this is a leader thread, no batch will be committed.
+                    balance_collector: None,
                 };
             }
 
             program_cache_for_tx_batch
         });
+        execute_timings
+            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
 
         // Determine a capacity for the internal account cache. This
         // over-allocates but avoids ever reallocating, and spares us from
@@ -370,21 +383,27 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let account_keys_in_batch = sanitized_txs.iter().map(|tx| tx.account_keys().len()).sum();
 
         // Create the account loader, which wraps all external account fetching.
-        let mut account_loader = AccountLoader::new_with_account_cache_capacity(
+        let mut account_loader = AccountLoader::new_with_loaded_accounts_capacity(
             config.account_overrides,
             callbacks,
             &environment.feature_set,
             account_keys_in_batch,
         );
 
-        let (mut validate_fees_us, mut load_us, mut execution_us): (u64, u64, u64) = (0, 0, 0);
+        // Create the transaction balance collector if recording is enabled.
+        let mut balance_collector = config
+            .recording_config
+            .enable_transaction_balance_recording
+            .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
+
+        let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
 
         // Validate, execute, and collect results from each transaction in order.
         // With SIMD83, transactions must be executed in order, because transactions
         // in the same batch may modify the same accounts. Transaction order is
         // preserved within entries written to the ledger.
         for (tx, check_result) in sanitized_txs.iter().zip(check_results) {
-            let (validate_result, single_validate_fees_us) =
+            let (validate_result, validate_fees_us) =
                 measure_us!(check_result.and_then(|tx_details| {
                     Self::validate_transaction_nonce_and_fee_payer(
                         &mut account_loader,
@@ -397,7 +416,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         &mut error_metrics,
                     )
                 }));
-            validate_fees_us = validate_fees_us.saturating_add(single_validate_fees_us);
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
 
             let (load_result, single_load_us) = measure_us!(load_transaction(
                 &mut account_loader,
@@ -410,12 +430,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
+            let ((), collect_balances_us) =
+                measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
             let (processing_result, single_execution_us) = measure_us!(match load_result {
                 TransactionLoadResult::NotLoaded(err) => Err(err),
                 TransactionLoadResult::FeesOnly(fees_only_tx) => {
                     // Update loaded accounts cache with nonce and fee-payer
-                    account_loader
-                        .update_accounts_for_failed_tx(tx, &fees_only_tx.rollback_accounts);
+                    account_loader.update_accounts_for_failed_tx(&fees_only_tx.rollback_accounts);
 
                     Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                 }
@@ -444,6 +468,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             });
             execution_us = execution_us.saturating_add(single_execution_us);
 
+            let ((), collect_balances_us) =
+                measure_us!(balance_collector.collect_post_balances(&mut account_loader, tx));
+            execute_timings
+                .saturating_add_in_place(ExecuteTimingType::CollectBalancesUs, collect_balances_us);
+
             processing_results.push(processing_result);
         }
 
@@ -468,20 +497,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             execution_us,
             sanitized_txs.len(),
         );
-
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ValidateFeesUs, validate_fees_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::FilterExecutableUs, filter_executable_us);
-        execute_timings
-            .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::LoadUs, load_us);
         execute_timings.saturating_add_in_place(ExecuteTimingType::ExecuteUs, execution_us);
+
+        if let Some(ref balance_collector) = balance_collector {
+            debug_assert!(balance_collector.lengths_match_expected(sanitized_txs.len()));
+        }
 
         LoadAndExecuteSanitizedTransactionsOutput {
             error_metrics,
             execute_timings,
             processing_results,
+            balance_collector,
         }
     }
 
@@ -543,20 +570,18 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let fee_payer_address = message.fee_payer();
 
-        let Some(mut loaded_fee_payer) = account_loader.load_account(fee_payer_address, true)
+        // We *must* use load_transaction_account() here because *this* is when the fee-payer
+        // is loaded for the transaction. Transaction loading skips the first account and
+        // loads (and thus inspects) all others normally.
+        let Some(mut loaded_fee_payer) =
+            account_loader.load_transaction_account(fee_payer_address, true)
         else {
             error_counters.account_not_found += 1;
             return Err(TransactionError::AccountNotFound);
         };
 
         let fee_payer_loaded_rent_epoch = loaded_fee_payer.account.rent_epoch();
-        loaded_fee_payer.rent_collected = collect_rent_from_account(
-            account_loader.feature_set,
-            rent_collector,
-            fee_payer_address,
-            &mut loaded_fee_payer.account,
-        )
-        .rent_amount;
+        update_rent_exempt_status_for_account(rent_collector, &mut loaded_fee_payer.account);
 
         let fee_payer_index = 0;
         validate_fee_payer(
@@ -574,7 +599,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             nonce,
             *fee_payer_address,
             loaded_fee_payer.account.clone(),
-            loaded_fee_payer.rent_collected,
             fee_payer_loaded_rent_epoch,
         );
 
@@ -600,13 +624,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // We must validate the account in case it was reopened, either as a normal system account,
         // or a fake nonce account. We must also check the signer in case the authority was changed.
         //
+        // We do not need to inspect the nonce account here, because by definition it is either the
+        // first account, inspected in `validate_transaction_fee_payer()`, or the second through nth
+        // account, inspected in `load_transaction()`.
+        //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address(), true)
-            .and_then(|loaded_nonce| {
-                let current_nonce_account = &loaded_nonce.account;
-                system_program::check_id(current_nonce_account.owner()).then_some(())?;
-                StateMut::<NonceVersions>::state(current_nonce_account).ok()
+            .load_transaction_account(nonce_info.address(), true)
+            .and_then(|ref current_nonce| {
+                system_program::check_id(current_nonce.account.owner()).then_some(())?;
+                StateMut::<NonceVersions>::state(&current_nonce.account).ok()
             })
             .and_then(
                 |current_nonce_versions| match current_nonce_versions.state() {
@@ -825,8 +852,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 .feature_set
                 .remove_accounts_executable_flag_checks,
         );
-        #[cfg(debug_assertions)]
-        transaction_context.set_signature(tx.signature());
 
         let pre_account_state_info =
             TransactionAccountStateInfo::new(&transaction_context, tx, rent_collector);
@@ -1064,7 +1089,10 @@ mod tests {
     use {
         super::*,
         crate::{
-            account_loader::{LoadedTransactionAccount, ValidatedTransactionDetails},
+            account_loader::{
+                LoadedTransactionAccount, ValidatedTransactionDetails,
+                TRANSACTION_ACCOUNT_BASE_SIZE,
+            },
             nonce_info::NonceInfo,
             rollback_accounts::RollbackAccounts,
         },
@@ -1087,7 +1115,6 @@ mod tests {
         },
         solana_rent::Rent,
         solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
-        solana_rent_debits::RentDebits,
         solana_sdk_ids::{bpf_loader, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
@@ -1112,13 +1139,23 @@ mod tests {
         }
     }
 
-    #[derive(Default, Clone)]
+    #[derive(Clone)]
     struct MockBankCallback {
         account_shared_data: Arc<RwLock<HashMap<Pubkey, AccountSharedData>>>,
         #[allow(clippy::type_complexity)]
         inspected_accounts:
             Arc<RwLock<HashMap<Pubkey, Vec<(Option<AccountSharedData>, /* is_writable */ bool)>>>>,
         feature_set: SVMFeatureSet,
+    }
+
+    impl Default for MockBankCallback {
+        fn default() -> Self {
+            Self {
+                account_shared_data: Arc::default(),
+                inspected_accounts: Arc::default(),
+                feature_set: SVMFeatureSet::all_enabled(),
+            }
+        }
     }
 
     impl InvokeContextCallback for MockBankCallback {}
@@ -1193,7 +1230,7 @@ mod tests {
 
     impl<'a> From<&'a MockBankCallback> for AccountLoader<'a, MockBankCallback> {
         fn from(callbacks: &'a MockBankCallback) -> AccountLoader<'a, MockBankCallback> {
-            AccountLoader::new_with_account_cache_capacity(
+            AccountLoader::new_with_loaded_accounts_capacity(
                 None,
                 callbacks,
                 &callbacks.feature_set,
@@ -1324,8 +1361,6 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 32,
         };
 
@@ -1421,8 +1456,6 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::default(),
             compute_budget: SVMTransactionExecutionBudget::default(),
-            rent: 0,
-            rent_debits: RentDebits::default(),
             loaded_accounts_data_size: 0,
         };
 
@@ -2001,8 +2034,11 @@ mod tests {
         assert_eq!(entry, Arc::new(program));
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_exact_balance() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_validate_transaction_fee_payer_exact_balance(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[
@@ -2026,12 +2062,11 @@ mod tests {
         let starting_balance = transaction_fee + priority_fee;
         assert!(
             starting_balance > min_balance,
-            "we're testing that a rent exempt fee payer can be fully drained, \
-                so ensure that the starting balance is more than the min balance"
+            "we're testing that a rent exempt fee payer can be fully drained, so ensure that the \
+             starting balance is more than the min balance"
         );
 
         let fee_payer_rent_epoch = current_epoch;
-        let fee_payer_rent_debit = 0;
         let fee_payer_account = AccountSharedData::new_rent_epoch(
             starting_balance,
             0,
@@ -2040,10 +2075,12 @@ mod tests {
         );
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -2072,6 +2109,12 @@ mod tests {
             account
         };
 
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
+        };
+
         assert_eq!(
             result,
             Ok(ValidatedTransactionDetails {
@@ -2079,7 +2122,6 @@ mod tests {
                     None, // nonce
                     *fee_payer_address,
                     post_validation_fee_payer_account.clone(),
-                    fee_payer_rent_debit,
                     fee_payer_rent_epoch
                 ),
                 compute_budget: compute_budget_and_limits.budget,
@@ -2087,16 +2129,18 @@ mod tests {
                     .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, priority_fee),
                 loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: fee_payer_account.data().len(),
+                    loaded_size: base_account_size + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
-                    rent_collected: fee_payer_rent_debit,
                 },
             })
         );
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_rent_paying() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_validate_transaction_fee_payer_rent_paying(
+        formalize_loaded_transaction_data_size: bool,
+    ) {
         let lamports_per_signature = 5000;
         let message = new_unchecked_sanitized_message(Message::new_with_blockhash(
             &[],
@@ -2110,21 +2154,15 @@ mod tests {
         let transaction_fee = lamports_per_signature;
         let starting_balance = min_balance - 1;
         let fee_payer_account = AccountSharedData::new(starting_balance, 0, &Pubkey::default());
-        let fee_payer_rent_debit = rent_collector
-            .get_rent_due(
-                fee_payer_account.lamports(),
-                fee_payer_account.data().len(),
-                fee_payer_account.rent_epoch(),
-            )
-            .lamports();
-        assert!(fee_payer_rent_debit > 0);
 
         let mut mock_accounts = HashMap::new();
         mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-        let mock_bank = MockBankCallback {
+        let mut mock_bank = MockBankCallback {
             account_shared_data: Arc::new(RwLock::new(mock_accounts)),
             ..Default::default()
         };
+        mock_bank.feature_set.formalize_loaded_transaction_data_size =
+            formalize_loaded_transaction_data_size;
         let mut account_loader = (&mock_bank).into();
 
         let mut error_counters = TransactionErrorMetrics::default();
@@ -2143,9 +2181,14 @@ mod tests {
 
         let post_validation_fee_payer_account = {
             let mut account = fee_payer_account.clone();
-            account.set_rent_epoch(1);
-            account.set_lamports(starting_balance - transaction_fee - fee_payer_rent_debit);
+            account.set_lamports(starting_balance - transaction_fee);
             account
+        };
+
+        let base_account_size = if formalize_loaded_transaction_data_size {
+            TRANSACTION_ACCOUNT_BASE_SIZE
+        } else {
+            0
         };
 
         assert_eq!(
@@ -2155,7 +2198,6 @@ mod tests {
                     None, // nonce
                     *fee_payer_address,
                     post_validation_fee_payer_account.clone(),
-                    fee_payer_rent_debit,
                     0, // rent epoch
                 ),
                 compute_budget: compute_budget_and_limits.budget,
@@ -2163,9 +2205,8 @@ mod tests {
                     .loaded_accounts_data_size_limit,
                 fee_details: FeeDetails::new(transaction_fee, 0),
                 loaded_fee_payer_account: LoadedTransactionAccount {
-                    loaded_size: fee_payer_account.data().len(),
+                    loaded_size: base_account_size + fee_payer_account.data().len(),
                     account: post_validation_fee_payer_account,
-                    rent_collected: fee_payer_rent_debit,
                 }
             })
         );
@@ -2346,8 +2387,9 @@ mod tests {
         assert_eq!(result, Err(TransactionError::DuplicateInstruction(1u8)));
     }
 
-    #[test]
-    fn test_validate_transaction_fee_payer_is_nonce() {
+    #[test_case(false; "informal_loaded_size")]
+    #[test_case(true; "simd186_loaded_size")]
+    fn test_validate_transaction_fee_payer_is_nonce(formalize_loaded_transaction_data_size: bool) {
         let lamports_per_signature = 5000;
         let rent_collector = RentCollector::default();
         let compute_unit_limit = 1000u64;
@@ -2386,10 +2428,12 @@ mod tests {
 
             let mut mock_accounts = HashMap::new();
             mock_accounts.insert(*fee_payer_address, fee_payer_account.clone());
-            let mock_bank = MockBankCallback {
+            let mut mock_bank = MockBankCallback {
                 account_shared_data: Arc::new(RwLock::new(mock_accounts)),
                 ..Default::default()
             };
+            mock_bank.feature_set.formalize_loaded_transaction_data_size =
+                formalize_loaded_transaction_data_size;
             let mut account_loader = (&mock_bank).into();
 
             let mut error_counters = TransactionErrorMetrics::default();
@@ -2422,6 +2466,12 @@ mod tests {
                 account
             };
 
+            let base_account_size = if formalize_loaded_transaction_data_size {
+                TRANSACTION_ACCOUNT_BASE_SIZE
+            } else {
+                0
+            };
+
             assert_eq!(
                 result,
                 Ok(ValidatedTransactionDetails {
@@ -2429,7 +2479,6 @@ mod tests {
                         Some(future_nonce),
                         *fee_payer_address,
                         post_validation_fee_payer_account.clone(),
-                        0, // fee_payer_rent_debit
                         0, // fee_payer_rent_epoch
                     ),
                     compute_budget: compute_budget_and_limits.budget,
@@ -2437,9 +2486,8 @@ mod tests {
                         .loaded_accounts_data_size_limit,
                     fee_details: FeeDetails::new(transaction_fee, priority_fee),
                     loaded_fee_payer_account: LoadedTransactionAccount {
-                        loaded_size: fee_payer_account.data().len(),
+                        loaded_size: base_account_size + fee_payer_account.data().len(),
                         account: post_validation_fee_payer_account,
-                        rent_collected: 0,
                     }
                 })
             );

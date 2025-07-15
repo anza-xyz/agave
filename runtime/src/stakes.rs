@@ -1,20 +1,19 @@
 //! Stakes serve as a cache of stake and vote accounts to derive
 //! node stakes
+#[cfg(feature = "dev-context-only-utils")]
+use solana_stake_interface::state::Stake;
 use {
     crate::{stake_account, stake_history::StakeHistory},
     im::HashMap as ImHashMap,
     log::error,
     num_derive::ToPrimitive,
     rayon::{prelude::*, ThreadPool},
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        clock::Epoch,
-        pubkey::Pubkey,
-        stake::state::{Delegation, StakeActivationStatus},
-        vote::state::VoteStateVersions,
-    },
-    solana_stake_program::stake_state::Stake,
+    solana_account::{AccountSharedData, ReadableAccount},
+    solana_clock::Epoch,
+    solana_pubkey::Pubkey,
+    solana_stake_interface::state::{Delegation, StakeActivationStatus},
     solana_vote::vote_account::{VoteAccount, VoteAccounts},
+    solana_vote_interface::state::VoteStateVersions,
     std::{
         collections::HashMap,
         ops::Add,
@@ -24,7 +23,7 @@ use {
 };
 
 mod serde_stakes;
-pub(crate) use serde_stakes::serde_stakes_to_delegation_format;
+pub(crate) use serde_stakes::serialize_stake_accounts_to_delegation_format;
 pub use serde_stakes::SerdeStakesToStakeFormat;
 
 #[derive(Debug, Error)]
@@ -173,22 +172,6 @@ pub struct Stakes<T: Clone> {
 
     /// history of staking levels
     stake_history: StakeHistory,
-}
-
-// For backward compatibility, we can only serialize and deserialize
-// Stakes<Delegation> in the old `epoch_stakes` bank snapshot field. However,
-// Stakes<StakeAccount> entries are added to the bank's epoch stakes hashmap
-// when crossing epoch boundaries and Stakes<Stake> entries are added when
-// starting up from bank snapshots that have the new epoch stakes field. By
-// using this enum, the cost of converting all entries to Stakes<Delegation> is
-// put off until serializing new snapshots. This helps avoid bogging down epoch
-// boundaries and startup with the conversion overhead.
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Clone)]
-pub enum StakesEnum {
-    Accounts(Stakes<StakeAccount>),
-    Delegations(Stakes<Delegation>),
-    Stakes(Stakes<Stake>),
 }
 
 impl<T: Clone> Stakes<T> {
@@ -425,24 +408,6 @@ impl Stakes<StakeAccount> {
     }
 }
 
-impl StakesEnum {
-    pub fn vote_accounts(&self) -> &VoteAccounts {
-        match self {
-            StakesEnum::Accounts(stakes) => stakes.vote_accounts(),
-            StakesEnum::Delegations(stakes) => stakes.vote_accounts(),
-            StakesEnum::Stakes(stakes) => stakes.vote_accounts(),
-        }
-    }
-
-    pub(crate) fn staked_nodes(&self) -> Arc<HashMap<Pubkey, u64>> {
-        match self {
-            StakesEnum::Accounts(stakes) => stakes.staked_nodes(),
-            StakesEnum::Delegations(stakes) => stakes.staked_nodes(),
-            StakesEnum::Stakes(stakes) => stakes.staked_nodes(),
-        }
-    }
-}
-
 /// This conversion is very memory intensive so should only be used in
 /// development contexts.
 #[cfg(feature = "dev-context-only-utils")]
@@ -503,52 +468,6 @@ impl From<Stakes<Stake>> for Stakes<Delegation> {
     }
 }
 
-/// This conversion is memory intensive so should only be used in development
-/// contexts.
-#[cfg(feature = "dev-context-only-utils")]
-impl From<StakesEnum> for Stakes<Delegation> {
-    fn from(stakes: StakesEnum) -> Self {
-        match stakes {
-            StakesEnum::Accounts(stakes) => stakes.into(),
-            StakesEnum::Delegations(stakes) => stakes,
-            StakesEnum::Stakes(stakes) => stakes.into(),
-        }
-    }
-}
-
-impl From<Stakes<StakeAccount>> for StakesEnum {
-    fn from(stakes: Stakes<StakeAccount>) -> Self {
-        Self::Accounts(stakes)
-    }
-}
-
-impl From<Stakes<Delegation>> for StakesEnum {
-    fn from(stakes: Stakes<Delegation>) -> Self {
-        Self::Delegations(stakes)
-    }
-}
-
-// Two StakesEnums are equal as long as they represent the same delegations;
-// whether these delegations are stored as StakeAccounts or Delegations.
-// Therefore, if one side is Stakes<StakeAccount> and the other is a
-// Stakes<Delegation> we convert the former one to Stakes<Delegation> before
-// comparing for equality.
-#[cfg(feature = "dev-context-only-utils")]
-impl PartialEq<StakesEnum> for StakesEnum {
-    fn eq(&self, other: &StakesEnum) -> bool {
-        match (self, other) {
-            (Self::Accounts(stakes), Self::Accounts(other)) => stakes == other,
-            (Self::Delegations(stakes), Self::Delegations(other)) => stakes == other,
-            (Self::Stakes(stakes), Self::Stakes(other)) => stakes == other,
-            (stakes, other) => {
-                let stakes = Stakes::<Delegation>::from(stakes.clone());
-                let other = Stakes::<Delegation>::from(other.clone());
-                stakes == other
-            }
-        }
-    }
-}
-
 fn refresh_vote_accounts(
     thread_pool: &ThreadPool,
     epoch: Epoch,
@@ -595,9 +514,13 @@ pub(crate) mod tests {
     use {
         super::*,
         rayon::ThreadPoolBuilder,
-        solana_sdk::{account::WritableAccount, pubkey::Pubkey, rent::Rent, stake},
+        solana_account::WritableAccount,
+        solana_pubkey::Pubkey,
+        solana_rent::Rent,
+        solana_stake_interface as stake,
         solana_stake_program::stake_state,
-        solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+        solana_vote_interface::state::{VoteState, VoteStateVersions},
+        solana_vote_program::vote_state,
     };
 
     //  set up some dummies for a staked node     ((     vote      )  (     stake     ))

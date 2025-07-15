@@ -46,4 +46,6 @@ pub enum QuicError {
     Connect(#[from] ConnectError),
     #[error(transparent)]
     Endpoint(#[from] IoErrorWithPartialEq),
+    #[error("Handshake timeout")]
+    HandshakeTimeout,
 }

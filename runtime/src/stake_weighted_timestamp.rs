@@ -1,13 +1,13 @@
 /// A helper for calculating a stake-weighted timestamp estimate from a set of timestamps and epoch
 /// stake.
-use solana_sdk::{
-    clock::{Slot, UnixTimestamp},
-    pubkey::Pubkey,
-};
-use std::{
-    borrow::Borrow,
-    collections::{BTreeMap, HashMap},
-    time::Duration,
+use {
+    solana_clock::{Slot, UnixTimestamp},
+    solana_pubkey::Pubkey,
+    std::{
+        borrow::Borrow,
+        collections::{BTreeMap, HashMap},
+        time::Duration,
+    },
 };
 
 // Obsolete limits
@@ -102,10 +102,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use {
-        super::*,
-        solana_sdk::{account::Account, native_token::sol_to_lamports},
-    };
+    use {super::*, solana_account::Account, solana_native_token::sol_to_lamports};
 
     #[test]
     fn test_calculate_stake_weighted_timestamp_uses_median() {

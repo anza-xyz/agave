@@ -1,5 +1,5 @@
 use {
-    solana_sdk::clock::Slot,
+    solana_clock::Slot,
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::vote_state::{Lockout, VoteState, VoteState1_14_11, MAX_LOCKOUT_HISTORY},
     std::collections::VecDeque,
@@ -70,9 +70,11 @@ impl TowerVoteState {
         for (i, v) in self.votes.iter_mut().enumerate() {
             // Don't increase the lockout for this vote until we get more confirmations
             // than the max number of confirmations this vote has seen
-            if stack_depth >
-                i.checked_add(v.confirmation_count() as usize)
-                    .expect("`confirmation_count` and tower_size should be bounded by `MAX_LOCKOUT_HISTORY`")
+            if stack_depth
+                > i.checked_add(v.confirmation_count() as usize).expect(
+                    "`confirmation_count` and tower_size should be bounded by \
+                     `MAX_LOCKOUT_HISTORY`",
+                )
             {
                 v.increase_confirmation_count(1);
             }

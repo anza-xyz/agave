@@ -1,12 +1,13 @@
 pub mod cluster_slots;
+pub mod slot_supporters;
 use {
     cluster_slots::ClusterSlots,
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
+    solana_clock::Slot,
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::clock::Slot,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -119,12 +120,7 @@ impl ClusterSlotsService {
                 }
             }
             let root_bank = bank_forks.read().unwrap().root_bank();
-            cluster_slots.update(
-                root_bank.slot(),
-                epoch_specs.current_epoch_staked_nodes(),
-                &cluster_info,
-                root_bank.epoch(),
-            );
+            cluster_slots.update(&root_bank, &cluster_info);
             process_cluster_slots_updates_elapsed.stop();
 
             cluster_slots_service_timing.update(
@@ -184,8 +180,12 @@ impl ClusterSlotsService {
         // TODO: Should probably incorporate slots that were replayed on startup,
         // and maybe some that were frozen < snapshot root in case validators restart
         // from newer snapshots and lose history.
-        let frozen_banks = bank_forks.read().unwrap().frozen_banks();
-        let mut frozen_bank_slots: Vec<Slot> = frozen_banks.keys().cloned().collect();
+        let mut frozen_bank_slots: Vec<_> = bank_forks
+            .read()
+            .unwrap()
+            .frozen_banks()
+            .map(|(slot, _bank)| slot)
+            .collect();
         frozen_bank_slots.sort_unstable();
 
         if !frozen_bank_slots.is_empty() {
@@ -199,7 +199,8 @@ mod test {
     use {
         super::*,
         solana_gossip::{cluster_info::Node, crds_data::LowestSlot},
-        solana_sdk::signature::{Keypair, Signer},
+        solana_keypair::Keypair,
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
     };
 

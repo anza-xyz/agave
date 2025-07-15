@@ -6,7 +6,7 @@ use {
     solana_connection_cache::client_connection::ClientConnection as TpuConnection,
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
-    solana_sdk::quic::NotifyKeyUpdate,
+    solana_quic_definitions::NotifyKeyUpdate,
     solana_tpu_client_next::{
         connection_workers_scheduler::{
             BindTarget, ConnectionWorkersSchedulerConfig, Fanout, StakeIdentity,
@@ -246,6 +246,7 @@ impl TpuClientNextClient {
         leader_forward_count: u64,
         identity: Option<&Keypair>,
         bind_socket: UdpSocket,
+        cancel: CancellationToken,
     ) -> Self
     where
         T: TpuInfoWithSendStatic + Clone,
@@ -255,8 +256,6 @@ impl TpuClientNextClient {
         let (sender, receiver) = mpsc::channel(128);
 
         let (update_certificate_sender, update_certificate_receiver) = watch::channel(None);
-
-        let cancel = CancellationToken::new();
 
         let leader_info_provider = CurrentLeaderInfo::new(leader_info);
         let leader_updater: SendTransactionServiceLeaderUpdater<T> =
@@ -302,8 +301,9 @@ impl TpuClientNextClient {
             // experimentally found parameter values
             worker_channel_size: 64,
             max_reconnect_attempts: 4,
+            // We open connection to one more leader in advance, which time-wise means ~1.6s
             leaders_fanout: Fanout {
-                connect: leader_forward_count,
+                connect: leader_forward_count + 1,
                 send: leader_forward_count,
             },
         }

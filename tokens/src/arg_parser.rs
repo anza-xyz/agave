@@ -12,8 +12,8 @@ use {
         keypair::{pubkey_from_path, signer_from_path},
     },
     solana_cli_config::CONFIG_FILE,
+    solana_native_token::sol_to_lamports,
     solana_remote_wallet::remote_wallet::maybe_wallet_manager,
-    solana_sdk::native_token::sol_to_lamports,
     std::{error::Error, ffi::OsString, process::exit},
 };
 

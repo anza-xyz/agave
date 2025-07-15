@@ -3,9 +3,12 @@
 use {
     clap::{crate_description, crate_name, value_t_or_exit, Arg, Command},
     crossbeam_channel::unbounded,
-    solana_net_utils::{bind_to_unspecified, SocketConfig},
+    solana_net_utils::{
+        bind_to_unspecified,
+        sockets::{multi_bind_in_range_with_config, SocketConfiguration},
+    },
     solana_streamer::{
-        packet::{Packet, PacketBatch, PacketBatchRecycler, PACKET_DATA_SIZE},
+        packet::{Packet, PacketBatchRecycler, PinnedPacketBatch, PACKET_DATA_SIZE},
         sendmmsg::batch_send,
         streamer::{receiver, PacketBatchReceiver, StreamerReceiveStats},
     },
@@ -20,6 +23,10 @@ use {
     },
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> {
     let send = bind_to_unspecified().unwrap();
 
@@ -32,7 +39,7 @@ fn producer(dest_addr: &SocketAddr, exit: Arc<AtomicBool>) -> JoinHandle<usize> 
         packet.meta_mut().set_socket_addr(dest_addr);
         packet
     };
-    let mut packet_batch = PacketBatch::with_capacity(batch_size);
+    let mut packet_batch = PinnedPacketBatch::with_capacity(batch_size);
     packet_batch.resize(batch_size, packet);
 
     spawn(move || {
@@ -104,10 +111,10 @@ fn main() -> Result<()> {
 
     let port = 0;
     let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-    let (_port, read_sockets) = solana_net_utils::multi_bind_in_range_with_config(
+    let (_port, read_sockets) = multi_bind_in_range_with_config(
         ip_addr,
         (port, port + num_sockets as u16),
-        SocketConfig::default().reuseport(true),
+        SocketConfiguration::default(),
         num_sockets,
     )
     .unwrap();

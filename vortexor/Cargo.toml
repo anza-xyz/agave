@@ -11,6 +11,13 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_vortexor"
+
 [dependencies]
 agave-banking-stage-ingress-types = { workspace = true }
 async-channel = { workspace = true }
@@ -38,17 +45,21 @@ smallvec = { workspace = true }
 socket2 = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-core = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
 solana-metrics = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-perf = { workspace = true }
-solana-sdk = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-quic-definitions = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-transaction-metrics-tracker = { workspace = true }
 solana-version = { workspace = true }
-
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
@@ -57,11 +68,5 @@ x509-parser = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 solana-local-cluster = { workspace = true }
+solana-native-token = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }
-
-[lib]
-crate-type = ["lib"]
-name = "solana_vortexor"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

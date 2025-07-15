@@ -5,12 +5,15 @@ extern crate test;
 
 use {
     rand::Rng,
+    solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
+    solana_hash::Hash,
     solana_ledger::{
         blockstore::{entries_to_test_shreds, Blockstore},
         get_tmp_ledger_path_auto_delete,
     },
-    solana_sdk::{clock::Slot, hash::Hash, pubkey::Pubkey, signature::Signature},
+    solana_pubkey::Pubkey,
+    solana_signature::Signature,
     solana_transaction_status::TransactionStatusMeta,
     std::path::Path,
     test::Bencher,

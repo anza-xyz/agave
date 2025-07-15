@@ -7,8 +7,7 @@ use qualifier_attr::qualifiers;
 use {
     self::{
         committer::Committer, consumer::Consumer, decision_maker::DecisionMaker,
-        latest_unprocessed_votes::LatestUnprocessedVotes, packet_receiver::PacketReceiver,
-        qos_service::QosService, vote_storage::VoteStorage,
+        packet_receiver::PacketReceiver, qos_service::QosService, vote_storage::VoteStorage,
     },
     crate::{
         banking_stage::{
@@ -29,13 +28,15 @@ use {
     solana_ledger::blockstore_processor::TransactionStatusSender,
     solana_perf::packet::PACKETS_PER_BATCH,
     solana_poh::{poh_recorder::PohRecorder, transaction_recorder::TransactionRecorder},
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::Bank, bank_forks::BankForks, prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_sdk::{pubkey::Pubkey, timing::AtomicInterval},
+    solana_time_utils::AtomicInterval,
     std::{
         cmp, env,
+        num::Saturating,
         ops::Deref,
         sync::{
             atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -66,7 +67,7 @@ mod consume_worker;
 mod vote_worker;
 conditional_vis_mod!(decision_maker, feature = "dev-context-only-utils", pub);
 mod immutable_deserialized_packet;
-mod latest_unprocessed_votes;
+mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
 mod packet_filter;
@@ -83,6 +84,7 @@ conditional_vis_mod!(unified_scheduler, feature = "dev-context-only-utils", pub,
 // Fixed thread size seems to be fastest on GCP setup
 pub const NUM_THREADS: u32 = 6;
 
+#[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
 const TOTAL_BUFFERED_PACKETS: usize = 100_000;
 
 const NUM_VOTE_PROCESSING_THREADS: u32 = 2;
@@ -321,20 +323,20 @@ pub struct BatchedTransactionDetails {
 
 #[derive(Debug, Default)]
 pub struct BatchedTransactionCostDetails {
-    pub batched_signature_cost: u64,
-    pub batched_write_lock_cost: u64,
-    pub batched_data_bytes_cost: u64,
-    pub batched_loaded_accounts_data_size_cost: u64,
-    pub batched_programs_execute_cost: u64,
+    pub batched_signature_cost: Saturating<u64>,
+    pub batched_write_lock_cost: Saturating<u64>,
+    pub batched_data_bytes_cost: Saturating<u64>,
+    pub batched_loaded_accounts_data_size_cost: Saturating<u64>,
+    pub batched_programs_execute_cost: Saturating<u64>,
 }
 
 #[derive(Debug, Default)]
 pub struct BatchedTransactionErrorDetails {
-    pub batched_retried_txs_per_block_limit_count: u64,
-    pub batched_retried_txs_per_vote_limit_count: u64,
-    pub batched_retried_txs_per_account_limit_count: u64,
-    pub batched_retried_txs_per_account_data_block_limit_count: u64,
-    pub batched_dropped_txs_per_account_data_total_limit_count: u64,
+    pub batched_retried_txs_per_block_limit_count: Saturating<u64>,
+    pub batched_retried_txs_per_vote_limit_count: Saturating<u64>,
+    pub batched_retried_txs_per_account_limit_count: Saturating<u64>,
+    pub batched_retried_txs_per_account_data_block_limit_count: Saturating<u64>,
+    pub batched_dropped_txs_per_account_data_total_limit_count: Saturating<u64>,
 }
 
 /// Stores the stage's thread handle and output receiver.
@@ -411,31 +413,26 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
-        match block_production_method {
-            BlockProductionMethod::CentralScheduler
-            | BlockProductionMethod::CentralSchedulerGreedy => {
-                let use_greedy_scheduler = matches!(
-                    block_production_method,
-                    BlockProductionMethod::CentralSchedulerGreedy
-                );
-                Self::new_central_scheduler(
-                    transaction_struct,
-                    use_greedy_scheduler,
-                    cluster_info,
-                    poh_recorder,
-                    transaction_recorder,
-                    non_vote_receiver,
-                    tpu_vote_receiver,
-                    gossip_vote_receiver,
-                    num_threads,
-                    transaction_status_sender,
-                    replay_vote_sender,
-                    log_messages_bytes_limit,
-                    bank_forks,
-                    prioritization_fee_cache,
-                )
-            }
-        }
+        let use_greedy_scheduler = matches!(
+            block_production_method,
+            BlockProductionMethod::CentralSchedulerGreedy
+        );
+        Self::new_central_scheduler(
+            transaction_struct,
+            use_greedy_scheduler,
+            cluster_info,
+            poh_recorder,
+            transaction_recorder,
+            non_vote_receiver,
+            tpu_vote_receiver,
+            gossip_vote_receiver,
+            num_threads,
+            transaction_status_sender,
+            replay_vote_sender,
+            log_messages_bytes_limit,
+            bank_forks,
+            prioritization_fee_cache,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -456,10 +453,9 @@ impl BankingStage {
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
-        // Keeps track of extraneous vote transactions for the vote threads
-        let latest_unprocessed_votes = {
+        let vote_storage = {
             let bank = bank_forks.read().unwrap().working_bank();
-            LatestUnprocessedVotes::new(&bank)
+            VoteStorage::new(&bank)
         };
 
         let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
@@ -481,7 +477,7 @@ impl BankingStage {
             committer.clone(),
             transaction_recorder.clone(),
             log_messages_bytes_limit,
-            VoteStorage::new(latest_unprocessed_votes),
+            vote_storage,
         ));
 
         match transaction_struct {
@@ -678,13 +674,9 @@ pub(crate) fn update_bank_forks_and_poh_recorder_for_new_tpu_bank(
     bank_forks: &RwLock<BankForks>,
     poh_recorder: &RwLock<PohRecorder>,
     tpu_bank: Bank,
-    track_transaction_indexes: bool,
 ) {
     let tpu_bank = bank_forks.write().unwrap().insert(tpu_bank);
-    poh_recorder
-        .write()
-        .unwrap()
-        .set_bank(tpu_bank, track_transaction_indexes);
+    poh_recorder.write().unwrap().set_bank(tpu_bank);
 }
 
 #[cfg(test)]
@@ -697,6 +689,8 @@ mod tests {
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
         solana_gossip::cluster_info::Node,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{
@@ -711,17 +705,14 @@ mod tests {
             poh_service::PohService,
             transaction_recorder::RecordTransactionsSummary,
         },
+        solana_poh_config::PohConfig,
+        solana_pubkey::Pubkey,
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            hash::Hash,
-            poh_config::PohConfig,
-            pubkey::Pubkey,
-            signature::{Keypair, Signer},
-            system_transaction,
-            transaction::{SanitizedTransaction, Transaction},
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_system_transaction as system_transaction,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
         solana_vote_program::vote_state::TowerSync,
         std::{
@@ -934,7 +925,11 @@ mod tests {
 
         // send 'em over
         let mut packet_batches = to_packet_batches(&[tx_no_ver, tx_anf, tx], 3);
-        packet_batches[0][0].meta_mut().set_discard(true); // set discard on `tx_no_ver`
+        packet_batches[0]
+            .first_mut()
+            .unwrap()
+            .meta_mut()
+            .set_discard(true); // set discard on `tx_no_ver`
 
         // glad they all fit
         assert_eq!(packet_batches.len(), 1);
@@ -1091,9 +1086,9 @@ mod tests {
 
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         for entry in entries {
-            bank.process_entry_transactions(entry.transactions)
-                .iter()
-                .for_each(|x| assert_eq!(*x, Ok(())));
+            let _ = bank
+                .try_process_entry_transactions(entry.transactions)
+                .expect("All transactions should be processed");
         }
 
         // Assert the user doesn't hold three lamports. If the stage only outputs one

@@ -1,9 +1,10 @@
 use {
+    solana_instruction::Instruction,
     solana_program_test::{ProgramTest, ProgramTestContext},
-    solana_sdk::{
-        bpf_loader_upgradeable, instruction::Instruction, pubkey::Pubkey, signature::Signer,
-        transaction::Transaction,
-    },
+    solana_pubkey::Pubkey,
+    solana_sdk_ids::bpf_loader_upgradeable,
+    solana_signer::Signer,
+    solana_transaction::Transaction,
 };
 
 async fn assert_bpf_program(context: &ProgramTestContext, program_id: &Pubkey) {

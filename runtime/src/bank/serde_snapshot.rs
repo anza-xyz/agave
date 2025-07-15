@@ -2,12 +2,8 @@
 mod tests {
     use {
         crate::{
-            bank::{
-                epoch_accounts_hash_utils, test_utils as bank_test_utils, Bank, EpochRewardStatus,
-            },
-            epoch_stakes::{
-                EpochAuthorizedVoters, EpochStakes, NodeIdToVoteAccounts, VersionedEpochStakes,
-            },
+            bank::{test_utils as bank_test_utils, Bank},
+            epoch_stakes::{EpochAuthorizedVoters, NodeIdToVoteAccounts, VersionedEpochStakes},
             genesis_utils::activate_all_features,
             runtime_config::RuntimeConfig,
             serde_snapshot::{
@@ -15,27 +11,28 @@ mod tests {
                 SerdeAccountsHash, SerdeIncrementalAccountsHash, SnapshotStreams,
             },
             snapshot_bank_utils,
+            snapshot_config::SnapshotConfig,
             snapshot_utils::{
-                create_tmp_accounts_dir_for_tests, get_storages_to_serialize, ArchiveFormat,
+                create_tmp_accounts_dir_for_tests, get_storages_to_serialize,
                 StorageAndNextAccountsFileId,
             },
-            stakes::{SerdeStakesToStakeFormat, Stakes, StakesEnum},
+            stakes::{SerdeStakesToStakeFormat, Stakes},
         },
         solana_accounts_db::{
             account_storage::AccountStorageMap,
             accounts_db::{
-                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AccountsDbConfig,
-                AtomicAccountsFileId, ACCOUNTS_DB_CONFIG_FOR_TESTING,
+                get_temp_accounts_paths, AccountStorageEntry, AccountsDb, AtomicAccountsFileId,
+                ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             accounts_hash::{AccountsDeltaHash, AccountsHash},
-            epoch_accounts_hash::EpochAccountsHash,
         },
+        solana_epoch_schedule::EpochSchedule,
+        solana_genesis_config::create_genesis_config,
+        solana_hash::Hash,
         solana_nohash_hasher::BuildNoHashHasher,
-        solana_sdk::{
-            epoch_schedule::EpochSchedule, genesis_config::create_genesis_config, hash::Hash,
-            pubkey::Pubkey, stake::state::Stake,
-        },
+        solana_pubkey::Pubkey,
+        solana_stake_interface::state::Stake,
         std::{
             io::{BufReader, BufWriter, Cursor},
             mem,
@@ -67,7 +64,7 @@ mod tests {
             std::fs::copy(storage_path, &output_path)?;
 
             // Read new file into append-vec and build new entry
-            let (accounts_file, num_accounts) = AccountsFile::new_from_file(
+            let (accounts_file, _num_accounts) = AccountsFile::new_from_file(
                 output_path,
                 storage_entry.accounts.len(),
                 storage_access,
@@ -76,7 +73,6 @@ mod tests {
                 storage_entry.slot(),
                 storage_entry.id(),
                 accounts_file,
-                num_accounts,
             );
             next_append_vec_id = next_append_vec_id.max(new_storage_entry.id());
             storage.insert(new_storage_entry.slot(), Arc::new(new_storage_entry));
@@ -91,41 +87,24 @@ mod tests {
     /// Test roundtrip serialize/deserialize of a bank
     #[test_matrix(
         [StorageAccess::Mmap, StorageAccess::File],
-        [false, true],
-        [false, true],
         [false, true]
     )]
     fn test_serialize_bank_snapshot(
         storage_access: StorageAccess,
         has_incremental_snapshot_persistence: bool,
-        has_epoch_accounts_hash: bool,
-        has_accounts_lt_hash: bool,
     ) {
         let (mut genesis_config, _) = create_genesis_config(500);
         genesis_config.epoch_schedule = EpochSchedule::custom(400, 400, false);
         let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        bank0
-            .rc
-            .accounts
-            .accounts_db
-            .set_is_experimental_accumulator_hash_enabled(has_accounts_lt_hash);
         let deposit_amount = bank0.get_minimum_balance_for_rent_exemption(0);
-        let eah_start_slot = epoch_accounts_hash_utils::calculation_start(&bank0);
         let bank1 = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
 
         // Create an account on a non-root fork
         let key1 = Pubkey::new_unique();
         bank_test_utils::deposit(&bank1, &key1, deposit_amount).unwrap();
 
-        // If setting an initial EAH, then the bank being snapshotted must be in the EAH calculation
-        // window.  Otherwise serializing below will *not* include the EAH in the bank snapshot,
-        // and the later-deserialized bank's EAH will not match the expected EAH.
-        let bank2_slot = if has_epoch_accounts_hash {
-            eah_start_slot
-        } else {
-            0
-        } + 2;
-        let mut bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
+        let bank2_slot = 2;
+        let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), bank2_slot);
 
         // Test new account
         let key2 = Pubkey::new_unique();
@@ -151,50 +130,13 @@ mod tests {
                 incremental_capitalization: 32,
             });
 
-        let expected_epoch_accounts_hash = has_epoch_accounts_hash.then(|| {
-            let epoch_accounts_hash = EpochAccountsHash::new(Hash::new_unique());
-            accounts_db
-                .epoch_accounts_hash_manager
-                .set_valid(epoch_accounts_hash, eah_start_slot);
-            epoch_accounts_hash
-        });
-        let expected_accounts_lt_hash =
-            has_accounts_lt_hash.then(|| bank2.accounts_lt_hash.lock().unwrap().clone());
-
-        // Only if a bank was recently recreated from a snapshot will it have an epoch stakes entry
-        // of type "delegations" which cannot be serialized into the versioned epoch stakes map. Simulate
-        // this condition by replacing the epoch 0 stakes map of stake accounts with an epoch stakes map
-        // of delegations.
-        {
-            assert_eq!(bank2.epoch_stakes.len(), 2);
-            assert!(bank2
-                .epoch_stakes
-                .values()
-                .all(|epoch_stakes| matches!(epoch_stakes.stakes(), &StakesEnum::Accounts(_))));
-
-            let StakesEnum::Accounts(stake_accounts) =
-                bank2.epoch_stakes.remove(&0).unwrap().stakes().clone()
-            else {
-                panic!("expected the epoch 0 stakes entry to have stake accounts");
-            };
-
-            bank2.epoch_stakes.insert(
-                0,
-                EpochStakes::new(Arc::new(StakesEnum::Delegations(stake_accounts.into())), 0),
-            );
-        }
+        let expected_accounts_lt_hash = bank2.accounts_lt_hash.lock().unwrap().clone();
 
         let mut buf = Vec::new();
         let cursor = Cursor::new(&mut buf);
         let mut writer = BufWriter::new(cursor);
         {
             let mut bank_fields = bank2.get_fields_to_serialize();
-            // Ensure that epoch_stakes and versioned_epoch_stakes are each
-            // serialized with at least one entry to verify that epoch stakes
-            // entries are combined correctly during deserialization
-            assert!(!bank_fields.epoch_stakes.is_empty());
-            assert!(!bank_fields.versioned_epoch_stakes.is_empty());
-
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
             serde_snapshot::serialize_bank_snapshot_into(
@@ -208,7 +150,7 @@ mod tests {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     incremental_snapshot_persistence: expected_incremental_snapshot_persistence
                         .as_ref(),
-                    epoch_accounts_hash: expected_epoch_accounts_hash,
+                    epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
@@ -233,10 +175,6 @@ mod tests {
             full_snapshot_stream: &mut reader,
             incremental_snapshot_stream: None,
         };
-        let accounts_db_config = AccountsDbConfig {
-            enable_experimental_accumulator_hash: has_accounts_lt_hash,
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        };
         let (dbank, _) = serde_snapshot::bank_from_streams(
             &mut snapshot_streams,
             &dbank_paths,
@@ -247,7 +185,7 @@ mod tests {
             None,
             None,
             false,
-            Some(accounts_db_config),
+            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
         )
@@ -273,15 +211,7 @@ mod tests {
             assert_eq!(dbank.get_incremental_accounts_hash(), None);
         }
         assert_eq!(
-            dbank.get_epoch_accounts_hash_to_serialize(),
-            expected_epoch_accounts_hash,
-        );
-        assert_eq!(
-            dbank.is_accounts_lt_hash_enabled().then(|| dbank
-                .accounts_lt_hash
-                .lock()
-                .unwrap()
-                .clone()),
+            dbank.accounts_lt_hash.lock().unwrap().clone(),
             expected_accounts_lt_hash,
         );
         assert_eq!(dbank.get_bank_hash_stats(), bank2.get_bank_hash_stats());
@@ -320,12 +250,12 @@ mod tests {
         // entries are of type Stakes<StakeAccount> so add a new entry for Stakes<Stake>.
         bank.epoch_stakes.insert(
             42,
-            EpochStakes::from(VersionedEpochStakes::Current {
+            VersionedEpochStakes::Current {
                 stakes: SerdeStakesToStakeFormat::Stake(Stakes::<Stake>::default()),
                 total_stake: 42,
                 node_id_to_vote_accounts: Arc::<NodeIdToVoteAccounts>::default(),
                 epoch_authorized_voters: Arc::<EpochAuthorizedVoters>::default(),
-            }),
+            },
         );
         assert_eq!(bank.epoch_stakes.len(), 3);
 
@@ -407,7 +337,7 @@ mod tests {
             None,
             full_snapshot_archives_dir.path(),
             incremental_snapshot_archives_dir.path(),
-            ArchiveFormat::Tar,
+            SnapshotConfig::default().archive_format,
         )
         .unwrap();
 
@@ -438,91 +368,17 @@ mod tests {
         );
     }
 
-    #[test_case(StorageAccess::Mmap)]
-    #[test_case(StorageAccess::File)]
-    fn test_blank_extra_fields(storage_access: StorageAccess) {
-        solana_logger::setup();
-        let (genesis_config, _) = create_genesis_config(500);
-
-        let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
-        bank0.squash();
-        let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
-        bank.freeze();
-        add_root_and_flush_write_cache(&bank0);
-        bank.rc
-            .accounts
-            .accounts_db
-            .set_accounts_delta_hash(bank.slot(), AccountsDeltaHash(Hash::new_unique()));
-        bank.rc.accounts.accounts_db.set_accounts_hash(
-            bank.slot(),
-            (AccountsHash(Hash::new_unique()), u64::default()),
-        );
-
-        // Set extra fields
-        bank.fee_rate_governor.lamports_per_signature = 7000;
-
-        // Serialize, but don't serialize the extra fields
-        let snapshot_storages = bank.get_snapshot_storages(None);
-        let mut buf = vec![];
-        let mut writer = Cursor::new(&mut buf);
-
-        crate::serde_snapshot::bank_to_stream_no_extra_fields(
-            &mut std::io::BufWriter::new(&mut writer),
-            &bank,
-            &get_storages_to_serialize(&snapshot_storages),
-        )
-        .unwrap();
-
-        // Deserialize
-        let rdr = Cursor::new(&buf[..]);
-        let mut reader = std::io::BufReader::new(&buf[rdr.position() as usize..]);
-        let mut snapshot_streams = SnapshotStreams {
-            full_snapshot_stream: &mut reader,
-            incremental_snapshot_stream: None,
-        };
-        let (_accounts_dir, dbank_paths) = get_temp_accounts_paths(4).unwrap();
-        let copied_accounts = TempDir::new().unwrap();
-        let storage_and_next_append_vec_id = copy_append_vecs(
-            &bank.rc.accounts.accounts_db,
-            copied_accounts.path(),
-            storage_access,
-        )
-        .unwrap();
-        let (dbank, _) = crate::serde_snapshot::bank_from_streams(
-            &mut snapshot_streams,
-            &dbank_paths,
-            storage_and_next_append_vec_id,
-            &genesis_config,
-            &RuntimeConfig::default(),
-            None,
-            None,
-            None,
-            false,
-            Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
-            None,
-            Arc::default(),
-        )
-        .unwrap();
-
-        // Defaults to 0
-        assert_eq!(0, dbank.fee_rate_governor.lamports_per_signature);
-
-        // The snapshot epoch_reward_status always equals `None`, so the bank
-        // field should default to `Inactive`
-        assert_eq!(dbank.epoch_reward_status, EpochRewardStatus::Inactive);
-    }
-
     #[cfg(feature = "frozen-abi")]
     mod test_bank_serialize {
         use {
             super::*,
             crate::bank::BankHashStats,
             solana_accounts_db::{
-                accounts_hash::AccountsLtHash, append_vec::StoredMetaWriteVersion,
+                accounts_hash::AccountsLtHash, epoch_accounts_hash::EpochAccountsHash,
             },
+            solana_clock::Slot,
             solana_frozen_abi::abi_example::AbiExample,
             solana_lattice_hash::lt_hash::LtHash,
-            solana_sdk::clock::Slot,
             std::marker::PhantomData,
         };
 
@@ -547,7 +403,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "3PsrjAtyWBU3KPopGoM1UK1sa8HjVzehjBi7M2v6wW1Q")
+            frozen_abi(digest = "CsLEuMN7aF93CutCEYfUQrWi3kBV4weLtmckWs8f6Kt1")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
@@ -588,7 +444,7 @@ mod tests {
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },
-                StoredMetaWriteVersion::default(),
+                u64::default(), // obsolete, formerly write_version
             )
         }
     }

@@ -24,13 +24,12 @@ const PEDERSEN_OPENING_LEN: usize = SCALAR_LEN;
 /// Byte length of a Pedersen commitment.
 pub(crate) const PEDERSEN_COMMITMENT_LEN: usize = RISTRETTO_POINT_LEN;
 
-lazy_static::lazy_static! {
-    /// Pedersen base point for encoding messages to be committed.
-    pub static ref G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
-    /// Pedersen base point for encoding the commitment openings.
-    pub static ref H: RistrettoPoint =
-        RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes());
-}
+/// Pedersen base point for encoding messages to be committed.
+pub const G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
+/// Pedersen base point for encoding the commitment openings.
+pub static H: std::sync::LazyLock<RistrettoPoint> = std::sync::LazyLock::new(|| {
+    RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes())
+});
 
 /// Algorithm handle for the Pedersen commitment scheme.
 pub struct Pedersen;
@@ -57,7 +56,7 @@ impl Pedersen {
         let x: Scalar = amount.into();
         let r = opening.get_scalar();
 
-        PedersenCommitment(RistrettoPoint::multiscalar_mul(&[x, *r], &[*G, *H]))
+        PedersenCommitment(RistrettoPoint::multiscalar_mul(&[x, *r], &[G, *H]))
     }
 
     /// On input a message (numeric amount), the function returns a Pedersen commitment with zero
@@ -65,7 +64,7 @@ impl Pedersen {
     ///
     /// This function is deterministic.
     pub fn encode<T: Into<Scalar>>(amount: T) -> PedersenCommitment {
-        PedersenCommitment(amount.into() * &(*G))
+        PedersenCommitment(amount.into() * &G)
     }
 }
 

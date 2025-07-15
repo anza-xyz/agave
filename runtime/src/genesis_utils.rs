@@ -1,20 +1,19 @@
 use {
     agave_feature_set::{FeatureSet, FEATURE_NAMES},
     log::*,
-    solana_sdk::{
-        account::{Account, AccountSharedData},
-        feature::{self, Feature},
-        fee_calculator::FeeRateGovernor,
-        genesis_config::{ClusterType, GenesisConfig},
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{Keypair, Signer},
-        signer::SeedDerivable,
-        stake::state::StakeStateV2,
-        system_program,
-    },
+    solana_account::{Account, AccountSharedData},
+    solana_feature_gate_interface::{self as feature, Feature},
+    solana_fee_calculator::FeeRateGovernor,
+    solana_genesis_config::{ClusterType, GenesisConfig},
+    solana_keypair::Keypair,
+    solana_native_token::sol_to_lamports,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_seed_derivable::SeedDerivable,
+    solana_signer::Signer,
+    solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
+    solana_system_interface::program as system_program,
     solana_vote_program::vote_state,
     std::borrow::Borrow,
 };
@@ -220,10 +219,20 @@ pub fn create_genesis_config_with_leader_with_mint_keypair(
     }
 }
 
+pub fn activate_all_features_alpenglow(genesis_config: &mut GenesisConfig) {
+    do_activate_all_features::<true>(genesis_config);
+}
+
 pub fn activate_all_features(genesis_config: &mut GenesisConfig) {
+    do_activate_all_features::<false>(genesis_config);
+}
+
+fn do_activate_all_features<const IS_ALPENGLOW: bool>(genesis_config: &mut GenesisConfig) {
     // Activate all features at genesis in development mode
     for feature_id in FeatureSet::default().inactive() {
-        activate_feature(genesis_config, *feature_id);
+        if IS_ALPENGLOW || *feature_id != agave_feature_set::alpenglow::id() {
+            activate_feature(genesis_config, *feature_id);
+        }
     }
 }
 
@@ -296,7 +305,7 @@ pub fn create_genesis_config_with_leader_ex_no_features(
     initial_accounts.push((*validator_vote_account_pubkey, validator_vote_account));
     initial_accounts.push((*validator_stake_account_pubkey, validator_stake_account));
 
-    let native_mint_account = solana_sdk::account::AccountSharedData::from(Account {
+    let native_mint_account = solana_account::AccountSharedData::from(Account {
         owner: spl_generic_token::token::id(),
         data: spl_generic_token::token::native_mint::ACCOUNT_DATA.to_vec(),
         lamports: sol_to_lamports(1.),

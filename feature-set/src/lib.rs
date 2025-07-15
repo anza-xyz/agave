@@ -102,7 +102,6 @@ impl FeatureSet {
 
     pub fn runtime_features(&self) -> SVMFeatureSet {
         SVMFeatureSet {
-            lift_cpi_caller_restriction: self.is_active(&lift_cpi_caller_restriction::id()),
             move_precompile_verification_to_svm: self
                 .is_active(&move_precompile_verification_to_svm::id()),
             remove_accounts_executable_flag_checks: self
@@ -151,7 +150,13 @@ impl FeatureSet {
                 .is_active(&fix_alt_bn128_multiplication_input_length::id()),
             loosen_cpi_size_restriction: self.is_active(&loosen_cpi_size_restriction::id()),
             increase_tx_account_lock_limit: self.is_active(&increase_tx_account_lock_limit::id()),
-            disable_rent_fees_collection: self.is_active(&disable_rent_fees_collection::id()),
+            enable_extend_program_checked: self.is_active(&enable_extend_program_checked::id()),
+            formalize_loaded_transaction_data_size: self
+                .is_active(&formalize_loaded_transaction_data_size::id()),
+            disable_zk_elgamal_proof_program: self
+                .is_active(&disable_zk_elgamal_proof_program::id()),
+            reenable_zk_elgamal_proof_program: self
+                .is_active(&reenable_zk_elgamal_proof_program::id()),
         }
     }
 }
@@ -819,7 +824,7 @@ pub mod remaining_compute_units_syscall_enabled {
 }
 
 pub mod enable_loader_v4 {
-    solana_pubkey::declare_id!("G8yMNsNUd4p3VB22ycrPEB1qRgepCFeFpAqD2Lr66s36");
+    solana_pubkey::declare_id!("2aQJYqER2aKyb3cZw22v4SL2xMX7vwXBRWfvS4pTrtED");
 }
 
 pub mod require_rent_exempt_split_destination {
@@ -1007,15 +1012,11 @@ pub mod enable_sbpf_v2_deployment_and_execution {
 }
 
 pub mod enable_sbpf_v3_deployment_and_execution {
-    solana_pubkey::declare_id!("C8XZNs1bfzaiT3YDeXZJ7G5swQWQv7tVzDnCxtHvnSpw");
+    solana_pubkey::declare_id!("GJav1vwg2etvSWraPT96QvYuQJswJTJwtcyARrvkhuV9");
 }
 
 pub mod remove_accounts_executable_flag_checks {
     solana_pubkey::declare_id!("FXs1zh47QbNnhXcnB6YiAQoJ4sGB91tKF3UFHLcKT7PM");
-}
-
-pub mod lift_cpi_caller_restriction {
-    solana_pubkey::declare_id!("HcW8ZjBezYYgvcbxNJwqv1t484Y2556qJsfNDWvJGZRH");
 }
 
 pub mod disable_account_loader_special_case {
@@ -1059,7 +1060,7 @@ pub mod drop_unchained_merkle_shreds {
 }
 
 pub mod relax_intrabatch_account_locks {
-    solana_pubkey::declare_id!("EbAhnReKK8Sf88CvAfAXbgKji8DV48rsp4q2sgHqgWef");
+    solana_pubkey::declare_id!("ENTRYnPAoT5Swwx73YDGzMp3XnNH1kxacyvLosRHza1i");
 }
 
 pub mod create_slashing_program {
@@ -1088,6 +1089,26 @@ pub mod mask_out_rent_epoch_in_vm_serialization {
 
 pub mod enshrine_slashing_program {
     solana_pubkey::declare_id!("sProgVaNWkYdP2eTRAy1CPrgb3b9p8yXCASrPEqo6VJ");
+}
+
+pub mod enable_extend_program_checked {
+    solana_pubkey::declare_id!("2oMRZEDWT2tqtYMofhmmfQ8SsjqUFzT6sYXppQDavxwz");
+}
+
+pub mod formalize_loaded_transaction_data_size {
+    solana_pubkey::declare_id!("DeS7sR48ZcFTUmt5FFEVDr1v1bh73aAbZiZq3SYr8Eh8");
+}
+
+pub mod alpenglow {
+    solana_pubkey::declare_id!("mustRekeyVm2QHYB3JPefBiU4BY3Z6JkW2k3Scw5GWP");
+}
+
+pub mod disable_zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("zkdoVwnSFnSLtGJG7irJPEYUpmb4i7sGMGcnN6T9rnC");
+}
+
+pub mod reenable_zk_elgamal_proof_program {
+    solana_pubkey::declare_id!("zkemPXcuM3G4wpMDZ36Cpw34EjUpvm1nuioiSGbGZPR");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
@@ -1219,7 +1240,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (check_syscall_outputs_do_not_overlap::id(), "check syscall outputs do_not overlap #28600"),
         (enable_bpf_loader_set_authority_checked_ix::id(), "enable bpf upgradeable loader SetAuthorityChecked instruction #28424"),
         (enable_alt_bn128_syscall::id(), "add alt_bn128 syscalls #27961"),
-        (simplify_alt_bn128_syscall_error_codes::id(), "simplify alt_bn128 syscall error codes SIMD-0129"),
+        (simplify_alt_bn128_syscall_error_codes::id(), "SIMD-0129: simplify alt_bn128 syscall error codes"),
         (enable_program_redeployment_cooldown::id(), "enable program redeployment cooldown #29135"),
         (commission_updates_only_allowed_in_first_half_of_epoch::id(), "validator commission updates are only allowed in the first half of an epoch #29362"),
         (enable_turbine_fanout_experiments::id(), "enable turbine fanout experiments #29393"),
@@ -1252,7 +1273,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enable_poseidon_syscall::id(), "Enable Poseidon syscall"),
         (timely_vote_credits::id(), "use timeliness of votes in determining credits to award"),
         (remaining_compute_units_syscall_enabled::id(), "enable the remaining_compute_units syscall"),
-        (enable_loader_v4::id(), "Enable Loader-v4 SIMD-0167"),
+        (enable_loader_v4::id(), "SIMD-0167: Enable Loader-v4"),
         (require_rent_exempt_split_destination::id(), "Require stake split destination account to be rent exempt"),
         (better_error_codes_for_tx_lamport_check::id(), "better error codes for tx lamport check #33353"),
         (enable_alt_bn128_compression_syscall::id(), "add alt_bn128 compression syscalls"),
@@ -1281,49 +1302,53 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (enable_tower_sync_ix::id(), "Enable tower sync vote instruction"),
         (chained_merkle_conflict_duplicate_proofs::id(), "generate duplicate proofs for chained merkle root conflicts"),
         (reward_full_priority_fee::id(), "Reward full priority fee to validators #34731"),
-        (abort_on_invalid_curve::id(), "Abort when elliptic curve syscalls invoked on invalid curve id SIMD-0137"),
+        (abort_on_invalid_curve::id(), "SIMD-0137: Abort when elliptic curve syscalls invoked on invalid curve id"),
         (get_sysvar_syscall_enabled::id(), "Enable syscall for fetching Sysvar bytes #615"),
         (migrate_feature_gate_program_to_core_bpf::id(), "Migrate Feature Gate program to Core BPF (programify) #1003"),
         (vote_only_full_fec_sets::id(), "vote only full fec sets"),
         (migrate_config_program_to_core_bpf::id(), "Migrate Config program to Core BPF #1378"),
         (enable_get_epoch_stake_syscall::id(), "Enable syscall: sol_get_epoch_stake #884"),
         (migrate_address_lookup_table_program_to_core_bpf::id(), "Migrate Address Lookup Table program to Core BPF #1651"),
-        (zk_elgamal_proof_program_enabled::id(), "Enable ZkElGamalProof program SIMD-0153"),
+        (zk_elgamal_proof_program_enabled::id(), "SIMD-0153: Enable ZkElGamalProof program"),
         (verify_retransmitter_signature::id(), "Verify retransmitter signature #1840"),
         (move_stake_and_move_lamports_ixs::id(), "Enable MoveStake and MoveLamports stake program instructions #1610"),
-        (ed25519_precompile_verify_strict::id(), "Use strict verification in ed25519 precompile SIMD-0152"),
+        (ed25519_precompile_verify_strict::id(), "SIMD-0152: Use strict verification in ed25519 precompile"),
         (vote_only_retransmitter_signed_fec_sets::id(), "vote only on retransmitter signed fec sets"),
         (move_precompile_verification_to_svm::id(), "SIMD-0159: Move precompile verification into SVM"),
-        (enable_transaction_loading_failure_fees::id(), "Enable fees for some additional transaction failures SIMD-0082"),
+        (enable_transaction_loading_failure_fees::id(), "SIMD-0082: Enable fees for some additional transaction failures"),
         (enable_turbine_extended_fanout_experiments::id(), "enable turbine extended fanout experiments #"),
         (deprecate_legacy_vote_ixs::id(), "Deprecate legacy vote instructions"),
-        (partitioned_epoch_rewards_superfeature::id(), "replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary SIMD-0118"),
-        (disable_sbpf_v0_execution::id(), "Disables execution of SBPFv1 programs SIMD-0161"),
-        (reenable_sbpf_v0_execution::id(), "Re-enables execution of SBPFv1 programs"),
-        (enable_sbpf_v1_deployment_and_execution::id(), "Enables deployment and execution of SBPFv1 programs SIMD-0161"),
-        (enable_sbpf_v2_deployment_and_execution::id(), "Enables deployment and execution of SBPFv2 programs SIMD-0161"),
-        (enable_sbpf_v3_deployment_and_execution::id(), "Enables deployment and execution of SBPFv3 programs SIMD-0161"),
-        (remove_accounts_executable_flag_checks::id(), "Remove checks of accounts is_executable flag SIMD-0162"),
-        (lift_cpi_caller_restriction::id(), "Lift the restriction in CPI that the caller must have the callee as an instruction account #2202"),
+        (partitioned_epoch_rewards_superfeature::id(), "SIMD-0118: replaces enable_partitioned_epoch_reward to enable partitioned rewards at epoch boundary"),
+        (disable_sbpf_v0_execution::id(), "SIMD-0161: Disables execution of SBPFv0 programs"),
+        (reenable_sbpf_v0_execution::id(), "Re-enables execution of SBPFv0 programs"),
+        (enable_sbpf_v1_deployment_and_execution::id(), "SIMD-0166: Enable deployment and execution of SBPFv1 programs"),
+        (enable_sbpf_v2_deployment_and_execution::id(), "SIMD-0173 and SIMD-0174: Enable deployment and execution of SBPFv2 programs"),
+        (enable_sbpf_v3_deployment_and_execution::id(), "SIMD-0178, SIMD-0179 and SIMD-0189: Enable deployment and execution of SBPFv3 programs"),
+        (remove_accounts_executable_flag_checks::id(), "SIMD-0162: Remove checks of accounts is_executable flag"),
         (disable_account_loader_special_case::id(), "Disable account loader special case #3513"),
-        (accounts_lt_hash::id(), "enables lattice-based accounts hash SIMD-0215"),
-        (snapshots_lt_hash::id(), "snapshots use lattice-based accounts hash SIMD-0220"),
-        (remove_accounts_delta_hash::id(), "removes accounts delta hash SIMD-0223"),
-        (enable_secp256r1_precompile::id(), "Enable secp256r1 precompile SIMD-0075"),
-        (migrate_stake_program_to_core_bpf::id(), "Migrate Stake program to Core BPF SIMD-0196 #3655"),
-        (deplete_cu_meter_on_vm_failure::id(), "Deplete compute meter for vm errors SIMD-0182 #3993"),
-        (reserve_minimal_cus_for_builtin_instructions::id(), "Reserve minimal CUs for builtin instructions SIMD-170 #2562"),
-        (raise_block_limits_to_50m::id(), "Raise block limit to 50M SIMD-0207"),
-        (fix_alt_bn128_multiplication_input_length::id(), "fix alt_bn128 multiplication input length SIMD-0222 #3686"),
+        (accounts_lt_hash::id(), "SIMD-0215: enables lattice-based accounts hash"),
+        (snapshots_lt_hash::id(), "SIMD-0220: snapshots use lattice-based accounts hash"),
+        (remove_accounts_delta_hash::id(), "SIMD-0223: removes accounts delta hash"),
+        (enable_secp256r1_precompile::id(), "SIMD-0075: Enable secp256r1 precompile"),
+        (migrate_stake_program_to_core_bpf::id(), "SIMD-0196: Migrate Stake program to Core BPF #3655"),
+        (deplete_cu_meter_on_vm_failure::id(), "SIMD-0182: Deplete compute meter for vm errors #3993"),
+        (reserve_minimal_cus_for_builtin_instructions::id(), "SIMD-0170: Reserve minimal CUs for builtin instructions #2562"),
+        (raise_block_limits_to_50m::id(), "SIMD-0207: Raise block limit to 50M"),
+        (fix_alt_bn128_multiplication_input_length::id(), "SIMD-0222: fix alt_bn128 multiplication input length #3686"),
         (drop_unchained_merkle_shreds::id(), "drops unchained Merkle shreds #2149"),
-        (relax_intrabatch_account_locks::id(), "Allow batched transactions to read/write and write/write the same accounts SIMD-0083"),
-        (create_slashing_program::id(), "creates an enshrined slashing program SIMD-0204"),
-        (disable_partitioned_rent_collection::id(), "Disable partitioned rent collection SIMD-0175 #4562"),
-        (enable_vote_address_leader_schedule::id(), "Enable vote address leader schedule SIMD-0180 #4573"),
+        (relax_intrabatch_account_locks::id(), "SIMD-0083: Allow batched transactions to read/write and write/write the same accounts"),
+        (create_slashing_program::id(), "SIMD-0204: creates an enshrined slashing program"),
+        (disable_partitioned_rent_collection::id(), "SIMD-0175: Disable partitioned rent collection #4562"),
+        (enable_vote_address_leader_schedule::id(), "SIMD-0180: Enable vote address leader schedule #4573"),
         (require_static_nonce_account::id(), "SIMD-0242: Static Nonce Account Only"),
-        (raise_block_limits_to_60m::id(), "Raise block limit to 60M SIMD-0256"),
+        (raise_block_limits_to_60m::id(), "SIMD-0256: Raise block limit to 60M"),
         (mask_out_rent_epoch_in_vm_serialization::id(), "SIMD-0267: Sets rent_epoch to a constant in the VM"),
         (enshrine_slashing_program::id(), "SIMD-0204: Slashable event verification"),
+        (enable_extend_program_checked::id(), "Enable ExtendProgramChecked instruction"),
+        (formalize_loaded_transaction_data_size::id(), "SIMD-0186: Loaded transaction data size specification"),
+        (alpenglow::id(), "Enable Alpenglow"),
+        (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
+        (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

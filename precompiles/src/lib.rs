@@ -1,10 +1,10 @@
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 use {
     agave_feature_set::{enable_secp256r1_precompile, FeatureSet},
-    lazy_static::lazy_static,
     solana_message::compiled_instruction::CompiledInstruction,
     solana_precompile_error::PrecompileError,
     solana_pubkey::Pubkey,
+    std::sync::LazyLock,
 };
 
 pub mod ed25519;
@@ -52,9 +52,9 @@ impl Precompile {
     }
 }
 
-lazy_static! {
-    /// The list of all precompiled programs
-    static ref PRECOMPILES: Vec<Precompile> = vec![
+/// The list of all precompiled programs
+static PRECOMPILES: LazyLock<Vec<Precompile>> = LazyLock::new(|| {
+    vec![
         Precompile::new(
             solana_sdk_ids::secp256k1_program::id(),
             None, // always enabled
@@ -69,9 +69,9 @@ lazy_static! {
             solana_sdk_ids::secp256r1_program::id(),
             Some(enable_secp256r1_precompile::id()),
             secp256r1::verify,
-        )
-    ];
-}
+        ),
+    ]
+});
 
 /// Check if a program is a precompiled program
 pub fn is_precompile<F>(program_id: &Pubkey, is_enabled: F) -> bool

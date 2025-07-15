@@ -33,7 +33,6 @@ use {
     solana_message::Message,
     solana_native_token::lamports_to_sol,
     solana_nonce::state::State as NonceState,
-    solana_program::stake::{self, state::StakeStateV2},
     solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
@@ -53,6 +52,7 @@ use {
     solana_sdk_ids::sysvar::{self, stake_history},
     solana_signature::Signature,
     solana_slot_history::{self as slot_history, SlotHistory},
+    solana_stake_interface::{self as stake, state::StakeStateV2},
     solana_system_interface::{instruction as system_instruction, MAX_PERMITTED_DATA_LENGTH},
     solana_tps_client::TpsClient,
     solana_transaction::Transaction,
@@ -736,7 +736,7 @@ pub fn process_catchup(
     our_localhost_port: Option<u16>,
     log: bool,
 ) -> ProcessResult {
-    let sleep_interval = Duration::from_secs(5);
+    let sleep_interval = Duration::from_secs(2);
 
     let progress_bar = new_spinner_progress_bar();
     progress_bar.set_message("Connecting...");
@@ -2434,13 +2434,5 @@ mod tests {
                 signers: vec![Box::new(default_keypair)],
             }
         );
-    }
-
-    #[test]
-    fn check_default_rpc_port_inline() {
-        assert_eq!(
-            DEFAULT_RPC_PORT_STR,
-            solana_sdk::rpc_port::DEFAULT_RPC_PORT_STR
-        )
     }
 }

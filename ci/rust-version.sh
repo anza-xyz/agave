@@ -29,13 +29,17 @@ fi
 if [[ -n $RUST_NIGHTLY_VERSION ]]; then
   nightly_version="$RUST_NIGHTLY_VERSION"
 else
-  nightly_version=2025-02-16
+  nightly_version=2025-03-29
 fi
 
 
 export rust_stable="$stable_version"
 
 export rust_nightly=nightly-"$nightly_version"
+
+if [[ -n $NO_INSTALL ]]; then
+  return
+fi
 
 [[ -z $1 ]] || (
 

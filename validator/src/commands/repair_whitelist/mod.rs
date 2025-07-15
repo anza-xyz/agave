@@ -7,7 +7,7 @@ use {
     itertools::Itertools,
     solana_clap_utils::input_validators::is_pubkey,
     solana_cli_output::OutputFormat,
-    solana_sdk::pubkey::Pubkey,
+    solana_pubkey::Pubkey,
     std::path::Path,
 };
 

@@ -1,16 +1,16 @@
-use solana_sdk::{
-    account::{Account, AccountSharedData},
-    bpf_loader,
-    bpf_loader_upgradeable::{self, get_program_data_address, UpgradeableLoaderState},
-    pubkey::Pubkey,
-    rent::Rent,
+use {
+    solana_account::{Account, AccountSharedData},
+    solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
 };
 
 mod spl_memo_1_0 {
-    solana_sdk::declare_id!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo");
+    solana_pubkey::declare_id!("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo");
 }
 mod spl_memo_3_0 {
-    solana_sdk::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
+    solana_pubkey::declare_id!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr");
 }
 
 static SPL_PROGRAMS: &[(Pubkey, Pubkey, &[u8])] = &[

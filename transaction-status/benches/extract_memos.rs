@@ -5,10 +5,10 @@ use {
     solana_transaction_status::extract_memos::{spl_memo_id_v1, spl_memo_id_v3, ExtractMemos},
 };
 
-fn bench_extract_memos(c: &mut Criterion) {
+fn bench_extract_memos(b: &mut Bencher) {
     let mut account_keys: Vec<Pubkey> = (0..64).map(|_| Pubkey::new_unique()).collect();
-    account_keys[62] = spl_memo_id_v1();
-    account_keys[63] = spl_memo_id_v3();
+    account_keys[62] = spl_memo::v1::id();
+    account_keys[63] = spl_memo::id();
     let memo = "Test memo";
 
     let instructions: Vec<_> = (0..20)
@@ -24,11 +24,8 @@ fn bench_extract_memos(c: &mut Criterion) {
         instructions,
         ..Message::default()
     };
-
-    c.bench_function("extract_memos", |b| {
         b.iter(|| message.extract_memos());
-    });
 }
 
-criterion_group!(benches, bench_extract_memos);
-criterion_main!(benches);
+benchmark_group!(benches, bench_extract_memos);
+benchmark_main!(benches);

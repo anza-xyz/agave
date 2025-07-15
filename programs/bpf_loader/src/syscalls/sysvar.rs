@@ -1,4 +1,7 @@
-use {super::*, solana_program_runtime::execution_budget::SVMTransactionExecutionCost};
+use {
+    super::*, crate::translate_mut,
+    solana_program_runtime::execution_budget::SVMTransactionExecutionCost,
+};
 
 fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
     sysvar: Result<Arc<T>, InstructionError>,
@@ -14,7 +17,11 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId + Clone>(
             .sysvar_base_cost
             .saturating_add(size_of::<T>() as u64),
     )?;
-    let var = translate_type_mut::<T>(memory_mapping, var_addr, check_aligned)?;
+    translate_mut!(
+        memory_mapping,
+        check_aligned,
+        let var: &mut T = map(var_addr)?;
+    );
 
     // this clone looks unecessary now, but it exists to zero out trailing alignment bytes
     // it is unclear whether this should ever matter
@@ -196,11 +203,15 @@ declare_builtin_function!(
                 .saturating_add(std::cmp::max(sysvar_buf_cost, mem_op_base_cost)),
         )?;
 
+        // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
+        translate_mut!(
+            memory_mapping,
+            check_aligned,
+            let var: &mut [u8] = map(var_addr, length)?;
+        );
+
         // Abort: "Not all bytes in VM memory range `[sysvar_id, sysvar_id + 32)` are readable."
         let sysvar_id = translate_type::<Pubkey>(memory_mapping, sysvar_id_addr, check_aligned)?;
-
-        // Abort: "Not all bytes in VM memory range `[var_addr, var_addr + length)` are writable."
-        let var = translate_slice_mut::<u8>(memory_mapping, var_addr, length, check_aligned)?;
 
         // Abort: "`offset + length` is not in `[0, 2^64)`."
         let offset_length = offset

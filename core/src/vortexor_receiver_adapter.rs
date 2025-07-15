@@ -5,9 +5,9 @@
 use {
     crate::banking_trace::TracedSender,
     agave_banking_stage_ingress_types::BankingPacketBatch,
+    agave_verified_packet_receiver::receiver::VerifiedPacketReceiver,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     solana_perf::packet::PacketBatch,
-    solana_vortexor_receiver::receiver::VerifiedPacketReceiver,
     std::{
         net::UdpSocket,
         sync::{atomic::AtomicBool, Arc},

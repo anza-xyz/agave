@@ -253,8 +253,8 @@ mod test {
         assert_matches::assert_matches,
         solana_account::AccountSharedData,
         solana_nonce::{self as nonce, state::State},
+        solana_nonce_account::{create_account, verify_nonce_account},
         solana_program_runtime::with_mock_invoke_context,
-        solana_sdk::nonce_account::{create_account, verify_nonce_account},
         solana_sdk_ids::system_program,
         solana_sha256_hasher::hash,
         solana_transaction_context::InstructionAccount,
@@ -294,20 +294,8 @@ mod test {
                 (system_program::id(), AccountSharedData::default()),
             ];
             let $instruction_accounts = vec![
-                InstructionAccount {
-                    index_in_transaction: 0,
-                    index_in_caller: 0,
-                    index_in_callee: 0,
-                    is_signer: true,
-                    is_writable: true,
-                },
-                InstructionAccount {
-                    index_in_transaction: 1,
-                    index_in_caller: 1,
-                    index_in_callee: 1,
-                    is_signer: false,
-                    is_writable: true,
-                },
+                InstructionAccount::new(0, 0, 0, true, true),
+                InstructionAccount::new(1, 1, 1, false, true),
             ];
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
         };

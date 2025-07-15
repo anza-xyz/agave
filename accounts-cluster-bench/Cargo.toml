@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 clap = { workspace = true }
 log = { workspace = true }
@@ -17,27 +20,39 @@ solana-account-decoder = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
 solana-client = { workspace = true }
+solana-clock = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-gossip = { workspace = true }
+solana-hash = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-measure = { workspace = true }
+solana-message = { workspace = true, features = ["serde", "bincode", "blake3"] }
 solana-net-utils = { workspace = true }
+solana-program-pack = { workspace = true }
+solana-pubkey = { workspace = true }
 solana-rpc-client = { workspace = true, features = ["default"] }
 solana-rpc-client-api = { workspace = true }
-solana-runtime = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signature = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-system-interface = { workspace = true, features = ["bincode"] }
+solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
 spl-generic-token = { workspace = true }
 spl-token = { workspace = true, features = ["no-entrypoint"] }
+
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }
 
 [dev-dependencies]
 solana-accounts-db = { workspace = true }
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-faucet = { workspace = true }
 solana-local-cluster = { workspace = true }
+solana-native-token = { workspace = true }
+solana-poh-config = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
 solana-test-validator = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

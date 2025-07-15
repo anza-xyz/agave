@@ -8,6 +8,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 bincode = { workspace = true }
 clap = { workspace = true }
@@ -15,12 +18,17 @@ crossbeam-channel = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-client = { workspace = true }
 solana-connection-cache = { workspace = true }
+solana-hash = { workspace = true }
+solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
+solana-message = { workspace = true }
 solana-net-utils = { workspace = true }
-solana-sdk = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
+solana-transaction = { workspace = true }
 solana-version = { workspace = true }
 solana-vote-program = { workspace = true }
 
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }

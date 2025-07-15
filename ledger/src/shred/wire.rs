@@ -6,18 +6,18 @@ use {
         self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
         ShredType, ShredVariant, SignedData, SIZE_OF_COMMON_SHRED_HEADER,
     },
-    solana_perf::packet::Packet,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        signature::{Signature, Signer, SIGNATURE_BYTES},
-        signer::keypair::Keypair,
-    },
+    solana_clock::Slot,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_perf::packet::{PacketRef, PacketRefMut},
+    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signer::Signer,
     std::ops::Range,
 };
 #[cfg(test)]
 use {
     rand::{seq::SliceRandom, Rng},
+    solana_perf::packet::Packet,
     std::collections::HashMap,
 };
 
@@ -34,19 +34,30 @@ fn get_shred_size(shred: &[u8]) -> Option<usize> {
 }
 
 #[inline]
-pub fn get_shred(packet: &Packet) -> Option<&[u8]> {
-    let data = packet.data(..)?;
+pub fn get_shred<'a, P>(packet: P) -> Option<&'a [u8]>
+where
+    P: Into<PacketRef<'a>>,
+{
+    let data = packet.into().data(..)?;
     data.get(..get_shred_size(data)?)
 }
 
 #[inline]
-pub fn get_shred_mut(packet: &mut Packet) -> Option<&mut [u8]> {
-    let buffer = packet.buffer_mut();
-    buffer.get_mut(..get_shred_size(buffer)?)
+pub fn get_shred_mut<'a>(packet: &'a mut PacketRefMut) -> Option<&'a mut [u8]> {
+    // This function is used only in turbine for re-signing shreds.
+    match packet {
+        // Currently, turbine uses only `Packet`, which allows mutability.
+        PacketRefMut::Packet(packet) => {
+            let buffer = packet.buffer_mut();
+            buffer.get_mut(..get_shred_size(buffer)?)
+        }
+        // `BytesPacket` is immutable, but not used in turbine.
+        PacketRefMut::Bytes(_) => unreachable!("`BytesPacket` is not used in turbine"),
+    }
 }
 
 #[inline]
-pub fn get_shred_and_repair_nonce(packet: &Packet) -> Option<(&[u8], Option<Nonce>)> {
+pub fn get_shred_and_repair_nonce(packet: PacketRef) -> Option<(&[u8], Option<Nonce>)> {
     let data = packet.data(..)?;
     let shred = data.get(..get_shred_size(data)?)?;
     if !packet.meta().repair() {
@@ -369,7 +380,9 @@ pub(crate) fn corrupt_packet<R: Rng>(
         let byte = buffer[offsets].choose_mut(rng).unwrap();
         *byte = rng.gen::<u8>().max(1u8).wrapping_add(*byte);
     }
-    let shred = get_shred(packet).unwrap();
+    // We need to re-borrow the `packet` here, otherwise compiler considers it
+    // as moved.
+    let shred = get_shred(&*packet).unwrap();
     let merkle_variant = match get_shred_variant(shred).unwrap() {
         ShredVariant::LegacyCode | ShredVariant::LegacyData => None,
         ShredVariant::MerkleCode {
@@ -434,7 +447,7 @@ mod tests {
         rand::Rng,
         solana_perf::packet::PacketFlags,
         std::io::{Cursor, Write},
-        test_case::test_case,
+        test_case::test_matrix,
     };
 
     fn make_dummy_signature<R: Rng>(rng: &mut R) -> Signature {
@@ -473,14 +486,11 @@ mod tests {
         packet.meta_mut().size = usize::try_from(cursor.position()).unwrap();
     }
 
-    #[test_case(false, false, false)]
-    #[test_case(false, false, true)]
-    #[test_case(false, true, false)]
-    #[test_case(false, true, true)]
-    #[test_case(true, false, false)]
-    #[test_case(true, false, true)]
-    #[test_case(true, true, false)]
-    #[test_case(true, true, true)]
+    #[test_matrix(
+        [true, false],
+        [true, false],
+        [true, false]
+    )]
     fn test_merkle_shred_wire_layout(repaired: bool, chained: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
         let slot = 318_230_963 + rng.gen_range(0..318_230_963);
@@ -499,27 +509,31 @@ mod tests {
                 );
             }
         }
-        let mut packet = Packet::default();
-        if repaired {
-            packet.meta_mut().flags |= PacketFlags::REPAIR;
-        }
         for shred in &shreds {
+            let mut packet = Packet::default();
+            if repaired {
+                packet.meta_mut().flags |= PacketFlags::REPAIR;
+            }
             let nonce = repaired.then(|| rng.gen::<Nonce>());
             write_shred(&mut rng, shred.payload(), nonce, &mut packet);
+            let mut packet = PacketRefMut::Packet(&mut packet);
             assert_eq!(
                 packet.data(..).map(get_shred_size).unwrap().unwrap(),
                 shred.payload().len()
             );
-            assert_eq!(get_shred(&packet).unwrap(), shred.payload().as_ref());
+            assert_eq!(
+                get_shred(packet.as_ref()).unwrap(),
+                shred.payload().as_ref()
+            );
             assert_eq!(
                 get_shred_mut(&mut packet).unwrap(),
                 shred.payload().as_ref(),
             );
             assert_eq!(
-                get_shred_and_repair_nonce(&packet).unwrap(),
+                get_shred_and_repair_nonce(packet.as_ref()).unwrap(),
                 (shred.payload().as_ref(), nonce),
             );
-            let bytes = get_shred(&packet).unwrap();
+            let bytes = get_shred(packet.as_ref()).unwrap();
             let shred_common_header = shred.common_header();
             assert_eq!(
                 get_common_header_bytes(bytes).unwrap(),

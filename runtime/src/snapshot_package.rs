@@ -12,13 +12,12 @@ use {
         accounts_hash::{
             AccountsDeltaHash, AccountsHash, AccountsHashKind, MerkleOrLatticeAccountsHash,
         },
-        append_vec::StoredMetaWriteVersion,
         epoch_accounts_hash::EpochAccountsHash,
     },
-    solana_sdk::{
-        clock::Slot, hash::Hash, rent_collector::RentCollector,
-        sysvar::epoch_schedule::EpochSchedule,
-    },
+    solana_clock::Slot,
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
+    solana_rent_collector::RentCollector,
     std::{
         sync::{atomic::Ordering, Arc},
         time::Instant,
@@ -184,7 +183,7 @@ impl AccountsPackage {
                 bank_hash_stats: BankHashStats::default(),
                 accounts_delta_hash: AccountsDeltaHash(Hash::default()),
                 must_include_epoch_accounts_hash: false,
-                write_version: StoredMetaWriteVersion::default(),
+                write_version: u64::default(),
             }),
             enqueued: Instant::now(),
         }
@@ -209,7 +208,7 @@ pub struct SupplementalSnapshotInfo {
     pub bank_hash_stats: BankHashStats,
     pub accounts_delta_hash: AccountsDeltaHash,
     pub must_include_epoch_accounts_hash: bool,
-    pub write_version: StoredMetaWriteVersion,
+    pub write_version: u64,
 }
 
 /// Accounts packages are sent to the Accounts Hash Verifier for processing.  There are multiple
@@ -234,7 +233,7 @@ pub struct SnapshotPackage {
     pub accounts_delta_hash: AccountsDeltaHash,
     pub accounts_hash: AccountsHash,
     pub epoch_accounts_hash: Option<EpochAccountsHash>,
-    pub write_version: StoredMetaWriteVersion,
+    pub write_version: u64,
     pub bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
 
     /// The instant this snapshot package was sent to the queue.
@@ -340,7 +339,7 @@ impl SnapshotPackage {
             accounts_hash: AccountsHash(Hash::default()),
             epoch_accounts_hash: None,
             bank_incremental_snapshot_persistence: None,
-            write_version: StoredMetaWriteVersion::default(),
+            write_version: u64::default(),
             enqueued: Instant::now(),
         }
     }

@@ -1,22 +1,21 @@
 #![cfg(feature = "sbf_rust")]
 
 use {
+    solana_instruction::{AccountMeta, Instruction},
+    solana_keypair::Keypair,
+    solana_message::Message,
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
-        epoch_stakes::EpochStakes,
+        epoch_stakes::VersionedEpochStakes,
         genesis_utils::{
             create_genesis_config_with_vote_accounts, GenesisConfigInfo, ValidatorVoteKeypairs,
         },
         loader_utils::load_program_of_loader_v4,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        instruction::{AccountMeta, Instruction},
-        message::Message,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
+    solana_transaction::Transaction,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::create_account_with_authorized,
     std::collections::HashMap,
@@ -45,7 +44,7 @@ fn test_syscall_get_epoch_stake() {
     // Intentionally overwrite the bank epoch with no stake, to ensure the
     // syscall gets the _current_ epoch stake based on the leader schedule
     // (N + 1).
-    let epoch_stakes_epoch_0 = EpochStakes::new_for_tests(
+    let epoch_stakes_epoch_0 = VersionedEpochStakes::new_for_tests(
         voting_keypairs
             .iter()
             .map(|keypair| {

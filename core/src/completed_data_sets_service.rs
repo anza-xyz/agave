@@ -9,7 +9,7 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::blockstore::{Blockstore, CompletedDataSetInfo},
     solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
-    solana_sdk::signature::Signature,
+    solana_signature::Signature,
     std::{
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -74,7 +74,7 @@ impl CompletedDataSetsService {
                         rpc_subscriptions.notify_signatures_received((slot, transactions));
                     }
                 }
-                Err(e) => warn!("completed-data-set-service deserialize error: {:?}", e),
+                Err(e) => warn!("completed-data-set-service deserialize error: {e:?}"),
             }
             slot
         };
@@ -109,12 +109,8 @@ impl CompletedDataSetsService {
 #[cfg(test)]
 pub mod test {
     use {
-        super::*,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-            transaction::Transaction,
-        },
+        super::*, solana_hash::Hash, solana_keypair::Keypair, solana_signer::Signer,
+        solana_transaction::Transaction,
     };
 
     #[test]

@@ -8,13 +8,21 @@ repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
-rust-version = "1.83.0"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_net_utils"
+
+[features]
+default = []
+dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
 
 [dependencies]
 anyhow = { workspace = true }
 bincode = { workspace = true }
 bytes = { workspace = true }
-clap = { version = "3.1.5", features = ["cargo"], optional = true }
 hxdmp = { version = "0.2.1", optional = true }
 itertools = { workspace = true }
 log = { workspace = true }
@@ -24,32 +32,12 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 socket2 = { workspace = true }
-solana-logger = { version = "=2.3.1", optional = true }
-solana-serde = "=2.2.1"
-solana-version = { workspace = true, optional = true }
+solana-serde = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 url = { workspace = true }
 
 [dev-dependencies]
 solana-logger = { workspace = true }
 
-[features]
-default = []
-clap = ["dep:clap", "dep:solana-logger", "dep:solana-version"]
-dev-context-only-utils = ["dep:pcap-file", "dep:hxdmp"]
-
-[lib]
-name = "solana_net_utils"
-
-[[bin]]
-name = "solana-ip-address"
-path = "src/bin/ip_address.rs"
-required-features = ["clap"]
-
-[[bin]]
-name = "solana-ip-address-server"
-path = "src/bin/ip_address_server.rs"
-required-features = ["clap"]
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+[lints]
+workspace = true

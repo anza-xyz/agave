@@ -7,10 +7,13 @@ use {
         iter::IndexedParallelIterator,
         prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator},
     },
+    solana_account::{Account, ReadableAccount},
+    solana_clock::Epoch,
     solana_core::banking_stage::{
         committer::Committer, consumer::Consumer, qos_service::QosService,
     },
     solana_entry::entry::Entry,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore,
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -21,14 +24,10 @@ use {
     },
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::{Account, ReadableAccount},
-        signature::Keypair,
-        signer::Signer,
-        stake_history::Epoch,
-        system_program, system_transaction,
-        transaction::SanitizedTransaction,
-    },
+    solana_signer::Signer,
+    solana_system_interface::program as system_program,
+    solana_system_transaction as system_transaction,
+    solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,

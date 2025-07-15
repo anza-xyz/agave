@@ -78,7 +78,7 @@ pub enum Error {
     ObjectCorrupt(String),
 
     #[error("RPC: {0}")]
-    Rpc(tonic::Status),
+    Rpc(Box<tonic::Status>),
 
     #[error("Timeout")]
     Timeout,
@@ -107,7 +107,7 @@ impl std::convert::From<tonic::transport::Error> for Error {
 
 impl std::convert::From<tonic::Status> for Error {
     fn from(err: tonic::Status) -> Self {
-        Self::Rpc(err)
+        Self::Rpc(Box::new(err))
     }
 }
 

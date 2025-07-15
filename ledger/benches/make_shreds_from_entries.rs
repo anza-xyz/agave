@@ -3,11 +3,12 @@ use {
     criterion::{black_box, criterion_group, criterion_main, Criterion},
     rand::Rng,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::shred::{self, ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
-    solana_sdk::{
-        hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, signer::keypair::Keypair,
-        transaction::Transaction,
-    },
+    solana_packet::PACKET_DATA_SIZE,
+    solana_pubkey::Pubkey,
+    solana_transaction::Transaction,
     std::iter::repeat_with,
 };
 
@@ -16,7 +17,7 @@ fn make_dummy_hash<R: Rng>(rng: &mut R) -> Hash {
 }
 
 fn make_dummy_transaction<R: Rng>(rng: &mut R) -> Transaction {
-    solana_sdk::system_transaction::transfer(
+    solana_system_transaction::transfer(
         &Keypair::new(),                      // from
         &Pubkey::from(rng.gen::<[u8; 32]>()), // to
         rng.gen(),                            // lamports

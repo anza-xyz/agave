@@ -1,25 +1,24 @@
 use {
     super::packet_filter::PacketFilterFailure,
     agave_feature_set::FeatureSet,
+    solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_perf::packet::Packet,
+    solana_hash::Hash,
+    solana_message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
+    solana_perf::packet::PacketRef,
+    solana_pubkey::Pubkey,
     solana_runtime::bank::Bank,
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
     solana_sanitize::SanitizeError,
-    solana_sdk::{
-        clock::Slot,
-        hash::Hash,
-        message::{v0::LoadedAddresses, AddressLoaderError, Message, SimpleAddressLoader},
-        pubkey::Pubkey,
-        signature::Signature,
-        transaction::{
-            MessageHash, SanitizedTransaction, SanitizedVersionedTransaction, VersionedTransaction,
-        },
-    },
     solana_short_vec::decode_shortu16_len,
+    solana_signature::Signature,
     solana_svm_transaction::{
         instruction::SVMInstruction, message_address_table_lookup::SVMMessageAddressTableLookup,
+    },
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
     std::{cmp::Ordering, collections::HashSet, mem::size_of},
     thiserror::Error,
@@ -44,13 +43,13 @@ pub enum DeserializedPacketError {
     FailedFilter(#[from] PacketFilterFailure),
 }
 
-lazy_static::lazy_static! {
-    // Make a dummy feature_set with all features enabled to
-    // fetch compute_unit_price and compute_unit_limit for legacy leader.
-    static ref FEATURE_SET: FeatureSet = FeatureSet::all_enabled();
-}
+// Make a dummy feature_set with all features enabled to
+// fetch compute_unit_price and compute_unit_limit for legacy leader.
+static FEATURE_SET: std::sync::LazyLock<FeatureSet> =
+    std::sync::LazyLock::new(FeatureSet::all_enabled);
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct ImmutableDeserializedPacket {
     transaction: SanitizedVersionedTransaction,
     forwarded: bool,
@@ -61,7 +60,7 @@ pub struct ImmutableDeserializedPacket {
 }
 
 impl ImmutableDeserializedPacket {
-    pub fn new(packet: &Packet) -> Result<Self, DeserializedPacketError> {
+    pub fn new(packet: PacketRef) -> Result<Self, DeserializedPacketError> {
         let versioned_transaction: VersionedTransaction = packet.deserialize_slice(..)?;
         let sanitized_transaction = SanitizedVersionedTransaction::try_from(versioned_transaction)?;
         let message_bytes = packet_message(packet)?;
@@ -193,7 +192,7 @@ impl Ord for ImmutableDeserializedPacket {
 }
 
 /// Read the transaction message from packet data
-fn packet_message(packet: &Packet) -> Result<&[u8], DeserializedPacketError> {
+fn packet_message(packet: PacketRef) -> Result<&[u8], DeserializedPacketError> {
     let (sig_len, sig_size) = packet
         .data(..)
         .and_then(|bytes| decode_shortu16_len(bytes).ok())
@@ -208,11 +207,11 @@ fn packet_message(packet: &Packet) -> Result<&[u8], DeserializedPacketError> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*,
-        solana_sdk::{
-            compute_budget, instruction::Instruction, pubkey::Pubkey, signature::Keypair,
-            signer::Signer, system_instruction, system_transaction, transaction::Transaction,
-        },
+        super::*, solana_compute_budget_interface as compute_budget,
+        solana_instruction::Instruction, solana_keypair::Keypair, solana_perf::packet::BytesPacket,
+        solana_pubkey::Pubkey, solana_signer::Signer,
+        solana_system_interface::instruction as system_instruction,
+        solana_system_transaction as system_transaction, solana_transaction::Transaction,
     };
 
     #[test]
@@ -223,8 +222,8 @@ mod tests {
             1,
             Hash::new_unique(),
         );
-        let packet = Packet::from_data(None, tx).unwrap();
-        let deserialized_packet = ImmutableDeserializedPacket::new(&packet);
+        let packet = BytesPacket::from_data(None, tx).unwrap();
+        let deserialized_packet = ImmutableDeserializedPacket::new(packet.as_ref());
 
         assert!(deserialized_packet.is_ok());
     }
@@ -253,8 +252,8 @@ mod tests {
                 &[&keypair],
                 Hash::new_unique(),
             );
-            let packet = Packet::from_data(None, tx).unwrap();
-            let deserialized_packet = ImmutableDeserializedPacket::new(&packet).unwrap();
+            let packet = BytesPacket::from_data(None, tx).unwrap();
+            let deserialized_packet = ImmutableDeserializedPacket::new(packet.as_ref()).unwrap();
             assert_eq!(
                 deserialized_packet.check_insufficent_compute_unit_limit(),
                 expectation

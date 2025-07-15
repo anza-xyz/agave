@@ -1,9 +1,7 @@
 //! Example Rust-based SBF noop program
 
 use {
-    solana_account_info::AccountInfo,
-    solana_program_error::ProgramResult,
-    solana_pubkey::Pubkey
+    solana_account_info::AccountInfo, solana_program_error::ProgramResult, solana_pubkey::Pubkey,
 };
 
 solana_program_entrypoint::entrypoint!(process_instruction);

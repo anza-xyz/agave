@@ -7,9 +7,12 @@
     note = "Use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER instead"
 )]
 pub use solana_streamer::quic::DEFAULT_MAX_QUIC_CONNECTIONS_PER_PEER as MAX_QUIC_CONNECTIONS_PER_PEER;
-pub use {crate::forwarding_stage::ForwardingClientOption, solana_sdk::net::DEFAULT_TPU_COALESCE};
+pub use {
+    crate::forwarding_stage::ForwardingClientOption, solana_streamer::quic::DEFAULT_TPU_COALESCE,
+};
 use {
     crate::{
+        admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
         banking_stage::BankingStage,
         banking_trace::{Channels, TracerThread},
         cluster_info_vote_listener::{
@@ -17,7 +20,9 @@ use {
             VerifiedVoteSender, VoteTracker,
         },
         fetch_stage::FetchStage,
-        forwarding_stage::{spawn_forwarding_stage, ForwardAddressGetter},
+        forwarding_stage::{
+            spawn_forwarding_stage, ForwardAddressGetter, SpawnForwardingStageResult,
+        },
         sigverify::TransactionSigVerifier,
         sigverify_stage::SigVerifyStage,
         staked_nodes_updater_service::StakedNodesUpdaterService,
@@ -27,8 +32,9 @@ use {
     },
     bytes::Bytes,
     crossbeam_channel::{bounded, unbounded, Receiver},
-    solana_client::connection_cache::ConnectionCache,
+    solana_clock::Slot,
     solana_gossip::cluster_info::ClusterInfo,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
         entry_notifier_service::EntryNotifierSender,
@@ -38,6 +44,7 @@ use {
         poh_recorder::{PohRecorder, WorkingBankEntry},
         transaction_recorder::TransactionRecorder,
     },
+    solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::BankNotificationSender,
         rpc_subscriptions::RpcSubscriptions,
@@ -48,7 +55,6 @@ use {
         root_bank_cache::RootBankCache,
         vote_sender_types::{ReplayVoteReceiver, ReplayVoteSender},
     },
-    solana_sdk::{clock::Slot, pubkey::Pubkey, quic::NotifyKeyUpdate, signature::Keypair},
     solana_streamer::{
         quic::{spawn_server_multi, QuicServerParams, SpawnServerResult},
         streamer::StakedNodes,
@@ -73,7 +79,7 @@ pub struct TpuSockets {
     pub transactions_forwards_quic: Vec<UdpSocket>,
     pub vote_quic: Vec<UdpSocket>,
     /// Client-side socket for the forwarding votes.
-    pub vote_forwards_client: UdpSocket,
+    pub vote_forwarding_client: UdpSocket,
     pub vortexor_receivers: Option<Vec<UdpSocket>>,
 }
 
@@ -110,7 +116,7 @@ pub struct Tpu {
 
 impl Tpu {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn new_with_client(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
@@ -133,7 +139,7 @@ impl Tpu {
         bank_notification_sender: Option<BankNotificationSender>,
         tpu_coalesce: Duration,
         duplicate_confirmed_slot_sender: DuplicateConfirmedSlotsSender,
-        connection_cache: &Arc<ConnectionCache>,
+        client: ForwardingClientOption,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         keypair: &Keypair,
         log_messages_bytes_limit: Option<usize>,
@@ -150,7 +156,8 @@ impl Tpu {
         transaction_struct: TransactionStructure,
         enable_block_production_forwarding: bool,
         _generator_config: Option<GeneratorConfig>, /* vestigial code for replay invalidator */
-    ) -> (Self, Vec<Arc<dyn NotifyKeyUpdate + Sync + Send>>) {
+        key_notifiers: Arc<RwLock<KeyUpdaters>>,
+    ) -> Self {
         let TpuSockets {
             transactions: transactions_sockets,
             transaction_forwards: tpu_forwards_sockets,
@@ -159,7 +166,7 @@ impl Tpu {
             transactions_quic: transactions_quic_sockets,
             transactions_forwards_quic: transactions_forwards_quic_sockets,
             vote_quic: tpu_vote_quic_sockets,
-            vote_forwards_client: vote_forwards_client_socket,
+            vote_forwarding_client: vote_forwarding_client_socket,
             vortexor_receivers,
         } = sockets;
 
@@ -329,12 +336,13 @@ impl Tpu {
             prioritization_fee_cache,
         );
 
-        let client = ForwardingClientOption::ConnectionCache(connection_cache.clone());
-
-        let forwarding_stage = spawn_forwarding_stage(
+        let SpawnForwardingStageResult {
+            join_handle: forwarding_stage,
+            client_updater,
+        } = spawn_forwarding_stage(
             forward_stage_receiver,
             client,
-            vote_forwards_client_socket,
+            vote_forwarding_client_socket,
             RootBankCache::new(bank_forks.clone()),
             ForwardAddressGetter::new(cluster_info.clone(), poh_recorder.clone()),
             DataBudget::default(),
@@ -366,32 +374,32 @@ impl Tpu {
             turbine_quic_endpoint_sender,
         );
 
-        let mut key_updaters: Vec<Arc<dyn NotifyKeyUpdate + Send + Sync>> = Vec::new();
+        let mut key_notifiers = key_notifiers.write().unwrap();
         if let Some(key_updater) = key_updater {
-            key_updaters.push(key_updater);
+            key_notifiers.add(KeyUpdaterType::Tpu, key_updater);
         }
         if let Some(forwards_key_updater) = forwards_key_updater {
-            key_updaters.push(forwards_key_updater);
+            key_notifiers.add(KeyUpdaterType::TpuForwards, forwards_key_updater);
         }
-        key_updaters.push(vote_streamer_key_updater);
-        (
-            Self {
-                fetch_stage,
-                sig_verifier,
-                vote_sigverify_stage,
-                banking_stage,
-                forwarding_stage,
-                cluster_info_vote_listener,
-                broadcast_stage,
-                tpu_quic_t,
-                tpu_forwards_quic_t,
-                tpu_entry_notifier,
-                staked_nodes_updater_service,
-                tracer_thread_hdl,
-                tpu_vote_quic_t,
-            },
-            key_updaters,
-        )
+        key_notifiers.add(KeyUpdaterType::TpuVote, vote_streamer_key_updater);
+
+        key_notifiers.add(KeyUpdaterType::Forward, client_updater);
+
+        Self {
+            fetch_stage,
+            sig_verifier,
+            vote_sigverify_stage,
+            banking_stage,
+            forwarding_stage,
+            cluster_info_vote_listener,
+            broadcast_stage,
+            tpu_quic_t,
+            tpu_forwards_quic_t,
+            tpu_entry_notifier,
+            staked_nodes_updater_service,
+            tracer_thread_hdl,
+            tpu_vote_quic_t,
+        }
     }
 
     pub fn join(self) -> thread::Result<()> {
@@ -418,8 +426,8 @@ impl Tpu {
         if let Some(tracer_thread_hdl) = self.tracer_thread_hdl {
             if let Err(tracer_result) = tracer_thread_hdl.join()? {
                 error!(
-                    "banking tracer thread returned error after successful thread join: {:?}",
-                    tracer_result
+                    "banking tracer thread returned error after successful thread join: \
+                     {tracer_result:?}"
                 );
             }
         }

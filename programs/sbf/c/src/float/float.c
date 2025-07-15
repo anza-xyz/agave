@@ -15,7 +15,7 @@ extern uint64_t entrypoint(const uint8_t *input) {
     return ERROR_INVALID_ARGUMENT;
   }
   /* test float conversion to int compiles and works */
-  uint32_t data = *(uint32_t *)(params.ka[0].data);
+  uint32_t data = 0;
   uint32_t new_data = data + 1;
   data += 1.5;
   sol_assert(data == new_data);

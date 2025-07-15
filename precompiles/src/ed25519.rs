@@ -121,7 +121,7 @@ pub mod tests {
         hex,
         rand0_7::{thread_rng, Rng},
         solana_ed25519_program::{
-            new_ed25519_instruction, offsets_to_ed25519_instruction, DATA_START,
+            new_ed25519_instruction_with_signature, offsets_to_ed25519_instruction, DATA_START,
         },
         solana_instruction::Instruction,
         std::vec,
@@ -341,7 +341,10 @@ pub mod tests {
 
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let message_arr = b"hello";
-        let mut instruction = new_ed25519_instruction(&privkey, message_arr);
+        let signature = privkey.sign(message_arr).to_bytes();
+        let pubkey = privkey.public.to_bytes();
+        let mut instruction =
+            new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
         let feature_set = FeatureSet::all_enabled();
 
         assert!(test_verify_with_alignment(
@@ -446,7 +449,9 @@ pub mod tests {
         // sig created via ed25519_dalek: both pass
         let privkey = ed25519_dalek::Keypair::generate(&mut thread_rng());
         let message_arr = b"hello";
-        let instruction = new_ed25519_instruction(&privkey, message_arr);
+        let signature = privkey.sign(message_arr).to_bytes();
+        let pubkey = privkey.public.to_bytes();
+        let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
         let feature_set = FeatureSet::default();
         assert!(test_verify_with_alignment(

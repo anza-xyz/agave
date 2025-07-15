@@ -8,12 +8,17 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dev-dependencies]
 assert_matches = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
+solana-ed25519-program = { workspace = true }
+solana-instruction = { workspace = true }
+solana-precompile-error = { workspace = true }
 solana-program-test = { workspace = true }
-solana-sdk = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
+solana-signer = { workspace = true }
+solana-transaction = { workspace = true }
+solana-transaction-error = { workspace = true }

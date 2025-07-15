@@ -2,7 +2,8 @@ use {
     crate::bench::{fund_keypairs, generate_and_fund_keypairs},
     log::*,
     solana_genesis::Base64Account,
-    solana_sdk::signature::{Keypair, Signer},
+    solana_keypair::Keypair,
+    solana_signer::Signer,
     solana_tps_client::TpsClient,
     std::{collections::HashMap, fs::File, path::Path, process::exit, sync::Arc},
 };

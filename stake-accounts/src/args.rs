@@ -1,12 +1,10 @@
 use {
     clap::ArgMatches,
     solana_clap_utils::keypair::{pubkey_from_path, signer_from_path},
+    solana_clock::{Epoch, UnixTimestamp},
+    solana_pubkey::Pubkey,
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
-    solana_sdk::{
-        clock::{Epoch, UnixTimestamp},
-        pubkey::Pubkey,
-        signature::Signer,
-    },
+    solana_signer::Signer,
     std::{error::Error, rc::Rc},
 };
 
@@ -18,6 +16,7 @@ pub(crate) struct NewArgs<P, K> {
     pub stake_authority: P,
     pub withdraw_authority: P,
     pub index: usize,
+    pub no_wait: bool,
 }
 
 pub(crate) struct CountArgs<P> {
@@ -37,6 +36,7 @@ pub(crate) struct AuthorizeArgs<P, K> {
     pub new_stake_authority: P,
     pub new_withdraw_authority: P,
     pub num_accounts: usize,
+    pub no_wait: bool,
 }
 
 pub(crate) struct SetLockupArgs<P, K> {
@@ -57,6 +57,7 @@ pub(crate) struct RebaseArgs<P, K> {
     pub new_base_keypair: K,
     pub stake_authority: K,
     pub num_accounts: usize,
+    pub no_wait: bool,
 }
 
 pub(crate) struct MoveArgs<P, K> {
@@ -78,6 +79,7 @@ pub(crate) enum Command<P, K> {
 pub(crate) struct Args<P, K> {
     pub config_file: String,
     pub url: Option<String>,
+    pub commitment: Option<String>,
     pub command: Command<P, K>,
 }
 
@@ -178,6 +180,7 @@ fn resolve_authorize_args(
             &args.new_withdraw_authority,
         )?,
         num_accounts: args.num_accounts,
+        no_wait: args.no_wait,
     };
     Ok(resolved_args)
 }
@@ -210,6 +213,7 @@ fn resolve_rebase_args(
         new_base_keypair: resolve_new_base_keypair(wallet_manager, &args.new_base_keypair)?,
         stake_authority: resolve_stake_authority(wallet_manager, &args.stake_authority)?,
         num_accounts: args.num_accounts,
+        no_wait: args.no_wait,
     };
     Ok(resolved_args)
 }
@@ -249,6 +253,7 @@ pub(crate) fn resolve_command(
                 )?,
                 lamports: args.lamports,
                 index: args.index,
+                no_wait: args.no_wait,
             };
             Ok(Command::New(resolved_args))
         }

@@ -1,9 +1,13 @@
 use {
     super::scheduler::SchedulingSummary,
     itertools::MinMaxResult,
+    solana_clock::Slot,
     solana_poh::poh_recorder::BankStart,
-    solana_sdk::{clock::Slot, timing::AtomicInterval},
-    std::time::{Duration, Instant},
+    solana_time_utils::AtomicInterval,
+    std::{
+        num::Saturating,
+        time::{Duration, Instant},
+    },
 };
 
 #[derive(Default)]
@@ -46,38 +50,37 @@ struct SlotSchedulerCountMetrics {
 #[derive(Default)]
 pub struct SchedulerCountMetricsInner {
     /// Number of packets received.
-    pub num_received: usize,
+    pub num_received: Saturating<usize>,
     /// Number of packets buffered.
-    pub num_buffered: usize,
-
+    pub num_buffered: Saturating<usize>,
     /// Number of transactions scheduled.
-    pub num_scheduled: usize,
+    pub num_scheduled: Saturating<usize>,
     /// Number of transactions that were unschedulable due to multiple conflicts.
-    pub num_unschedulable_conflicts: usize,
+    pub num_unschedulable_conflicts: Saturating<usize>,
     /// Number of transactions that were unschedulable due to thread capacity.
-    pub num_unschedulable_threads: usize,
+    pub num_unschedulable_threads: Saturating<usize>,
     /// Number of transactions that were filtered out during scheduling.
-    pub num_schedule_filtered_out: usize,
+    pub num_schedule_filtered_out: Saturating<usize>,
     /// Number of completed transactions received from workers.
-    pub num_finished: usize,
+    pub num_finished: Saturating<usize>,
     /// Number of transactions that were retryable.
-    pub num_retryable: usize,
+    pub num_retryable: Saturating<usize>,
 
     /// Number of transactions that were immediately dropped on receive.
-    pub num_dropped_on_receive: usize,
+    pub num_dropped_on_receive: Saturating<usize>,
     /// Number of transactions that were dropped due to sanitization failure.
-    pub num_dropped_on_sanitization: usize,
+    pub num_dropped_on_sanitization: Saturating<usize>,
     /// Number of transactions that were dropped due to failed lock validation.
-    pub num_dropped_on_validate_locks: usize,
+    pub num_dropped_on_validate_locks: Saturating<usize>,
     /// Number of transactions that were dropped due to failed transaction
     /// checks during receive.
-    pub num_dropped_on_receive_transaction_checks: usize,
+    pub num_dropped_on_receive_transaction_checks: Saturating<usize>,
     /// Number of transactions that were dropped due to clearing.
-    pub num_dropped_on_clear: usize,
+    pub num_dropped_on_clear: Saturating<usize>,
     /// Number of transactions that were dropped due to age and status checks.
-    pub num_dropped_on_age_and_status: usize,
+    pub num_dropped_on_age_and_status: Saturating<usize>,
     /// Number of transactions that were dropped due to exceeded capacity.
-    pub num_dropped_on_capacity: usize,
+    pub num_dropped_on_capacity: Saturating<usize>,
     /// Min prioritization fees in the transaction container
     pub min_prioritization_fees: u64,
     /// Max prioritization fees in the transaction container
@@ -112,43 +115,63 @@ impl SlotSchedulerCountMetrics {
 
 impl SchedulerCountMetricsInner {
     fn report(&self, name: &'static str, slot: Option<Slot>) {
+        let &Self {
+            num_received: Saturating(num_received),
+            num_buffered: Saturating(num_buffered),
+            num_scheduled: Saturating(num_scheduled),
+            num_unschedulable_conflicts: Saturating(num_unschedulable_conflicts),
+            num_unschedulable_threads: Saturating(num_unschedulable_threads),
+            num_schedule_filtered_out: Saturating(num_schedule_filtered_out),
+            num_finished: Saturating(num_finished),
+            num_retryable: Saturating(num_retryable),
+            num_dropped_on_receive: Saturating(num_dropped_on_receive),
+            num_dropped_on_sanitization: Saturating(num_dropped_on_sanitization),
+            num_dropped_on_validate_locks: Saturating(num_dropped_on_validate_locks),
+            num_dropped_on_receive_transaction_checks:
+                Saturating(num_dropped_on_receive_transaction_checks),
+            num_dropped_on_clear: Saturating(num_dropped_on_clear),
+            num_dropped_on_age_and_status: Saturating(num_dropped_on_age_and_status),
+            num_dropped_on_capacity: Saturating(num_dropped_on_capacity),
+            min_prioritization_fees: _min_prioritization_fees,
+            max_prioritization_fees: _max_prioritization_fees,
+        } = self;
         let mut datapoint = create_datapoint!(
             @point name,
-            ("num_received", self.num_received, i64),
-            ("num_buffered", self.num_buffered, i64),
-            ("num_scheduled", self.num_scheduled, i64),
-            ("num_unschedulable_conflicts", self.num_unschedulable_conflicts, i64),
-            ("num_unschedulable_threads", self.num_unschedulable_threads, i64),
+            ("num_received", num_received, i64),
+            ("num_buffered", num_buffered, i64),
+            ("num_scheduled", num_scheduled, i64),
+            ("num_unschedulable_conflicts", num_unschedulable_conflicts, i64),
+            ("num_unschedulable_threads", num_unschedulable_threads, i64),
             (
                 "num_schedule_filtered_out",
-                self.num_schedule_filtered_out,
+                num_schedule_filtered_out,
                 i64
             ),
-            ("num_finished", self.num_finished, i64),
-            ("num_retryable", self.num_retryable, i64),
-            ("num_dropped_on_receive", self.num_dropped_on_receive, i64),
+            ("num_finished", num_finished, i64),
+            ("num_retryable", num_retryable, i64),
+            ("num_dropped_on_receive", num_dropped_on_receive, i64),
             (
                 "num_dropped_on_sanitization",
-                self.num_dropped_on_sanitization,
+                num_dropped_on_sanitization,
                 i64
             ),
             (
                 "num_dropped_on_validate_locks",
-                self.num_dropped_on_validate_locks,
+                num_dropped_on_validate_locks,
                 i64
             ),
             (
                 "num_dropped_on_receive_transaction_checks",
-                self.num_dropped_on_receive_transaction_checks,
+                num_dropped_on_receive_transaction_checks,
                 i64
             ),
-            ("num_dropped_on_clear", self.num_dropped_on_clear, i64),
+            ("num_dropped_on_clear", num_dropped_on_clear, i64),
             (
                 "num_dropped_on_age_and_status",
-                self.num_dropped_on_age_and_status,
+                num_dropped_on_age_and_status,
                 i64
             ),
-            ("num_dropped_on_capacity", self.num_dropped_on_capacity, i64),
+            ("num_dropped_on_capacity", num_dropped_on_capacity, i64),
             ("min_priority", self.get_min_priority(), i64),
             ("max_priority", self.get_max_priority(), i64)
         );
@@ -159,39 +182,39 @@ impl SchedulerCountMetricsInner {
     }
 
     fn has_data(&self) -> bool {
-        self.num_received != 0
-            || self.num_buffered != 0
-            || self.num_scheduled != 0
-            || self.num_unschedulable_conflicts != 0
-            || self.num_unschedulable_threads != 0
-            || self.num_schedule_filtered_out != 0
-            || self.num_finished != 0
-            || self.num_retryable != 0
-            || self.num_dropped_on_receive != 0
-            || self.num_dropped_on_sanitization != 0
-            || self.num_dropped_on_validate_locks != 0
-            || self.num_dropped_on_receive_transaction_checks != 0
-            || self.num_dropped_on_clear != 0
-            || self.num_dropped_on_age_and_status != 0
-            || self.num_dropped_on_capacity != 0
+        self.num_received != Saturating(0)
+            || self.num_buffered != Saturating(0)
+            || self.num_scheduled != Saturating(0)
+            || self.num_unschedulable_conflicts != Saturating(0)
+            || self.num_unschedulable_threads != Saturating(0)
+            || self.num_schedule_filtered_out != Saturating(0)
+            || self.num_finished != Saturating(0)
+            || self.num_retryable != Saturating(0)
+            || self.num_dropped_on_receive != Saturating(0)
+            || self.num_dropped_on_sanitization != Saturating(0)
+            || self.num_dropped_on_validate_locks != Saturating(0)
+            || self.num_dropped_on_receive_transaction_checks != Saturating(0)
+            || self.num_dropped_on_clear != Saturating(0)
+            || self.num_dropped_on_age_and_status != Saturating(0)
+            || self.num_dropped_on_capacity != Saturating(0)
     }
 
     fn reset(&mut self) {
-        self.num_received = 0;
-        self.num_buffered = 0;
-        self.num_scheduled = 0;
-        self.num_unschedulable_conflicts = 0;
-        self.num_unschedulable_threads = 0;
-        self.num_schedule_filtered_out = 0;
-        self.num_finished = 0;
-        self.num_retryable = 0;
-        self.num_dropped_on_receive = 0;
-        self.num_dropped_on_sanitization = 0;
-        self.num_dropped_on_validate_locks = 0;
-        self.num_dropped_on_receive_transaction_checks = 0;
-        self.num_dropped_on_clear = 0;
-        self.num_dropped_on_age_and_status = 0;
-        self.num_dropped_on_capacity = 0;
+        self.num_received = Saturating(0);
+        self.num_buffered = Saturating(0);
+        self.num_scheduled = Saturating(0);
+        self.num_unschedulable_conflicts = Saturating(0);
+        self.num_unschedulable_threads = Saturating(0);
+        self.num_schedule_filtered_out = Saturating(0);
+        self.num_finished = Saturating(0);
+        self.num_retryable = Saturating(0);
+        self.num_dropped_on_receive = Saturating(0);
+        self.num_dropped_on_sanitization = Saturating(0);
+        self.num_dropped_on_validate_locks = Saturating(0);
+        self.num_dropped_on_receive_transaction_checks = Saturating(0);
+        self.num_dropped_on_clear = Saturating(0);
+        self.num_dropped_on_age_and_status = Saturating(0);
+        self.num_dropped_on_capacity = Saturating(0);
         self.min_prioritization_fees = u64::MAX;
         self.max_prioritization_fees = 0;
     }
@@ -263,21 +286,21 @@ struct SlotSchedulerTimingMetrics {
 #[derive(Default)]
 pub struct SchedulerTimingMetricsInner {
     /// Time spent making processing decisions.
-    pub decision_time_us: u64,
+    pub decision_time_us: Saturating<u64>,
     /// Time spent receiving packets.
-    pub receive_time_us: u64,
+    pub receive_time_us: Saturating<u64>,
     /// Time spent buffering packets.
-    pub buffer_time_us: u64,
+    pub buffer_time_us: Saturating<u64>,
     /// Time spent filtering transactions during scheduling.
-    pub schedule_filter_time_us: u64,
+    pub schedule_filter_time_us: Saturating<u64>,
     /// Time spent scheduling transactions.
-    pub schedule_time_us: u64,
+    pub schedule_time_us: Saturating<u64>,
     /// Time spent clearing transactions from the container.
-    pub clear_time_us: u64,
+    pub clear_time_us: Saturating<u64>,
     /// Time spent cleaning expired or processed transactions from the container.
-    pub clean_time_us: u64,
+    pub clean_time_us: Saturating<u64>,
     /// Time spent receiving completed transactions.
-    pub receive_completed_time_us: u64,
+    pub receive_completed_time_us: Saturating<u64>,
 }
 
 impl IntervalSchedulerTimingMetrics {
@@ -308,18 +331,28 @@ impl SlotSchedulerTimingMetrics {
 
 impl SchedulerTimingMetricsInner {
     fn report(&self, name: &'static str, slot: Option<Slot>) {
+        let &Self {
+            decision_time_us: Saturating(decision_time_us),
+            receive_time_us: Saturating(receive_time_us),
+            buffer_time_us: Saturating(buffer_time_us),
+            schedule_filter_time_us: Saturating(schedule_filter_time_us),
+            schedule_time_us: Saturating(schedule_time_us),
+            clear_time_us: Saturating(clear_time_us),
+            clean_time_us: Saturating(clean_time_us),
+            receive_completed_time_us: Saturating(receive_completed_time_us),
+        } = self;
         let mut datapoint = create_datapoint!(
             @point name,
-            ("decision_time_us", self.decision_time_us, i64),
-            ("receive_time_us", self.receive_time_us, i64),
-            ("buffer_time_us", self.buffer_time_us, i64),
-            ("schedule_filter_time_us", self.schedule_filter_time_us, i64),
-            ("schedule_time_us", self.schedule_time_us, i64),
-            ("clear_time_us", self.clear_time_us, i64),
-            ("clean_time_us", self.clean_time_us, i64),
+            ("decision_time_us", decision_time_us, i64),
+            ("receive_time_us", receive_time_us, i64),
+            ("buffer_time_us", buffer_time_us, i64),
+            ("schedule_filter_time_us", schedule_filter_time_us, i64),
+            ("schedule_time_us", schedule_time_us, i64),
+            ("clear_time_us", clear_time_us, i64),
+            ("clean_time_us", clean_time_us, i64),
             (
                 "receive_completed_time_us",
-                self.receive_completed_time_us,
+                receive_completed_time_us,
                 i64
             )
         );
@@ -330,14 +363,14 @@ impl SchedulerTimingMetricsInner {
     }
 
     fn reset(&mut self) {
-        self.decision_time_us = 0;
-        self.receive_time_us = 0;
-        self.buffer_time_us = 0;
-        self.schedule_filter_time_us = 0;
-        self.schedule_time_us = 0;
-        self.clear_time_us = 0;
-        self.clean_time_us = 0;
-        self.receive_completed_time_us = 0;
+        self.decision_time_us = Saturating(0);
+        self.receive_time_us = Saturating(0);
+        self.buffer_time_us = Saturating(0);
+        self.schedule_filter_time_us = Saturating(0);
+        self.schedule_time_us = Saturating(0);
+        self.clear_time_us = Saturating(0);
+        self.clean_time_us = Saturating(0);
+        self.receive_completed_time_us = Saturating(0);
     }
 }
 

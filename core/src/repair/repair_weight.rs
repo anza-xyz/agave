@@ -9,17 +9,15 @@ use {
         },
         replay_stage::DUPLICATE_THRESHOLD,
     },
+    solana_clock::{Epoch, Slot},
+    solana_epoch_schedule::EpochSchedule,
+    solana_hash::Hash,
     solana_ledger::{
         ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_meta::SlotMeta,
     },
     solana_measure::measure::Measure,
-    solana_runtime::epoch_stakes::EpochStakes,
-    solana_sdk::{
-        clock::Slot,
-        epoch_schedule::{Epoch, EpochSchedule},
-        hash::Hash,
-        pubkey::Pubkey,
-    },
+    solana_pubkey::Pubkey,
+    solana_runtime::epoch_stakes::VersionedEpochStakes,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         iter,
@@ -89,7 +87,7 @@ impl RepairWeight {
         &mut self,
         blockstore: &Blockstore,
         votes: I,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) where
         I: Iterator<Item = (Slot, Vec<Pubkey>)>,
@@ -206,7 +204,7 @@ impl RepairWeight {
     pub fn get_best_weighted_repairs(
         &mut self,
         blockstore: &Blockstore,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
         max_new_orphans: usize,
         max_new_shreds: usize,
@@ -324,13 +322,13 @@ impl RepairWeight {
     pub fn split_off(&mut self, slot: Slot) -> HashSet<Slot> {
         assert!(slot >= self.root);
         if slot == self.root {
-            error!("Trying to orphan root of repair tree {}", slot);
+            error!("Trying to orphan root of repair tree {slot}");
             return HashSet::new();
         }
         match self.slot_to_tree.get(&slot).copied() {
             Some(TreeRoot::Root(subtree_root)) => {
                 if subtree_root == slot {
-                    info!("{} is already orphan, skipping", slot);
+                    info!("{slot} is already orphan, skipping");
                     return HashSet::new();
                 }
                 let subtree = self
@@ -352,10 +350,7 @@ impl RepairWeight {
                 // If not they will once again be attached to the pruned set in
                 // `update_orphan_ancestors`.
 
-                info!(
-                    "Dumping pruned slot {} of tree {} in repair",
-                    slot, subtree_root
-                );
+                info!("Dumping pruned slot {slot} of tree {subtree_root} in repair");
                 let mut subtree = self
                     .pruned_trees
                     .remove(&subtree_root)
@@ -380,10 +375,7 @@ impl RepairWeight {
                 }
             }
             None => {
-                warn!(
-                    "Trying to split off slot {} which doesn't currently exist in repair",
-                    slot
-                );
+                warn!("Trying to split off slot {slot} which doesn't currently exist in repair");
                 HashSet::new()
             }
         }
@@ -442,7 +434,7 @@ impl RepairWeight {
 
             // Find all descendants of `self.root` that are not reachable from `new_root`.
             // Prune these out and add to `self.pruned_trees`
-            trace!("pruning tree {} with {}", new_root_tree_root, new_root);
+            trace!("pruning tree {new_root_tree_root} with {new_root}");
             let (removed, pruned) = new_root_tree.purge_prune((new_root, Hash::default()));
             for pruned_tree in pruned {
                 let pruned_tree_root = pruned_tree.tree_root().0;
@@ -473,7 +465,7 @@ impl RepairWeight {
             .drain()
             .flat_map(|(tree_root, mut pruned_tree)| {
                 if tree_root < new_root {
-                    trace!("pruning tree {} with {}", tree_root, new_root);
+                    trace!("pruning tree {tree_root} with {new_root}");
                     let (removed, pruned) = pruned_tree.purge_prune((new_root, Hash::default()));
                     for (slot, _) in removed {
                         self.slot_to_tree.remove(&slot);
@@ -530,7 +522,7 @@ impl RepairWeight {
         blockstore: &Blockstore,
         processed_slots: &mut HashSet<Slot>,
         repairs: &mut Vec<ShredRepairType>,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
         max_new_orphans: usize,
         outstanding_repairs: &mut HashMap<ShredRepairType, u64>,
@@ -668,7 +660,7 @@ impl RepairWeight {
         &mut self,
         blockstore: &Blockstore,
         mut orphan_tree_root: Slot,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> Option<Slot> {
         // Must only be called on existing orphan trees
@@ -766,7 +758,7 @@ impl RepairWeight {
     /// It is expected that no two children of a parent could both reach `DUPLICATE_THRESHOLD`.
     pub fn get_popular_pruned_forks(
         &self,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) -> Vec<Slot> {
         #[cfg(test)]
@@ -948,7 +940,7 @@ impl RepairWeight {
         root1: TreeRoot,
         root2: TreeRoot,
         merge_leaf: Slot,
-        epoch_stakes: &HashMap<Epoch, EpochStakes>,
+        epoch_stakes: &HashMap<Epoch, VersionedEpochStakes>,
         epoch_schedule: &EpochSchedule,
     ) {
         // Update self.slot_to_tree to reflect the merge
@@ -997,12 +989,12 @@ mod test {
         super::*,
         itertools::Itertools,
         solana_accounts_db::contains::Contains,
+        solana_hash::Hash,
         solana_ledger::{
             blockstore::{make_chaining_slot_entries, Blockstore},
             get_tmp_ledger_path,
         },
         solana_runtime::{bank::Bank, bank_utils},
-        solana_sdk::hash::Hash,
         trees::tr,
     };
 

@@ -352,14 +352,15 @@ mod tests {
             Error::SlotMismatch,
             Error::InvalidDuplicateShreds,
         ] {
-            match create_duplicate_proof(
+            let proof_result = create_duplicate_proof(
                 my_keypair.clone(),
                 None,
                 start_slot + 2,
                 Some(error),
                 DUPLICATE_SHRED_MAX_PAYLOAD_SIZE,
                 shred_version,
-            ) {
+            );
+            match proof_result {
                 Err(_) => (),
                 Ok(chunks) => {
                     for chunk in chunks {

@@ -12,7 +12,7 @@ use {crate::spinner, solana_clock::MAX_HASH_AGE_IN_SECONDS, std::cmp::min};
 use {
     crate::{
         http_sender::HttpSender,
-        mock_sender::{mock_encoded_account, MockSender},
+        mock_sender::{mock_encoded_account, MockSender, MocksMap},
         rpc_client::{
             GetConfirmedSignaturesForAddress2Config, RpcClientConfig, SerializableMessage,
             SerializableTransaction,
@@ -49,6 +49,7 @@ use {
         EncodedConfirmedBlock, EncodedConfirmedTransactionWithStatusMeta, TransactionStatus,
         UiConfirmedBlock, UiTransactionEncoding,
     },
+    solana_vote_interface::state::MAX_LOCKOUT_HISTORY,
     std::{
         net::SocketAddr,
         str::FromStr,
@@ -56,13 +57,6 @@ use {
     },
     tokio::time::sleep,
 };
-// inlined to avoid a solana_program dep
-const MAX_LOCKOUT_HISTORY: usize = 31;
-#[cfg(test)]
-static_assertions::const_assert_eq!(
-    MAX_LOCKOUT_HISTORY,
-    solana_program::vote::state::MAX_LOCKOUT_HISTORY
-);
 
 /// A client of a remote Solana node.
 ///
@@ -436,6 +430,101 @@ impl RpcClient {
     pub fn new_mock_with_mocks(url: String, mocks: Mocks) -> Self {
         Self::new_sender(
             MockSender::new_with_mocks(url, mocks),
+            RpcClientConfig::with_commitment(CommitmentConfig::default()),
+        )
+    }
+    /// Create a mock `RpcClient`.
+    ///
+    /// A mock `RpcClient` contains an implementation of [`RpcSender`] that does
+    /// not use the network, and instead returns synthetic responses, for use in
+    /// tests.
+    ///
+    /// It is primarily for internal use, with limited customizability, and
+    /// behaviors determined by internal Solana test cases. New users should
+    /// consider implementing `RpcSender` themselves and constructing
+    /// `RpcClient` with [`RpcClient::new_sender`] to get mock behavior.
+    ///
+    /// Unless directed otherwise, a mock `RpcClient` will generally return a
+    /// reasonable default response to any request, at least for [`RpcRequest`]
+    /// values for which responses have been implemented.
+    ///
+    /// This mock can be customized in two ways:
+    ///
+    /// 1) By changing the `url` argument, which is not actually a URL, but a
+    ///    simple string directive that changes the mock behavior in specific
+    ///    scenarios.
+    ///
+    ///    It is customary to set the `url` to "succeeds" for mocks that should
+    ///    return successfully, though this value is not actually interpreted.
+    ///
+    ///    If `url` is "fails" then any call to `send` will return `Ok(Value::Null)`.
+    ///
+    ///    Other possible values of `url` are specific to different `RpcRequest`
+    ///    values. Read the implementation of `MockSender` (which is non-public)
+    ///    for details.
+    ///
+    /// 2) Custom responses can be configured by providing [`MocksMap`]. This type
+    ///    is a [`HashMap`] from [`RpcRequest`] to a [`Vec`] of JSON [`Value`] responses,
+    ///    Any entries in this map override the default behavior for the given
+    ///    request.
+    ///
+    /// The [`RpcClient::new_mock_with_mocks_map`] function offers further
+    /// customization options.
+    ///
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use solana_rpc_client_api::{
+    /// #     request::RpcRequest,
+    /// #     response::{Response, RpcResponseContext},
+    /// # };
+    /// # use solana_rpc_client::{rpc_client::RpcClient, mock_sender::MocksMap};
+    /// # use serde_json::json;
+    /// // Create a mock with a custom response to the `GetBalance` request
+    /// let account_balance_x = 50;
+    /// let account_balance_y = 100;
+    /// let account_balance_z = 150;
+    /// let account_balance_req_responses = vec![
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_x),
+    ///         })
+    ///     ),
+    ///     (
+    ///         RpcRequest::GetBalance,
+    ///         json!(Response {
+    ///             context: RpcResponseContext {
+    ///                 slot: 1,
+    ///                 api_version: None,
+    ///             },
+    ///             value: json!(account_balance_y),
+    ///         })
+    ///     ),
+    /// ];
+    ///
+    /// let mut mocks = MocksMap::from_iter(account_balance_req_responses);
+    /// mocks.insert(
+    ///     RpcRequest::GetBalance,
+    ///     json!(Response {
+    ///         context: RpcResponseContext {
+    ///             slot: 1,
+    ///             api_version: None,
+    ///         },
+    ///         value: json!(account_balance_z),
+    ///     }),
+    /// );
+    /// let url = "succeeds".to_string();
+    /// let client = RpcClient::new_mock_with_mocks_map(url, mocks);
+    /// ```
+    pub fn new_mock_with_mocks_map<U: ToString>(url: U, mocks: MocksMap) -> Self {
+        Self::new_sender(
+            MockSender::new_with_mocks_map(url, mocks),
             RpcClientConfig::with_commitment(CommitmentConfig::default()),
         )
     }
@@ -898,7 +987,7 @@ impl RpcClient {
                     code,
                     message,
                     data,
-                }) = &err.kind
+                }) = err.kind()
                 {
                     debug!("{} {}", code, message);
                     if let RpcResponseErrorData::SendTransactionPreflightFailure(
@@ -4707,7 +4796,7 @@ pub(crate) fn parse_keyed_accounts(
 
 #[doc(hidden)]
 pub fn create_rpc_client_mocks() -> crate::mock_sender::Mocks {
-    let mut mocks = std::collections::HashMap::new();
+    let mut mocks = crate::mock_sender::Mocks::default();
 
     let get_account_request = RpcRequest::GetAccountInfo;
     let get_account_response = serde_json::to_value(Response {

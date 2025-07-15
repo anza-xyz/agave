@@ -63,10 +63,18 @@ impl BgThreads {
         can_advance_age: bool,
         exit: Arc<AtomicBool>,
     ) -> Self {
+        let is_disk_index_enabled = storage.is_disk_index_enabled();
+        let num_threads = if is_disk_index_enabled {
+            threads.get()
+        } else {
+            // no disk index, so only need 1 thread to report stats
+            1
+        };
+
         // stop signal used for THIS batch of bg threads
         let local_exit = Arc::new(AtomicBool::default());
         let handles = Some(
-            (0..threads.get())
+            (0..num_threads)
                 .map(|idx| {
                     // the first thread we start is special
                     let can_advance_age = can_advance_age && idx == 0;
@@ -99,6 +107,7 @@ impl BgThreads {
 }
 
 /// modes the system can be in
+#[derive(Debug, Eq, PartialEq)]
 pub enum Startup {
     /// not startup, but steady state execution
     Normal,
@@ -118,8 +127,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
     ///      also creates some additional bg threads to facilitate flushing to disk asap
     /// startup=false is 'normal' operation
     pub fn set_startup(&self, startup: Startup) {
-        let value = !matches!(startup, Startup::Normal);
-        if matches!(startup, Startup::StartupWithExtraThreads) {
+        if startup == Startup::StartupWithExtraThreads && self.storage.is_disk_index_enabled() {
             // create some additional bg threads to help get things to the disk index asap
             *self.startup_worker_threads.lock().unwrap() = Some(BgThreads::new(
                 &self.storage,
@@ -129,8 +137,9 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexStorage<
                 self.exit.clone(),
             ));
         }
-        self.storage.set_startup(value);
-        if !value {
+        let is_startup = startup != Startup::Normal;
+        self.storage.set_startup(is_startup);
+        if !is_startup {
             // transitioning from startup to !startup (ie. steady state)
             // shutdown the bg threads
             *self.startup_worker_threads.lock().unwrap() = None;

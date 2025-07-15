@@ -6,7 +6,9 @@ use {
     agave_precompiles::secp256k1::verify,
     rand0_7::{thread_rng, Rng},
     solana_instruction::Instruction,
-    solana_secp256k1_program::new_secp256k1_instruction,
+    solana_secp256k1_program::{
+        eth_address_from_pubkey, new_secp256k1_instruction_with_signature, sign_message,
+    },
     test::Bencher,
 };
 
@@ -20,7 +22,17 @@ fn create_test_instructions(message_length: u16) -> Vec<Instruction> {
             let mut rng = thread_rng();
             let secp_privkey = libsecp256k1::SecretKey::random(&mut thread_rng());
             let message: Vec<u8> = (0..message_length).map(|_| rng.gen_range(0, 255)).collect();
-            new_secp256k1_instruction(&secp_privkey, &message)
+            let secp_pubkey = libsecp256k1::PublicKey::from_secret_key(&secp_privkey);
+            let eth_address =
+                eth_address_from_pubkey(&secp_pubkey.serialize()[1..].try_into().unwrap());
+            let (signature, recovery_id) =
+                sign_message(&secp_privkey.serialize(), &message).unwrap();
+            new_secp256k1_instruction_with_signature(
+                &message,
+                &signature,
+                recovery_id,
+                &eth_address,
+            )
         })
         .collect()
 }

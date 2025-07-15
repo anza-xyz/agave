@@ -280,36 +280,36 @@ async fn send_transaction_with_rpc_fallback(
             )
             .await
         {
-            match &e.kind {
+            match e.kind() {
                 ErrorKind::Io(_) | ErrorKind::Reqwest(_) => {
                     // fall through on io error, we will retry the transaction
                 }
-                ErrorKind::TransactionError(TransactionError::BlockhashNotFound)
-                | ErrorKind::RpcError(RpcError::RpcResponseError {
-                    data:
-                        RpcResponseErrorData::SendTransactionPreflightFailure(
-                            RpcSimulateTransactionResult {
-                                err: Some(TransactionError::BlockhashNotFound),
-                                ..
-                            },
-                        ),
-                    ..
-                }) => {
+                ErrorKind::TransactionError(TransactionError::BlockhashNotFound) => {
                     // fall through so that we will resend with another blockhash
                 }
-                ErrorKind::TransactionError(transaction_error)
-                | ErrorKind::RpcError(RpcError::RpcResponseError {
+                ErrorKind::TransactionError(transaction_error) => {
+                    // if we get other than blockhash not found error the transaction is invalid
+                    context.error_map.insert(index, transaction_error.clone());
+                }
+                ErrorKind::RpcError(RpcError::RpcResponseError {
                     data:
                         RpcResponseErrorData::SendTransactionPreflightFailure(
                             RpcSimulateTransactionResult {
-                                err: Some(transaction_error),
+                                err: Some(ui_transaction_error),
                                 ..
                             },
                         ),
                     ..
                 }) => {
-                    // if we get other than blockhash not found error the transaction is invalid
-                    context.error_map.insert(index, transaction_error.clone());
+                    match TransactionError::from(ui_transaction_error.clone()) {
+                        TransactionError::BlockhashNotFound => {
+                            // fall through so that we will resend with another blockhash
+                        }
+                        err => {
+                            // if we get other than blockhash not found error the transaction is invalid
+                            context.error_map.insert(index, err);
+                        }
+                    }
                 }
                 _ => {
                     return Err(TpuSenderError::from(e));

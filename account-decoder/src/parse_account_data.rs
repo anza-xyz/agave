@@ -20,34 +20,26 @@ use {
     thiserror::Error,
 };
 
-lazy_static! {
-    static ref ADDRESS_LOOKUP_PROGRAM_ID: Pubkey = address_lookup_table::id();
-    static ref BPF_UPGRADEABLE_LOADER_PROGRAM_ID: Pubkey = bpf_loader_upgradeable::id();
-    static ref CONFIG_PROGRAM_ID: Pubkey = config::id();
-    static ref STAKE_PROGRAM_ID: Pubkey = stake::id();
-    static ref SYSTEM_PROGRAM_ID: Pubkey = system_program::id();
-    static ref SYSVAR_PROGRAM_ID: Pubkey = sysvar::id();
-    static ref VOTE_PROGRAM_ID: Pubkey = vote::id();
-    pub static ref PARSABLE_PROGRAM_IDS: HashMap<Pubkey, ParsableAccount> = {
+pub static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableAccount>> =
+    std::sync::LazyLock::new(|| {
         let mut m = HashMap::new();
         m.insert(
-            *ADDRESS_LOOKUP_PROGRAM_ID,
+            address_lookup_table::id(),
             ParsableAccount::AddressLookupTable,
         );
         m.insert(
-            *BPF_UPGRADEABLE_LOADER_PROGRAM_ID,
+            bpf_loader_upgradeable::id(),
             ParsableAccount::BpfUpgradeableLoader,
         );
-        m.insert(*CONFIG_PROGRAM_ID, ParsableAccount::Config);
-        m.insert(*SYSTEM_PROGRAM_ID, ParsableAccount::Nonce);
+        m.insert(config::id(), ParsableAccount::Config);
+        m.insert(system_program::id(), ParsableAccount::Nonce);
         m.insert(spl_token::id(), ParsableAccount::SplToken);
         m.insert(spl_token_2022::id(), ParsableAccount::SplToken2022);
-        m.insert(*STAKE_PROGRAM_ID, ParsableAccount::Stake);
-        m.insert(*SYSVAR_PROGRAM_ID, ParsableAccount::Sysvar);
-        m.insert(*VOTE_PROGRAM_ID, ParsableAccount::Vote);
+        m.insert(stake::id(), ParsableAccount::Stake);
+        m.insert(sysvar::id(), ParsableAccount::Sysvar);
+        m.insert(vote::id(), ParsableAccount::Vote);
         m
-    };
-}
+    });
 
 #[derive(Error, Debug)]
 pub enum ParseAccountError {

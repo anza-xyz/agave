@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+name = "solana_genesis"
+
+[[bin]]
+name = "solana-genesis"
+path = "src/main.rs"
+
 [dependencies]
 agave-feature-set = { workspace = true }
 base64 = { workspace = true }
@@ -22,21 +32,21 @@ solana-account = "=2.2.1"
 solana-accounts-db = { workspace = true }
 solana-clap-utils = { workspace = true }
 solana-cli-config = { workspace = true }
-solana-clock = "=2.2.1"
+solana-clock = "=2.2.2"
 solana-commitment-config = "=2.2.1"
 solana-entry = { workspace = true }
 solana-epoch-schedule = "=2.2.1"
-solana-feature-gate-interface = "=2.2.1"
+solana-feature-gate-interface = "=2.2.2"
 solana-fee-calculator = "=2.2.1"
-solana-genesis-config = "=2.2.1"
+solana-genesis-config = "=2.3.0"
 solana-inflation = "=2.2.1"
 solana-keypair = "=2.2.1"
 solana-ledger = { workspace = true }
-solana-loader-v3-interface = "=3.0.0"
+solana-loader-v3-interface = "5.0.0"
 solana-logger = "=2.3.1"
-solana-native-token = "=2.2.1"
+solana-native-token = "=2.2.2"
 solana-poh-config = "=2.2.1"
-solana-pubkey = { version = "=2.3.0", default-features = false }
+solana-pubkey = { version = "=2.4.0", default-features = false }
 solana-rent = "=2.2.1"
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
@@ -54,13 +64,3 @@ tempfile = { workspace = true }
 solana-borsh = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
-
-[[bin]]
-name = "solana-genesis"
-path = "src/main.rs"
-
-[lib]
-name = "solana_genesis"
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

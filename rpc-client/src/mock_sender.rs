@@ -9,7 +9,7 @@ use {
     solana_clock::{Slot, UnixTimestamp},
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
-    solana_instruction::error::InstructionError,
+    solana_instruction::{error::InstructionError, TRANSACTION_LEVEL_STACK_HEIGHT},
     solana_message::MessageHeader,
     solana_pubkey::Pubkey,
     solana_rpc_client_api::{
@@ -36,14 +36,54 @@ use {
         UiRawMessage, UiTransaction, UiTransactionStatusMeta,
     },
     solana_version::Version,
-    std::{collections::HashMap, net::SocketAddr, str::FromStr, sync::RwLock},
+    std::{
+        collections::{HashMap, VecDeque},
+        net::SocketAddr,
+        str::FromStr,
+        sync::RwLock,
+    },
 };
 
 pub const PUBKEY: &str = "7RoSF9fUmdphVCpabEoefH81WwrW7orsWonXWqTXkKV8";
 
 pub type Mocks = HashMap<RpcRequest, Value>;
+
+impl From<Mocks> for MocksMap {
+    fn from(mocks: Mocks) -> Self {
+        let mut map = HashMap::new();
+        for (key, value) in mocks {
+            map.insert(key, [value].into());
+        }
+        MocksMap(map)
+    }
+}
+
+#[derive(Default, Clone)]
+pub struct MocksMap(pub HashMap<RpcRequest, VecDeque<Value>>);
+
+impl FromIterator<(RpcRequest, Value)> for MocksMap {
+    fn from_iter<T: IntoIterator<Item = (RpcRequest, Value)>>(iter: T) -> Self {
+        let mut map = MocksMap::default();
+        for (request, value) in iter {
+            map.insert(request, value);
+        }
+        map
+    }
+}
+
+impl MocksMap {
+    pub fn insert(&mut self, request: RpcRequest, value: Value) {
+        let queue = self.0.entry(request).or_default();
+        queue.push_back(value)
+    }
+
+    pub fn pop_front_with_request(&mut self, request: &RpcRequest) -> Option<Value> {
+        self.0.get_mut(request).and_then(|queue| queue.pop_front())
+    }
+}
+
 pub struct MockSender {
-    mocks: RwLock<Mocks>,
+    mocks: RwLock<MocksMap>,
     url: String,
 }
 
@@ -80,6 +120,13 @@ impl MockSender {
     pub fn new_with_mocks<U: ToString>(url: U, mocks: Mocks) -> Self {
         Self {
             url: url.to_string(),
+            mocks: RwLock::new(MocksMap::from(mocks)),
+        }
+    }
+
+    pub fn new_with_mocks_map<U: ToString>(url: U, mocks: MocksMap) -> Self {
+        Self {
+            url: url.to_string(),
             mocks: RwLock::new(mocks),
         }
     }
@@ -96,7 +143,7 @@ impl RpcSender for MockSender {
         request: RpcRequest,
         params: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        if let Some(value) = self.mocks.write().unwrap().remove(&request) {
+        if let Some(value) = self.mocks.write().unwrap().pop_front_with_request(&request) {
             return Ok(value);
         }
         if self.url == "fails" {
@@ -180,7 +227,7 @@ impl RpcSender for MockSender {
                                         program_id_index: 2,
                                         accounts: vec![0, 1],
                                         data: "3Bxs49DitAvXtoDR".to_string(),
-                                        stack_height: None,
+                                        stack_height: Some(TRANSACTION_LEVEL_STACK_HEIGHT as u32),
                                     }],
                                     address_table_lookups: None,
                                 })
@@ -305,6 +352,7 @@ impl RpcSender for MockSender {
                     logs: None,
                     accounts: None,
                     units_consumed: None,
+                    loaded_accounts_data_size: None,
                     return_data: None,
                     inner_instructions: None,
                     replacement_blockhash: None

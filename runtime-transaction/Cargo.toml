@@ -9,6 +9,16 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+crate-type = ["lib"]
+name = "solana_runtime_transaction"
+
+[features]
+dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
+
 [dependencies]
 agave-transaction-view = { workspace = true }
 log = { workspace = true }
@@ -24,10 +34,6 @@ solana-transaction = { workspace = true }
 solana-transaction-error = { workspace = true }
 thiserror = { workspace = true }
 
-[lib]
-crate-type = ["lib"]
-name = "solana_runtime_transaction"
-
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
@@ -38,18 +44,12 @@ solana-compute-budget-instruction = { workspace = true, features = ["dev-context
 solana-compute-budget-interface = { workspace = true }
 solana-instruction = { workspace = true }
 solana-keypair = { workspace = true }
-solana-program = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 solana-signer = { workspace = true }
 solana-system-interface = { workspace = true, features = ["bincode"] }
 solana-system-transaction = { workspace = true }
 solana-transaction = { workspace = true, features = ["blake3"] }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]
-
-[features]
-dev-context-only-utils = ["solana-compute-budget-instruction/dev-context-only-utils"]
+solana-vote-interface = { workspace = true }
 
 [[bench]]
 name = "get_signature_details"

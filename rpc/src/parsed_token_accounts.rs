@@ -1,18 +1,16 @@
 use {
     crate::rpc::account_resolver,
     jsonrpc_core::{Error, Result},
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_account_decoder::{
         encode_ui_account,
         parse_account_data::{AccountAdditionalDataV3, SplTokenAdditionalDataV2},
         parse_token::get_token_account_mint,
         UiAccount, UiAccountData, UiAccountEncoding,
     },
+    solana_pubkey::Pubkey,
     solana_rpc_client_api::response::RpcKeyedAccount,
     solana_runtime::bank::Bank,
-    solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
-        pubkey::Pubkey,
-    },
     spl_token_2022::{
         extension::{
             interest_bearing_mint::InterestBearingConfig, scaled_ui_amount::ScaledUiAmountConfig,

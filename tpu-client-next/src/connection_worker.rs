@@ -5,7 +5,7 @@ use {
     super::SendTransactionStats,
     crate::{
         quic_networking::send_data_over_stream, send_transaction_stats::record_error,
-        transaction_batch::TransactionBatch,
+        transaction_batch::TransactionBatch, QuicError,
     },
     log::*,
     quinn::{ConnectError, Connection, Endpoint},
@@ -18,10 +18,15 @@ use {
     },
     tokio::{
         sync::mpsc,
-        time::{sleep, Duration},
+        time::{sleep, timeout, Duration},
     },
     tokio_util::sync::CancellationToken,
 };
+
+/// The maximum connection handshake timeout for QUIC connections.
+/// This is set to 2 seconds, which was the earlier shorter connection idle timeout
+/// which was also used by QUINN to timemout connection handshake.
+pub(crate) const DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Interval between retry attempts for creating a new connection. This value is
 /// a best-effort estimate, based on current network conditions.
@@ -75,6 +80,7 @@ pub(crate) struct ConnectionWorker {
     max_reconnect_attempts: usize,
     send_txs_stats: Arc<SendTransactionStats>,
     cancel: CancellationToken,
+    handshake_timeout: Duration,
 }
 
 impl ConnectionWorker {
@@ -95,6 +101,7 @@ impl ConnectionWorker {
         skip_check_transaction_age: bool,
         max_reconnect_attempts: usize,
         send_txs_stats: Arc<SendTransactionStats>,
+        handshake_timeout: Duration,
     ) -> (Self, CancellationToken) {
         let cancel = CancellationToken::new();
         let this = Self {
@@ -106,6 +113,7 @@ impl ConnectionWorker {
             max_reconnect_attempts,
             send_txs_stats,
             cancel: cancel.clone(),
+            handshake_timeout,
         };
 
         (this, cancel)
@@ -205,7 +213,7 @@ impl ConnectionWorker {
         match connecting {
             Ok(connecting) => {
                 let mut measure_connection = Measure::start("establish connection");
-                let res = connecting.await;
+                let res = timeout(self.handshake_timeout, connecting).await;
                 measure_connection.stop();
                 debug!(
                     "Establishing connection with {} took: {} us",
@@ -213,12 +221,20 @@ impl ConnectionWorker {
                     measure_connection.as_us()
                 );
                 match res {
-                    Ok(connection) => {
+                    Ok(Ok(connection)) => {
                         self.connection = ConnectionState::Active(connection);
                     }
-                    Err(err) => {
+                    Ok(Err(err)) => {
                         warn!("Connection error {}: {}", self.peer, err);
                         record_error(err.into(), &self.send_txs_stats);
+                        self.connection = ConnectionState::Retry(retries_attempt.saturating_add(1));
+                    }
+                    Err(_) => {
+                        debug!(
+                            "Connection to {} timed out after {:?}",
+                            self.peer, self.handshake_timeout
+                        );
+                        record_error(QuicError::HandshakeTimeout, &self.send_txs_stats);
                         self.connection = ConnectionState::Retry(retries_attempt.saturating_add(1));
                     }
                 }

@@ -26,20 +26,20 @@ use {
     solana_epoch_info::EpochInfo,
     solana_hash::Hash,
     solana_native_token::lamports_to_sol,
-    solana_program::stake::state::{Authorized, Lockup},
     solana_pubkey::Pubkey,
     solana_rpc_client_api::response::{
         RpcAccountBalance, RpcContactInfo, RpcInflationGovernor, RpcInflationRate, RpcKeyedAccount,
         RpcSupply, RpcVoteAccountInfo,
     },
     solana_signature::Signature,
+    solana_stake_interface::state::{Authorized, Lockup},
     solana_sysvar::stake_history::StakeHistoryEntry,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
-    solana_transaction_error::TransactionError,
     solana_transaction_status::{
         EncodedConfirmedBlock, EncodedTransaction, TransactionConfirmationStatus,
         UiTransactionStatusMeta,
     },
+    solana_transaction_status_client_types::UiTransactionError,
     solana_vote_program::{
         authorized_voters::AuthorizedVoters,
         vote_state::{BlockTimestamp, LandedVote, MAX_EPOCH_CREDITS_HISTORY, MAX_LOCKOUT_HISTORY},
@@ -876,7 +876,7 @@ impl fmt::Display for CliHistorySignature {
 pub struct CliHistoryVerbose {
     pub slot: Slot,
     pub block_time: Option<UnixTimestamp>,
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
     pub confirmation_status: Option<TransactionConfirmationStatus>,
     pub memo: Option<String>,
 }
@@ -2925,7 +2925,7 @@ pub struct CliTransactionConfirmation {
     #[serde(skip_serializing)]
     pub get_transaction_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub err: Option<TransactionError>,
+    pub err: Option<UiTransactionError>,
 }
 
 impl QuietDisplay for CliTransactionConfirmation {}

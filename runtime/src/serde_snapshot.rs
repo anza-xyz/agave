@@ -1,13 +1,13 @@
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 use std::ffi::{CStr, CString};
 use {
     crate::{
         bank::{Bank, BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankRc},
-        epoch_stakes::{EpochStakes, VersionedEpochStakes},
+        epoch_stakes::VersionedEpochStakes,
         runtime_config::RuntimeConfig,
-        serde_snapshot::storage::SerializableAccountStorageEntry,
         snapshot_utils::{SnapshotError, StorageAndNextAccountsFileId},
-        stakes::{serde_stakes_to_delegation_format, Stakes, StakesEnum},
+        stake_account::StakeAccount,
+        stakes::{serialize_stake_accounts_to_delegation_format, Stakes},
     },
     bincode::{self, config::Options, Error},
     log::*,
@@ -22,25 +22,22 @@ use {
         accounts_hash::{AccountsDeltaHash, AccountsHash},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
-        append_vec::StoredMetaWriteVersion,
         blockhash_queue::BlockhashQueue,
         epoch_accounts_hash::EpochAccountsHash,
     },
     solana_builtins::prototype::BuiltinPrototype,
+    solana_clock::{Epoch, Slot, UnixTimestamp},
+    solana_epoch_schedule::EpochSchedule,
+    solana_fee_calculator::{FeeCalculator, FeeRateGovernor},
+    solana_genesis_config::GenesisConfig,
+    solana_hard_forks::HardForks,
+    solana_hash::Hash,
+    solana_inflation::Inflation,
     solana_measure::measure::Measure,
-    solana_sdk::{
-        clock::{Epoch, Slot, UnixTimestamp},
-        deserialize_utils::default_on_eof,
-        epoch_schedule::EpochSchedule,
-        fee_calculator::{FeeCalculator, FeeRateGovernor},
-        genesis_config::GenesisConfig,
-        hard_forks::HardForks,
-        hash::Hash,
-        inflation::Inflation,
-        pubkey::Pubkey,
-        rent_collector::RentCollector,
-        stake::state::Delegation,
-    },
+    solana_pubkey::Pubkey,
+    solana_rent_collector::RentCollector,
+    solana_serde::default_on_eof,
+    solana_stake_interface::state::Delegation,
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
@@ -52,6 +49,7 @@ use {
             Arc,
         },
         thread::Builder,
+        time::Instant,
     },
     storage::SerializableStorage,
     types::SerdeAccountsLtHash,
@@ -66,7 +64,7 @@ pub(crate) use {
     solana_accounts_db::accounts_hash::{
         SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
     },
-    storage::SerializedAccountsFileId,
+    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
@@ -75,7 +73,7 @@ const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AccountsDbFields<T>(
     HashMap<Slot, Vec<T>>,
-    StoredMetaWriteVersion,
+    u64, // obsolete, formerly write_version
     Slot,
     BankHashInfo,
     /// all slots that were roots within the last epoch
@@ -154,14 +152,14 @@ struct DeserializableVersionedBank {
     collector_fees: u64,
     _fee_calculator: FeeCalculator,
     fee_rate_governor: FeeRateGovernor,
-    collected_rent: u64,
+    _collected_rent: u64,
     rent_collector: RentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
     stakes: Stakes<Delegation>,
     #[allow(dead_code)]
     unused_accounts: UnusedAccounts,
-    epoch_stakes: HashMap<Epoch, EpochStakes>,
+    unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
 }
 
@@ -191,17 +189,16 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             collector_id: dvb.collector_id,
             collector_fees: dvb.collector_fees,
             fee_rate_governor: dvb.fee_rate_governor,
-            collected_rent: dvb.collected_rent,
             rent_collector: dvb.rent_collector,
             epoch_schedule: dvb.epoch_schedule,
             inflation: dvb.inflation,
             stakes: dvb.stakes,
-            epoch_stakes: dvb.epoch_stakes,
             is_delta: dvb.is_delta,
             incremental_snapshot_persistence: None,
             epoch_accounts_hash: None,
-            accounts_lt_hash: None, // populated from ExtraFieldsToDeserialize
-            bank_hash_stats: BankHashStats::default(), // populated from AccountsDbFields
+            versioned_epoch_stakes: HashMap::default(), // populated from ExtraFieldsToDeserialize
+            accounts_lt_hash: None,                     // populated from ExtraFieldsToDeserialize
+            bank_hash_stats: BankHashStats::default(),  // populated from AccountsDbFields
         }
     }
 }
@@ -238,10 +235,10 @@ struct SerializableVersionedBank {
     rent_collector: RentCollector,
     epoch_schedule: EpochSchedule,
     inflation: Inflation,
-    #[serde(serialize_with = "serde_stakes_to_delegation_format::serialize")]
-    stakes: StakesEnum,
+    #[serde(serialize_with = "serialize_stake_accounts_to_delegation_format")]
+    stakes: Stakes<StakeAccount<Delegation>>,
     unused_accounts: UnusedAccounts,
-    epoch_stakes: HashMap<Epoch, EpochStakes>,
+    unused_epoch_stakes: HashMap<Epoch, ()>,
     is_delta: bool,
 }
 
@@ -272,13 +269,13 @@ impl From<BankFieldsToSerialize> for SerializableVersionedBank {
             collector_fees: rhs.collector_fees,
             fee_calculator: FeeCalculator::default(),
             fee_rate_governor: rhs.fee_rate_governor,
-            collected_rent: rhs.collected_rent,
+            collected_rent: u64::default(),
             rent_collector: rhs.rent_collector,
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
             stakes: rhs.stakes,
             unused_accounts: UnusedAccounts::default(),
-            epoch_stakes: rhs.epoch_stakes,
+            unused_epoch_stakes: HashMap::default(),
             is_delta: rhs.is_delta,
         }
     }
@@ -303,6 +300,13 @@ pub struct SnapshotBankFields {
 }
 
 impl SnapshotBankFields {
+    pub fn new(
+        full: BankFieldsToDeserialize,
+        incremental: Option<BankFieldsToDeserialize>,
+    ) -> Self {
+        Self { full, incremental }
+    }
+
     /// Collapse the SnapshotBankFields into a single (the latest) BankFieldsToDeserialize.
     pub fn collapse_into(self) -> BankFieldsToDeserialize {
         self.incremental.unwrap_or(self.full)
@@ -318,11 +322,21 @@ pub struct SnapshotAccountsDbFields<T> {
 }
 
 impl<T> SnapshotAccountsDbFields<T> {
+    pub fn new(
+        full_snapshot_accounts_db_fields: AccountsDbFields<T>,
+        incremental_snapshot_accounts_db_fields: Option<AccountsDbFields<T>>,
+    ) -> Self {
+        Self {
+            full_snapshot_accounts_db_fields,
+            incremental_snapshot_accounts_db_fields,
+        }
+    }
+
     /// Collapse the SnapshotAccountsDbFields into a single AccountsDbFields.  If there is no
     /// incremental snapshot, this returns the AccountsDbFields from the full snapshot.
     /// Otherwise, use the AccountsDbFields from the incremental snapshot, and a combination
     /// of the storages from both the full and incremental snapshots.
-    fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
+    pub fn collapse_into(self) -> Result<AccountsDbFields<T>, Error> {
         match self.incremental_snapshot_accounts_db_fields {
             None => Ok(self.full_snapshot_accounts_db_fields),
             Some(AccountsDbFields(
@@ -434,8 +448,15 @@ fn deserialize_bank_fields<R>(
 where
     R: Read,
 {
-    let mut bank_fields: BankFieldsToDeserialize =
-        deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?.into();
+    let deserializable_bank = deserialize_from::<_, DeserializableVersionedBank>(&mut stream)?;
+    if !deserializable_bank.unused_epoch_stakes.is_empty() {
+        return Err(Box::new(bincode::ErrorKind::Custom(
+            "Expected deserialized bank's unused_epoch_stakes field \
+             to be empty"
+                .to_string(),
+        )));
+    }
+    let mut bank_fields = BankFieldsToDeserialize::from(deserializable_bank);
     let accounts_db_fields = deserialize_accounts_db_fields(stream)?;
     let extra_fields = deserialize_from(stream)?;
 
@@ -453,15 +474,7 @@ where
         .clone_with_lamports_per_signature(lamports_per_signature);
     bank_fields.incremental_snapshot_persistence = incremental_snapshot_persistence;
     bank_fields.epoch_accounts_hash = epoch_accounts_hash;
-
-    // If we deserialize the new epoch stakes, add all of the entries into the
-    // other deserialized map which could still have old epoch stakes entries
-    bank_fields.epoch_stakes.extend(
-        versioned_epoch_stakes
-            .into_iter()
-            .map(|(epoch, versioned_epoch_stakes)| (epoch, versioned_epoch_stakes.into())),
-    );
-
+    bank_fields.versioned_epoch_stakes = versioned_epoch_stakes;
     bank_fields.accounts_lt_hash = accounts_lt_hash.map(Into::into);
 
     Ok((bank_fields, accounts_db_fields))
@@ -516,6 +529,7 @@ pub(crate) fn fields_from_stream<R: Read>(
     deserialize_bank_fields(snapshot_stream)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub(crate) fn fields_from_streams(
     snapshot_streams: &mut SnapshotStreams<impl Read>,
 ) -> std::result::Result<
@@ -553,6 +567,7 @@ pub struct BankFromStreamsInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn bank_from_streams<R>(
     snapshot_streams: &mut SnapshotStreams<R>,
     account_paths: &[PathBuf],
@@ -612,24 +627,6 @@ where
     )
 }
 
-#[cfg(test)]
-pub(crate) fn bank_to_stream_no_extra_fields<W>(
-    stream: &mut BufWriter<W>,
-    bank: &Bank,
-    snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
-) -> Result<(), Error>
-where
-    W: Write,
-{
-    bincode::serialize_into(
-        stream,
-        &SerializableBankAndStorageNoExtra {
-            bank,
-            snapshot_storages,
-        },
-    )
-}
-
 /// Serializes bank snapshot into `stream` with bincode
 pub fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
@@ -639,7 +636,7 @@ pub fn serialize_bank_snapshot_into<W>(
     accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
-    write_version: StoredMetaWriteVersion,
+    write_version: u64,
 ) -> Result<(), Error>
 where
     W: Write,
@@ -669,7 +666,7 @@ pub fn serialize_bank_snapshot_with<S>(
     accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
-    write_version: StoredMetaWriteVersion,
+    write_version: u64,
 ) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -785,7 +782,7 @@ struct SerializableAccountsDb<'a> {
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
-    write_version: StoredMetaWriteVersion,
+    write_version: u64,
 }
 
 impl Serialize for SerializableAccountsDb<'_> {
@@ -801,7 +798,7 @@ impl Serialize for SerializableAccountsDb<'_> {
                 x.first().unwrap().slot(),
                 utils::serialize_iter_as_seq(
                     x.iter()
-                        .map(|x| SerializableAccountStorageEntry::from(x.as_ref())),
+                        .map(|x| SerializableAccountStorageEntry::new(x.as_ref(), self.slot)),
                 ),
             )
         }));
@@ -839,12 +836,12 @@ impl solana_frozen_abi::abi_example::TransparentAsHelper for SerializableAccount
 
 /// This struct contains side-info while reconstructing the bank from fields
 #[derive(Debug)]
-struct ReconstructedBankInfo {
-    duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
+pub(crate) struct ReconstructedBankInfo {
+    pub(crate) duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reconstruct_bank_from_fields<E>(
+pub(crate) fn reconstruct_bank_from_fields<E>(
     bank_fields: SnapshotBankFields,
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     genesis_config: &GenesisConfig,
@@ -874,7 +871,6 @@ where
         snapshot_accounts_db_fields,
         account_paths,
         storage_and_next_append_vec_id,
-        genesis_config,
         limit_load_slot_count_from_snapshot,
         verify_index,
         accounts_db_config,
@@ -919,13 +915,12 @@ pub(crate) fn reconstruct_single_storage(
     append_vec_id: AccountsFileId,
     storage_access: StorageAccess,
 ) -> Result<Arc<AccountStorageEntry>, SnapshotError> {
-    let (accounts_file, num_accounts) =
-        AccountsFile::new_from_file(append_vec_path, current_len, storage_access)?;
+    let accounts_file =
+        AccountsFile::new_for_startup(append_vec_path, current_len, storage_access)?;
     Ok(Arc::new(AccountStorageEntry::new_existing(
         *slot,
         append_vec_id,
         accounts_file,
-        num_accounts,
     )))
 }
 
@@ -939,7 +934,7 @@ pub(crate) fn remap_append_vec_file(
     next_append_vec_id: &AtomicAccountsFileId,
     num_collisions: &AtomicUsize,
 ) -> io::Result<(AccountsFileId, PathBuf)> {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     let append_vec_path_cstr = cstring_from_path(append_vec_path)?;
 
     let mut remapped_append_vec_path = append_vec_path.to_path_buf();
@@ -1041,7 +1036,6 @@ fn reconstruct_accountsdb_from_fields<E>(
     snapshot_accounts_db_fields: SnapshotAccountsDbFields<E>,
     account_paths: &[PathBuf],
     storage_and_next_append_vec_id: StorageAndNextAccountsFileId,
-    genesis_config: &GenesisConfig,
     limit_load_slot_count_from_snapshot: Option<usize>,
     verify_index: bool,
     accounts_db_config: Option<AccountsDbConfig>,
@@ -1233,21 +1227,17 @@ where
     // This means, either when the cli arg is set, or when the snapshot has an accounts lt hash.
     let is_accounts_lt_hash_enabled =
         accounts_db.is_experimental_accumulator_hash_enabled() || has_accounts_lt_hash;
+    info!("Building accounts index...");
+    let start = Instant::now();
     let IndexGenerationInfo {
         accounts_data_len,
-        rent_paying_accounts_by_partition,
         duplicates_lt_hash,
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
         verify_index,
-        genesis_config,
         is_accounts_lt_hash_enabled,
     );
-    accounts_db
-        .accounts_index
-        .rent_paying_accounts_by_partition
-        .set(rent_paying_accounts_by_partition)
-        .unwrap();
+    info!("Building accounts index... Done in {:?}", start.elapsed());
 
     handle.join().unwrap();
     measure_notify.stop();
@@ -1286,7 +1276,7 @@ fn rename_no_replace(src: &CStr, dest: &CStr) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
 fn cstring_from_path(path: &Path) -> io::Result<CString> {
     // It is better to allocate here than use the stack. Jemalloc is going to give us a chunk of a
     // preallocated small arena anyway. Instead if we used the stack since PATH_MAX=4096 it would

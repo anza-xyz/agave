@@ -6,8 +6,6 @@ use {
     std::{ptr, str},
 };
 
-pub type StoredMetaWriteVersion = u64;
-
 /// Meta contains enough context to recover the index from storage itself
 /// This struct will be backed by mmaped and snapshotted data files.
 /// So the data layout must be stable and consistent across the entire cluster!
@@ -18,7 +16,7 @@ pub struct StoredMeta {
     /// This will be made completely obsolete such that we stop storing it.
     /// We will not support multiple append vecs per slot anymore, so this concept is no longer necessary.
     /// Order of stores of an account to an append vec will determine 'latest' account data per pubkey.
-    pub write_version_obsolete: StoredMetaWriteVersion,
+    pub write_version_obsolete: u64,
     pub data_len: u64,
     /// key for the account
     pub pubkey: Pubkey,

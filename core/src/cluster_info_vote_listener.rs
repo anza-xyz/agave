@@ -10,14 +10,17 @@ use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Select, Sender},
     log::*,
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::{
         cluster_info::{ClusterInfo, GOSSIP_SLEEP_MILLIS},
         crds::Cursor,
     },
+    solana_hash::Hash,
     solana_ledger::blockstore::Blockstore,
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_debug,
     solana_perf::packet::{self, PacketBatch},
+    solana_pubkey::Pubkey,
     solana_rpc::{
         optimistically_confirmed_bank_tracker::{BankNotification, BankNotificationSender},
         rpc_subscriptions::RpcSubscriptions,
@@ -27,18 +30,13 @@ use {
         bank_forks::BankForks,
         bank_hash_cache::{BankHashCache, DumpedSlotSubscription},
         commitment::VOTE_THRESHOLD_SIZE,
-        epoch_stakes::EpochStakes,
+        epoch_stakes::VersionedEpochStakes,
         root_bank_cache::RootBankCache,
         vote_sender_types::ReplayVoteReceiver,
     },
-    solana_sdk::{
-        clock::{Slot, DEFAULT_MS_PER_SLOT},
-        hash::Hash,
-        pubkey::Pubkey,
-        signature::Signature,
-        timing::AtomicInterval,
-        transaction::Transaction,
-    },
+    solana_signature::Signature,
+    solana_time_utils::AtomicInterval,
+    solana_transaction::Transaction,
     solana_vote::{
         vote_parser::{self, ParsedVote},
         vote_transaction::VoteTransaction,
@@ -294,7 +292,7 @@ impl ClusterInfoVoteListener {
             .filter(|(_, packet_batch)| {
                 // to_packet_batches() above splits into 1 packet long batches
                 assert_eq!(packet_batch.len(), 1);
-                !packet_batch[0].meta().discard()
+                !packet_batch.get(0).unwrap().meta().discard()
             })
             .filter_map(|(tx, packet_batch)| {
                 let (vote_account_key, vote, ..) = vote_parser::parse_vote_transaction(&tx)?;
@@ -547,7 +545,7 @@ impl ClusterInfoVoteListener {
                         sender
                             .send(BankNotification::OptimisticallyConfirmed(slot))
                             .unwrap_or_else(|err| {
-                                warn!("bank_notification_sender failed: {:?}", err)
+                                warn!("bank_notification_sender failed: {err:?}")
                             });
                     }
                 }
@@ -562,7 +560,7 @@ impl ClusterInfoVoteListener {
 
                     // Note gossip votes will always be processed because those should be unique
                     // and we need to update the gossip-only stake in the `VoteTracker`.
-                    return;
+                    break;
                 }
 
                 is_new_vote = is_new;
@@ -722,7 +720,7 @@ impl ClusterInfoVoteListener {
             .add_vote_pubkey(pubkey, stake, total_epoch_stake, &THRESHOLDS_TO_CHECK)
     }
 
-    fn sum_stake(sum: &mut u64, epoch_stakes: Option<&EpochStakes>, pubkey: &Pubkey) {
+    fn sum_stake(sum: &mut u64, epoch_stakes: Option<&VersionedEpochStakes>, pubkey: &Pubkey) {
         if let Some(stakes) = epoch_stakes {
             *sum += stakes.stakes().vote_accounts().get_delegated_stake(pubkey)
         }
@@ -734,7 +732,10 @@ mod tests {
     use {
         super::*,
         itertools::Itertools,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_perf::packet,
+        solana_pubkey::Pubkey,
         solana_rpc::optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         solana_runtime::{
             bank::Bank,
@@ -744,11 +745,8 @@ mod tests {
             },
             vote_sender_types::ReplayVoteSender,
         },
-        solana_sdk::{
-            hash::Hash,
-            pubkey::Pubkey,
-            signature::{Keypair, Signature, Signer},
-        },
+        solana_signature::Signature,
+        solana_signer::Signer,
         solana_vote::vote_transaction,
         solana_vote_program::vote_state::{TowerSync, Vote, MAX_LOCKOUT_HISTORY},
         std::{
@@ -1354,11 +1352,9 @@ mod tests {
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
             exit,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             bank_forks.clone(),
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
@@ -1479,11 +1475,9 @@ mod tests {
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
             exit,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             bank_forks.clone(),
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,
@@ -1629,11 +1623,9 @@ mod tests {
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-        let max_complete_rewards_slot = Arc::new(AtomicU64::default());
         let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
             exit,
             max_complete_transaction_status_slot,
-            max_complete_rewards_slot,
             bank_forks.clone(),
             Arc::new(RwLock::new(BlockCommitmentCache::default())),
             optimistically_confirmed_bank,

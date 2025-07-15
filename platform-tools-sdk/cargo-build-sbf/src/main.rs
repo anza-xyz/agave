@@ -1,30 +1,32 @@
+mod post_processing;
+mod utils;
+
 use {
+    crate::{
+        post_processing::post_process,
+        utils::{rust_target_triple, spawn},
+    },
     bzip2::bufread::BzDecoder,
     cargo_metadata::camino::Utf8PathBuf,
     clap::{crate_description, crate_name, crate_version, Arg},
-    itertools::Itertools,
     log::*,
     regex::Regex,
     solana_file_download::download_file,
-    solana_keypair::{write_keypair_file, Keypair},
     std::{
         borrow::Cow,
-        collections::{HashMap, HashSet},
         env,
-        ffi::OsStr,
         fs::{self, File},
-        io::{prelude::*, BufReader, BufWriter},
+        io::BufReader,
         path::{Path, PathBuf},
-        process::{exit, Command, Stdio},
-        str::FromStr,
+        process::exit,
     },
     tar::Archive,
 };
 
-const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.47";
+const DEFAULT_PLATFORM_TOOLS_VERSION: &str = "v1.50";
 
 #[derive(Debug)]
-struct Config<'a> {
+pub struct Config<'a> {
     cargo_args: Vec<&'a str>,
     target_directory: Option<Utf8PathBuf>,
     sbf_out_dir: Option<PathBuf>,
@@ -45,6 +47,7 @@ struct Config<'a> {
     jobs: Option<String>,
     arch: &'a str,
     optimize_size: bool,
+    lto: bool,
 }
 
 impl Default for Config<'_> {
@@ -76,61 +79,9 @@ impl Default for Config<'_> {
             jobs: None,
             arch: "v0",
             optimize_size: false,
+            lto: false,
         }
     }
-}
-
-fn spawn<I, S>(program: &Path, args: I, generate_child_script_on_failure: bool) -> String
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let args = Vec::from_iter(args);
-    let msg = args
-        .iter()
-        .map(|arg| arg.as_ref().to_str().unwrap_or("?"))
-        .join(" ");
-    info!("spawn: {:?} {}", program, msg);
-
-    let child = Command::new(program)
-        .args(args)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|err| {
-            error!("Failed to execute {}: {}", program.display(), err);
-            exit(1);
-        });
-
-    let output = child.wait_with_output().expect("failed to wait on child");
-    if !output.status.success() {
-        if !generate_child_script_on_failure {
-            exit(1);
-        }
-        error!("cargo-build-sbf exited on command execution failure");
-        let script_name = format!(
-            "cargo-build-sbf-child-script-{}.sh",
-            program.file_name().unwrap().to_str().unwrap(),
-        );
-        let file = File::create(&script_name).unwrap();
-        let mut out = BufWriter::new(file);
-        for (key, value) in env::vars() {
-            writeln!(out, "{key}=\"{value}\" \\").unwrap();
-        }
-        write!(out, "{}", program.display()).unwrap();
-        writeln!(out, "{}", msg).unwrap();
-        out.flush().unwrap();
-        error!(
-            "To rerun the failed command for debugging use {}",
-            script_name,
-        );
-        exit(1);
-    }
-    output
-        .stdout
-        .as_slice()
-        .iter()
-        .map(|&c| c as char)
-        .collect::<String>()
 }
 
 pub fn is_version_string(arg: &str) -> Result<(), String> {
@@ -372,153 +323,6 @@ fn install_if_missing(
     Ok(())
 }
 
-// Process dump file attributing call instructions with callee function names
-fn postprocess_dump(program_dump: &Path) {
-    if !program_dump.exists() {
-        return;
-    }
-    let postprocessed_dump = program_dump.with_extension("postprocessed");
-    let head_re = Regex::new(r"^([0-9a-f]{16}) (.+)").unwrap();
-    let insn_re = Regex::new(r"^ +([0-9]+)((\s[0-9a-f]{2})+)\s.+").unwrap();
-    let call_re = Regex::new(r"^ +([0-9]+)(\s[0-9a-f]{2})+\scall (-?)0x([0-9a-f]+)").unwrap();
-    let relo_re = Regex::new(r"^([0-9a-f]{16})  [0-9a-f]{16} R_BPF_64_32 +0{16} (.+)").unwrap();
-    let mut a2n: HashMap<i64, String> = HashMap::new();
-    let mut rel: HashMap<u64, String> = HashMap::new();
-    let mut name = String::from("");
-    let mut state = 0;
-    let Ok(file) = File::open(program_dump) else {
-        return;
-    };
-    for line_result in BufReader::new(file).lines() {
-        let line = line_result.unwrap();
-        let line = line.trim_end();
-        if line == "Disassembly of section .text" {
-            state = 1;
-        }
-        if state == 0 {
-            if relo_re.is_match(line) {
-                let captures = relo_re.captures(line).unwrap();
-                let address = u64::from_str_radix(&captures[1], 16).unwrap();
-                let symbol = captures[2].to_string();
-                rel.insert(address, symbol);
-            }
-        } else if state == 1 {
-            if head_re.is_match(line) {
-                state = 2;
-                let captures = head_re.captures(line).unwrap();
-                name = captures[2].to_string();
-            }
-        } else if state == 2 {
-            state = 1;
-            if insn_re.is_match(line) {
-                let captures = insn_re.captures(line).unwrap();
-                let address = i64::from_str(&captures[1]).unwrap();
-                a2n.insert(address, name.clone());
-            }
-        }
-    }
-    let Ok(file) = File::create(&postprocessed_dump) else {
-        return;
-    };
-    let mut out = BufWriter::new(file);
-    let Ok(file) = File::open(program_dump) else {
-        return;
-    };
-    let mut pc = 0u64;
-    let mut step = 0u64;
-    for line_result in BufReader::new(file).lines() {
-        let line = line_result.unwrap();
-        let line = line.trim_end();
-        if head_re.is_match(line) {
-            let captures = head_re.captures(line).unwrap();
-            pc = u64::from_str_radix(&captures[1], 16).unwrap();
-            writeln!(out, "{line}").unwrap();
-            continue;
-        }
-        if insn_re.is_match(line) {
-            let captures = insn_re.captures(line).unwrap();
-            step = if captures[2].len() > 24 { 16 } else { 8 };
-        }
-        if call_re.is_match(line) {
-            if rel.contains_key(&pc) {
-                writeln!(out, "{} ; {}", line, rel[&pc]).unwrap();
-            } else {
-                let captures = call_re.captures(line).unwrap();
-                let pc = i64::from_str(&captures[1]).unwrap().checked_add(1).unwrap();
-                let offset = i64::from_str_radix(&captures[4], 16).unwrap();
-                let offset = if &captures[3] == "-" {
-                    offset.checked_neg().unwrap()
-                } else {
-                    offset
-                };
-                let address = pc.checked_add(offset).unwrap();
-                if a2n.contains_key(&address) {
-                    writeln!(out, "{} ; {}", line, a2n[&address]).unwrap();
-                } else {
-                    writeln!(out, "{line}").unwrap();
-                }
-            }
-        } else {
-            writeln!(out, "{line}").unwrap();
-        }
-        pc = pc.checked_add(step).unwrap();
-    }
-    fs::rename(postprocessed_dump, program_dump).unwrap();
-}
-
-// Check whether the built .so file contains undefined symbols that are
-// not known to the runtime and warn about them if any.
-fn check_undefined_symbols(config: &Config, program: &Path) {
-    let syscalls_txt = config.sbf_sdk.join("syscalls.txt");
-    let Ok(file) = File::open(syscalls_txt) else {
-        return;
-    };
-    let mut syscalls = HashSet::new();
-    for line_result in BufReader::new(file).lines() {
-        let line = line_result.unwrap();
-        let line = line.trim_end();
-        syscalls.insert(line.to_string());
-    }
-    let entry =
-        Regex::new(r"^ *[0-9]+: [0-9a-f]{16} +[0-9a-f]+ +NOTYPE +GLOBAL +DEFAULT +UND +(.+)")
-            .unwrap();
-    let readelf = config
-        .sbf_sdk
-        .join("dependencies")
-        .join("platform-tools")
-        .join("llvm")
-        .join("bin")
-        .join("llvm-readelf");
-    let mut readelf_args = vec!["--dyn-symbols"];
-    readelf_args.push(program.to_str().unwrap());
-    let output = spawn(
-        &readelf,
-        &readelf_args,
-        config.generate_child_script_on_failure,
-    );
-    if config.verbose {
-        debug!("{}", output);
-    }
-    let mut unresolved_symbols: Vec<String> = Vec::new();
-    for line in output.lines() {
-        let line = line.trim_end();
-        if entry.is_match(line) {
-            let captures = entry.captures(line).unwrap();
-            let symbol = captures[1].to_string();
-            if !syscalls.contains(&symbol) {
-                unresolved_symbols.push(symbol);
-            }
-        }
-    }
-    if !unresolved_symbols.is_empty() {
-        warn!(
-            "The following functions are undefined and not known syscalls {:?}.",
-            unresolved_symbols
-        );
-        warn!("         Calling them will trigger a run-time error.");
-    }
-}
-
 // Check if we have all binaries in place to execute the build command.
 // If the download failed or the binaries were somehow deleted, inform the user how to fix it.
 fn corrupted_toolchain(config: &Config) -> bool {
@@ -530,10 +334,13 @@ fn corrupted_toolchain(config: &Config) -> bool {
 
     let binaries = toolchain_path.join("bin");
 
+    let rustc = binaries.join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    let cargo = binaries.join(if cfg!(windows) { "cargo.exe" } else { "cargo" });
+
     !toolchain_path.try_exists().unwrap_or(false)
         || !binaries.try_exists().unwrap_or(false)
-        || !binaries.join("rustc").try_exists().unwrap_or(false)
-        || !binaries.join("cargo").try_exists().unwrap_or(false)
+        || !rustc.try_exists().unwrap_or(false)
+        || !cargo.try_exists().unwrap_or(false)
 }
 
 // check whether custom solana toolchain is linked, and link it if it is not.
@@ -593,83 +400,14 @@ fn link_solana_toolchain(config: &Config) {
     }
 }
 
-fn build_solana_package(
+fn install_tools(
     config: &Config,
-    target_directory: &Path,
-    package: &cargo_metadata::Package,
+    package: Option<&cargo_metadata::Package>,
     metadata: &cargo_metadata::Metadata,
 ) {
-    let program_name = {
-        let cdylib_targets = package
-            .targets
-            .iter()
-            .filter_map(|target| {
-                if target.crate_types.contains(&"cdylib".to_string()) {
-                    let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
-                        Some("rlib")
-                    } else if target.crate_types.contains(&"lib".to_string()) {
-                        Some("lib")
-                    } else {
-                        None
-                    };
-
-                    if let Some(other_crate) = other_crate_type {
-                        warn!("Package '{}' has two crate types defined: cdylib and {}. \
-                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
-                        to be deployed and rlib for packages to be imported by other programs as libraries.",
-                        package.name, other_crate);
-                    }
-
-                    Some(&target.name)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        match cdylib_targets.len() {
-            0 => None,
-            1 => Some(cdylib_targets[0].replace('-', "_")),
-            _ => {
-                error!(
-                    "{} crate contains multiple cdylib targets: {:?}",
-                    package.name, cdylib_targets
-                );
-                exit(1);
-            }
-        }
-    };
-
-    let root_package_dir = &package.manifest_path.parent().unwrap_or_else(|| {
-        error!("Unable to get directory of {}", package.manifest_path);
-        exit(1);
-    });
-
-    let sbf_out_dir = config
-        .sbf_out_dir
-        .as_ref()
-        .cloned()
-        .unwrap_or_else(|| target_directory.join("deploy"));
-
-    let target_triple = if config.arch == "v0" {
-        "sbpf-solana-solana".to_string()
-    } else {
-        format!("sbpf{}-solana-solana", config.arch)
-    };
-
-    let target_build_directory = target_directory.join(&target_triple).join("release");
-
-    env::set_current_dir(root_package_dir).unwrap_or_else(|err| {
-        error!(
-            "Unable to set current directory to {}: {}",
-            root_package_dir, err
-        );
-        exit(1);
-    });
-
     let platform_tools_version = config.platform_tools_version.unwrap_or_else(|| {
         let workspace_tools_version = metadata.workspace_metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str());
-        let package_tools_version = package.metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str());
+        let package_tools_version = package.map(|p| p.metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str())).unwrap_or(None);
         match (workspace_tools_version, package_tools_version) {
             (Some(workspace_version), Some(package_version)) => {
                 if workspace_version != package_version {
@@ -683,20 +421,13 @@ fn build_solana_package(
         }
     });
 
-    info!("Solana SDK: {}", config.sbf_sdk.display());
-    if config.no_default_features {
-        info!("No default features");
-    }
-    if !config.features.is_empty() {
-        info!("Features: {}", config.features.join(" "));
-    }
-    let arch = if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        "x86_64"
-    };
-
     if !config.skip_tools_install {
+        let arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+
         let platform_tools_version =
             validate_platform_tools_version(platform_tools_version, DEFAULT_PLATFORM_TOOLS_VERSION);
 
@@ -737,6 +468,7 @@ fn build_solana_package(
     }
 
     if config.no_rustup_override {
+        let target_triple = rust_target_triple(config);
         check_solana_target_installed(&target_triple);
     } else {
         link_solana_toolchain(config);
@@ -750,6 +482,40 @@ fn build_solana_package(
             );
             env::remove_var("RUSTC")
         }
+    }
+}
+
+fn prepare_environment(
+    config: &Config,
+    package: Option<&cargo_metadata::Package>,
+    metadata: &cargo_metadata::Metadata,
+) {
+    let root_dir = if let Some(package) = package {
+        &package.manifest_path.parent().unwrap_or_else(|| {
+            error!("Unable to get directory of {}", package.manifest_path);
+            exit(1);
+        })
+    } else {
+        &&*metadata.workspace_root
+    };
+
+    env::set_current_dir(root_dir).unwrap_or_else(|err| {
+        error!("Unable to set current directory to {}: {}", root_dir, err);
+        exit(1);
+    });
+
+    install_tools(config, package, metadata);
+}
+
+fn invoke_cargo(config: &Config) {
+    let target_triple = rust_target_triple(config);
+
+    info!("Solana SDK: {}", config.sbf_sdk.display());
+    if config.no_default_features {
+        info!("No default features");
+    }
+    if !config.features.is_empty() {
+        info!("Features: {}", config.features.join(" "));
     }
 
     if corrupted_toolchain(config) {
@@ -792,6 +558,12 @@ fn build_solana_package(
     if config.optimize_size {
         target_rustflags = Cow::Owned(format!("{} -C opt-level=s", &target_rustflags));
     }
+    if config.lto {
+        target_rustflags = Cow::Owned(format!(
+            "{} -C embed-bitcode=yes -C lto=fat",
+            &target_rustflags
+        ));
+    }
     if config.debug {
         // Replace with -Zsplit-debuginfo=packed when stabilized.
         target_rustflags = Cow::Owned(format!("{} -g", &target_rustflags));
@@ -828,131 +600,18 @@ fn build_solana_package(
         cargo_build_args.push("--jobs");
         cargo_build_args.push(jobs);
     }
+    if config.workspace {
+        cargo_build_args.push("--workspace");
+    }
     cargo_build_args.append(&mut config.cargo_args.clone());
     let output = spawn(
         &cargo_build,
         &cargo_build_args,
         config.generate_child_script_on_failure,
     );
+
     if config.verbose {
         debug!("{}", output);
-    }
-
-    if let Some(program_name) = program_name {
-        let program_unstripped_so = target_build_directory.join(format!("{program_name}.so"));
-        let program_dump = sbf_out_dir.join(format!("{program_name}-dump.txt"));
-        let program_so = sbf_out_dir.join(format!("{program_name}.so"));
-        let program_debug = sbf_out_dir.join(format!("{program_name}.debug"));
-        let program_keypair = sbf_out_dir.join(format!("{program_name}-keypair.json"));
-
-        fn file_older_or_missing(prerequisite_file: &Path, target_file: &Path) -> bool {
-            let prerequisite_metadata = fs::metadata(prerequisite_file).unwrap_or_else(|err| {
-                error!(
-                    "Unable to get file metadata for {}: {}",
-                    prerequisite_file.display(),
-                    err
-                );
-                exit(1);
-            });
-
-            if let Ok(target_metadata) = fs::metadata(target_file) {
-                use std::time::UNIX_EPOCH;
-                prerequisite_metadata.modified().unwrap_or(UNIX_EPOCH)
-                    > target_metadata.modified().unwrap_or(UNIX_EPOCH)
-            } else {
-                true
-            }
-        }
-
-        if !program_keypair.exists() {
-            write_keypair_file(&Keypair::new(), &program_keypair).unwrap_or_else(|err| {
-                error!(
-                    "Unable to get create {}: {}",
-                    program_keypair.display(),
-                    err
-                );
-                exit(1);
-            });
-        }
-
-        if file_older_or_missing(&program_unstripped_so, &program_so) {
-            #[cfg(windows)]
-            let output = spawn(
-                &llvm_bin.join("llvm-objcopy"),
-                [
-                    "--strip-all".as_ref(),
-                    program_unstripped_so.as_os_str(),
-                    program_so.as_os_str(),
-                ],
-                config.generate_child_script_on_failure,
-            );
-            #[cfg(not(windows))]
-            let output = spawn(
-                &config.sbf_sdk.join("scripts").join("strip.sh"),
-                [&program_unstripped_so, &program_so],
-                config.generate_child_script_on_failure,
-            );
-            if config.verbose {
-                debug!("{}", output);
-            }
-        }
-
-        if config.dump && file_older_or_missing(&program_unstripped_so, &program_dump) {
-            let dump_script = config.sbf_sdk.join("scripts").join("dump.sh");
-            #[cfg(windows)]
-            {
-                error!("Using Bash scripts from within a program is not supported on Windows, skipping `--dump`.");
-                error!(
-                    "Please run \"{} {} {}\" from a Bash-supporting shell, then re-run this command to see the processed program dump.",
-                    &dump_script.display(),
-                    &program_unstripped_so.display(),
-                    &program_dump.display());
-            }
-            #[cfg(not(windows))]
-            {
-                let output = spawn(
-                    &dump_script,
-                    [&program_unstripped_so, &program_dump],
-                    config.generate_child_script_on_failure,
-                );
-                if config.verbose {
-                    debug!("{}", output);
-                }
-            }
-            postprocess_dump(&program_dump);
-        }
-
-        if config.debug && file_older_or_missing(&program_unstripped_so, &program_debug) {
-            #[cfg(windows)]
-            let llvm_objcopy = &llvm_bin.join("llvm-objcopy");
-            #[cfg(not(windows))]
-            let llvm_objcopy = &config.sbf_sdk.join("scripts").join("objcopy.sh");
-
-            let output = spawn(
-                llvm_objcopy,
-                [
-                    "--only-keep-debug".as_ref(),
-                    program_unstripped_so.as_os_str(),
-                    program_debug.as_os_str(),
-                ],
-                config.generate_child_script_on_failure,
-            );
-            if config.verbose {
-                debug!("{}", output);
-            }
-        }
-
-        if config.arch != "v3" {
-            // SBPFv3 shall not have any undefined syscall.
-            check_undefined_symbols(config, &program_so);
-        }
-
-        info!("To deploy this program:");
-        info!("  $ solana program deploy {}", program_so.display());
-        info!("The program address will default to this keypair (override with --program-id):");
-        info!("  {}", program_keypair.display());
-    } else if config.dump {
-        warn!("Note: --dump is only available for crates with a cdylib target");
     }
 }
 
@@ -964,6 +623,47 @@ fn check_solana_target_installed(target: &str) {
     if !output.contains(target) {
         error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
         exit(1);
+    }
+}
+
+fn generate_program_name(package: &cargo_metadata::Package) -> Option<String> {
+    let cdylib_targets = package
+        .targets
+        .iter()
+        .filter_map(|target| {
+            if target.crate_types.contains(&"cdylib".to_string()) {
+                let other_crate_type = if target.crate_types.contains(&"rlib".to_string()) {
+                    Some("rlib")
+                } else if target.crate_types.contains(&"lib".to_string()) {
+                    Some("lib")
+                } else {
+                    None
+                };
+
+                if let Some(other_crate) = other_crate_type {
+                    warn!("Package '{}' has two crate types defined: cdylib and {}. \
+                        This setting precludes link-time optimizations (LTO). Use cdylib for programs \
+                        to be deployed and rlib for packages to be imported by other programs as libraries.",
+                        package.name, other_crate);
+                }
+
+                Some(&target.name)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    match cdylib_targets.len() {
+        0 => None,
+        1 => Some(cdylib_targets[0].replace('-', "_")),
+        _ => {
+            error!(
+                "{} crate contains multiple cdylib targets: {:?}",
+                package.name, cdylib_targets
+            );
+            exit(1);
+        }
     }
 }
 
@@ -988,10 +688,16 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
 
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
-            build_solana_package(&config, target_dir.as_ref(), root_package, &metadata);
+            let program_name = generate_program_name(root_package);
+            prepare_environment(&config, Some(root_package), &metadata);
+            invoke_cargo(&config);
+            post_process(&config, target_dir.as_ref(), program_name);
             return;
         }
     }
+
+    prepare_environment(&config, None, &metadata);
+    invoke_cargo(&config);
 
     let all_sbf_packages = metadata
         .packages
@@ -1009,7 +715,8 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
         .collect::<Vec<_>>();
 
     for package in all_sbf_packages {
-        build_solana_package(&config, target_dir.as_ref(), package, &metadata);
+        let program_name = generate_program_name(package);
+        post_process(&config, target_dir.as_ref(), program_name);
     }
 }
 
@@ -1172,7 +879,7 @@ fn main() {
         .arg(
             Arg::new("arch")
                 .long("arch")
-                .possible_values(["v0", "v1", "v2", "v3"])
+                .possible_values(["v0", "v1", "v2", "v3", "v4"])
                 .default_value("v0")
                 .help("Build for the given target architecture"),
         )
@@ -1181,6 +888,14 @@ fn main() {
                 .long("optimize-size")
                 .takes_value(false)
                 .help("Optimize program for size. This option may reduce program size, potentially increasing CU consumption.")
+        )
+        .arg(
+            Arg::new("lto")
+                .long("lto")
+                .takes_value(false)
+                .help("Enable Link-Time Optimization (LTO) for all crates being built. \
+                This option may decrease program size and CU consumption. The default option is LTO \
+                disabled, as one may get mixed results with it.")
         )
         .get_matches_from(args);
 
@@ -1252,6 +967,7 @@ fn main() {
         jobs: matches.value_of_t("jobs").ok(),
         arch: matches.value_of("arch").unwrap(),
         optimize_size: matches.is_present("optimize_size"),
+        lto: matches.is_present("lto"),
     };
     let manifest_path: Option<PathBuf> = matches.value_of_t("manifest_path").ok();
     if config.verbose {

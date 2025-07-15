@@ -9,6 +9,9 @@ homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+
 [dependencies]
 agave-feature-set = { workspace = true }
 base64 = { workspace = true }
@@ -17,27 +20,42 @@ crossbeam-channel = { workspace = true }
 log = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
+solana-account = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-cli-output = { workspace = true }
+solana-clock = { workspace = true }
+solana-cluster-type = { workspace = true }
+solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-core = { workspace = true }
+solana-epoch-schedule = { workspace = true }
+solana-feature-gate-interface = { workspace = true }
+solana-fee-calculator = { workspace = true }
 solana-geyser-plugin-manager = { workspace = true }
 solana-gossip = { workspace = true }
+solana-inflation = { workspace = true }
+solana-instruction = { workspace = true }
+solana-keypair = { workspace = true }
 solana-ledger = { workspace = true }
+solana-loader-v3-interface = { workspace = true }
 solana-logger = "=2.3.1"
+solana-message = { workspace = true }
+solana-native-token = { workspace = true }
 solana-net-utils = { workspace = true }
 solana-program-test = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rent = { workspace = true }
 solana-rpc = { workspace = true }
 solana-rpc-client = { workspace = true }
 solana-rpc-client-api = { workspace = true }
 solana-runtime = { workspace = true }
-solana-sdk = { version = "=2.2.2", features = ["openssl-vendored"] }
+solana-sdk-ids = { workspace = true }
+solana-signer = { workspace = true }
 solana-streamer = { workspace = true }
 solana-tpu-client = { workspace = true }
+solana-transaction = { workspace = true }
+solana-validator-exit = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 solana-sdk-ids = { workspace = true }
-
-[package.metadata.docs.rs]
-targets = ["x86_64-unknown-linux-gnu"]

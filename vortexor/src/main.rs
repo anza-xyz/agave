@@ -3,9 +3,11 @@ use {
     crossbeam_channel::bounded,
     log::*,
     solana_core::banking_trace::BankingTracer,
+    solana_keypair::read_keypair_file,
     solana_logger::redirect_stderr_to_file,
-    solana_net_utils::{bind_in_range_with_config, SocketConfig},
-    solana_sdk::{signature::read_keypair_file, signer::Signer},
+    solana_net_utils::sockets::{bind_in_range_with_config, SocketConfiguration as SocketConfig},
+    solana_quic_definitions::QUIC_PORT_OFFSET,
+    solana_signer::Signer,
     solana_streamer::streamer::StakedNodes,
     solana_vortexor::{
         cli::Cli,
@@ -20,7 +22,7 @@ use {
     std::{
         collections::HashMap,
         env,
-        net::IpAddr,
+        net::{IpAddr, SocketAddr},
         sync::{atomic::AtomicBool, Arc, RwLock},
         time::Duration,
     },
@@ -77,21 +79,28 @@ pub fn main() {
     let tpu_coalesce = Duration::from_millis(args.tpu_coalesce_ms);
     let dynamic_port_range = args.dynamic_port_range;
 
+    let tpu_address = args.tpu_address;
+    let tpu_forward_address = args.tpu_forward_address;
     let max_streams_per_ms = args.max_streams_per_ms;
     let exit = Arc::new(AtomicBool::new(false));
     // To be linked with the Tpu sigverify and forwarder service
     let (tpu_sender, tpu_receiver) = bounded(DEFAULT_CHANNEL_SIZE);
     let (tpu_fwd_sender, _tpu_fwd_receiver) = bounded(DEFAULT_CHANNEL_SIZE);
 
-    let tpu_sockets =
-        Vortexor::create_tpu_sockets(*bind_address, dynamic_port_range, num_quic_endpoints);
+    let tpu_sockets = Vortexor::create_tpu_sockets(
+        *bind_address,
+        dynamic_port_range,
+        tpu_address,
+        tpu_forward_address,
+        num_quic_endpoints,
+    );
 
     let (banking_tracer, _) = BankingTracer::new(
         None, // Not interesed in banking tracing
     )
     .unwrap();
 
-    let config = SocketConfig::default().reuseport(false);
+    let config = SocketConfig::default();
 
     let sender_socket =
         bind_in_range_with_config(*bind_address, dynamic_port_range, config).unwrap();
@@ -125,7 +134,7 @@ pub fn main() {
         DEFAULT_SENDER_THREADS_COUNT,
         DEFAULT_BATCH_SIZE,
         DEFAULT_RECV_TIMEOUT,
-        destinations,
+        destinations.clone(),
     );
 
     info!("Creating the SigVerifier");
@@ -155,6 +164,27 @@ pub fn main() {
         tpu_sockets.tpu_quic[0].local_addr(),
         tpu_sockets.tpu_quic_fwd[0].local_addr()
     );
+
+    let tpu_address = tpu_sockets.tpu_quic[0].local_addr().unwrap();
+    let tpu_public_address = SocketAddr::new(
+        tpu_address.ip(),
+        tpu_address.port().saturating_sub(QUIC_PORT_OFFSET),
+    );
+    let tpu_fwd_address = tpu_sockets.tpu_quic_fwd[0].local_addr().unwrap();
+    let tpu_fwd_public_address = SocketAddr::new(
+        tpu_fwd_address.ip(),
+        tpu_fwd_address.port().saturating_sub(QUIC_PORT_OFFSET),
+    );
+
+    for destination in destinations.read().unwrap().iter() {
+        info!(
+            "To pair the validator with receiver address {destination} with this \
+             vortexor, add the following arguments in the validator's start command: \
+              --tpu-vortexor-receiver-address {destination} \
+              --public-tpu-address {tpu_public_address} \
+              --public-tpu-forwards-address {tpu_fwd_public_address}",
+        );
+    }
 
     let vortexor = Vortexor::create_vortexor(
         tpu_sockets,

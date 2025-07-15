@@ -97,7 +97,7 @@ fn test_out_dir() {
 #[serial]
 fn test_target_dir() {
     let target_dir = "./temp-target-dir";
-    run_cargo_build("noop", &["--", "--target-dir", target_dir], false);
+    run_cargo_build("noop", &["--lto", "--", "--target-dir", target_dir], false);
     let cwd = env::current_dir().expect("Unable to get current working directory");
     let normal_target_dir = cwd.join("tests").join("crates").join("noop").join("target");
     assert!(!normal_target_dir.exists());
@@ -213,6 +213,18 @@ fn test_sbpfv3() {
     assert_v1
         .stdout(predicate::str::contains(
             "Flags:                             0x3",
+        ))
+        .success();
+    clean_target("noop");
+}
+
+#[test]
+#[serial]
+fn test_sbpfv4() {
+    let assert_v1 = build_noop_and_readelf("v4");
+    assert_v1
+        .stdout(predicate::str::contains(
+            "Flags:                             0x4",
         ))
         .success();
     clean_target("noop");

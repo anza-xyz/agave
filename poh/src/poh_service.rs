@@ -4,6 +4,7 @@ use {
     crate::poh_recorder::{PohRecorder, Record},
     crossbeam_channel::Receiver,
     log::*,
+    solana_clock::DEFAULT_HASHES_PER_SECOND,
     solana_entry::poh::Poh,
     solana_measure::{measure::Measure, measure_us},
     solana_poh_config::PohConfig,
@@ -21,13 +22,15 @@ pub struct PohService {
     tick_producer: JoinHandle<()>,
 }
 
-// Number of hashes to batch together.
+// Amount of time to hash continuously.
+//
 // * If this number is too small, PoH hash rate will suffer.
-// * The larger this number is from 1, the speed of recording transactions will suffer due to lock
-//   contention with the PoH hashing within `tick_producer()`.
+// * If this number is too large, PoH will be less responsive to record requests.
 //
 // Can use test_poh_service to calibrate this
-pub const DEFAULT_HASHES_PER_BATCH: u64 = 64;
+const TARGET_HASH_BATCH_TIME_US: u64 = 50;
+pub const DEFAULT_HASHES_PER_BATCH: u64 =
+    TARGET_HASH_BATCH_TIME_US * DEFAULT_HASHES_PER_SECOND / 1_000_000;
 
 pub const DEFAULT_PINNED_CPU_CORE: usize = 0;
 
@@ -194,8 +197,8 @@ impl PohService {
                 .sender
                 .send(poh_recorder.write().unwrap().record(
                     record.slot,
-                    record.mixin,
-                    record.transactions,
+                    record.mixins,
+                    record.transaction_batches,
                 ))
                 .is_err()
             {
@@ -257,8 +260,8 @@ impl PohService {
                 loop {
                     let res = poh_recorder_l.record(
                         record.slot,
-                        record.mixin,
-                        std::mem::take(&mut record.transactions),
+                        record.mixins,
+                        std::mem::take(&mut record.transaction_batches),
                     );
                     let (send_res, send_record_result_us) = measure_us!(record.sender.send(res));
                     debug_assert!(send_res.is_ok(), "Record wasn't sent.");
@@ -376,9 +379,10 @@ impl PohService {
 mod tests {
     use {
         super::*,
+        crate::poh_recorder::PohRecorderError::MaxHeightReached,
         crossbeam_channel::unbounded,
         rand::{thread_rng, Rng},
-        solana_clock::DEFAULT_HASHES_PER_TICK,
+        solana_clock::{DEFAULT_HASHES_PER_TICK, DEFAULT_MS_PER_SLOT},
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
@@ -397,7 +401,11 @@ mod tests {
     #[ignore]
     fn test_poh_service() {
         solana_logger::setup();
-        let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(2);
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config(2);
+        let hashes_per_tick = Some(DEFAULT_HASHES_PER_TICK);
+        genesis_config.poh_config.hashes_per_tick = hashes_per_tick;
         let (bank, _bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
         let prev_hash = bank.last_blockhash();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -408,7 +416,7 @@ mod tests {
             PohConfig::default().target_tick_duration.as_micros() as u64;
         let target_tick_duration = Duration::from_micros(default_target_tick_duration);
         let poh_config = PohConfig {
-            hashes_per_tick: Some(DEFAULT_HASHES_PER_TICK),
+            hashes_per_tick,
             target_tick_duration,
             target_tick_count: None,
         };
@@ -417,11 +425,13 @@ mod tests {
         let ticks_per_slot = bank.ticks_per_slot();
         let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
         let blockstore = Arc::new(blockstore);
+        // Just set something very far in the future that we won't reach.
+        let next_leader_slot = Some((1_000_000, 1_000_000));
         let (poh_recorder, entry_receiver) = PohRecorder::new(
             bank.tick_height(),
             prev_hash,
             bank.clone(),
-            Some((4, 4)),
+            next_leader_slot,
             ticks_per_slot,
             blockstore,
             &leader_schedule_cache,
@@ -430,7 +440,6 @@ mod tests {
         );
         let poh_recorder = Arc::new(RwLock::new(poh_recorder));
         let ticks_per_slot = bank.ticks_per_slot();
-        let bank_slot = bank.slot();
 
         // specify RUN_TIME to run in a benchmark-like mode
         // to calibrate batch size
@@ -442,6 +451,7 @@ mod tests {
         let entry_producer = {
             let poh_recorder = poh_recorder.clone();
             let exit = exit.clone();
+            let mut bank = bank.clone();
 
             Builder::new()
                 .name("solPohEntryProd".to_string())
@@ -454,11 +464,27 @@ mod tests {
                     loop {
                         // send some data
                         let mut time = Measure::start("record");
-                        let _ =
+                        let res = poh_recorder.write().unwrap().record(
+                            bank.slot(),
+                            vec![h1],
+                            vec![vec![tx.clone()]],
+                        );
+                        if let Err(MaxHeightReached) = res {
+                            // Advance to the next slot.
                             poh_recorder
                                 .write()
                                 .unwrap()
-                                .record(bank_slot, h1, vec![tx.clone()]);
+                                .reset(bank.clone(), next_leader_slot);
+                            bank = Arc::new(Bank::new_from_parent(
+                                bank.clone(),
+                                &solana_pubkey::new_rand(),
+                                bank.slot() + 1,
+                            ));
+                            poh_recorder
+                                .write()
+                                .unwrap()
+                                .set_bank_for_test(bank.clone());
+                        }
                         time.stop();
                         total_us += time.as_us();
                         total_times += 1;
@@ -504,7 +530,9 @@ mod tests {
 
         let time = Instant::now();
         while run_time != 0 || need_tick || need_entry || need_partial {
-            let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
+            let (_bank, (entry, _tick_height)) = entry_receiver
+                .recv_timeout(Duration::from_millis(DEFAULT_MS_PER_SLOT))
+                .expect("Expected to receive an entry");
 
             if entry.is_tick() {
                 num_ticks += 1;

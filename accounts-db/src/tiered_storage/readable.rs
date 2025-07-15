@@ -1,8 +1,8 @@
 use {
     crate::{
+        account_info::Offset,
         account_storage::stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
         accounts_file::MatchAccountOwnerError,
-        append_vec::IndexInfo,
         tiered_storage::{
             file::TieredReadableFile,
             footer::{AccountMetaFormat, TieredStorageFooter},
@@ -11,7 +11,7 @@ use {
             TieredStorageResult,
         },
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     std::path::Path,
 };
@@ -76,19 +76,30 @@ impl TieredStorageReader {
         }
     }
 
-    /// Returns the `IndexInfo` for the account located at the specified index offset.
+    /// Calls `callback` with the stored account at `offset`.
     ///
-    /// Only intended to be used with the accounts index.
-    pub(crate) fn get_account_index_info(
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn does *not* load the account's data, just the data length.  If the data is needed,
+    /// use `get_stored_account_callback()` instead.  However, prefer this fn when possible.
+    pub fn get_stored_account_without_data_callback<Ret>(
         &self,
         index_offset: IndexOffset,
-    ) -> TieredStorageResult<Option<IndexInfo>> {
+        callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>) -> Ret,
+    ) -> TieredStorageResult<Option<Ret>> {
         match self {
-            Self::Hot(hot) => hot.get_account_index_info(index_offset),
+            Self::Hot(hot) => hot.get_stored_account_without_data_callback(index_offset, callback),
         }
     }
 
-    /// calls `callback` with the account located at the specified index offset.
+    /// Calls `callback` with the stored account at `offset`.
+    ///
+    /// Returns `None` if there is no account at `offset`, otherwise returns the result of
+    /// `callback` in `Some`.
+    ///
+    /// This fn *does* load the account's data.  If the data is not needed,
+    /// use `get_stored_account_without_data_callback()` instead.
     pub fn get_stored_account_callback<Ret>(
         &self,
         index_offset: IndexOffset,
@@ -130,54 +141,54 @@ impl TieredStorageReader {
         }
     }
 
-    /// iterate over all entries to put in index
-    pub(crate) fn scan_index(&self, callback: impl FnMut(IndexInfo)) -> TieredStorageResult<()> {
+    /// Iterate over all accounts and call `callback` with each account.
+    ///
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfoWithoutData: the account itself, without account data
+    ///
+    /// Note that account data is not read/passed to the callback.
+    pub fn scan_accounts_without_data(
+        &self,
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfoWithoutData<'local>),
+    ) -> TieredStorageResult<()> {
         match self {
-            Self::Hot(hot) => hot.scan_index(callback),
+            Self::Hot(hot) => hot.scan_accounts_without_data(callback),
         }
     }
 
     /// Iterate over all accounts and call `callback` with each account.
     ///
-    /// Note that account data is not read/passed to the callback.
-    pub fn scan_accounts_without_data(
-        &self,
-        mut callback: impl for<'local> FnMut(StoredAccountInfoWithoutData<'local>),
-    ) -> TieredStorageResult<()> {
-        // Note, this should be reimplemented to not read account data
-        self.scan_accounts(|stored_account| {
-            let account = StoredAccountInfoWithoutData {
-                pubkey: stored_account.pubkey(),
-                lamports: stored_account.lamports(),
-                owner: stored_account.owner(),
-                data_len: stored_account.data().len(),
-                executable: stored_account.executable(),
-                rent_epoch: stored_account.rent_epoch(),
-            };
-            callback(account);
-        })
-    }
-
-    /// Iterate over all accounts and call `callback` with each account.
+    /// `callback` parameters:
+    /// * Offset: the offset within the file of this account
+    /// * StoredAccountInfo: the account itself, with account data
     ///
     /// Prefer scan_accounts_without_data() when account data is not needed,
     /// as it can potentially read less and be faster.
     pub fn scan_accounts(
         &self,
-        callback: impl for<'local> FnMut(StoredAccountInfo<'local>),
+        callback: impl for<'local> FnMut(Offset, StoredAccountInfo<'local>),
     ) -> TieredStorageResult<()> {
         match self {
             Self::Hot(hot) => hot.scan_accounts(callback),
         }
     }
 
-    /// for each offset in `sorted_offsets`, return the account size
-    pub(crate) fn get_account_sizes(
+    /// Calculate the amount of storage required for an account with the passed
+    /// in data_len
+    pub(crate) fn calculate_stored_size(&self, data_len: usize) -> usize {
+        match self {
+            Self::Hot(hot) => hot.calculate_stored_size(data_len),
+        }
+    }
+
+    /// for each offset in `sorted_offsets`, return the length of data stored in the account
+    pub(crate) fn get_account_data_lens(
         &self,
         sorted_offsets: &[usize],
     ) -> TieredStorageResult<Vec<usize>> {
         match self {
-            Self::Hot(hot) => hot.get_account_sizes(sorted_offsets),
+            Self::Hot(hot) => hot.get_account_data_lens(sorted_offsets),
         }
     }
 

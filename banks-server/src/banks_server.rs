@@ -2,32 +2,33 @@ use {
     bincode::{deserialize, serialize},
     crossbeam_channel::{unbounded, Receiver, Sender},
     futures::{future, prelude::stream::StreamExt},
+    solana_account::Account,
     solana_banks_interface::{
         Banks, BanksRequest, BanksResponse, BanksTransactionResultWithMetadata,
         BanksTransactionResultWithSimulation, TransactionConfirmationStatus, TransactionMetadata,
         TransactionSimulationDetails, TransactionStatus,
     },
     solana_client::connection_cache::ConnectionCache,
+    solana_clock::Slot,
+    solana_commitment_config::CommitmentLevel,
+    solana_hash::Hash,
+    solana_message::{Message, SanitizedMessage},
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{Bank, TransactionSimulationResult},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk::{
-        account::Account,
-        clock::Slot,
-        commitment_config::CommitmentLevel,
-        hash::Hash,
-        message::{Message, SanitizedMessage},
-        pubkey::Pubkey,
-        signature::Signature,
-        transaction::{self, MessageHash, SanitizedTransaction, VersionedTransaction},
-    },
     solana_send_transaction_service::{
         send_transaction_service::{Config, SendTransactionService, TransactionInfo},
         tpu_info::NullTpuInfo,
         transaction_client::ConnectionCacheClient,
+    },
+    solana_signature::Signature,
+    solana_transaction::{
+        sanitized::{MessageHash, SanitizedTransaction},
+        versioned::VersionedTransaction,
     },
     std::{
         io,
@@ -46,6 +47,10 @@ use {
     tokio::time::sleep,
     tokio_serde::formats::Bincode,
 };
+
+mod transaction {
+    pub use solana_transaction_error::TransactionResult as Result;
+}
 
 #[derive(Clone)]
 struct BanksServer {
@@ -183,6 +188,7 @@ fn simulate_transaction(
         logs,
         post_simulation_accounts: _,
         units_consumed,
+        loaded_accounts_data_size,
         return_data,
         inner_instructions,
     } = bank.simulate_transaction_unchecked(&sanitized_transaction, true);
@@ -190,6 +196,7 @@ fn simulate_transaction(
     let simulation_details = TransactionSimulationDetails {
         logs,
         units_consumed,
+        loaded_accounts_data_size,
         return_data,
         inner_instructions,
     };
@@ -202,6 +209,7 @@ fn simulate_transaction(
 #[tarpc::server]
 impl Banks for BanksServer {
     async fn send_transaction_with_context(self, _: Context, transaction: VersionedTransaction) {
+        let message_hash = transaction.message.hash();
         let blockhash = transaction.message.recent_blockhash();
         let last_valid_block_height = self
             .bank_forks
@@ -212,7 +220,9 @@ impl Banks for BanksServer {
             .unwrap();
         let signature = transaction.signatures.first().cloned().unwrap_or_default();
         let info = TransactionInfo::new(
+            message_hash,
             signature,
+            *blockhash,
             serialize(&transaction).unwrap(),
             last_valid_block_height,
             None,
@@ -315,6 +325,7 @@ impl Banks for BanksServer {
             return Some(Err(err));
         }
 
+        let message_hash = sanitized_transaction.message_hash();
         let blockhash = transaction.message.recent_blockhash();
         let last_valid_block_height = self
             .bank(commitment)
@@ -322,7 +333,9 @@ impl Banks for BanksServer {
             .unwrap();
         let signature = sanitized_transaction.signature();
         let info = TransactionInfo::new(
+            *message_hash,
             *signature,
+            *blockhash,
             serialize(&transaction).unwrap(),
             last_valid_block_height,
             None,

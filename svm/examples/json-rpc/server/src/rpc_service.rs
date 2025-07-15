@@ -7,7 +7,7 @@ use {
     },
     log::*,
     solana_perf::thread::renice_this_thread,
-    solana_sdk::exit::Exit,
+    solana_validator_exit::Exit,
     std::{
         net::SocketAddr,
         sync::{atomic::AtomicBool, Arc, RwLock},
@@ -69,8 +69,8 @@ impl JsonRpcService {
 
                 if let Err(e) = server {
                     warn!(
-                        "JSON RPC service unavailable error: {:?}. \n\
-                           Also, check that port {} is not already in use by another application",
+                        "JSON RPC service unavailable error: {:?}. \nAlso, check that port {} is \
+                         not already in use by another application",
                         e,
                         rpc_addr.port()
                     );

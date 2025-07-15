@@ -1,6 +1,6 @@
 use {
-    crate::bank::Bank, core::ops::Deref, solana_sdk::transaction::Result,
-    solana_svm_transaction::svm_message::SVMMessage,
+    crate::bank::Bank, core::ops::Deref, solana_svm_transaction::svm_message::SVMMessage,
+    solana_transaction_error::TransactionResult as Result,
 };
 
 pub enum OwnedOrBorrowed<'a, T> {
@@ -115,17 +115,18 @@ mod tests {
     use {
         super::*,
         crate::genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
+        solana_keypair::Keypair,
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-        solana_sdk::{
-            signature::Keypair,
-            system_transaction,
-            transaction::{SanitizedTransaction, TransactionError},
-        },
+        solana_system_transaction as system_transaction,
+        solana_transaction::sanitized::SanitizedTransaction,
+        solana_transaction_error::TransactionError,
+        test_case::test_case,
     };
 
-    #[test]
-    fn test_transaction_batch() {
-        let (bank, txs) = setup(false);
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_transaction_batch(relax_intrabatch_account_locks: bool) {
+        let (bank, txs) = setup(false, relax_intrabatch_account_locks);
 
         // Test getting locked accounts
         let batch = bank.prepare_sanitized_batch(&txs);
@@ -145,9 +146,10 @@ mod tests {
         assert!(batch2.lock_results().iter().all(|x| x.is_ok()));
     }
 
-    #[test]
-    fn test_simulation_batch() {
-        let (bank, txs) = setup(false);
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_simulation_batch(relax_intrabatch_account_locks: bool) {
+        let (bank, txs) = setup(false, relax_intrabatch_account_locks);
 
         // Prepare batch without locks
         let batch = bank.prepare_unlocked_batch_from_single_tx(&txs[0]);
@@ -162,20 +164,23 @@ mod tests {
         assert!(batch3.lock_results().iter().all(|x| x.is_ok()));
     }
 
-    #[test]
-    fn test_unlock_failures() {
-        let (bank, txs) = setup(true);
+    #[test_case(false; "old")]
+    #[test_case(true; "simd83")]
+    fn test_unlock_failures(relax_intrabatch_account_locks: bool) {
+        let (bank, txs) = setup(true, relax_intrabatch_account_locks);
+        let expected_lock_results = if relax_intrabatch_account_locks {
+            vec![Ok(()), Ok(()), Ok(())]
+        } else {
+            vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
+        };
 
         // Test getting locked accounts
         let mut batch = bank.prepare_sanitized_batch(&txs);
-        assert_eq!(
-            batch.lock_results,
-            vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
-        );
+        assert_eq!(batch.lock_results, expected_lock_results,);
 
         let qos_results = vec![
             Ok(()),
-            Err(TransactionError::AccountInUse),
+            Err(TransactionError::WouldExceedMaxBlockCostLimit),
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
         ];
         batch.unlock_failures(qos_results.clone());
@@ -184,22 +189,25 @@ mod tests {
         // Dropping the batch should unlock remaining locked transactions
         drop(batch);
 
-        // The next batch should be able to lock all but the conflicting tx
+        // The next batch should be able to take all the same locks as before
         let batch2 = bank.prepare_sanitized_batch(&txs);
-        assert_eq!(
-            batch2.lock_results,
-            vec![Ok(()), Err(TransactionError::AccountInUse), Ok(())]
-        );
+        assert_eq!(batch2.lock_results, expected_lock_results,);
     }
 
-    fn setup(insert_conflicting_tx: bool) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
+    fn setup(
+        insert_conflicting_tx: bool,
+        relax_intrabatch_account_locks: bool,
+    ) -> (Bank, Vec<RuntimeTransaction<SanitizedTransaction>>) {
         let dummy_leader_pubkey = solana_pubkey::new_rand();
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
             ..
         } = create_genesis_config_with_leader(500, &dummy_leader_pubkey, 100);
-        let bank = Bank::new_for_tests(&genesis_config);
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        if !relax_intrabatch_account_locks {
+            bank.deactivate_feature(&agave_feature_set::relax_intrabatch_account_locks::id());
+        }
 
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();

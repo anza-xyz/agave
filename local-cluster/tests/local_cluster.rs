@@ -7,9 +7,15 @@ use {
     log::*,
     rand::seq::SliceRandom,
     serial_test::serial,
+    solana_account::AccountSharedData,
     solana_accounts_db::{
         hardened_unpack::open_genesis_config, utils::create_accounts_run_and_snapshot_dirs,
     },
+    solana_client_traits::AsyncClient,
+    solana_clock::{
+        self as clock, Slot, DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE,
+    },
+    solana_commitment_config::CommitmentConfig,
     solana_core::{
         consensus::{
             tower_storage::FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD, VOTE_THRESHOLD_DEPTH,
@@ -20,7 +26,12 @@ use {
     },
     solana_download_utils::download_snapshot_archive,
     solana_entry::entry::create_ticks,
+    solana_epoch_schedule::{MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH},
+    solana_genesis_config::ClusterType,
     solana_gossip::{crds_data::MAX_VOTES, gossip_service::discover_validators},
+    solana_hard_forks::HardForks,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         ancestor_iterator::AncestorIterator,
         bank_forks_utils,
@@ -46,6 +57,8 @@ use {
         local_cluster::{ClusterConfig, LocalCluster, DEFAULT_MINT_LAMPORTS},
         validator_configs::*,
     },
+    solana_poh_config::PohConfig,
+    solana_pubkey::Pubkey,
     solana_pubsub_client::pubsub_client::PubsubClient,
     solana_rpc_client::rpc_client::RpcClient,
     solana_rpc_client_api::{
@@ -56,40 +69,31 @@ use {
         response::RpcSignatureResult,
     },
     solana_runtime::{
-        commitment::VOTE_THRESHOLD_SIZE, snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_bank_utils, snapshot_config::SnapshotConfig, snapshot_package::SnapshotKind,
-        snapshot_utils,
+        commitment::VOTE_THRESHOLD_SIZE,
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
+        snapshot_bank_utils,
+        snapshot_config::SnapshotConfig,
+        snapshot_package::SnapshotKind,
+        snapshot_utils::{self, SnapshotInterval},
     },
-    solana_sdk::{
-        account::AccountSharedData,
-        client::AsyncClient,
-        clock::{self, Slot, DEFAULT_TICKS_PER_SLOT, MAX_PROCESSING_AGE},
-        commitment_config::CommitmentConfig,
-        epoch_schedule::{
-            DEFAULT_SLOTS_PER_EPOCH, MAX_LEADER_SCHEDULE_EPOCH_OFFSET, MINIMUM_SLOTS_PER_EPOCH,
-        },
-        genesis_config::ClusterType,
-        hard_forks::HardForks,
-        hash::Hash,
-        poh_config::PohConfig,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        system_program, system_transaction,
-        vote::state::TowerSync,
-    },
-    solana_stake_program::stake_state::NEW_WARMUP_COOLDOWN_RATE,
+    solana_signer::Signer,
+    solana_stake_interface::{self as stake, state::NEW_WARMUP_COOLDOWN_RATE},
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::program as system_program,
+    solana_system_transaction as system_transaction,
     solana_turbine::broadcast_stage::{
         broadcast_duplicates_run::{BroadcastDuplicatesConfig, ClusterPartition},
         BroadcastStageType,
     },
     solana_vote::{vote_parser, vote_transaction},
+    solana_vote_interface::state::TowerSync,
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
     std::{
         collections::{BTreeSet, HashMap, HashSet},
         fs,
         io::Read,
         iter,
+        num::NonZeroU64,
         path::Path,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -232,7 +236,7 @@ fn test_local_cluster_signature_subscribe() {
 
     let mut transaction = system_transaction::transfer(
         &cluster.funding_keypair,
-        &solana_sdk::pubkey::new_rand(),
+        &solana_pubkey::new_rand(),
         10,
         blockhash,
     );
@@ -436,12 +440,12 @@ fn test_mainnet_beta_cluster_type() {
 
     // Programs that are available at epoch 0
     for program_id in [
-        &solana_sdk::system_program::id(),
-        &solana_sdk::stake::program::id(),
+        &solana_sdk_ids::system_program::id(),
+        &stake::program::id(),
         &solana_vote_program::id(),
-        &solana_sdk::bpf_loader_deprecated::id(),
-        &solana_sdk::bpf_loader::id(),
-        &solana_sdk::bpf_loader_upgradeable::id(),
+        &solana_sdk_ids::bpf_loader_deprecated::id(),
+        &solana_sdk_ids::bpf_loader::id(),
+        &solana_sdk_ids::bpf_loader_upgradeable::id(),
     ]
     .iter()
     {
@@ -479,7 +483,7 @@ fn test_mainnet_beta_cluster_type() {
 fn test_snapshot_download() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 node
-    let snapshot_interval_slots = 50;
+    let snapshot_interval_slots = NonZeroU64::new(50).unwrap();
     let num_account_paths = 3;
 
     let leader_snapshot_test_config =
@@ -559,13 +563,13 @@ fn test_incremental_snapshot_download() {
     let num_account_paths = 3;
 
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
     let validator_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
 
@@ -730,13 +734,13 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     let num_account_paths = 3;
     let leader_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
     let mut validator_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
     // The test has asserts that require the validator always boots from snapshot archives
@@ -756,7 +760,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
     let mut cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
 
     info!(
-        "snapshot config:\n\tfull snapshot interval: {}\n\tincremental snapshot interval: {}",
+        "snapshot config:\n\tfull snapshot interval: {:?}\n\tincremental snapshot interval: {:?}",
         full_snapshot_interval, incremental_snapshot_interval,
     );
     debug!(
@@ -1174,8 +1178,8 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 
     // And lastly, startup another node with the new snapshots to ensure they work
     let final_validator_snapshot_test_config = SnapshotValidatorConfig::new(
-        full_snapshot_interval,
-        incremental_snapshot_interval,
+        SnapshotInterval::Slots(NonZeroU64::new(full_snapshot_interval).unwrap()),
+        SnapshotInterval::Slots(NonZeroU64::new(incremental_snapshot_interval).unwrap()),
         num_account_paths,
     );
 
@@ -1215,7 +1219,7 @@ fn test_incremental_snapshot_download_with_crossing_full_snapshot_interval_at_st
 fn test_snapshot_restart_tower() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 2 nodes
-    let snapshot_interval_slots = 10;
+    let snapshot_interval_slots = NonZeroU64::new(10).unwrap();
     let num_account_paths = 2;
 
     let leader_snapshot_test_config =
@@ -1258,7 +1262,7 @@ fn test_snapshot_restart_tower() {
     let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
-            .into_path(),
+            .keep(),
         full_snapshot_archive_info.slot(),
         full_snapshot_archive_info.hash(),
         full_snapshot_archive_info.archive_format(),
@@ -1288,7 +1292,7 @@ fn test_snapshot_restart_tower() {
 fn test_snapshots_blockstore_floor() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
     // First set up the cluster with 1 snapshotting leader
-    let snapshot_interval_slots = 100;
+    let snapshot_interval_slots = NonZeroU64::new(100).unwrap();
     let num_account_paths = 4;
 
     let leader_snapshot_test_config =
@@ -1328,7 +1332,7 @@ fn test_snapshots_blockstore_floor() {
     let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         validator_snapshot_test_config
             .full_snapshot_archives_dir
-            .into_path(),
+            .keep(),
         archive_info.slot(),
         archive_info.hash(),
         validator_snapshot_test_config
@@ -1400,7 +1404,7 @@ fn test_snapshots_blockstore_floor() {
 #[serial]
 fn test_snapshots_restart_validity() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
-    let snapshot_interval_slots = 100;
+    let snapshot_interval_slots = NonZeroU64::new(100).unwrap();
     let num_account_paths = 1;
     let mut snapshot_test_config =
         setup_snapshot_validator_config(snapshot_interval_slots, num_account_paths);
@@ -2243,10 +2247,10 @@ fn test_hard_fork_invalidates_tower() {
     // persistent tower's lockout behavior...
     let hard_fork_slot = min_root - 5;
     let hard_fork_slots = Some(vec![hard_fork_slot]);
-    let mut hard_forks = solana_sdk::hard_forks::HardForks::default();
+    let mut hard_forks = solana_hard_forks::HardForks::default();
     hard_forks.register(hard_fork_slot);
 
-    let expected_shred_version = solana_sdk::shred_version::compute_shred_version(
+    let expected_shred_version = solana_shred_version::compute_shred_version(
         &cluster.lock().unwrap().genesis_config.hash(),
         Some(&hard_forks),
     );
@@ -2327,7 +2331,6 @@ fn create_snapshot_to_hard_fork(
         ],
         &snapshot_config,
         process_options,
-        None,
         None,
         None,
         None,
@@ -2428,7 +2431,7 @@ fn test_hard_fork_with_gap_in_roots() {
     let mut hard_forks = HardForks::default();
     hard_forks.register(hard_fork_slot);
 
-    let expected_shred_version = solana_sdk::shred_version::compute_shred_version(
+    let expected_shred_version = solana_shred_version::compute_shred_version(
         &cluster.lock().unwrap().genesis_config.hash(),
         Some(&hard_forks),
     );
@@ -3389,7 +3392,7 @@ fn do_test_lockout_violation_with_or_without_tower(with_tower: bool) {
         let a_blockstore = open_blockstore(&val_a_ledger_path);
         copy_blocks(next_slot_on_a, &b_blockstore, &a_blockstore, false);
 
-        // Purge uneccessary slots
+        // Purge unnecessary slots
         purge_slots_with_count(&a_blockstore, next_slot_on_a + 1, truncated_slots);
     }
 
@@ -4511,7 +4514,7 @@ fn test_leader_failure_4() {
 #[serial]
 fn test_slot_hash_expiry() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
-    solana_sdk::slot_hashes::set_entries_for_tests_only(64);
+    solana_slot_hashes::set_entries_for_tests_only(64);
 
     let slots_per_epoch = 2048;
     let node_stakes = vec![60 * DEFAULT_NODE_STAKE, 40 * DEFAULT_NODE_STAKE];
@@ -4614,16 +4617,14 @@ fn test_slot_hash_expiry() {
 
     info!(
         "Run A on majority fork until it reaches slot hash expiry {}",
-        solana_sdk::slot_hashes::get_entries()
+        solana_slot_hashes::get_entries()
     );
     let mut last_vote_on_a;
     // Keep A running for a while longer so the majority fork has some decent size
     loop {
         last_vote_on_a =
             wait_for_last_vote_in_tower_to_land_in_ledger(&a_ledger_path, &a_pubkey).unwrap();
-        if last_vote_on_a
-            >= common_ancestor_slot + 2 * (solana_sdk::slot_hashes::get_entries() as u64)
-        {
+        if last_vote_on_a >= common_ancestor_slot + 2 * (solana_slot_hashes::get_entries() as u64) {
             let blockstore = open_blockstore(&a_ledger_path);
             info!(
                 "A majority fork: {:?}",
@@ -4989,8 +4990,10 @@ fn test_duplicate_with_pruned_ancestor() {
 #[serial]
 fn test_boot_from_local_state() {
     solana_logger::setup_with_default("error,local_cluster=info");
-    const FULL_SNAPSHOT_INTERVAL: Slot = 100;
-    const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
+    const FULL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(100).unwrap());
+    const INCREMENTAL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(10).unwrap());
 
     let validator1_config =
         SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 2);
@@ -5269,8 +5272,10 @@ fn test_boot_from_local_state() {
 #[serial]
 fn test_boot_from_local_state_missing_archive() {
     solana_logger::setup_with_default(RUST_LOG_FILTER);
-    const FULL_SNAPSHOT_INTERVAL: Slot = 20;
-    const INCREMENTAL_SNAPSHOT_INTERVAL: Slot = 10;
+    const FULL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(20).unwrap());
+    const INCREMENTAL_SNAPSHOT_INTERVAL: SnapshotInterval =
+        SnapshotInterval::Slots(NonZeroU64::new(10).unwrap());
 
     let validator_config =
         SnapshotValidatorConfig::new(FULL_SNAPSHOT_INTERVAL, INCREMENTAL_SNAPSHOT_INTERVAL, 7);
@@ -5902,7 +5907,7 @@ fn test_invalid_forks_persisted_on_restart() {
             cluster.genesis_config.hash(),
         );
         let last_hash = entries.last().unwrap().hash;
-        let version = solana_sdk::shred_version::version_from_hash(&last_hash);
+        let version = solana_shred_version::version_from_hash(&last_hash);
         let dup_shreds = Shredder::new(dup_slot, parent, 0, version)
             .unwrap()
             .entries_to_shreds(

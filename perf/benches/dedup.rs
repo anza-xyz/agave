@@ -13,6 +13,10 @@ use {
     test::Bencher,
 };
 
+#[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 const NUM: usize = 4096;
 
 fn test_packet_with_size(size: usize, rng: &mut ThreadRng) -> Vec<u8> {
@@ -33,9 +37,10 @@ fn do_bench_dedup_packets(bencher: &mut Bencher, mut batches: Vec<PacketBatch>) 
             0.001,                  // false_positive_rate
             Duration::from_secs(2), // reset_cycle
         );
-        batches
-            .iter_mut()
-            .for_each(|b| b.iter_mut().for_each(|p| p.meta_mut().set_discard(false)));
+        batches.iter_mut().for_each(|b| {
+            b.iter_mut()
+                .for_each(|mut p| p.meta_mut().set_discard(false))
+        });
     });
 }
 

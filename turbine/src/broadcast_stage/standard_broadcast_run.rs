@@ -7,11 +7,13 @@ use {
     },
     crate::cluster_nodes::ClusterNodesCache,
     solana_entry::entry::Entry,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
     solana_ledger::{
         blockstore,
         shred::{shred_code, ProcessShredsStats, ReedSolomonCache, Shred, ShredType, Shredder},
     },
-    solana_sdk::{hash::Hash, signature::Keypair, timing::AtomicInterval},
+    solana_time_utils::AtomicInterval,
     std::{borrow::Cow, sync::RwLock},
     tokio::sync::mpsc::Sender as AsyncSender,
 };
@@ -487,7 +489,10 @@ mod test {
         super::*,
         rand::Rng,
         solana_entry::entry::create_ticks,
+        solana_genesis_config::GenesisConfig,
         solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::Blockstore,
             genesis_utils::create_genesis_config,
@@ -496,11 +501,7 @@ mod test {
         },
         solana_net_utils::bind_to_unspecified,
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            genesis_config::GenesisConfig,
-            hash::Hash,
-            signature::{Keypair, Signer},
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         std::{ops::Deref, sync::Arc, time::Duration},
     };
@@ -811,7 +812,7 @@ mod test {
         let mut bs = StandardBroadcastRun::new(0);
         bs.slot = 1;
         bs.parent = 0;
-        let entries = create_ticks(10_000, 1, solana_sdk::hash::Hash::default());
+        let entries = create_ticks(10_000, 1, solana_hash::Hash::default());
 
         let mut stats = ProcessShredsStats::default();
 

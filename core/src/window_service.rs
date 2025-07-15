@@ -14,6 +14,7 @@ use {
     assert_matches::debug_assert_matches,
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
     rayon::{prelude::*, ThreadPool},
+    solana_clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics, PossibleDuplicateShred},
@@ -24,7 +25,6 @@ use {
     solana_metrics::inc_new_counter_error,
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::bank_forks::BankForks,
-    solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
     solana_streamer::evicting_sender::EvictingSender,
     solana_turbine::cluster_nodes,
     std::{
@@ -96,7 +96,7 @@ impl WindowServiceMetrics {
             Error::RecvTimeout(_) => self.num_errors_cross_beam_recv_timeout += 1,
             Error::Blockstore(err) => {
                 self.num_errors_blockstore += 1;
-                error!("blockstore error: {}", err);
+                error!("blockstore error: {err}");
             }
             _ => self.num_errors_other += 1,
         }
@@ -464,6 +464,8 @@ mod test {
         rand::Rng,
         solana_entry::entry::{create_ticks, Entry},
         solana_gossip::contact_info::ContactInfo,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{make_many_slot_entries, Blockstore},
             genesis_utils::create_genesis_config,
@@ -471,12 +473,9 @@ mod test {
             shred::{ProcessShredsStats, Shredder},
         },
         solana_runtime::bank::Bank,
-        solana_sdk::{
-            hash::Hash,
-            signature::{Keypair, Signer},
-            timing::timestamp,
-        },
+        solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
+        solana_time_utils::timestamp,
     };
 
     fn local_entries_to_shred(

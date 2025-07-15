@@ -5,22 +5,22 @@ extern crate test;
 
 use {
     log::*,
+    solana_client_traits::{AsyncClient, SyncClient},
+    solana_clock::MAX_RECENT_BLOCKHASHES,
+    solana_genesis_config::create_genesis_config,
+    solana_hash::Hash,
+    solana_keypair::Keypair,
+    solana_message::Message,
     solana_program_runtime::declare_process_instruction,
+    solana_pubkey::Pubkey,
     solana_runtime::{
         bank::{test_utils::goto_end_of_slot, *},
         bank_client::BankClient,
         loader_utils::create_invoke_instruction,
     },
-    solana_sdk::{
-        client::{AsyncClient, SyncClient},
-        clock::MAX_RECENT_BLOCKHASHES,
-        genesis_config::create_genesis_config,
-        message::Message,
-        pubkey::Pubkey,
-        signature::{Keypair, Signer},
-        transaction::Transaction,
-    },
+    solana_signer::Signer,
     solana_svm::transaction_processing_callback::TransactionProcessingCallback,
+    solana_transaction::Transaction,
     std::{sync::Arc, thread::sleep, time::Duration},
     test::Bencher,
 };
@@ -38,7 +38,7 @@ const NOOP_PROGRAM_ID: [u8; 32] = [
 pub fn create_builtin_transactions(
     bank_client: &BankClient,
     mint_keypair: &Keypair,
-) -> Vec<Transaction> {
+) -> Vec<(Transaction, Hash)> {
     let program_id = Pubkey::from(BUILTIN_PROGRAM_ID);
 
     (0..4096)
@@ -52,7 +52,9 @@ pub fn create_builtin_transactions(
             let instruction = create_invoke_instruction(rando0.pubkey(), program_id, &1u8);
             let blockhash = bank_client.get_latest_blockhash().unwrap();
             let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-            Transaction::new(&[&rando0], message, blockhash)
+            let message_hash = message.hash();
+            let tx = Transaction::new(&[&rando0], message, blockhash);
+            (tx, message_hash)
         })
         .collect()
 }
@@ -60,7 +62,7 @@ pub fn create_builtin_transactions(
 pub fn create_native_loader_transactions(
     bank_client: &BankClient,
     mint_keypair: &Keypair,
-) -> Vec<Transaction> {
+) -> Vec<(Transaction, Hash)> {
     let program_id = Pubkey::from(NOOP_PROGRAM_ID);
 
     (0..4096)
@@ -74,48 +76,42 @@ pub fn create_native_loader_transactions(
             let instruction = create_invoke_instruction(rando0.pubkey(), program_id, &1u8);
             let blockhash = bank_client.get_latest_blockhash().unwrap();
             let message = Message::new(&[instruction], Some(&mint_keypair.pubkey()));
-            Transaction::new(&[&rando0], message, blockhash)
+            let message_hash = message.hash();
+            let tx = Transaction::new(&[&rando0], message, blockhash);
+            (tx, message_hash)
         })
         .collect()
 }
 
-fn sync_bencher(bank: &Bank, _bank_client: &BankClient, transactions: &[Transaction]) {
-    let results = bank.process_transactions(transactions.iter());
+fn sync_bencher(bank: &Bank, _bank_client: &BankClient, transactions: &[(Transaction, Hash)]) {
+    let results = bank.process_transactions(transactions.iter().map(|(tx, _)| tx));
     assert!(results.iter().all(Result::is_ok));
 }
 
-fn async_bencher(bank: &Bank, bank_client: &BankClient, transactions: &[Transaction]) {
-    for transaction in transactions.iter().cloned() {
+fn async_bencher(bank: &Bank, bank_client: &BankClient, transactions: &[(Transaction, Hash)]) {
+    for (transaction, _hash) in transactions.iter().cloned() {
         bank_client.async_send_transaction(transaction).unwrap();
     }
+    let (last_transaction, last_tx_hash) = transactions.last().unwrap();
     for _ in 0..1_000_000_000_u64 {
-        if bank
-            .get_signature_status(transactions.last().unwrap().signatures.first().unwrap())
-            .is_some()
-        {
+        if let Some((_slot, status)) = bank.get_committed_transaction_status_and_slot(
+            last_tx_hash,
+            &last_transaction.message.recent_blockhash,
+        ) {
+            if !status {
+                panic!("transaction failed");
+            }
             break;
         }
         sleep(Duration::from_nanos(1));
-    }
-    if bank
-        .get_signature_status(transactions.last().unwrap().signatures.first().unwrap())
-        .unwrap()
-        .is_err()
-    {
-        error!(
-            "transaction failed: {:?}",
-            bank.get_signature_status(transactions.last().unwrap().signatures.first().unwrap())
-                .unwrap()
-        );
-        panic!();
     }
 }
 
 #[allow(clippy::type_complexity)]
 fn do_bench_transactions(
     bencher: &mut Bencher,
-    bench_work: &dyn Fn(&Bank, &BankClient, &[Transaction]),
-    create_transactions: &dyn Fn(&BankClient, &Keypair) -> Vec<Transaction>,
+    bench_work: &dyn Fn(&Bank, &BankClient, &[(Transaction, Hash)]),
+    create_transactions: &dyn Fn(&BankClient, &Keypair) -> Vec<(Transaction, Hash)>,
 ) {
     solana_logger::setup();
     let ns_per_s = 1_000_000_000;
@@ -139,7 +135,7 @@ fn do_bench_transactions(
     let transactions = create_transactions(&bank_client, &mint_keypair);
 
     // Do once to fund accounts, load modules, etc...
-    let results = bank.process_transactions(transactions.iter());
+    let results = bank.process_transactions(transactions.iter().map(|(tx, _)| tx));
     assert!(results.iter().all(Result::is_ok));
 
     bencher.iter(|| {

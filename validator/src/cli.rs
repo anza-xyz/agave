@@ -14,26 +14,21 @@ use {
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_url_or_moniker,
         },
     },
+    solana_clock::Slot,
     solana_core::banking_trace::BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT,
+    solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_faucet::faucet::{self, FAUCET_PORT},
+    solana_hash::Hash,
     solana_net_utils::{MINIMUM_VALIDATOR_PORT_RANGE_WIDTH, VALIDATOR_PORT_RANGE},
+    solana_quic_definitions::QUIC_PORT_OFFSET,
     solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{rpc::MAX_REQUEST_BODY_SIZE, rpc_pubsub_service::PubSubConfig},
     solana_rpc_client_api::request::{DELINQUENT_VALIDATOR_SLOT_DISTANCE, MAX_MULTIPLE_ACCOUNTS},
-    solana_runtime::{
-        snapshot_bank_utils::{
-            DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-            DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        },
-        snapshot_utils::{
-            SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION,
-            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-            DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
-        },
-    },
-    solana_sdk::{
-        clock::Slot, epoch_schedule::MINIMUM_SLOTS_PER_EPOCH, hash::Hash, quic::QUIC_PORT_OFFSET,
-        rpc_port,
+    solana_runtime::snapshot_utils::{
+        SnapshotVersion, DEFAULT_ARCHIVE_COMPRESSION, DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
+        DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN,
     },
     solana_send_transaction_service::send_transaction_service::{self},
     solana_streamer::quic::{
@@ -42,7 +37,7 @@ use {
         DEFAULT_MAX_UNSTAKED_CONNECTIONS, DEFAULT_QUIC_ENDPOINTS,
     },
     solana_tpu_client::tpu_client::{DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_VOTE_USE_QUIC},
-    std::{path::PathBuf, str::FromStr},
+    std::{cmp::Ordering, path::PathBuf, str::FromStr},
 };
 
 pub mod thread_args;
@@ -131,200 +126,9 @@ fn deprecated_arguments() -> Vec<DeprecatedArg> {
         (@into-option $v:expr) => { Some($v) };
     }
 
-    // deprecated in v2.1 by PR #2721
-    add_arg!(Arg::with_name("accounts_index_memory_limit_mb")
-        .long("accounts-index-memory-limit-mb")
-        .value_name("MEGABYTES")
-        .validator(is_parsable::<usize>)
-        .takes_value(true)
-        .help(
-            "How much memory the accounts index can consume. If this is exceeded, some \
-         account index entries will be stored on disk.",
-        ),
-        usage_warning: "index memory limit has been deprecated. The limit arg has no effect now.",
-    );
-    add_arg!(Arg::with_name("accountsdb_repl_bind_address")
-        .long("accountsdb-repl-bind-address")
-        .value_name("HOST")
-        .takes_value(true)
-        .validator(solana_net_utils::is_host)
-        .help(
-            "IP address to bind the AccountsDb Replication port [default: use \
-                     --bind-address]",
-        ));
-    add_arg!(Arg::with_name("accountsdb_repl_port")
-        .long("accountsdb-repl-port")
-        .value_name("PORT")
-        .takes_value(true)
-        .validator(port_validator)
-        .help("Enable AccountsDb Replication Service on this port"));
-    add_arg!(Arg::with_name("accountsdb_repl_threads")
-        .long("accountsdb-repl-threads")
-        .value_name("NUMBER")
-        .validator(is_parsable::<usize>)
-        .takes_value(true)
-        .help("Number of threads to use for servicing AccountsDb Replication requests"));
     add_arg!(Arg::with_name("disable_accounts_disk_index")
         .long("disable-accounts-disk-index")
-        .help("Disable the disk-based accounts index if it is enabled by default.")
-        .conflicts_with("accounts_index_memory_limit_mb"));
-    add_arg!(
-        Arg::with_name("disable_quic_servers")
-            .long("disable-quic-servers")
-            .takes_value(false),
-        usage_warning: "The quic server cannot be disabled.",
-    );
-    add_arg!(Arg::with_name("enable_accountsdb_repl")
-        .long("enable-accountsdb-repl")
-        .takes_value(false)
-        .help("Enable AccountsDb Replication"));
-    add_arg!(
-        Arg::with_name("enable_cpi_and_log_storage")
-            .long("enable-cpi-and-log-storage")
-            .requires("enable_rpc_transaction_history")
-            .takes_value(false)
-            .help(
-                "Include CPI inner instructions, logs and return data in the historical \
-                 transaction info stored",
-            ),
-        replaced_by: "enable-extended-tx-metadata-storage",
-    );
-    add_arg!(
-        Arg::with_name("enable_quic_servers")
-            .long("enable-quic-servers"),
-        usage_warning: "The quic server is now enabled by default.",
-    );
-    // All etcd config is deprecated as of v2.2
-    add_arg!(Arg::with_name("etcd_cacert_file")
-        .long("etcd-cacert-file")
-        .required_if("tower_storage", "etcd")
-        .value_name("FILE")
-        .takes_value(true)
-        .help("verify the TLS certificate of the etcd endpoint using this CA bundle"),);
-    add_arg!(Arg::with_name("etcd_cert_file")
-        .long("etcd-cert-file")
-        .required_if("tower_storage", "etcd")
-        .value_name("FILE")
-        .takes_value(true)
-        .help("TLS certificate to use when establishing a connection to the etcd endpoint"),);
-    add_arg!(Arg::with_name("etcd_domain_name")
-        .long("etcd-domain-name")
-        .required_if("tower_storage", "etcd")
-        .value_name("DOMAIN")
-        .default_value("localhost")
-        .takes_value(true)
-        .help("domain name against which to verify the etcd server’s TLS certificate"),);
-    add_arg!(Arg::with_name("etcd_endpoint")
-        .long("etcd-endpoint")
-        .required_if("tower_storage", "etcd")
-        .value_name("HOST:PORT")
-        .takes_value(true)
-        .multiple(true)
-        .validator(solana_net_utils::is_host_port)
-        .help("etcd gRPC endpoint to connect with"),);
-    add_arg!(Arg::with_name("etcd_key_file")
-        .long("etcd-key-file")
-        .required_if("tower_storage", "etcd")
-        .value_name("FILE")
-        .takes_value(true)
-        .help("TLS key file to use when establishing a connection to the etcd endpoint"),);
-
-    add_arg!(Arg::with_name("minimal_rpc_api")
-        .long("minimal-rpc-api")
-        .takes_value(false)
-        .help("Only expose the RPC methods required to serve snapshots to other nodes"));
-    add_arg!(
-        Arg::with_name("no_check_vote_account")
-            .long("no-check-vote-account")
-            .takes_value(false)
-            .conflicts_with("no_voting")
-            .requires("entrypoint")
-            .help("Skip the RPC vote account sanity check"),
-        usage_warning: "Vote account sanity checks are no longer performed by default.",
-    );
-    add_arg!(Arg::with_name("no_rocksdb_compaction")
-        .long("no-rocksdb-compaction")
-        .takes_value(false)
-        .help("Disable manual compaction of the ledger database"));
-    add_arg!(
-        Arg::with_name("replay_slots_concurrently")
-            .long("replay-slots-concurrently")
-            .help("Allow concurrent replay of slots on different forks")
-            .conflicts_with("replay_forks_threads"),
-        replaced_by: "replay_forks_threads",
-        usage_warning: "Equivalent behavior to this flag would be --replay-forks-threads 4");
-    add_arg!(Arg::with_name("rocksdb_compaction_interval")
-        .long("rocksdb-compaction-interval-slots")
-        .value_name("ROCKSDB_COMPACTION_INTERVAL_SLOTS")
-        .takes_value(true)
-        .help("Number of slots between compacting ledger"));
-    // Deprecated in v2.2
-    add_arg!(Arg::with_name("rocksdb_fifo_shred_storage_size")
-        .long("rocksdb-fifo-shred-storage-size")
-        .value_name("SHRED_STORAGE_SIZE_BYTES")
-        .takes_value(true)
-        .validator(is_parsable::<u64>)
-        .help(
-            "The shred storage size in bytes. The suggested value is at least 50% of your ledger \
-             storage size. If this argument is unspecified, we will assign a proper value based \
-             on --limit-ledger-size. If --limit-ledger-size is not presented, it means there is \
-             no limitation on the ledger size and thus rocksdb_fifo_shred_storage_size will also \
-             be unbounded.",
-        ));
-    add_arg!(Arg::with_name("rocksdb_max_compaction_jitter")
-        .long("rocksdb-max-compaction-jitter-slots")
-        .value_name("ROCKSDB_MAX_COMPACTION_JITTER_SLOTS")
-        .takes_value(true)
-        .help("Introduce jitter into the compaction to offset compaction operation"));
-    add_arg!(Arg::with_name("rpc_pubsub_max_connections")
-        .long("rpc-pubsub-max-connections")
-        .value_name("NUMBER")
-        .takes_value(true)
-        .validator(is_parsable::<usize>)
-        .help(
-            "The maximum number of connections that RPC PubSub will support. This is a \
-             hard limit and no new connections beyond this limit can be made until an old \
-             connection is dropped."
-        ));
-    add_arg!(Arg::with_name("rpc_pubsub_max_fragment_size")
-        .long("rpc-pubsub-max-fragment-size")
-        .value_name("BYTES")
-        .takes_value(true)
-        .validator(is_parsable::<usize>)
-        .help(
-            "The maximum length in bytes of acceptable incoming frames. Messages longer \
-             than this will be rejected"
-        ));
-    add_arg!(Arg::with_name("rpc_pubsub_max_in_buffer_capacity")
-        .long("rpc-pubsub-max-in-buffer-capacity")
-        .value_name("BYTES")
-        .takes_value(true)
-        .validator(is_parsable::<usize>)
-        .help("The maximum size in bytes to which the incoming websocket buffer can grow."));
-    add_arg!(Arg::with_name("rpc_pubsub_max_out_buffer_capacity")
-        .long("rpc-pubsub-max-out-buffer-capacity")
-        .value_name("BYTES")
-        .takes_value(true)
-        .validator(is_parsable::<usize>)
-        .help("The maximum size in bytes to which the outgoing websocket buffer can grow."));
-    add_arg!(
-        Arg::with_name("skip_poh_verify")
-            .long("skip-poh-verify")
-            .takes_value(false)
-            .help("Skip ledger verification at validator bootup."),
-        replaced_by: "skip-startup-ledger-verification",
-    );
-    // Deprecated as of v2.2
-    add_arg!(
-        Arg::with_name("tower_storage")
-            .long("tower-storage")
-            .possible_values(&["file", "etcd"])
-            .default_value("file")
-            .takes_value(true)
-            .help("Where to store the tower"),
-        usage_warning: "\"etcd\" is no longer supported, and the functionality from setting \
-            \"file\" will be become the sole behavior",
-    );
+        .help("Disable the disk-based accounts index if it is enabled by default."));
 
     res
 }
@@ -498,9 +302,12 @@ impl DefaultArgs {
                 DEFAULT_MAX_INCREMENTAL_SNAPSHOT_ARCHIVES_TO_RETAIN.to_string(),
             snapshot_packager_niceness_adjustment: "0".to_string(),
             full_snapshot_archive_interval_slots: DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
+                .get()
                 .to_string(),
             incremental_snapshot_archive_interval_slots:
-                DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS.to_string(),
+                DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS
+                    .get()
+                    .to_string(),
             min_snapshot_download_speed: DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED.to_string(),
             max_snapshot_download_abort: MAX_SNAPSHOT_DOWNLOAD_ABORT.to_string(),
             snapshot_archive_format: DEFAULT_ARCHIVE_COMPRESSION.to_string(),
@@ -832,6 +639,26 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 ),
         )
         .arg(
+            Arg::with_name("inflation_fixed")
+                .long("inflation-fixed")
+                .value_name("RATE")
+                .validator(|value| {
+                    value
+                        .parse::<f64>()
+                        .map_err(|err| format!("error parsing '{value}': {err}"))
+                        .and_then(|rate| match rate.partial_cmp(&0.0) {
+			    Some(Ordering::Greater) | Some(Ordering::Equal) => Ok(()),
+			    Some(Ordering::Less) | None => Err(String::from("value must be >= 0")),
+                        })
+                })
+                .takes_value(true)
+                .allow_hyphen_values(true)
+                .help(
+                    "Override default inflation with fixed rate. If the ledger already exists then \
+                     this parameter is silently ignored",
+                ),
+        )
+        .arg(
             Arg::with_name("gossip_port")
                 .long("gossip-port")
                 .value_name("PORT")
@@ -844,10 +671,8 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                 .value_name("HOST")
                 .takes_value(true)
                 .validator(solana_net_utils::is_host)
-                .help(
-                    "Gossip DNS name or IP address for the validator to advertise in gossip \
-                     [default: 127.0.0.1]",
-                ),
+                .hidden(hidden_unless_forced())
+                .help("DEPRECATED: Use --bind-address instead."),
         )
         .arg(
             Arg::with_name("dynamic_port_range")
@@ -879,6 +704,19 @@ pub fn test_app<'a>(version: &'a str, default_args: &'a DefaultTestArgs) -> App<
                     "Copy an account from the cluster referenced by the --url argument the \
                      genesis configuration. If the ledger already exists then this parameter is \
                      silently ignored",
+                ),
+        )
+        .arg(
+            Arg::with_name("deep_clone_address_lookup_table")
+                .long("deep-clone-address-lookup-table")
+                .takes_value(true)
+                .validator(is_pubkey_or_keypair)
+                .multiple(true)
+                .requires("json_rpc_url")
+                .help(
+                    "Copy an address lookup table and all accounts it references from the cluster referenced by the --url \
+                     argument in the genesis configuration. If the ledger already exists then this \
+                     parameter is silently ignored",
                 ),
         )
         .arg(
@@ -1037,7 +875,7 @@ pub struct DefaultTestArgs {
 impl DefaultTestArgs {
     pub fn new() -> Self {
         DefaultTestArgs {
-            rpc_port: rpc_port::DEFAULT_RPC_PORT.to_string(),
+            rpc_port: 8899.to_string(),
             faucet_port: FAUCET_PORT.to_string(),
             /* 10,000 was derived empirically by watching the size
              * of the rocksdb/ directory self-limit itself to the

@@ -1,10 +1,8 @@
 //! Example Rust-based SBF program tests loop iteration
 
-extern crate solana_program;
 use {
-    solana_program::{
-        custom_heap_default, custom_panic_default, entrypoint::SUCCESS, log::sol_log_64,
-    },
+    solana_program::log::sol_log_64,
+    solana_program_entrypoint::{custom_heap_default, custom_panic_default, SUCCESS},
     solana_sbf_rust_param_passing_dep::{Data, TestDep},
 };
 

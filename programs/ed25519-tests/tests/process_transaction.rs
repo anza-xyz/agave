@@ -1,13 +1,9 @@
 use {
-    assert_matches::assert_matches,
-    solana_program_test::*,
-    solana_sdk::{
-        ed25519_instruction::new_ed25519_instruction,
-        instruction::InstructionError,
-        precompiles::PrecompileError,
-        signature::Signer,
-        transaction::{Transaction, TransactionError},
-    },
+    assert_matches::assert_matches, ed25519_dalek::ed25519::signature::Signer as EdSigner,
+    solana_ed25519_program::new_ed25519_instruction_with_signature,
+    solana_instruction::error::InstructionError, solana_precompile_error::PrecompileError,
+    solana_program_test::*, solana_signer::Signer, solana_transaction::Transaction,
+    solana_transaction_error::TransactionError,
 };
 
 // Since ed25519_dalek is still using the old version of rand, this test
@@ -34,7 +30,9 @@ async fn test_success() {
 
     let privkey = generate_keypair();
     let message_arr = b"hello";
-    let instruction = new_ed25519_instruction(&privkey, message_arr);
+    let signature = privkey.sign(message_arr).to_bytes();
+    let pubkey = privkey.public.to_bytes();
+    let instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
     let transaction = Transaction::new_signed_with_payer(
         &[instruction],
@@ -56,7 +54,9 @@ async fn test_failure() {
 
     let privkey = generate_keypair();
     let message_arr = b"hello";
-    let mut instruction = new_ed25519_instruction(&privkey, message_arr);
+    let signature = privkey.sign(message_arr).to_bytes();
+    let pubkey = privkey.public.to_bytes();
+    let mut instruction = new_ed25519_instruction_with_signature(message_arr, &signature, &pubkey);
 
     instruction.data[0] += 1;
 

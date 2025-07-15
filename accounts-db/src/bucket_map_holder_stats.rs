@@ -48,7 +48,6 @@ pub struct BucketMapHolderStats {
     pub bg_waiting_us: AtomicU64,
     pub bg_throttling_wait_us: AtomicU64,
     pub count_in_mem: AtomicUsize,
-    pub per_bucket_count: Vec<AtomicUsize>,
     pub flush_entries_updated_on_disk: AtomicU64,
     pub flush_entries_evicted_from_mem: AtomicU64,
     pub active_threads: AtomicU64,
@@ -69,7 +68,6 @@ impl BucketMapHolderStats {
     pub fn new(bins: usize) -> BucketMapHolderStats {
         BucketMapHolderStats {
             bins: bins as u64,
-            per_bucket_count: (0..bins).map(|_| AtomicUsize::default()).collect(),
             ..BucketMapHolderStats::default()
         }
     }
@@ -88,24 +86,20 @@ impl BucketMapHolderStats {
         self.count.fetch_sub(1, Ordering::Relaxed);
     }
 
-    pub fn inc_mem_count(&self, bin: usize) {
-        self.add_mem_count(bin, 1);
+    pub fn inc_mem_count(&self) {
+        self.add_mem_count(1);
     }
 
-    pub fn dec_mem_count(&self, bin: usize) {
-        self.sub_mem_count(bin, 1);
+    pub fn dec_mem_count(&self) {
+        self.sub_mem_count(1);
     }
 
-    pub fn add_mem_count(&self, bin: usize, count: usize) {
-        let per_bucket = self.per_bucket_count.get(bin);
+    pub fn add_mem_count(&self, count: usize) {
         self.count_in_mem.fetch_add(count, Ordering::Relaxed);
-        per_bucket.map(|stat| stat.fetch_add(count, Ordering::Relaxed));
     }
 
-    pub fn sub_mem_count(&self, bin: usize, count: usize) {
-        let per_bucket = self.per_bucket_count.get(bin);
+    pub fn sub_mem_count(&self, count: usize) {
         self.count_in_mem.fetch_sub(count, Ordering::Relaxed);
-        per_bucket.map(|stat| stat.fetch_sub(count, Ordering::Relaxed));
     }
 
     fn ms_per_age<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
@@ -167,14 +161,6 @@ impl BucketMapHolderStats {
         self.count.load(Ordering::Relaxed)
     }
 
-    pub fn count_in_bucket(&self, bucket: usize) -> usize {
-        if bucket < self.per_bucket_count.len() {
-            self.per_bucket_count[bucket].load(Ordering::Relaxed)
-        } else {
-            0
-        }
-    }
-
     /// This is an estimate of the # of items in mem that are awaiting flushing to disk.
     /// returns (# items in mem) - (# items we intend to hold in mem for performance heuristics)
     /// The result is also an estimate because 'held_in_mem' is based on a stat that is swapped out when stats are reported.
@@ -201,11 +187,6 @@ impl BucketMapHolderStats {
 
         let ms_per_age = self.ms_per_age(storage, elapsed_ms);
 
-        let in_mem_per_bucket_counts = self
-            .per_bucket_count
-            .iter()
-            .map(|count| count.load(Ordering::Relaxed))
-            .collect::<Vec<_>>();
         let disk = storage.disk.as_ref();
         let disk_per_bucket_counts = disk
             .map(|disk| {
@@ -214,7 +195,6 @@ impl BucketMapHolderStats {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let in_mem_stats = Self::get_stats(in_mem_per_bucket_counts);
         let disk_stats = Self::get_stats(disk_per_bucket_counts);
 
         const US_PER_MS: u64 = 1_000;
@@ -225,7 +205,7 @@ impl BucketMapHolderStats {
 
         // sum of elapsed time in each thread
         let mut thread_time_elapsed_ms = elapsed_ms * storage.threads as u64;
-        if disk.is_some() {
+        if storage.is_disk_index_enabled() {
             if was_startup {
                 // these stats only apply at startup
                 datapoint_info!(
@@ -305,10 +285,6 @@ impl BucketMapHolderStats {
                     self.held_in_mem.slot_list_cached.swap(0, Ordering::Relaxed),
                     i64
                 ),
-                ("min_in_bin_mem", in_mem_stats.0, i64),
-                ("max_in_bin_mem", in_mem_stats.1, i64),
-                ("count_from_bins_mem", in_mem_stats.2, i64),
-                ("median_from_bins_mem", in_mem_stats.3, i64),
                 ("min_in_bin_disk", disk_stats.0, i64),
                 ("max_in_bin_disk", disk_stats.1, i64),
                 ("count_from_bins_disk", disk_stats.2, i64),
@@ -588,10 +564,6 @@ impl BucketMapHolderStats {
                     ),
                     f64
                 ),
-                ("min_in_bin_mem", in_mem_stats.0, i64),
-                ("max_in_bin_mem", in_mem_stats.1, i64),
-                ("count_from_bins_mem", in_mem_stats.2, i64),
-                ("median_from_bins_mem", in_mem_stats.3, i64),
                 (
                     "gets_from_mem",
                     self.gets_from_mem.swap(0, Ordering::Relaxed),

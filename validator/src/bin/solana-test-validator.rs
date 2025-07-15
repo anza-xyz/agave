@@ -7,33 +7,33 @@ use {
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::*,
+    solana_account::AccountSharedData,
     solana_accounts_db::accounts_index::{AccountIndex, AccountSecondaryIndexes},
     solana_clap_utils::{
         input_parsers::{pubkey_of, pubkeys_of, value_of},
         input_validators::normalize_to_url_if_moniker,
     },
+    solana_clock::Slot,
     solana_core::consensus::tower_storage::FileTowerStorage,
+    solana_epoch_schedule::EpochSchedule,
     solana_faucet::faucet::run_local_faucet_with_port,
+    solana_inflation::Inflation,
+    solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_logger::redirect_stderr_to_file,
+    solana_native_token::sol_to_lamports,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc::{
         rpc::{JsonRpcConfig, RpcBigtableConfig},
         rpc_pubsub_service::PubSubConfig,
     },
     solana_rpc_client::rpc_client::RpcClient,
-    solana_sdk::{
-        account::AccountSharedData,
-        clock::Slot,
-        epoch_schedule::EpochSchedule,
-        native_token::sol_to_lamports,
-        pubkey::Pubkey,
-        rent::Rent,
-        signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
-        system_program,
-    },
+    solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
+    solana_system_interface::program as system_program,
     solana_test_validator::*,
     std::{
-        collections::HashSet,
+        collections::{HashMap, HashSet},
         fs, io,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         path::{Path, PathBuf},
@@ -159,7 +159,9 @@ fn main() {
     let faucet_port = value_t_or_exit!(matches, "faucet_port", u16);
     let ticks_per_slot = value_t!(matches, "ticks_per_slot", u64).ok();
     let slots_per_epoch = value_t!(matches, "slots_per_epoch", Slot).ok();
+    let inflation_fixed = value_t!(matches, "inflation_fixed", f64).ok();
     let gossip_host = matches.value_of("gossip_host").map(|gossip_host| {
+        warn!("--gossip-host is deprecated. Use --bind-address instead.");
         solana_net_utils::parse_host(gossip_host).unwrap_or_else(|err| {
             eprintln!("Failed to parse --gossip-host: {err}");
             exit(1);
@@ -181,6 +183,15 @@ fn main() {
         eprintln!("Failed to parse --bind-address: {err}");
         exit(1);
     });
+
+    let advertised_ip = if let Some(ip) = gossip_host {
+        ip
+    } else if !bind_address.is_unspecified() && !bind_address.is_loopback() {
+        bind_address
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+
     let compute_unit_limit = value_t!(matches, "compute_unit_limit", u64).ok();
 
     let faucet_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), faucet_port);
@@ -215,7 +226,7 @@ fn main() {
 
             upgradeable_programs_to_load.push(UpgradeableProgramInfo {
                 program_id: address,
-                loader: solana_sdk::bpf_loader_upgradeable::id(),
+                loader: solana_sdk_ids::bpf_loader_upgradeable::id(),
                 upgrade_authority: Pubkey::default(),
                 program_path,
             });
@@ -244,7 +255,7 @@ fn main() {
 
             upgradeable_programs_to_load.push(UpgradeableProgramInfo {
                 program_id: address,
-                loader: solana_sdk::bpf_loader_upgradeable::id(),
+                loader: solana_sdk_ids::bpf_loader_upgradeable::id(),
                 upgrade_authority: upgrade_authority_address,
                 program_path,
             });
@@ -284,6 +295,10 @@ fn main() {
         pubkeys_of(&matches, "clone_upgradeable_program")
             .map(|v| v.into_iter().collect())
             .unwrap_or_default();
+
+    let alt_accounts_to_clone: HashSet<_> = pubkeys_of(&matches, "deep_clone_address_lookup_table")
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default();
 
     let clone_feature_set = matches.is_present("clone_feature_set");
 
@@ -367,6 +382,7 @@ fn main() {
             ("mint_address", "--mint"),
             ("ticks_per_slot", "--ticks-per-slot"),
             ("slots_per_epoch", "--slots-per-epoch"),
+            ("inflation_fixed", "--inflation-fixed"),
             ("faucet_sol", "--faucet-sol"),
             ("deactivate_feature", "--deactivate-feature"),
         ] {
@@ -406,6 +422,7 @@ fn main() {
             start_progress: genesis.start_progress.clone(),
             start_time: std::time::SystemTime::now(),
             validator_exit: genesis.validator_exit.clone(),
+            validator_exit_backpressure: HashMap::default(),
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
             staked_nodes_overrides: genesis.staked_nodes_overrides.clone(),
             post_init: admin_service_post_init,
@@ -489,6 +506,18 @@ fn main() {
         }
     }
 
+    if !alt_accounts_to_clone.is_empty() {
+        if let Err(e) = genesis.deep_clone_address_lookup_table_accounts(
+            alt_accounts_to_clone,
+            cluster_rpc_client
+                .as_ref()
+                .expect("--deep-clone-address-lookup-table requires --json-rpc-url argument"),
+        ) {
+            println!("Error: alt_accounts_to_clone failed: {e}");
+            exit(1);
+        }
+    }
+
     if !accounts_to_maybe_clone.is_empty() {
         if let Err(e) = genesis.clone_accounts(
             accounts_to_maybe_clone,
@@ -543,9 +572,11 @@ fn main() {
         genesis.rent = Rent::with_slots_per_epoch(slots_per_epoch);
     }
 
-    if let Some(gossip_host) = gossip_host {
-        genesis.gossip_host(gossip_host);
+    if let Some(inflation_fixed) = inflation_fixed {
+        genesis.inflation(Inflation::new_fixed(inflation_fixed));
     }
+
+    genesis.gossip_host(advertised_ip);
 
     if let Some(gossip_port) = gossip_port {
         genesis.gossip_port(gossip_port);

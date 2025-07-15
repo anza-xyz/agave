@@ -170,7 +170,7 @@ check_dcou() {
     grep -q -F '"feature=\"dev-context-only-utils\""'
 }
 
-# Some binaries (like the notable agave-ledger-tool) need to acitivate
+# Some binaries (like the notable agave-ledger-tool) need to activate
 # the dev-context-only-utils feature flag to build.
 # Build those binaries separately to avoid the unwanted feature unification.
 # Note that `--workspace --exclude <dcou tainted packages>` is needed to really
