@@ -258,6 +258,10 @@ impl HandlerContext {
     fn banking_stage_helper(&self) -> &BankingStageHelper {
         self.banking_stage_helper.as_ref().unwrap()
     }
+
+    fn finish_handler(&mut self) {
+        self.banking_packet_receiver = never();
+    }
 }
 
 #[derive(Debug, Clone)]
