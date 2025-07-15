@@ -52,13 +52,15 @@ static_assertions::const_assert_eq!(
     solana_account_info::MAX_PERMITTED_DATA_INCREASE
 );
 
+/// `InstructionViewAccountVector` manages the creation of vectors for `InstructionAccount` and
+/// `AccountCallIndexes`, by accepting `InstructionAccountView`, and exposing an iterator of it.
 #[derive(Default, Clone)]
 pub struct InstructionAccountViewVector {
     metadata: Vec<InstructionAccount>,
     indexes: Vec<AccountCallIndexes>,
 }
 
-type ViewIterator<'a> = Map<
+type InstructionViewIterator<'a> = Map<
     Zip<Iter<'a, InstructionAccount>, Iter<'a, AccountCallIndexes>>,
     fn((&InstructionAccount, &AccountCallIndexes)) -> InstructionAccountView,
 >;
@@ -97,7 +99,7 @@ impl InstructionAccountViewVector {
         view_owner
     }
 
-    pub fn iter(&self) -> ViewIterator {
+    pub fn iter(&self) -> InstructionViewIterator {
         self.metadata
             .iter()
             .zip(self.indexes.iter())
@@ -110,10 +112,12 @@ impl InstructionAccountViewVector {
             })
     }
 
+    /// Retrieve only an element of the `InstructionAccount` vector as mutable.
     pub fn get_metadata_mut(&mut self, idx: usize) -> Option<&mut InstructionAccount> {
         self.metadata.get_mut(idx)
     }
 
+    /// Retrieve a range of the `InstructionAccount` vector as immutable.
     pub fn get_metadata(&self, range: Range<usize>) -> Option<&[InstructionAccount]> {
         self.metadata.get(range)
     }
@@ -141,6 +145,9 @@ impl InstructionAccountViewVector {
     }
 }
 
+
+/// `InstructionAccountView` is a view struct that merges `InstructionAccount` and
+/// `AccountCallIndexes` for easier handling outside of runtime.
 pub struct InstructionAccountView {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
@@ -184,9 +191,11 @@ impl InstructionAccountView {
     }
 }
 
-/// Index of an account inside of the TransactionContext or an InstructionContext.
+/// Index of an account inside the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
+/// `AccountCallIndexes` saves indexes of the account relative to the caller and callee.
+/// These values are only used by the runtime and are not accessible to programs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountCallIndexes {
     /// Points to the first occurrence in the parent `InstructionContext`
@@ -199,9 +208,11 @@ pub struct AccountCallIndexes {
     pub index_in_callee: IndexOfAccount,
 }
 
-/// Contains account meta data which varies between instruction.
+/// Contains account metadata which varies between instruction.
 ///
 /// It also contains indices to other structures for faster lookup.
+/// This struct is shared between programs and runtime, so it cannot be modified without a SIMD,
+/// and a feature gate.
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstructionAccount {
