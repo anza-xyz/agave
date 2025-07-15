@@ -836,11 +836,8 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        self.banking_stage_handler_context
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap();
+        self.banking_stage_handler_context.lock().unwrap().take();
+        //.unwrap();
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
