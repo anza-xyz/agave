@@ -101,8 +101,11 @@ fn get_test_interval(bank: &Bank) -> Option<Slot> {
         .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
         .0;
     let x: TestControl = data.deserialize_data().ok()?;
-    dbg!(&x);
     if x.test_interval_slots > 0 {
+        debug!(
+            "Alpenglow test interval set to {} slots",
+            x.test_interval_slots
+        );
         Some(x.test_interval_slots as Slot)
     } else {
         None
