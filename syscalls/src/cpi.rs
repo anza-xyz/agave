@@ -5,7 +5,8 @@ use {
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
     solana_program_runtime::{
-        invoke_context::SerializedAccountMetadata, serialization::create_memory_region_of_account,
+        invoke_context::SerializedAccountMetadata,
+        serialization::{create_memory_region_of_account, modify_memory_region_of_account},
     },
     solana_sbpf::ebpf,
     solana_stable_layout::stable_instruction::StableInstruction,
@@ -77,8 +78,7 @@ struct CallerAccount<'a> {
     // mapped inside the vm (see serialize_parameters() in
     // BpfExecutor::execute).
     //
-    // This is only set when stricter_abi_and_runtime_constraints is off (see the relevant comment in
-    // CallerAccount::from_account_info).
+    // This is only set when account_data_direct_mapping is off.
     serialized_data: &'a mut [u8],
     // Given the corresponding input AccountInfo::data, vm_data_addr points to
     // the pointer field and ref_to_len_in_vm points to the length field.
@@ -87,6 +87,41 @@ struct CallerAccount<'a> {
 }
 
 impl<'a> CallerAccount<'a> {
+    fn get_serialized_data(
+        memory_mapping: &MemoryMapping<'_>,
+        vm_addr: u64,
+        len: u64,
+        stricter_abi_and_runtime_constraints: bool,
+        account_data_direct_mapping: bool,
+    ) -> Result<&'a mut [u8], Error> {
+        if stricter_abi_and_runtime_constraints && account_data_direct_mapping {
+            Ok(&mut [])
+        } else if stricter_abi_and_runtime_constraints {
+            // Workaround the memory permissions (as these are from the PoV of being inside the VM)
+            let serialization_ptr = translate_slice_mut::<u8>(
+                memory_mapping,
+                solana_sbpf::ebpf::MM_INPUT_START,
+                1,
+                false, // Don't care since it is byte aligned
+            )?
+            .as_mut_ptr();
+            unsafe {
+                Ok(std::slice::from_raw_parts_mut(
+                    serialization_ptr
+                        .add(vm_addr.saturating_sub(solana_sbpf::ebpf::MM_INPUT_START) as usize),
+                    len as usize,
+                ))
+            }
+        } else {
+            translate_slice_mut::<u8>(
+                memory_mapping,
+                vm_addr,
+                len,
+                false, // Don't care since it is byte aligned
+            )
+        }
+    }
+
     // Create a CallerAccount given an AccountInfo.
     fn from_account_info(
         invoke_context: &InvokeContext,
@@ -186,29 +221,13 @@ impl<'a> CallerAccount<'a> {
             }
             let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
-
-            let serialized_data = if stricter_abi_and_runtime_constraints {
-                // when stricter_abi_and_runtime_constraints is enabled, the permissions on the
-                // realloc region can change during CPI so we must delay
-                // translating until when we know whether we're going to mutate
-                // the realloc region or not. Consider this case:
-                //
-                // [caller can't write to an account] <- we are here
-                // [callee grows and assigns account to the caller]
-                // [caller can now write to the account]
-                //
-                // If we always translated the realloc area here, we'd get a
-                // memory access violation since we can't write to the account
-                // _yet_, but we will be able to once the caller returns.
-                &mut []
-            } else {
-                translate_slice_mut::<u8>(
-                    memory_mapping,
-                    vm_data_addr,
-                    data.len() as u64,
-                    check_aligned,
-                )?
-            };
+            let serialized_data = CallerAccount::get_serialized_data(
+                memory_mapping,
+                vm_data_addr,
+                data.len() as u64,
+                stricter_abi_and_runtime_constraints,
+                invoke_context.account_data_direct_mapping,
+            )?;
             (serialized_data, vm_data_addr, ref_to_len_in_vm)
         };
 
@@ -280,17 +299,13 @@ impl<'a> CallerAccount<'a> {
                 .unwrap_or(u64::MAX),
         )?;
 
-        let serialized_data = if stricter_abi_and_runtime_constraints {
-            // See comment in CallerAccount::from_account_info()
-            &mut []
-        } else {
-            translate_slice_mut::<u8>(
-                memory_mapping,
-                account_info.data_addr,
-                account_info.data_len,
-                check_aligned,
-            )?
-        };
+        let serialized_data = CallerAccount::get_serialized_data(
+            memory_mapping,
+            account_info.data_addr,
+            account_info.data_len,
+            stricter_abi_and_runtime_constraints,
+            invoke_context.account_data_direct_mapping,
+        )?;
 
         // we already have the host addr we want: &mut account_info.data_len.
         // The account info might be read only in the vm though, so we translate
@@ -1101,7 +1116,7 @@ fn update_callee_account(
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
-    _account_data_direct_mapping: bool,
+    account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
     let mut must_update_caller = false;
 
@@ -1127,6 +1142,9 @@ fn update_callee_account(
             callee_account.set_data_length(post_len)?;
             // pointer to data may have changed, so caller must be updated
             must_update_caller = true;
+        }
+        if !account_data_direct_mapping && callee_account.can_data_be_changed().is_ok() {
+            callee_account.set_data_from_slice(caller_account.serialized_data)?;
         }
     } else {
         // The redundant check helps to avoid the expensive data comparison if we can
@@ -1154,7 +1172,7 @@ fn update_caller_account_region(
     check_aligned: bool,
     caller_account: &CallerAccount,
     callee_account: &mut BorrowedAccount<'_>,
-    _account_data_direct_mapping: bool,
+    account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
     let address_space_reserved_for_account = if is_caller_loader_deprecated {
@@ -1173,7 +1191,13 @@ fn update_caller_account_region(
             .ok_or_else(|| Box::new(InstructionError::MissingAccount))?;
         // vm_data_addr must always point to the beginning of the region
         debug_assert_eq!(region.vm_addr, caller_account.vm_data_addr);
-        let new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
+        let mut new_region;
+        if !account_data_direct_mapping {
+            new_region = region.clone();
+            modify_memory_region_of_account(callee_account, &mut new_region);
+        } else {
+            new_region = create_memory_region_of_account(callee_account, region.vm_addr)?;
+        }
         memory_mapping.replace_region(region_index, new_region)?;
     }
 
@@ -1230,7 +1254,7 @@ fn update_caller_account(
     if prev_len != post_len {
         // when stricter_abi_and_runtime_constraints is enabled we don't cache the serialized data in
         // caller_account.serialized_data. See CallerAccount::from_account_info.
-        if !stricter_abi_and_runtime_constraints {
+        if !(stricter_abi_and_runtime_constraints && invoke_context.account_data_direct_mapping) {
             // If the account has been shrunk, we're going to zero the unused memory
             // *that was previously used*.
             if post_len < prev_len {
@@ -1241,11 +1265,12 @@ fn update_caller_account(
                     .fill(0);
             }
             // Set the length of caller_account.serialized_data to post_len.
-            caller_account.serialized_data = translate_slice_mut::<u8>(
+            caller_account.serialized_data = CallerAccount::get_serialized_data(
                 memory_mapping,
                 caller_account.vm_data_addr,
                 post_len as u64,
-                false, // Don't care since it is byte aligned
+                stricter_abi_and_runtime_constraints,
+                invoke_context.account_data_direct_mapping,
             )?;
         }
         // this is the len field in the AccountInfo::data slice
@@ -1262,7 +1287,7 @@ fn update_caller_account(
         *serialized_len_ptr = post_len as u64;
     }
 
-    if !stricter_abi_and_runtime_constraints {
+    if !(stricter_abi_and_runtime_constraints && invoke_context.account_data_direct_mapping) {
         // Propagate changes in the callee up to the caller.
         let to_slice = &mut caller_account.serialized_data;
         let from_slice = callee_account

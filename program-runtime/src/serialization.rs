@@ -22,7 +22,22 @@ use {
 /// SBF VM.
 const MAX_INSTRUCTION_ACCOUNTS: u8 = NON_DUP_MARKER;
 
-/// Creates the account data direct mapping in serialization and CPI return
+/// Modifies the memory mapping in serialization and CPI return for stricter_abi_and_runtime_constraints
+pub fn modify_memory_region_of_account(
+    account: &mut BorrowedAccount<'_>,
+    region: &mut MemoryRegion,
+) {
+    region.len = account.get_data().len() as u64;
+    if account.can_data_be_changed().is_ok() {
+        region.writable = true;
+        region.access_violation_handler_payload = Some(account.get_index_in_transaction());
+    } else {
+        region.writable = false;
+        region.access_violation_handler_payload = None;
+    }
+}
+
+/// Creates the memory mapping in serialization and CPI return for account_data_direct_mapping
 pub fn create_memory_region_of_account(
     account: &mut BorrowedAccount<'_>,
     vaddr: u64,
@@ -52,7 +67,7 @@ struct Serializer {
     region_start: usize,
     is_loader_v1: bool,
     stricter_abi_and_runtime_constraints: bool,
-    _account_data_direct_mapping: bool,
+    account_data_direct_mapping: bool,
 }
 
 impl Serializer {
@@ -61,7 +76,7 @@ impl Serializer {
         start_addr: u64,
         is_loader_v1: bool,
         stricter_abi_and_runtime_constraints: bool,
-        _account_data_direct_mapping: bool,
+        account_data_direct_mapping: bool,
     ) -> Serializer {
         Serializer {
             buffer: AlignedMemory::with_capacity(size),
@@ -70,7 +85,7 @@ impl Serializer {
             vaddr: start_addr,
             is_loader_v1,
             stricter_abi_and_runtime_constraints,
-            _account_data_direct_mapping,
+            account_data_direct_mapping,
         }
     }
 
@@ -117,13 +132,26 @@ impl Serializer {
         &mut self,
         account: &mut BorrowedAccount<'_>,
     ) -> Result<u64, InstructionError> {
-        let vm_data_addr = if !self.stricter_abi_and_runtime_constraints {
+        if !self.stricter_abi_and_runtime_constraints {
             let vm_data_addr = self.vaddr.saturating_add(self.buffer.len() as u64);
             self.write_all(account.get_data());
-            vm_data_addr
+            if !self.is_loader_v1 {
+                let align_offset =
+                    (account.get_data().len() as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                self.fill_write(MAX_PERMITTED_DATA_INCREASE + align_offset, 0)
+                    .map_err(|_| InstructionError::InvalidArgument)?;
+            }
+            Ok(vm_data_addr)
         } else {
             self.push_region();
-            let vaddr = self.vaddr;
+            let vm_data_addr = self.vaddr;
+            if !self.account_data_direct_mapping {
+                self.write_all(account.get_data());
+                if !self.is_loader_v1 {
+                    self.fill_write(MAX_PERMITTED_DATA_INCREASE, 0)
+                        .map_err(|_| InstructionError::InvalidArgument)?;
+                }
+            }
             let address_space_reserved_for_account = if !self.is_loader_v1 {
                 account
                     .get_data()
@@ -133,32 +161,35 @@ impl Serializer {
                 account.get_data().len()
             };
             if address_space_reserved_for_account > 0 {
-                let new_region = create_memory_region_of_account(account, self.vaddr)?;
-                self.vaddr += address_space_reserved_for_account as u64;
-                self.regions.push(new_region);
+                if !self.account_data_direct_mapping {
+                    self.push_region();
+                    let region = self.regions.last_mut().unwrap();
+                    modify_memory_region_of_account(account, region);
+                } else {
+                    let new_region = create_memory_region_of_account(account, self.vaddr)?;
+                    self.vaddr += address_space_reserved_for_account as u64;
+                    self.regions.push(new_region);
+                }
             }
-            vaddr
-        };
-
-        if !self.is_loader_v1 {
-            let align_offset =
-                (account.get_data().len() as *const u8).align_offset(BPF_ALIGN_OF_U128);
-            if !self.stricter_abi_and_runtime_constraints {
-                self.fill_write(MAX_PERMITTED_DATA_INCREASE + align_offset, 0)
-                    .map_err(|_| InstructionError::InvalidArgument)?;
-            } else {
-                // The deserialization code is going to align the vm_addr to
-                // BPF_ALIGN_OF_U128. Always add one BPF_ALIGN_OF_U128 worth of
-                // padding and shift the start of the next region, so that once
-                // vm_addr is aligned, the corresponding host_addr is aligned
-                // too.
-                self.fill_write(BPF_ALIGN_OF_U128, 0)
-                    .map_err(|_| InstructionError::InvalidArgument)?;
-                self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
+            if !self.is_loader_v1 {
+                let align_offset =
+                    (account.get_data().len() as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                if !self.account_data_direct_mapping {
+                    self.fill_write(align_offset, 0)
+                        .map_err(|_| InstructionError::InvalidArgument)?;
+                } else {
+                    // The deserialization code is going to align the vm_addr to
+                    // BPF_ALIGN_OF_U128. Always add one BPF_ALIGN_OF_U128 worth of
+                    // padding and shift the start of the next region, so that once
+                    // vm_addr is aligned, the corresponding host_addr is aligned
+                    // too.
+                    self.fill_write(BPF_ALIGN_OF_U128, 0)
+                        .map_err(|_| InstructionError::InvalidArgument)?;
+                    self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
+                }
             }
+            Ok(vm_data_addr)
         }
-
-        Ok(vm_data_addr)
     }
 
     fn push_region(&mut self) {
@@ -324,7 +355,7 @@ fn serialize_parameters_unaligned(
                 + size_of::<Pubkey>() // owner
                 + size_of::<u8>() // executable
                 + size_of::<u64>(); // rent_epoch
-                if !stricter_abi_and_runtime_constraints {
+                if !(stricter_abi_and_runtime_constraints && account_data_direct_mapping) {
                     size += account.get_data().len();
                 }
             }
@@ -389,7 +420,7 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
-    _account_data_direct_mapping: bool,
+    account_data_direct_mapping: bool,
     buffer: &[u8],
     account_lengths: I,
 ) -> Result<(), InstructionError> {
@@ -428,9 +459,17 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
                 }
-                start += pre_len; // data
+            } else if !account_data_direct_mapping && borrowed_account.can_data_be_changed().is_ok()
+            {
+                let data = buffer
+                    .get(start..start + pre_len)
+                    .ok_or(InstructionError::InvalidArgument)?;
+                borrowed_account.set_data_from_slice(data)?;
             } else if borrowed_account.get_data().len() != pre_len {
                 borrowed_account.set_data_length(pre_len)?;
+            }
+            if !(stricter_abi_and_runtime_constraints && account_data_direct_mapping) {
+                start += pre_len; // data
             }
             start += size_of::<Pubkey>() // owner
                 + size_of::<u8>() // executable
@@ -473,7 +512,7 @@ fn serialize_parameters_aligned(
                 + size_of::<u64>()  // lamports
                 + size_of::<u64>()  // data len
                 + size_of::<u64>(); // rent epoch
-                if !stricter_abi_and_runtime_constraints {
+                if !(stricter_abi_and_runtime_constraints && account_data_direct_mapping) {
                     size += data_len
                         + MAX_PERMITTED_DATA_INCREASE
                         + (data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
@@ -544,7 +583,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
-    _account_data_direct_mapping: bool,
+    account_data_direct_mapping: bool,
     buffer: &[u8],
     account_lengths: I,
 ) -> Result<(), InstructionError> {
@@ -602,10 +641,16 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
                 }
+            } else if !account_data_direct_mapping && borrowed_account.can_data_be_changed().is_ok()
+            {
+                let data = buffer
+                    .get(start..start + post_len)
+                    .ok_or(InstructionError::InvalidArgument)?;
+                borrowed_account.set_data_from_slice(data)?;
             } else if borrowed_account.get_data().len() != post_len {
                 borrowed_account.set_data_length(post_len)?;
             }
-            start += if !stricter_abi_and_runtime_constraints {
+            start += if !(stricter_abi_and_runtime_constraints && account_data_direct_mapping) {
                 let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
                 pre_len // data
                     .saturating_add(MAX_PERMITTED_DATA_INCREASE) // realloc padding
@@ -1448,7 +1493,7 @@ mod tests {
             regions,
             &config,
             SBPFVersion::V3,
-            transaction_context.access_violation_handler(false, false),
+            transaction_context.access_violation_handler(true, true),
         )
         .unwrap();
 
