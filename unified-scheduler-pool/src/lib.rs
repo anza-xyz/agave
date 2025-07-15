@@ -737,7 +737,11 @@ where
                 // preceding `.trash_taken()` and following `.put_spawned()` must be done
                 // atomically. That's why we pass around MutexGuard into
                 // spawn_block_production_scheduler().
-                self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
+                if self.should_respawn() {
+                    info!("respawning scheduler after being trashed...");
+                    self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
+                    info!("respawned scheduler after being trashed.");
+                }
             }
 
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
@@ -846,6 +850,13 @@ where
             .unwrap()
             .as_mut()
             .map(|context| context.banking_stage_monitor.status())
+    }
+
+    fn should_respawn(&self) -> bool {
+        !matches!(
+            self.banking_stage_status(),
+            None | Some(BankingStageStatus::Exited)
+        )
     }
 
     fn create_handler_context(
@@ -2305,7 +2316,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                             let Ok(banking_packet) = banking_packet else {
                                 info!("disconnected banking_packet_receiver");
-                                //banking_stage_helper.abort_scheduler();
+                                banking_stage_helper.abort_scheduler();
                                 handler_context.banking_packet_receiver = never();
                                 continue;
                             };
