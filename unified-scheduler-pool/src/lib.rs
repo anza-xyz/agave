@@ -727,9 +727,6 @@ where
             // Maintain the runtime invariant established in register_banking_stage() about
             // the availability of pooled block production scheduler by re-spawning one.
             if block_production_scheduler_inner.can_put(&scheduler) {
-                // Abort this trashed scheduler to stop receiving BankingPacketBatch anymore...
-                scheduler.ensure_abort();
-
                 block_production_scheduler_inner.trash_taken();
                 // To prevent block-production scheduler from being taken in
                 // do_take_resumed_scheduler() by different thread at this very moment, the
@@ -2531,7 +2528,6 @@ pub trait SchedulerInner {
     fn is_trashed(&self) -> bool;
     fn is_overgrown(&self) -> bool;
     fn discard_buffer(&self);
-    fn ensure_abort(&mut self);
 
     #[cfg(test)]
     fn set_next_task_id_for_block_production(&self, next_task_id: usize);
@@ -2694,14 +2690,6 @@ where
 
     fn discard_buffer(&self) {
         self.thread_manager.discard_buffered_tasks();
-    }
-
-    fn ensure_abort(&mut self) {
-        if self.thread_manager.are_threads_joined() {
-            return;
-        }
-        // todo
-        let _ = self.thread_manager.disconnect_new_task_sender();
     }
 
     #[cfg(test)]
@@ -4388,10 +4376,6 @@ mod tests {
         }
 
         fn discard_buffer(&self) {
-            unimplemented!()
-        }
-
-        fn ensure_abort(&mut self) {
             unimplemented!()
         }
 
