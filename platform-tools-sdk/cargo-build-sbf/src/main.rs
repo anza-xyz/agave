@@ -6,7 +6,7 @@ use {
     crate::{
         post_processing::post_process,
         toolchain::{
-            corrupted_toolchain, get_base_rust_version, install_tools,
+            corrupted_toolchain, generate_toolchain_name, get_base_rust_version, install_tools,
             DEFAULT_PLATFORM_TOOLS_VERSION,
         },
         utils::{rust_target_triple, spawn},
@@ -134,7 +134,7 @@ fn prepare_environment(
     config: &Config,
     package: Option<&cargo_metadata::Package>,
     metadata: &cargo_metadata::Metadata,
-) {
+) -> String {
     let root_dir = if let Some(package) = package {
         &package.manifest_path.parent().unwrap_or_else(|| {
             error!("Unable to get directory of {}", package.manifest_path);
@@ -149,10 +149,10 @@ fn prepare_environment(
         exit(1);
     });
 
-    install_tools(config, package, metadata);
+    install_tools(config, package, metadata)
 }
 
-fn invoke_cargo(config: &Config) {
+fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
     let target_triple = rust_target_triple(config);
 
     info!("Solana SDK: {}", config.sbf_sdk.display());
@@ -226,8 +226,11 @@ fn invoke_cargo(config: &Config) {
 
     let cargo_build = PathBuf::from("cargo");
     let mut cargo_build_args = vec![];
+    let toolchain_name = generate_toolchain_name(validated_toolchain_version.as_str());
+    let toolchain_argument = format!("+{toolchain_name}");
+
     if !config.no_rustup_override {
-        cargo_build_args.push("+solana");
+        cargo_build_args.push(toolchain_argument.as_str());
     };
 
     cargo_build_args.append(&mut vec!["build", "--release", "--target", &target_triple]);
@@ -323,15 +326,16 @@ fn build_solana(config: Config, manifest_path: Option<PathBuf>) {
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
             let program_name = generate_program_name(root_package);
-            prepare_environment(&config, Some(root_package), &metadata);
-            invoke_cargo(&config);
+            let validated_toolchain_version =
+                prepare_environment(&config, Some(root_package), &metadata);
+            invoke_cargo(&config, validated_toolchain_version);
             post_process(&config, target_dir.as_ref(), program_name);
             return;
         }
     }
 
-    prepare_environment(&config, None, &metadata);
-    invoke_cargo(&config);
+    let validated_toolchain_version = prepare_environment(&config, None, &metadata);
+    invoke_cargo(&config, validated_toolchain_version);
 
     let all_sbf_packages = metadata
         .packages
