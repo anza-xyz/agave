@@ -68,6 +68,7 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
     /// relying on eventual stale listener clean-up by `solScCleaner`.
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
 
+    fn unregister_banking_stage(&self);
     fn uninstalled_from_bank_forks(self: Arc<Self>);
 }
 

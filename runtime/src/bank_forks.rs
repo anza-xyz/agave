@@ -317,6 +317,12 @@ impl BankForks {
         self.banks.values().map(|bank| bank.slot()).max().unwrap()
     }
 
+    pub fn unregister_banking_stage(&self) {
+        if let Some(scheduler_pool) = &self.scheduler_pool {
+            scheduler_pool.unregister_banking_stage();
+        }
+    }
+
     pub fn working_bank(&self) -> Arc<Bank> {
         self[self.highest_slot()].clone()
     }

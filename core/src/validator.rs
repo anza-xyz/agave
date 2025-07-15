@@ -1798,6 +1798,8 @@ impl Validator {
     }
 
     pub fn join(self) {
+        self.bank_forks.read().unwrap().unregister_banking_stage();
+
         drop(self.cluster_info);
 
         macro_rules! join_then_log {

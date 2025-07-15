@@ -513,12 +513,13 @@ where
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
 
-            let mut exiting = false;
             loop {
                 sleep(pool_cleaner_interval);
                 trace!("Scheduler pool cleaner: start!!!",);
 
                 let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                    // this is the only safe termination point of cleaner_main_loop while all other
+                    // `break`s being due to poisoned locks.
                     break;
                 };
 
@@ -550,11 +551,6 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
-                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
-                    exiting = true;
-                    scheduler_pool.unregister_banking_stage();
-                }
-
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
                     else {
@@ -834,14 +830,6 @@ where
         );
     }
 
-    fn unregister_banking_stage(&self) {
-        self.banking_stage_handler_context
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap();
-    }
-
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.banking_stage_handler_context
             .lock()
@@ -989,6 +977,14 @@ where
             .lock()
             .unwrap()
             .push((timeout_listener, Instant::now()));
+    }
+
+    fn unregister_banking_stage(&self) {
+        self.banking_stage_handler_context
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap();
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
