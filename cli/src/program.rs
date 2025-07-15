@@ -87,14 +87,14 @@ pub const CLOSE_PROGRAM_WARNING: &str = "WARNING! Closed programs cannot be recr
                                          invoked again. To proceed with closing, rerun the \
                                          `close` command with the `--bypass-warning` flag";
 
-pub const EMERGENCY_ABORT_WARNING: &str = "WARNING! Emergency abort will replace the program with an \
-                                           abort program that makes all transactions fail. This is \
-                                           irreversible until the program is upgraded again with a fix. \
-                                           To proceed with emergency abort, rerun the command with the \
-                                           `--bypass-warning` flag";
+pub const DEPLOY_EMERGENCY_ABORT_WARNING: &str = "WARNING! Deploy emergency abort will replace the program with an \
+                                                  abort program that makes all transactions fail. This is \
+                                                  irreversible until the program is upgraded again with a fix. \
+                                                  To proceed with emergency abort deployment, rerun the command with the \
+                                                  `--bypass-warning` flag";
 
-// Include the generated emergency abort program binary
-include!(env!("EMERGENCY_ABORT_RS"));
+// Default emergency abort program on mainnet (deployed by deanmlittle)
+pub const DEFAULT_EMERGENCY_ABORT_PROGRAM_ID: &str = "fkv4NqZfGSfoAATFYGovrxaMHzeG69i525zEEpfUPyx";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ProgramCliCommand {
@@ -188,8 +188,9 @@ pub enum ProgramCliCommand {
         authority_signer_index: SignerIndex,
         compute_unit_price: Option<u64>,
     },
-    EmergencyAbort {
+    DeployEmergencyAbort {
         program_pubkey: Pubkey,
+        abort_program_id: Pubkey,
         upgrade_authority_signer_index: SignerIndex,
         fee_payer_signer_index: SignerIndex,
         skip_fee_check: bool,
@@ -688,9 +689,9 @@ impl ProgramSubCommands for App<'_, '_> {
                         .arg(compute_unit_price_arg()),
                 )
                 .subcommand(
-                    SubCommand::with_name("emergency-abort")
+                    SubCommand::with_name("deploy-emergency-abort")
                         .about(
-                            "Emergency abort: Replace an upgradeable program with an abort program that makes all transactions fail",
+                            "Deploy emergency abort: Replace an upgradeable program with an abort program that makes all transactions fail",
                         )
                         .arg(
                             Arg::with_name("program_id")
@@ -700,6 +701,14 @@ impl ProgramSubCommands for App<'_, '_> {
                                 .required(true)
                                 .validator(is_valid_pubkey)
                                 .help("Address of the program to replace with abort program"),
+                        )
+                        .arg(
+                            Arg::with_name("abort_program_id")
+                                .long("abort-program-id")
+                                .value_name("ABORT_PROGRAM_ID")
+                                .takes_value(true)
+                                .validator(is_valid_pubkey)
+                                .help("Program ID to use as the emergency abort program [default: fkv4NqZfGSfoAATFYGovrxaMHzeG69i525zEEpfUPyx]"),
                         )
                         .arg(fee_payer_arg())
                         .arg(
@@ -1123,8 +1132,10 @@ pub fn parse_program_subcommand(
                 signers: signer_info.signers,
             }
         }
-        ("emergency-abort", Some(matches)) => {
+        ("deploy-emergency-abort", Some(matches)) => {
             let program_pubkey = pubkey_of(matches, "program_id").unwrap();
+            let abort_program_id = pubkey_of(matches, "abort_program_id")
+                .unwrap_or_else(|| DEFAULT_EMERGENCY_ABORT_PROGRAM_ID.parse().unwrap());
 
             let (fee_payer, fee_payer_pubkey) =
                 signer_of(matches, FEE_PAYER_ARG.name, wallet_manager)?;
@@ -1145,8 +1156,9 @@ pub fn parse_program_subcommand(
             let max_sign_attempts = value_of(matches, "max_sign_attempts").unwrap();
 
             CliCommandInfo {
-                command: CliCommand::Program(ProgramCliCommand::EmergencyAbort {
+                command: CliCommand::Program(ProgramCliCommand::DeployEmergencyAbort {
                     program_pubkey,
+                    abort_program_id,
                     upgrade_authority_signer_index: signer_info.index_of(upgrade_authority_pubkey).unwrap(),
                     fee_payer_signer_index: signer_info.index_of(fee_payer_pubkey).unwrap(),
                     skip_fee_check,
@@ -1360,8 +1372,9 @@ pub fn process_program_subcommand(
             *authority_signer_index,
             *compute_unit_price,
         ),
-        ProgramCliCommand::EmergencyAbort {
+        ProgramCliCommand::DeployEmergencyAbort {
             program_pubkey,
+            abort_program_id,
             upgrade_authority_signer_index,
             fee_payer_signer_index,
             skip_fee_check,
@@ -1369,10 +1382,11 @@ pub fn process_program_subcommand(
             max_sign_attempts,
             use_rpc,
             bypass_warning,
-        } => process_emergency_abort(
+        } => process_deploy_emergency_abort(
             rpc_client,
             config,
             *program_pubkey,
+            *abort_program_id,
             *upgrade_authority_signer_index,
             *fee_payer_signer_index,
             *skip_fee_check,
@@ -2700,10 +2714,11 @@ fn process_migrate_program(
         }))
 }
 
-fn process_emergency_abort(
+fn process_deploy_emergency_abort(
     rpc_client: Arc<RpcClient>,
     config: &CliConfig,
     program_pubkey: Pubkey,
+    abort_program_id: Pubkey,
     upgrade_authority_signer_index: SignerIndex,
     fee_payer_signer_index: SignerIndex,
     skip_fee_check: bool,
@@ -2767,13 +2782,29 @@ fn process_emergency_abort(
 
     // Show warning unless bypassed
     if !bypass_warning {
-        println!("{}", EMERGENCY_ABORT_WARNING);
-        return Err("Emergency abort requires --bypass-warning flag".into());
+        println!("{}", DEPLOY_EMERGENCY_ABORT_WARNING);
+        return Err("Deploy emergency abort requires --bypass-warning flag".into());
     }
 
-    println!("⚠️  EMERGENCY ABORT: Replacing program {program_pubkey} with abort program...");
+    println!("⚠️  DEPLOY EMERGENCY ABORT: Replacing program {program_pubkey} with abort program {abort_program_id}...");
 
-    // Create a temporary buffer with the emergency abort program
+    // Step 1: Dump the abort program binary from the network
+    let temp_dir = std::env::temp_dir();
+    let temp_file_path = temp_dir.join(format!("emergency_abort_{}.so", abort_program_id));
+    
+    println!("📥 Downloading emergency abort program from {abort_program_id}...");
+    
+    // Use the existing dump functionality to get the program binary
+    let _dump_result = process_dump(&rpc_client, config, Some(abort_program_id), &temp_file_path.to_string_lossy())?;
+    println!("Downloaded emergency abort program to {}", temp_file_path.display());
+    
+    // Step 2: Read the dumped binary
+    let program_data = std::fs::read(&temp_file_path)
+        .map_err(|e| format!("Failed to read dumped program: {}", e))?;
+    
+    println!("📦 Emergency abort program size: {} bytes", program_data.len());
+
+    // Step 3: Create a temporary buffer with the emergency abort program
     let (buffer_words, buffer_mnemonic, buffer_keypair) = create_ephemeral_keypair()?;
     let buffer_pubkey = buffer_keypair.pubkey();
     
@@ -2781,14 +2812,14 @@ fn process_emergency_abort(
     
     report_ephemeral_mnemonic(buffer_words, buffer_mnemonic, &buffer_pubkey);
 
-    // Write the emergency abort program to the buffer
+    // Step 4: Write the emergency abort program to the buffer
     let _write_result = do_process_write_buffer(
         rpc_client.clone(),
         config,
-        EMERGENCY_ABORT_PROGRAM,
-        EMERGENCY_ABORT_PROGRAM.len(),
+        &program_data,
+        program_data.len(),
         rpc_client.get_minimum_balance_for_rent_exemption(
-            UpgradeableLoaderState::size_of_programdata(EMERGENCY_ABORT_PROGRAM.len()),
+            UpgradeableLoaderState::size_of_programdata(program_data.len()),
         )?,
         fee_payer_signer,
         Some(&buffer_keypair as &dyn Signer),
@@ -2801,16 +2832,16 @@ fn process_emergency_abort(
         use_rpc,
     )?;
 
-    println!("Emergency abort program written to buffer {buffer_pubkey}");
+    println!("📝 Emergency abort program written to buffer {buffer_pubkey}");
 
-    // Upgrade the program with the emergency abort program
+    // Step 5: Upgrade the program with the emergency abort program
     let upgrade_result = do_process_program_upgrade(
         rpc_client.clone(),
         config,
-        EMERGENCY_ABORT_PROGRAM,
-        EMERGENCY_ABORT_PROGRAM.len(),
+        &program_data,
+        program_data.len(),
         rpc_client.get_minimum_balance_for_rent_exemption(
-            UpgradeableLoaderState::size_of_programdata(EMERGENCY_ABORT_PROGRAM.len()),
+            UpgradeableLoaderState::size_of_programdata(program_data.len()),
         )?,
         fee_payer_signer,
         &program_pubkey,
@@ -2825,7 +2856,12 @@ fn process_emergency_abort(
         use_rpc,
     )?;
 
-    println!("✅ Emergency abort completed! Program {program_pubkey} has been replaced with an abort program.");
+    // Step 6: Clean up the temporary file
+    if let Err(e) = std::fs::remove_file(&temp_file_path) {
+        println!("Warning: Failed to clean up temporary file {}: {}", temp_file_path.display(), e);
+    }
+
+    println!("✅ Deploy emergency abort completed! Program {program_pubkey} has been replaced with abort program {abort_program_id}.");
     println!("   All transactions to this program will now fail until it is upgraded with a fix.");
     
     Ok(upgrade_result)
