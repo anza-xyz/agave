@@ -158,6 +158,16 @@ const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 80;
 const WAIT_FOR_WEN_RESTART_SUPERMAJORITY_THRESHOLD_PERCENT: u64 =
     WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT;
 
+mod join {
+    macro_rules! join_then_log {
+        ($expr:expr) => {
+            let label = stringify!($expr);
+            let r = $expr.join().expect(label);
+            error!("joined {label} with {r:?} {:?}", std::thread::current());
+        };
+    }
+}
+
 #[derive(
     Clone, EnumCount, EnumIter, EnumString, EnumVariantNames, Default, IntoStaticStr, Display,
 )]
@@ -1799,14 +1809,6 @@ impl Validator {
 
     pub fn join(self) {
         drop(self.cluster_info);
-
-        macro_rules! join_then_log {
-            ($expr:expr) => {
-                let label = stringify!($expr);
-                let r = $expr.join().expect(label);
-                error!("joined {label} with {r:?} {:?}", std::thread::current());
-            };
-        }
 
         join_then_log!(self.poh_service);
 
