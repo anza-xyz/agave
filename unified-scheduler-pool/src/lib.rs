@@ -551,6 +551,7 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
+
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
                     else {
