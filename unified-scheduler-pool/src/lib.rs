@@ -259,7 +259,7 @@ impl HandlerContext {
         self.banking_stage_helper.as_ref().unwrap()
     }
 
-    fn finish_handler(&mut self) {
+    fn finish(&mut self) {
         self.banking_packet_receiver = never();
         self.banking_packet_handler = Box::new(|_, _| {});
         self.banking_stage_helper = None;
@@ -1979,7 +1979,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
-            let handler_context = handler_context.clone();
+            let handler_context = {
+                let mut c = handler_context.clone();
+                c.finish();
+                c
+            };
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
@@ -2318,9 +2322,9 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
                             let Ok(banking_packet) = banking_packet else {
-                                info!("disconnected banking_packet_receiver");
-                                banking_stage_helper.abort_scheduler();
-                                handler_context.banking_packet_receiver = never();
+                                error!("disconnected banking_packet_receiver");
+                                //banking_stage_helper.abort_scheduler();
+                                handler_context.finish();
                                 continue;
                             };
                             banking_packet_handler(banking_stage_helper, banking_packet);
