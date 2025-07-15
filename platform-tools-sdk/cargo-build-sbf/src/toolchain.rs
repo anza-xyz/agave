@@ -74,7 +74,7 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
     let latest_version = get_latest_platform_tools_version().unwrap_or_else(|err| {
         debug!(
             "Can't get the latest version of platform-tools: {err}. Using built-in version \
-             {builtin_version}.",
+             {builtin_version}."
         );
         builtin_version.to_string()
     });
@@ -85,7 +85,7 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
     } else {
         warn!(
             "Version {requested_version} is not valid, latest version is {latest_version}. Using \
-             the built-in version {builtin_version}",
+             the built-in version {builtin_version}"
         );
         builtin_version.to_string()
     }
