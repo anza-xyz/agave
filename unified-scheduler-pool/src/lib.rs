@@ -402,20 +402,6 @@ impl BankingStageHelper {
     pub fn send_new_task(&self, task: Task) {
         let _ = self.new_task_sender.send(NewTaskPayload::Payload(task));
     }
-
-    #[allow(dead_code)]
-    fn abort_scheduler(&self) {
-        if self
-            .new_task_sender
-            .send(NewTaskPayload::Disconnect)
-            .is_ok()
-        {
-            info!("notified a disconnect from {:?}", thread::current());
-        } else {
-            // It seems that the scheduler thread has been aborted already...
-            warn!("failed to notify a disconnect from {:?}", thread::current());
-        }
-    }
 }
 
 pub type DefaultSchedulerPool =
@@ -2323,7 +2309,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
 
                             let Ok(banking_packet) = banking_packet else {
                                 error!("disconnected banking_packet_receiver");
-                                //banking_stage_helper.abort_scheduler();
                                 handler_context.finish();
                                 continue;
                             };
