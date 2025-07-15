@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::Rng,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
@@ -35,22 +35,20 @@ fn new_rand_vote_account<R: Rng>(
     (account, vote_state)
 }
 
-fn bench_vote_account_try_from(c: &mut Criterion) {
+fn bench_vote_account_try_from(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let (account, vote_state) = new_rand_vote_account(&mut rng, None);
 
-    c.bench_function("vote_account_try_from", |b| {
-        b.iter(|| {
-            let vote_account = VoteAccount::try_from(account.clone()).unwrap();
-            let vote_state_view = vote_account.vote_state_view();
-            assert_eq!(&vote_state.node_pubkey, vote_state_view.node_pubkey());
-            assert_eq!(vote_state.commission, vote_state_view.commission());
-            assert_eq!(vote_state.credits(), vote_state_view.credits());
+    b.iter(|| {
+        let vote_account = VoteAccount::try_from(account.clone()).unwrap();
+        let vote_state_view = vote_account.vote_state_view();
+        assert_eq!(&vote_state.node_pubkey, vote_state_view.node_pubkey());
+        assert_eq!(vote_state.commission, vote_state_view.commission());
+        assert_eq!(vote_state.credits(), vote_state_view.credits());
         assert_eq!(vote_state.last_timestamp, vote_state_view.last_timestamp());
-            assert_eq!(vote_state.root_slot, vote_state_view.root_slot());
-        });
+        assert_eq!(vote_state.root_slot, vote_state_view.root_slot());
     });
 }
 
-criterion_group!(benches, bench_vote_account_try_from);
-criterion_main!(benches);
+benchmark_group!(benches, bench_vote_account_try_from);
+benchmark_main!(benches);
