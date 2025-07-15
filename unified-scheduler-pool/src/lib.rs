@@ -982,7 +982,9 @@ where
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
         trace!("uninstalling: {}", Arc::strong_count(&self));
 
-        self.unregister_banking_stage();
+        if self.block_production_supported() {
+            self.unregister_banking_stage();
+        }
 
         // Drop all schedulers in the pool
         for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
