@@ -990,7 +990,7 @@ where
             listener.trigger(self.clone());
         }
         mem::take(&mut *self.scheduler_inners.lock().unwrap());
-        mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
+        mem::take::<BlockProductionSchedulerInner<_, _>>(&mut *self.block_production_scheduler_inner.lock().unwrap());
         mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
 
         // At this point, there should be only 1 strong rerefence, take pool out of  Arc...
