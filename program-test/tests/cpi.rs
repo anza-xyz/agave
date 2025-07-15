@@ -138,13 +138,12 @@ async fn cpi() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.working_bank().last_blockhash(),
     );
 
     context
-        .banks_client
-        .process_transaction(transaction)
-        .await
+        .working_bank()
+        .process_transaction(&transaction)
         .unwrap();
 }
 
@@ -179,13 +178,12 @@ async fn cpi_dupes() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.working_bank().last_blockhash(),
     );
 
     context
-        .banks_client
-        .process_transaction(transaction)
-        .await
+        .working_bank()
+        .process_transaction(&transaction)
         .unwrap();
 }
 
@@ -214,13 +212,12 @@ async fn cpi_create_account() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer, &create_account_keypair],
-        context.last_blockhash,
+        context.working_bank().last_blockhash(),
     );
 
     context
-        .banks_client
-        .process_transaction(transaction)
-        .await
+        .working_bank()
+        .process_transaction(&transaction)
         .unwrap();
 }
 
@@ -283,12 +280,11 @@ async fn stack_height() {
         &instructions,
         Some(&context.payer.pubkey()),
         &[&context.payer],
-        context.last_blockhash,
+        context.working_bank().last_blockhash(),
     );
 
     context
-        .banks_client
-        .process_transaction(transaction)
-        .await
+        .working_bank()
+        .process_transaction(&transaction)
         .unwrap();
 }
