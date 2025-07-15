@@ -23,9 +23,8 @@ struct PrioritizationFeeMetrics {
     // Count of attempted update on finalized PrioritizationFee
     attempted_update_on_finalized_fee_count: Saturating<u64>,
 
-    // TODO - replace with transaction fee in next step
-    // Total prioritization fees included in this slot.
-    total_prioritization_fee: Saturating<u64>,
+    // Total transaction fees of non-vote transactions included in this slot.
+    total_non_vote_transaction_fee: Saturating<u64>,
 
     // The minimum compute unit price of prioritized transactions in this slot.
     min_compute_unit_price: Option<u64>,
@@ -38,8 +37,8 @@ struct PrioritizationFeeMetrics {
 }
 
 impl PrioritizationFeeMetrics {
-    fn accumulate_total_prioritization_fee(&mut self, val: u64) {
-        self.total_prioritization_fee += val;
+    fn accumulate_total_non_vote_transaction_fee(&mut self, val: u64) {
+        self.total_non_vote_transaction_fee += val;
     }
 
     fn accumulate_total_update_elapsed_us(&mut self, val: u64) {
@@ -75,7 +74,7 @@ impl PrioritizationFeeMetrics {
             non_prioritized_transactions_count: Saturating(non_prioritized_transactions_count),
             attempted_update_on_finalized_fee_count:
                 Saturating(attempted_update_on_finalized_fee_count),
-            total_prioritization_fee: Saturating(total_prioritization_fee),
+            total_non_vote_transaction_fee: Saturating(total_non_vote_transaction_fee),
             min_compute_unit_price,
             max_compute_unit_price,
             total_update_elapsed_us: Saturating(total_update_elapsed_us),
@@ -109,8 +108,8 @@ impl PrioritizationFeeMetrics {
                 i64
             ),
             (
-                "total_prioritization_fee",
-                total_prioritization_fee as i64,
+                "total_non_vote_transaction_fee",
+                total_non_vote_transaction_fee as i64,
                 i64
             ),
             (
@@ -175,7 +174,12 @@ impl Default for PrioritizationFee {
 
 impl PrioritizationFee {
     /// Update self for minimum transaction fee in the block and minimum fee for each writable account.
-    pub fn update(&mut self, compute_unit_price: u64, writable_accounts: Vec<Pubkey>) {
+    pub fn update(
+        &mut self,
+        compute_unit_price: u64,
+        transaction_fee: u64,
+        writable_accounts: Vec<Pubkey>,
+    ) {
         let (_, update_us) = measure_us!({
             if !self.is_finalized {
                 if compute_unit_price < self.min_compute_unit_price {
@@ -192,7 +196,7 @@ impl PrioritizationFee {
                 }
 
                 self.metrics
-                    .accumulate_total_prioritization_fee(compute_unit_price);
+                    .accumulate_total_non_vote_transaction_fee(transaction_fee);
                 self.metrics.update_compute_unit_price(compute_unit_price);
             } else {
                 self.metrics
@@ -251,21 +255,22 @@ mod tests {
     use {super::*, solana_pubkey::Pubkey};
 
     #[test]
-    fn test_update_prioritization_fee() {
+    fn test_update_compute_unit_price() {
         solana_logger::setup();
         let write_account_a = Pubkey::new_unique();
         let write_account_b = Pubkey::new_unique();
         let write_account_c = Pubkey::new_unique();
+        let tx_fee = 10;
 
         let mut prioritization_fee = PrioritizationFee::default();
         assert!(prioritization_fee.get_min_compute_unit_price().is_none());
 
         // Assert for 1st transaction
-        // [fee, write_accounts...]  -->  [block, account_a, account_b, account_c]
+        // [cu_px, write_accounts...]  -->  [block, account_a, account_b, account_c]
         // -----------------------------------------------------------------------
         // [5,   a, b             ]  -->  [5,     5,         5,         nil      ]
         {
-            prioritization_fee.update(5, vec![write_account_a, write_account_b]);
+            prioritization_fee.update(5, tx_fee, vec![write_account_a, write_account_b]);
             assert_eq!(5, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert_eq!(
                 5,
@@ -285,11 +290,11 @@ mod tests {
         }
 
         // Assert for second transaction:
-        // [fee, write_accounts...]  -->  [block, account_a, account_b, account_c]
+        // [cu_px, write_accounts...]  -->  [block, account_a, account_b, account_c]
         // -----------------------------------------------------------------------
         // [9,      b, c          ]  -->  [5,     5,         5,         9        ]
         {
-            prioritization_fee.update(9, vec![write_account_b, write_account_c]);
+            prioritization_fee.update(9, tx_fee, vec![write_account_b, write_account_c]);
             assert_eq!(5, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert_eq!(
                 5,
@@ -312,11 +317,11 @@ mod tests {
         }
 
         // Assert for third transaction:
-        // [fee, write_accounts...]  -->  [block, account_a, account_b, account_c]
+        // [cu_px, write_accounts...]  -->  [block, account_a, account_b, account_c]
         // -----------------------------------------------------------------------
         // [2,   a,    c          ]  -->  [2,     2,         5,         2        ]
         {
-            prioritization_fee.update(2, vec![write_account_a, write_account_c]);
+            prioritization_fee.update(2, tx_fee, vec![write_account_a, write_account_c]);
             assert_eq!(2, prioritization_fee.get_min_compute_unit_price().unwrap());
             assert_eq!(
                 2,
@@ -356,6 +361,28 @@ mod tests {
                 .get_writable_account_fee(&write_account_c)
                 .is_none());
         }
+    }
+
+    #[test]
+    fn test_total_non_vote_transaction_fee() {
+        let mut prioritization_fee = PrioritizationFee::default();
+        prioritization_fee.update(0, 10, vec![]);
+        assert_eq!(
+            10,
+            prioritization_fee.metrics.total_non_vote_transaction_fee.0
+        );
+
+        prioritization_fee.update(10, u64::MAX, vec![]);
+        assert_eq!(
+            u64::MAX,
+            prioritization_fee.metrics.total_non_vote_transaction_fee.0
+        );
+
+        prioritization_fee.update(10, 100, vec![]);
+        assert_eq!(
+            u64::MAX,
+            prioritization_fee.metrics.total_non_vote_transaction_fee.0
+        );
     }
 
     #[test]
