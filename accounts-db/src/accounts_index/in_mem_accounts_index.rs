@@ -250,60 +250,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    pub fn items<R>(&self, range: &R) -> Vec<(Pubkey, Arc<AccountMapEntry<T>>)>
-    where
-        R: RangeBounds<Pubkey> + std::fmt::Debug,
-    {
-        let start = match range.start_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => bound,
-            Bound::Unbounded => &Pubkey::from([0; 32]),
-        };
-
-        let end = match range.end_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => bound,
-            Bound::Unbounded => &Pubkey::from([0xff; 32]),
-        };
-
-        if start > &self.highest_pubkey || end < &self.lowest_pubkey {
-            // range does not contain any of the keys in this bin. No need to
-            // load and scan the map.
-            // Example:
-            //    |-------------------|  |-------------------|  |-------------------|
-            //       start          end  low               high  start              end
-            return vec![];
-        }
-
-        let m = Measure::start("items");
-
-        // For simplicity, we check the range for every pubkey in the map. This
-        // can be further optimized for case, such as the range contains lowest
-        // and highest pubkey for this bin. In such case, we can return all
-        // items in the map without range check on item's pubkey. Since the
-        // check is cheap when compared with the cost of reading from disk, we
-        // are not optimizing it for now.
-        self.hold_range_in_memory(range, true);
-        let result = self
-            .map_internal
-            .read()
-            .unwrap()
-            .iter()
-            .filter(|&(k, _v)| range.contains(k))
-            .map(|(k, v)| (*k, Arc::clone(v)))
-            .collect();
-        self.hold_range_in_memory(range, false);
-        Self::update_stat(&self.stats().items, 1);
-        Self::update_time_stat(&self.stats().items_us, m);
-        result
-    }
-
-    // only called in debug code paths
+    /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);
-        // easiest implementation is to load everything from disk into cache and return the keys
-        let evictions_guard = EvictionsGuard::lock(self);
-        self.put_range_in_cache(&None::<&RangeInclusive<Pubkey>>, &evictions_guard);
-        let keys = self.map_internal.read().unwrap().keys().cloned().collect();
-        keys
+
+        // Collect keys from the in-memory map first.
+        let mut keys: HashSet<_> = self.map_internal.read().unwrap().keys().cloned().collect();
+
+        // Next, collect keys from the disk.
+        if let Some(disk) = self.bucket.as_ref() {
+            let disk_keys = disk.keys();
+            keys.reserve(disk_keys.len());
+            for key in disk_keys {
+                keys.insert(key);
+            }
+        }
+        keys.into_iter().collect()
     }
 
     fn load_from_disk(&self, pubkey: &Pubkey) -> Option<(SlotList<U>, RefCount)> {
@@ -551,7 +513,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// update 'entry' with 'new_value'
     fn update_slot_list_entry(
         &self,
-        entry: &Arc<AccountMapEntry<T>>,
+        entry: &AccountMapEntry<T>,
         new_value: PreAllocatedAccountMapEntry<T>,
         other_slot: Option<Slot>,
         reclaims: &mut SlotList<T>,
@@ -566,6 +528,22 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         self.set_age_to_future(entry, upsert_cached);
     }
 
+    /// Insert a cached entry into the accounts index
+    /// If the entry is already present, just mark dirty and set the age to the future
+    /// Code is required just for test for now, but will be used in future PRs so not putting in the test area
+    #[cfg(test)]
+    fn cache_entry_at_slot(&self, entry: &AccountMapEntry<T>, slot: Slot, account_info: T) {
+        let mut slot_list = entry.slot_list.write().unwrap();
+        if !slot_list
+            .iter()
+            .any(|(existing_slot, _)| *existing_slot == slot)
+        {
+            slot_list.push((slot, account_info));
+        }
+        entry.set_dirty(true);
+        self.set_age_to_future(entry, true);
+    }
+
     pub fn upsert(
         &self,
         pubkey: &Pubkey,
@@ -574,11 +552,24 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         reclaims: &mut SlotList<T>,
         reclaim: UpsertReclaim,
     ) {
+        self.get_or_create_index_entry_for_pubkey(pubkey, |entry| {
+            self.update_slot_list_entry(entry, new_value, other_slot, reclaims, reclaim)
+        });
+    }
+
+    /// Gets an entry for `pubkey` and calls `callback` with it.
+    /// If the entry is not in the index, an empty entry will be created and passed to `callback`.
+    /// If the entry is in the index, it will be passed to `callback` as is.
+    pub fn get_or_create_index_entry_for_pubkey(
+        &self,
+        pubkey: &Pubkey,
+        callback: impl FnOnce(&AccountMapEntry<T>),
+    ) {
         let mut updated_in_mem = true;
         // try to get it just from memory first using only a read lock
         self.get_only_in_mem(pubkey, false, |entry| {
             if let Some(entry) = entry {
-                self.update_slot_list_entry(entry, new_value, other_slot, reclaims, reclaim);
+                callback(entry);
             } else {
                 let mut m = Measure::start("entry");
                 let mut map = self.map_internal.write().unwrap();
@@ -588,9 +579,7 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 match entry {
                     Entry::Occupied(mut occupied) => {
                         let current = occupied.get_mut();
-                        self.update_slot_list_entry(
-                            current, new_value, other_slot, reclaims, reclaim,
-                        );
+                        callback(current);
                     }
                     Entry::Vacant(vacant) => {
                         // not in cache, look on disk
@@ -600,19 +589,24 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         let disk_entry = self.load_account_entry_from_disk(vacant.key());
                         let new_value = if let Some(disk_entry) = disk_entry {
                             // on disk, so merge new_value with what was on disk
-                            self.update_slot_list_entry(
-                                &disk_entry,
-                                new_value,
-                                other_slot,
-                                reclaims,
-                                reclaim,
-                            );
                             disk_entry
                         } else {
                             // not on disk, so insert new thing
                             self.stats().inc_insert();
-                            new_value.into_account_map_entry(&self.storage)
+                            Arc::new(AccountMapEntry::new(
+                                vec![],
+                                0,
+                                AccountMapEntryMeta::new_dirty(&self.storage, true),
+                            ))
                         };
+                        callback(&new_value);
+
+                        // Ensure that after callback there is an item in the slot list
+                        assert_ne!(
+                            new_value.slot_list.read().unwrap().len(),
+                            0,
+                            "Callback must insert item into slot list"
+                        );
                         assert!(new_value.dirty());
                         vacant.insert(new_value);
                         self.stats().inc_mem_count();
@@ -721,7 +715,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                     };
                     match reclaim {
                         UpsertReclaim::PopulateReclaims => {
-                            reclaims.push(reclaim_item);
+                            // Reclaims are used to reclaim other versions of accounts when they are
+                            // rewritten elsewhere. Cached accounts are not in storage, so there is
+                            // no reason to store the reclaim.
+                            if !is_cur_account_cached {
+                                reclaims.push(reclaim_item);
+                            }
                         }
                         UpsertReclaim::PreviousSlotEntryWasCached => {
                             assert!(is_cur_account_cached);
@@ -767,15 +766,17 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
 
     /// Queue up these insertions for when the flush thread is dealing with this bin.
     /// This is very fast and requires no lookups or disk access.
-    pub fn startup_insert_only(&self, items: impl Iterator<Item = (Pubkey, (Slot, T))>) {
+    pub fn startup_insert_only(
+        &self,
+        slot: Slot,
+        items: impl ExactSizeIterator<Item = (Pubkey, T)>,
+    ) {
         assert!(self.storage.get_startup());
         assert!(self.bucket.is_some());
 
         let mut insert = self.startup_info.insert.lock().unwrap();
         let m = Measure::start("copy");
-        items
-            .into_iter()
-            .for_each(|(k, (slot, v))| insert.push((k, (slot, v.into()))));
+        insert.extend(items.map(|(k, v)| (k, (slot, v.into()))));
         self.startup_stats
             .copy_data_us
             .fetch_add(m.end_as_us(), Ordering::Relaxed);
@@ -1228,14 +1229,59 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         let duplicates_put_on_disk = std::mem::take(&mut duplicate_items.duplicates_put_on_disk);
         drop(duplicate_items);
 
-        duplicates_put_on_disk
+        // accumulated stats after inserting pubkeys into the index
+        let mut num_did_not_exist = 0;
+        let mut num_existed_in_mem = 0;
+        let mut num_existed_on_disk = 0;
+
+        let duplicates = duplicates_put_on_disk
             .into_iter()
             .chain(duplicates.into_iter().map(|(slot, key, info)| {
                 let entry = PreAllocatedAccountMapEntry::new(slot, info, &self.storage, true);
-                self.insert_new_entry_if_missing_with_lock(key, entry);
+                match self.insert_new_entry_if_missing_with_lock(key, entry) {
+                    InsertNewEntryResults::DidNotExist => {
+                        num_did_not_exist += 1;
+                    }
+                    InsertNewEntryResults::Existed {
+                        other_slot: _,
+                        location,
+                    } => match location {
+                        ExistedLocation::InMem => {
+                            num_existed_in_mem += 1;
+                        }
+                        ExistedLocation::OnDisk => {
+                            num_existed_on_disk += 1;
+                        }
+                    },
+                };
                 (slot, key)
             }))
-            .collect()
+            .collect();
+
+        let stats = self.stats();
+
+        // stats for inserted entries that previously did *not* exist
+        stats.inc_insert_count(num_did_not_exist);
+        stats.add_mem_count(num_did_not_exist as usize);
+
+        // stats for inserted entries that previous did exist *in-mem*
+        stats
+            .entries_from_mem
+            .fetch_add(num_existed_in_mem, Ordering::Relaxed);
+        stats
+            .updates_in_mem
+            .fetch_add(num_existed_in_mem, Ordering::Relaxed);
+
+        // stats for inserted entries that previously did exist *on-disk*
+        stats.add_mem_count(num_existed_on_disk as usize);
+        stats
+            .entries_missing
+            .fetch_add(num_existed_on_disk, Ordering::Relaxed);
+        stats
+            .updates_in_mem
+            .fetch_add(num_existed_on_disk, Ordering::Relaxed);
+
+        duplicates
     }
 
     pub fn startup_take_duplicates_from_in_memory_only(&self) -> Vec<(Slot, Pubkey)> {
@@ -1664,6 +1710,113 @@ mod tests {
         let bucket = InMemAccountsIndex::new(&holder, bin);
         assert!(bucket.storage.is_disk_index_enabled());
         bucket
+    }
+
+    #[test]
+    fn test_get_or_create_index_entry_for_pubkey_insert_new() {
+        let accounts_index = new_for_test::<u64>();
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 0;
+
+        let mut callback_called = false;
+        accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
+            assert!(entry.slot_list.read().unwrap().is_empty());
+            assert_eq!(entry.ref_count(), 0);
+            assert!(entry.dirty());
+            accounts_index.cache_entry_at_slot(entry, slot, 0);
+            callback_called = true;
+        });
+
+        assert!(callback_called);
+
+        // Ensure the entry is now in memory
+        let mut found = false;
+        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+            found = entry.is_some();
+        });
+        assert!(found);
+    }
+
+    #[test]
+    fn test_get_or_create_index_entry_for_pubkey_existing_in_mem() {
+        let accounts_index = new_for_test::<u64>();
+        let pubkey = solana_pubkey::new_rand();
+
+        // Insert an entry manually
+        let entry = Arc::new(AccountMapEntry::new(
+            vec![(0, 42)],
+            1,
+            AccountMapEntryMeta::new_dirty(&accounts_index.storage, true),
+        ));
+        accounts_index
+            .map_internal
+            .write()
+            .unwrap()
+            .insert(pubkey, Arc::clone(&entry));
+
+        let mut callback_called = false;
+        accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
+            assert_eq!(entry.slot_list.read().unwrap().len(), 1);
+            assert_eq!(entry.ref_count(), 1);
+            assert!(entry.dirty());
+            callback_called = true;
+        });
+
+        assert!(callback_called);
+    }
+
+    #[test]
+    fn test_get_or_create_index_entry_for_pubkey_existing_on_disk() {
+        let accounts_index = new_disk_buckets_for_test::<u64>();
+        let pubkey = solana_pubkey::new_rand();
+        let slot = 0;
+
+        // Simulate an entry on disk
+        let disk_entry: (&[(u64, u64)], u64) = (&[(0u64, 42u64)], 1u64);
+        accounts_index
+            .bucket
+            .as_ref()
+            .unwrap()
+            .try_write(&pubkey, disk_entry)
+            .unwrap();
+
+        // Ensure the entry is not found in meory
+        let mut found = false;
+        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+            found = entry.is_some();
+        });
+        assert!(!found);
+
+        let mut callback_called = false;
+        accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |entry| {
+            assert_eq!(entry.slot_list.read().unwrap().len(), 1);
+            assert_eq!(entry.ref_count(), 1);
+            assert!(!entry.dirty()); // Entry loaded from disk should not be dirty
+            accounts_index.cache_entry_at_slot(entry, slot, 0);
+            callback_called = true;
+        });
+
+        assert!(callback_called);
+
+        // Ensure the entry is now in memory
+        let mut found = false;
+        accounts_index.get_only_in_mem(&pubkey, false, |entry| {
+            found = entry.is_some();
+        });
+        assert!(found);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "assertion `left != right` failed: Callback must insert item into slot list"
+    )]
+    fn test_get_or_create_index_entry_for_pubkey_empty_slot_list_assertion() {
+        let accounts_index = new_for_test::<u64>();
+        let pubkey = solana_pubkey::new_rand();
+
+        accounts_index.get_or_create_index_entry_for_pubkey(&pubkey, |_entry| {
+            // Do not modify the slot list, which should trigger the assertion
+        });
     }
 
     #[test]
@@ -2114,21 +2267,24 @@ mod tests {
                     }
                     assert_eq!(
                         expected_result, result,
-                        "return value different. other: {other_slot:?}, {expected:?}, {slot_list:?}, original: {original:?}"
+                        "return value different. other: {other_slot:?}, {expected:?}, \
+                         {slot_list:?}, original: {original:?}"
                     );
                     // sort for easy comparison
                     expected_reclaims.sort_unstable();
                     reclaims.sort_unstable();
                     assert_eq!(
                         expected_reclaims, reclaims,
-                        "reclaims different. other: {other_slot:?}, {expected:?}, {slot_list:?}, original: {original:?}"
+                        "reclaims different. other: {other_slot:?}, {expected:?}, {slot_list:?}, \
+                         original: {original:?}"
                     );
                     // sort for easy comparison
                     slot_list.sort_unstable();
                     expected.sort_unstable();
                     assert_eq!(
                         slot_list, expected,
-                        "slot_list different. other: {other_slot:?}, {expected:?}, {slot_list:?}, original: {original:?}"
+                        "slot_list different. other: {other_slot:?}, {expected:?}, {slot_list:?}, \
+                         original: {original:?}"
                     );
                 }
             }

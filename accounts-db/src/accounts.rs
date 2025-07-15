@@ -344,18 +344,6 @@ impl Accounts {
         }
     }
 
-    fn load_with_slot(
-        collector: &mut Vec<PubkeyAccountSlot>,
-        some_account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>,
-    ) {
-        if let Some(mapped_account_tuple) = some_account_tuple
-            .filter(|(_, account, _)| account.is_loadable())
-            .map(|(pubkey, account, slot)| (*pubkey, account, slot))
-        {
-            collector.push(mapped_account_tuple)
-        }
-    }
-
     pub fn load_by_program(
         &self,
         ancestors: &Ancestors,
@@ -539,22 +527,6 @@ impl Accounts {
         self.accounts_db
             .accounts_index
             .hold_range_in_memory(range, start_holding, thread_pool)
-    }
-
-    pub fn load_to_collect_rent_eagerly<R: RangeBounds<Pubkey> + std::fmt::Debug>(
-        &self,
-        ancestors: &Ancestors,
-        range: R,
-    ) -> Vec<PubkeyAccountSlot> {
-        let mut collector = Vec::new();
-        self.accounts_db.range_scan_accounts(
-            "", // disable logging of this. We now parallelize it and this results in multiple parallel logs
-            ancestors,
-            range,
-            &ScanConfig::default(),
-            |option| Self::load_with_slot(&mut collector, option),
-        );
-        collector
     }
 
     /// This function will prevent multiple threads from modifying the same account state at the

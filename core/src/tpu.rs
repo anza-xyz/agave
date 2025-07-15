@@ -426,8 +426,8 @@ impl Tpu {
         if let Some(tracer_thread_hdl) = self.tracer_thread_hdl {
             if let Err(tracer_result) = tracer_thread_hdl.join()? {
                 error!(
-                    "banking tracer thread returned error after successful thread join: {:?}",
-                    tracer_result
+                    "banking tracer thread returned error after successful thread join: \
+                     {tracer_result:?}"
                 );
             }
         }

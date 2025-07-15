@@ -30,7 +30,7 @@ const SLOT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 /// LoadBalancer can support providing a RpcClient which has the most
 /// up-to-date slot information among a set of configured RPC servers.
 /// This service starts threads which will subscribe to the slot events
-/// using the corresponding web socket for a RPC server. This mechansim can
+/// using the corresponding web socket for a RPC server. This mechanism can
 /// load balance the RPC calls to multiple RPC servers.
 pub struct RpcLoadBalancer {
     /// (ws_url, slot)

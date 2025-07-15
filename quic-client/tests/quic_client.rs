@@ -5,7 +5,7 @@ mod tests {
         log::*,
         solana_connection_cache::connection_cache_stats::ConnectionCacheStats,
         solana_keypair::Keypair,
-        solana_net_utils::bind_to_localhost,
+        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_packet::PACKET_DATA_SIZE,
         solana_perf::packet::PacketBatch,
         solana_quic_client::nonblocking::quic_client::QuicLazyInitializedEndpoint,
@@ -15,7 +15,7 @@ mod tests {
         },
         solana_tls_utils::{new_dummy_x509_certificate, QuicClientCertificate},
         std::{
-            net::{SocketAddr, UdpSocket},
+            net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
             sync::{
                 atomic::{AtomicBool, Ordering},
                 Arc, RwLock,
@@ -51,8 +51,9 @@ mod tests {
     }
 
     fn server_args() -> (UdpSocket, Arc<AtomicBool>, Keypair) {
+        let port_range = localhost_port_range_for_tests();
         (
-            bind_to_localhost().unwrap(),
+            bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.0).expect("should bind"),
             Arc::new(AtomicBool::new(false)),
             Keypair::new(),
         )

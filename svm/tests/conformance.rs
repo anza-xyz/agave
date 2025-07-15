@@ -60,8 +60,8 @@ const fn feature_u64(feature: &Pubkey) -> u64 {
 static INDEXED_FEATURES: std::sync::LazyLock<HashMap<u64, Pubkey>> =
     std::sync::LazyLock::new(|| {
         FEATURE_NAMES
-            .iter()
-            .map(|(pubkey, _)| (feature_u64(pubkey), *pubkey))
+            .keys()
+            .map(|pubkey| (feature_u64(pubkey), *pubkey))
             .collect()
     });
 
@@ -383,13 +383,13 @@ fn execute_fixture_as_instr(
             .position(|idx| *idx == *index_txn)
             .unwrap_or(instruction_acct_idx);
 
-        instruction_accounts.push(InstructionAccount {
-            index_in_transaction: *index_txn as IndexOfAccount,
-            index_in_caller: *index_txn as IndexOfAccount,
-            index_in_callee: index_in_callee as IndexOfAccount,
-            is_signer: sanitized_message.is_signer(*index_txn as usize),
-            is_writable: sanitized_message.is_writable(*index_txn as usize),
-        });
+        instruction_accounts.push(InstructionAccount::new(
+            *index_txn as IndexOfAccount,
+            *index_txn as IndexOfAccount,
+            index_in_callee as IndexOfAccount,
+            sanitized_message.is_signer(*index_txn as usize),
+            sanitized_message.is_writable(*index_txn as usize),
+        ));
     }
 
     let mut compute_units_consumed = 0u64;

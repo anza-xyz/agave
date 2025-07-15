@@ -324,7 +324,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                     .set_owner(account_info.owner.as_ref())
                     .unwrap();
             }
-            if instruction_account.is_writable {
+            if instruction_account.is_writable() {
                 account_indices.push((instruction_account.index_in_caller, account_info_index));
             }
         }
@@ -897,7 +897,7 @@ impl ProgramTest {
             }
             bank.store_account(address, account);
         }
-        bank.set_capitalization();
+        bank.set_capitalization_for_tests(bank.calculate_capitalization_for_tests());
         // Advance beyond slot 0 for a slightly more realistic test environment
         let bank = {
             let bank = Arc::new(bank);

@@ -322,13 +322,13 @@ impl RepairWeight {
     pub fn split_off(&mut self, slot: Slot) -> HashSet<Slot> {
         assert!(slot >= self.root);
         if slot == self.root {
-            error!("Trying to orphan root of repair tree {}", slot);
+            error!("Trying to orphan root of repair tree {slot}");
             return HashSet::new();
         }
         match self.slot_to_tree.get(&slot).copied() {
             Some(TreeRoot::Root(subtree_root)) => {
                 if subtree_root == slot {
-                    info!("{} is already orphan, skipping", slot);
+                    info!("{slot} is already orphan, skipping");
                     return HashSet::new();
                 }
                 let subtree = self
@@ -350,10 +350,7 @@ impl RepairWeight {
                 // If not they will once again be attached to the pruned set in
                 // `update_orphan_ancestors`.
 
-                info!(
-                    "Dumping pruned slot {} of tree {} in repair",
-                    slot, subtree_root
-                );
+                info!("Dumping pruned slot {slot} of tree {subtree_root} in repair");
                 let mut subtree = self
                     .pruned_trees
                     .remove(&subtree_root)
@@ -378,10 +375,7 @@ impl RepairWeight {
                 }
             }
             None => {
-                warn!(
-                    "Trying to split off slot {} which doesn't currently exist in repair",
-                    slot
-                );
+                warn!("Trying to split off slot {slot} which doesn't currently exist in repair");
                 HashSet::new()
             }
         }
@@ -440,7 +434,7 @@ impl RepairWeight {
 
             // Find all descendants of `self.root` that are not reachable from `new_root`.
             // Prune these out and add to `self.pruned_trees`
-            trace!("pruning tree {} with {}", new_root_tree_root, new_root);
+            trace!("pruning tree {new_root_tree_root} with {new_root}");
             let (removed, pruned) = new_root_tree.purge_prune((new_root, Hash::default()));
             for pruned_tree in pruned {
                 let pruned_tree_root = pruned_tree.tree_root().0;
@@ -471,7 +465,7 @@ impl RepairWeight {
             .drain()
             .flat_map(|(tree_root, mut pruned_tree)| {
                 if tree_root < new_root {
-                    trace!("pruning tree {} with {}", tree_root, new_root);
+                    trace!("pruning tree {tree_root} with {new_root}");
                     let (removed, pruned) = pruned_tree.purge_prune((new_root, Hash::default()));
                     for (slot, _) in removed {
                         self.slot_to_tree.remove(&slot);

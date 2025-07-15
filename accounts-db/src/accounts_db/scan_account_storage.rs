@@ -1,6 +1,7 @@
 use {
     super::{AccountStorageEntry, AccountsDb, BinnedHashData, LoadedAccount, SplitAncientStorages},
     crate::{
+        accounts_file::AccountsFileError,
         accounts_hash::{
             AccountHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
         },
@@ -224,10 +225,7 @@ impl AccountsDb {
                 config.epoch_schedule,
                 snapshot_storages.max_slot_inclusive(),
             );
-        let slots_per_epoch = config
-            .rent_collector
-            .epoch_schedule
-            .get_slots_in_epoch(config.rent_collector.epoch);
+        let slots_per_epoch = config.epoch_schedule.get_slots_in_epoch(config.epoch);
         let one_epoch_old = snapshot_storages
             .range()
             .end
@@ -343,7 +341,8 @@ impl AccountsDb {
                                 }
                                 scanner.set_slot(slot, ancient, storage);
 
-                                Self::scan_single_account_storage(storage, &mut scanner);
+                                Self::scan_single_account_storage(storage, &mut scanner)
+                                    .expect("must scan accounts storage");
                             });
                             if ancient {
                                 stats
@@ -376,15 +375,18 @@ impl AccountsDb {
     }
 
     /// iterate over a single storage, calling scanner on each item
-    fn scan_single_account_storage<S>(storage: &AccountStorageEntry, scanner: &mut S)
+    fn scan_single_account_storage<S>(
+        storage: &AccountStorageEntry,
+        scanner: &mut S,
+    ) -> Result<(), AccountsFileError>
     where
         S: AppendVecScan,
     {
-        storage.accounts.scan_accounts(|account| {
+        storage.accounts.scan_accounts(|_offset, account| {
             if scanner.filter(account.pubkey()) {
                 scanner.found_account(&LoadedAccount::Stored(account))
             }
-        });
+        })
     }
 }
 
@@ -632,7 +634,7 @@ mod tests {
             accum: Vec::default(),
             calls: calls.clone(),
         };
-        AccountsDb::scan_single_account_storage(&storage, &mut scanner);
+        AccountsDb::scan_single_account_storage(&storage, &mut scanner).unwrap();
         let accum = scanner.scanning_complete();
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(
@@ -678,7 +680,7 @@ mod tests {
                 value_to_use_for_lamports: expected,
             };
 
-            AccountsDb::scan_single_account_storage(&storage, &mut test_scan);
+            AccountsDb::scan_single_account_storage(&storage, &mut test_scan).unwrap();
             let accum = test_scan.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), 1);
             assert_eq!(
@@ -707,9 +709,12 @@ mod tests {
                     let slot = storage.slot();
                     let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                     let mut all_accounts = Vec::default();
-                    storage.accounts.scan_accounts(|acct| {
-                        all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
-                    });
+                    storage
+                        .accounts
+                        .scan_accounts(|_offset, acct| {
+                            all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                        })
+                        .expect("must scan accounts storage");
                     let accounts = all_accounts
                         .iter()
                         .map(|stored| (&stored.0, &stored.1))
@@ -718,7 +723,7 @@ mod tests {
                     let storable_accounts = (slot, slice);
                     copied_storage
                         .accounts
-                        .append_accounts(&storable_accounts, 0);
+                        .write_accounts(&storable_accounts, 0);
                     copied_storage
                 })
                 .collect::<Vec<_>>();
@@ -741,9 +746,12 @@ mod tests {
                 let slot = storage.slot() + max_slot;
                 let copied_storage = accounts_db.create_and_insert_store(slot, 10000, "test");
                 let mut all_accounts = Vec::default();
-                storage.accounts.scan_accounts(|acct| {
-                    all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
-                });
+                storage
+                    .accounts
+                    .scan_accounts(|_offset, acct| {
+                        all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
+                    })
+                    .expect("must scan accounts storage");
                 let accounts = all_accounts
                     .iter()
                     .map(|stored| (&stored.0, &stored.1))
@@ -752,7 +760,7 @@ mod tests {
                 let storable_accounts = (slot, slice);
                 copied_storage
                     .accounts
-                    .append_accounts(&storable_accounts, 0);
+                    .write_accounts(&storable_accounts, 0);
                 copied_storage
             })
             .collect::<Vec<_>>();
@@ -1116,7 +1124,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .append_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]), 0);
 
         // Mark each account obsolete at a different slot
         for (i, offsets) in offsets.unwrap().offsets.iter().enumerate() {
@@ -1138,7 +1146,7 @@ mod tests {
             };
             scanner.set_slot(max_slot as Slot, false, &storage);
 
-            AccountsDb::scan_single_account_storage(&storage, &mut scanner);
+            AccountsDb::scan_single_account_storage(&storage, &mut scanner).unwrap();
             scanner.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), expected_count as u64);
         }

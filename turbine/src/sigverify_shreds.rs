@@ -47,6 +47,9 @@ const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = 2;
 // are needed, we can use longer durations for cache TTL.
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 
+/// Maximum number of packet batches to process in a single sigverify iteration.
+const SIGVERIFY_SHRED_BATCH_SIZE: usize = 1024;
+
 #[allow(clippy::enum_variant_names)]
 enum Error {
     RecvDisconnected,
@@ -78,6 +81,7 @@ pub fn spawn_shred_sigverify(
     let run_shred_sigverify = move || {
         let mut rng = rand::thread_rng();
         let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
+        let mut shred_buffer = Vec::with_capacity(SIGVERIFY_SHRED_BATCH_SIZE);
         loop {
             if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, DEDUPER_RESET_CYCLE) {
                 stats.num_deduper_saturations += 1;
@@ -99,6 +103,7 @@ pub fn spawn_shred_sigverify(
                 &cluster_nodes_cache,
                 &cache,
                 &mut stats,
+                &mut shred_buffer,
             ) {
                 Ok(()) => (),
                 Err(Error::RecvTimeout) => (),
@@ -129,17 +134,24 @@ fn run_shred_sigverify<const K: usize>(
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
+    shred_buffer: &mut Vec<PacketBatch>,
 ) -> Result<(), Error> {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
     let packets = shred_fetch_receiver.recv_timeout(RECV_TIMEOUT)?;
-    let mut packets: Vec<_> = std::iter::once(packets)
-        .chain(shred_fetch_receiver.try_iter())
-        .collect();
+    stats.num_packets += packets.len();
+    shred_buffer.push(packets);
+    for packets in shred_fetch_receiver
+        .try_iter()
+        .take(SIGVERIFY_SHRED_BATCH_SIZE - 1)
+    {
+        stats.num_packets += packets.len();
+        shred_buffer.push(packets);
+    }
+
     let now = Instant::now();
     stats.num_iters += 1;
-    stats.num_batches += packets.len();
-    stats.num_packets += packets.iter().map(|batch| batch.len()).sum::<usize>();
-    stats.num_discards_pre += count_discards(&packets);
+    stats.num_batches += shred_buffer.len();
+    stats.num_discards_pre += count_discards(shred_buffer);
     // Repair shreds include a randomly generated u32 nonce, so it does not
     // make sense to deduplicate the entire packet payload (i.e. they are not
     // duplicate of any other packet.data(..)).
@@ -154,7 +166,7 @@ fn run_shred_sigverify<const K: usize>(
     // For backward compatibility we need to allow trailing bytes in the packet
     // after the shred payload, but have to exclude them here from the deduper.
     stats.num_duplicates += thread_pool.install(|| {
-        packets
+        shred_buffer
             .par_iter_mut()
             .flatten()
             .filter(|packet| {
@@ -177,15 +189,15 @@ fn run_shred_sigverify<const K: usize>(
         &working_bank,
         leader_schedule_cache,
         recycler_cache,
-        &mut packets,
+        shred_buffer,
         cache,
     );
-    stats.num_discards_post += count_discards(&packets);
+    stats.num_discards_post += count_discards(shred_buffer);
     // Verify retransmitter's signature, and resign shreds
     // Merkle root as the retransmitter node.
     let resign_start = Instant::now();
     thread_pool.install(|| {
-        packets
+        shred_buffer
             .par_iter_mut()
             .flatten()
             .filter(|packet| !packet.meta().discard())
@@ -238,7 +250,7 @@ fn run_shred_sigverify<const K: usize>(
     });
     stats.resign_micros += resign_start.elapsed().as_micros() as u64;
     // Extract shred payload from packets, and separate out repaired shreds.
-    let (shreds, repairs): (Vec<_>, Vec<_>) = packets
+    let (shreds, repairs): (Vec<_>, Vec<_>) = shred_buffer
         .iter()
         .flat_map(|batch| batch.iter())
         .filter(|packet| !packet.meta().discard())
@@ -276,6 +288,7 @@ fn run_shred_sigverify<const K: usize>(
         .map(|shred| (shred, /*is_repaired:*/ true));
     verified_sender.send(shreds.chain(repairs).collect())?;
     stats.elapsed_micros += now.elapsed().as_micros() as u64;
+    shred_buffer.clear();
     Ok(())
 }
 

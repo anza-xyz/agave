@@ -65,16 +65,10 @@ impl SnapshotController {
         root: Slot,
         banks: &[&Arc<Bank>],
     ) -> Result<(bool, SquashTiming, u64), SetRootError> {
-        let (mut is_root_bank_squashed, mut squash_timing) =
-            self.send_eah_request_if_needed(root, banks)?;
+        let mut is_root_bank_squashed = false;
+        let mut squash_timing = SquashTiming::default();
         let mut total_snapshot_ms = 0;
 
-        // After checking for EAH requests, also check for regular snapshot requests.
-        //
-        // This is needed when a snapshot request occurs in a slot after an EAH request, and is
-        // part of the same set of `banks` in a single `set_root()` invocation.  While (very)
-        // unlikely for a validator with default snapshot intervals (and accounts hash verifier
-        // intervals), it *is* possible, and there are tests to exercise this possibility.
         if let Some(SnapshotGenerationIntervals {
             full_snapshot_interval,
             incremental_snapshot_interval,
@@ -113,7 +107,7 @@ impl SnapshotController {
                 is_root_bank_squashed = bank_slot == root;
 
                 let mut snapshot_time = Measure::start("squash::snapshot_time");
-                if bank.is_startup_verification_complete() {
+                if bank.has_initial_accounts_hash_verification_completed() {
                     // Save off the status cache because these may get pruned if another
                     // `set_root()` is called before the snapshots package can be generated
                     let status_cache_slot_deltas =

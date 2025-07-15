@@ -144,28 +144,24 @@ pub struct NetlinkMessage {
 impl NetlinkMessage {
     fn read(buf: &[u8]) -> Result<Self, io::Error> {
         if mem::size_of::<nlmsghdr>() > buf.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "buffer smaller than nlmsghdr",
-            ));
+            return Err(io::Error::other("buffer smaller than nlmsghdr"));
         }
 
         // Safety: nlmsghdr is POD so read is safe
         let header = unsafe { ptr::read_unaligned(buf.as_ptr() as *const nlmsghdr) };
         let msg_len = header.nlmsg_len as usize;
         if msg_len < mem::size_of::<nlmsghdr>() || msg_len > buf.len() {
-            return Err(io::Error::new(io::ErrorKind::Other, "invalid nlmsg_len"));
+            return Err(io::Error::other("invalid nlmsg_len"));
         }
 
         let data_offset = align_to(mem::size_of::<nlmsghdr>(), NLMSG_ALIGNTO as usize);
         if data_offset >= buf.len() {
-            return Err(io::Error::new(io::ErrorKind::Other, "need more data"));
+            return Err(io::Error::other("need more data"));
         }
 
         let (data, error) = if header.nlmsg_type == NLMSG_ERROR as u16 {
             if data_offset + mem::size_of::<nlmsgerr>() > buf.len() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                return Err(io::Error::other(
                     "NLMSG_ERROR but not enough space for nlmsgerr",
                 ));
             }
@@ -266,7 +262,7 @@ enum NlAttrError {
 
 impl From<NlAttrError> for io::Error {
     fn from(e: NlAttrError) -> Self {
-        Self::new(io::ErrorKind::Other, e)
+        Self::other(e)
     }
 }
 

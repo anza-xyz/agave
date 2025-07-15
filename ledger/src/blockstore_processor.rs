@@ -849,7 +849,6 @@ pub struct ProcessOptions {
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub limit_load_slot_count_from_snapshot: Option<usize>,
     pub allow_dead_slots: bool,
-    pub accounts_db_test_hash_calculation: bool,
     pub accounts_db_skip_shrink: bool,
     pub accounts_db_force_initial_clean: bool,
     pub accounts_db_config: Option<AccountsDbConfig>,
@@ -2325,8 +2324,7 @@ pub mod tests {
         crate::{
             blockstore_options::{AccessType, BlockstoreOptions},
             genesis_utils::{
-                create_genesis_config, create_genesis_config_with_leader,
-                create_genesis_config_with_mint_keypair, GenesisConfigInfo,
+                create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
         },
         assert_matches::assert_matches,
@@ -2351,7 +2349,6 @@ pub mod tests {
                 SchedulingContext,
             },
         },
-        solana_seed_derivable::SeedDerivable,
         solana_signer::Signer,
         solana_svm::transaction_processor::ExecutionRecordingConfig,
         solana_system_interface::error::SystemError,
@@ -2371,7 +2368,7 @@ pub mod tests {
     // Convenience wrapper to optionally process blockstore with Secondary access.
     //
     // Setting up the ledger for a test requires Primary access as items will need to be inserted.
-    // However, once a Secondary access has been opened, it won't automaticaly see updates made by
+    // However, once a Secondary access has been opened, it won't automatically see updates made by
     // the Primary access. So, open (and close) the Secondary access within this function to ensure
     // that "stale" Secondary accesses don't propagate.
     fn test_process_blockstore_with_custom_options(
@@ -2583,7 +2580,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -2648,7 +2644,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -2666,7 +2661,6 @@ pub mod tests {
         */
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         fill_blockstore_slot_with_ticks(&blockstore, ticks_per_slot, 3, 0, blockhash);
@@ -2735,7 +2729,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -2815,7 +2808,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3029,7 +3021,6 @@ pub mod tests {
         // Check that we can properly restart the ledger / leader scheduler doesn't fail
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3174,7 +3165,6 @@ pub mod tests {
             .unwrap();
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3205,7 +3195,6 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -3225,7 +3214,6 @@ pub mod tests {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
         let opts = ProcessOptions {
             full_leader_cache: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (_bank_forks, leader_schedule) =
@@ -3441,29 +3429,14 @@ pub mod tests {
         assert_eq!(bank.get_balance(&keypair1.pubkey()), 3);
     }
 
-    #[test_case(true, true; "fee_payer_in_rent_partition")]
-    #[test_case(false, true; "fee_payer_not_in_rent_partition")]
-    #[test_case(true, false; "fee_payer_in_rent_partition-partitioned_rent_disabled")]
-    fn test_transaction_result_does_not_affect_bankhash(
-        fee_payer_in_rent_partition: bool,
-        should_run_partitioned_rent_collection: bool,
-    ) {
+    #[test]
+    fn test_transaction_result_does_not_affect_bankhash() {
         solana_logger::setup();
         let GenesisConfigInfo {
-            mut genesis_config,
+            genesis_config,
             mint_keypair,
             ..
-        } = if fee_payer_in_rent_partition {
-            create_genesis_config(1000)
-        } else {
-            create_genesis_config_with_mint_keypair(Keypair::from_seed(&[1u8; 32]).unwrap(), 1000)
-        };
-
-        if should_run_partitioned_rent_collection {
-            genesis_config
-                .accounts
-                .remove(&agave_feature_set::disable_partitioned_rent_collection::id());
-        }
+        } = create_genesis_config(1000);
 
         fn get_instruction_errors() -> Vec<InstructionError> {
             vec![
@@ -3611,11 +3584,8 @@ pub mod tests {
                     .unwrap()
                     .last_blockhash
             );
-            // AND should not affect bankhash IF the rent is collected during freeze.
-            assert_eq!(
-                ok_bank_details == bank_details,
-                fee_payer_in_rent_partition && should_run_partitioned_rent_collection
-            );
+            // Though bankhash is not affected, bank_details should be different.
+            assert_ne!(ok_bank_details, bank_details);
             // Different types of transaction failure should not affect bank hash
             if let Some(prev_bank_details) = &err_bank_details {
                 assert_eq!(
@@ -4191,7 +4161,6 @@ pub mod tests {
         let opts = ProcessOptions {
             run_verification: true,
             halt_at_slot: Some(0),
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let (bank_forks, ..) =
@@ -4244,7 +4213,6 @@ pub mod tests {
         let bank0 = bank_forks.read().unwrap().get_with_scheduler(0).unwrap();
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
         let recyclers = VerifyRecyclers::default();
@@ -4705,7 +4673,6 @@ pub mod tests {
 
         let opts = ProcessOptions {
             run_verification: true,
-            accounts_db_test_hash_calculation: true,
             ..ProcessOptions::default()
         };
 

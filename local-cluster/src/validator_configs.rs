@@ -45,7 +45,6 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         no_os_disk_stats_reporting: config.no_os_disk_stats_reporting,
         poh_pinned_cpu_core: config.poh_pinned_cpu_core,
         warp_slot: config.warp_slot,
-        accounts_db_test_hash_calculation: config.accounts_db_test_hash_calculation,
         accounts_db_skip_shrink: config.accounts_db_skip_shrink,
         accounts_db_force_initial_clean: config.accounts_db_force_initial_clean,
         tpu_coalesce: config.tpu_coalesce,
@@ -80,6 +79,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         delay_leader_block_for_pending_fork: config.delay_leader_block_for_pending_fork,
         use_tpu_client_next: config.use_tpu_client_next,
         retransmit_xdp: config.retransmit_xdp.clone(),
+        repair_handler_type: config.repair_handler_type.clone(),
     }
 }
 

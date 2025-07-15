@@ -630,10 +630,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
-            .load_account(nonce_info.address())
-            .and_then(|ref current_nonce_account| {
-                system_program::check_id(current_nonce_account.owner()).then_some(())?;
-                StateMut::<NonceVersions>::state(current_nonce_account).ok()
+            .load_transaction_account(nonce_info.address(), true)
+            .and_then(|ref current_nonce| {
+                system_program::check_id(current_nonce.account.owner()).then_some(())?;
+                StateMut::<NonceVersions>::state(&current_nonce.account).ok()
             })
             .and_then(
                 |current_nonce_versions| match current_nonce_versions.state() {
@@ -2062,8 +2062,8 @@ mod tests {
         let starting_balance = transaction_fee + priority_fee;
         assert!(
             starting_balance > min_balance,
-            "we're testing that a rent exempt fee payer can be fully drained, \
-                so ensure that the starting balance is more than the min balance"
+            "we're testing that a rent exempt fee payer can be fully drained, so ensure that the \
+             starting balance is more than the min balance"
         );
 
         let fee_payer_rent_epoch = current_epoch;

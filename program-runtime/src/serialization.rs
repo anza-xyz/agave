@@ -22,6 +22,23 @@ use {
 /// SBF VM.
 const MAX_INSTRUCTION_ACCOUNTS: u8 = NON_DUP_MARKER;
 
+/// Creates the account data direct mapping in serialization and CPI return
+pub fn create_memory_region_of_account(
+    account: &mut BorrowedAccount<'_>,
+    vaddr: u64,
+) -> Result<MemoryRegion, InstructionError> {
+    let can_data_be_changed = account.can_data_be_changed().is_ok();
+    let mut memory_region = if can_data_be_changed && !account.is_shared() {
+        MemoryRegion::new_writable(account.get_data_mut()?, vaddr)
+    } else {
+        MemoryRegion::new_readonly(account.get_data(), vaddr)
+    };
+    if can_data_be_changed {
+        memory_region.access_violation_handler_payload = Some(account.get_index_in_transaction());
+    }
+    Ok(memory_region)
+}
+
 #[allow(dead_code)]
 enum SerializeAccount<'a> {
     Account(IndexOfAccount, BorrowedAccount<'a>),
@@ -97,20 +114,19 @@ impl Serializer {
             self.write_all(account.get_data());
             vm_data_addr
         } else {
-            self.push_region(true);
+            self.push_region();
             let vaddr = self.vaddr;
-            if !account.get_data().is_empty() {
-                let writable = account.can_data_be_changed().is_ok();
-                let shared = account.is_shared();
-                let mut new_region = if writable && !shared {
-                    MemoryRegion::new_writable(account.get_data_mut()?, self.vaddr)
-                } else {
-                    MemoryRegion::new_readonly(account.get_data(), self.vaddr)
-                };
-                if writable && shared {
-                    new_region.cow_callback_payload = account.get_index_in_transaction() as u32;
-                }
-                self.vaddr += new_region.len;
+            let address_space_reserved_for_account = if self.aligned {
+                account
+                    .get_data()
+                    .len()
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+            } else {
+                account.get_data().len()
+            };
+            if address_space_reserved_for_account > 0 {
+                let new_region = create_memory_region_of_account(account, self.vaddr)?;
+                self.vaddr += address_space_reserved_for_account as u64;
                 self.regions.push(new_region);
             }
             vaddr
@@ -128,37 +144,27 @@ impl Serializer {
                 // padding and shift the start of the next region, so that once
                 // vm_addr is aligned, the corresponding host_addr is aligned
                 // too.
-                self.fill_write(MAX_PERMITTED_DATA_INCREASE + BPF_ALIGN_OF_U128, 0)
+                self.fill_write(BPF_ALIGN_OF_U128, 0)
                     .map_err(|_| InstructionError::InvalidArgument)?;
                 self.region_start += BPF_ALIGN_OF_U128.saturating_sub(align_offset);
-                // put the realloc padding in its own region
-                self.push_region(account.can_data_be_changed().is_ok());
             }
         }
 
         Ok(vm_data_addr)
     }
 
-    fn push_region(&mut self, writable: bool) {
+    fn push_region(&mut self) {
         let range = self.region_start..self.buffer.len();
-        let region = if writable {
-            MemoryRegion::new_writable(
-                self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        } else {
-            MemoryRegion::new_readonly(
-                self.buffer.as_slice().get(range.clone()).unwrap(),
-                self.vaddr,
-            )
-        };
-        self.regions.push(region);
+        self.regions.push(MemoryRegion::new_writable(
+            self.buffer.as_slice_mut().get_mut(range.clone()).unwrap(),
+            self.vaddr,
+        ));
         self.region_start = range.end;
         self.vaddr += range.len() as u64;
     }
 
     fn finish(mut self) -> (AlignedMemory<HOST_ALIGN>, Vec<MemoryRegion>) {
-        self.push_region(true);
+        self.push_region();
         debug_assert_eq!(self.region_start, self.buffer.len());
         (self.buffer, self.regions)
     }
@@ -441,10 +447,11 @@ fn serialize_parameters_aligned(
                 + size_of::<Pubkey>() // owner
                 + size_of::<u64>()  // lamports
                 + size_of::<u64>()  // data len
-                + MAX_PERMITTED_DATA_INCREASE
                 + size_of::<u64>(); // rent epoch
                 if copy_account_data {
-                    size += data_len + (data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                    size += data_len
+                        + MAX_PERMITTED_DATA_INCREASE
+                        + (data_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
                 } else {
                     size += BPF_ALIGN_OF_U128;
                 }
@@ -553,46 +560,28 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
             {
                 return Err(InstructionError::InvalidRealloc);
             }
-            // The redundant check helps to avoid the expensive data comparison if we can
-            let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
             if copy_account_data {
                 let data = buffer
                     .get(start..start + post_len)
                     .ok_or(InstructionError::InvalidArgument)?;
+                // The redundant check helps to avoid the expensive data comparison if we can
                 match borrowed_account.can_data_be_resized(post_len) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
                 }
-                start += pre_len; // data
+            } else if borrowed_account.get_data().len() != post_len {
+                borrowed_account.set_data_length(post_len)?;
+            }
+            start += if copy_account_data {
+                let alignment_offset = (pre_len as *const u8).align_offset(BPF_ALIGN_OF_U128);
+                pre_len // data
+                    .saturating_add(MAX_PERMITTED_DATA_INCREASE) // realloc padding
+                    .saturating_add(alignment_offset)
             } else {
                 // See Serializer::write_account() as to why we have this
-                // padding before the realloc region here.
-                start += BPF_ALIGN_OF_U128.saturating_sub(alignment_offset);
-                let data = buffer
-                    .get(start..start + MAX_PERMITTED_DATA_INCREASE)
-                    .ok_or(InstructionError::InvalidArgument)?;
-                match borrowed_account.can_data_be_resized(post_len) {
-                    Ok(()) => {
-                        borrowed_account.set_data_length(post_len)?;
-                        let allocated_bytes = post_len.saturating_sub(pre_len);
-                        if allocated_bytes > 0 {
-                            borrowed_account
-                                .get_data_mut()?
-                                .get_mut(pre_len..pre_len.saturating_add(allocated_bytes))
-                                .ok_or(InstructionError::InvalidArgument)?
-                                .copy_from_slice(
-                                    data.get(0..allocated_bytes)
-                                        .ok_or(InstructionError::InvalidArgument)?,
-                                );
-                        }
-                    }
-                    Err(err) if borrowed_account.get_data().len() != post_len => return Err(err),
-                    _ => {}
-                }
-            }
-            start += MAX_PERMITTED_DATA_INCREASE;
-            start += alignment_offset;
+                BPF_ALIGN_OF_U128
+            };
             start += size_of::<u64>(); // rent_epoch
             if borrowed_account.get_owner().to_bytes() != owner {
                 // Change the owner at the end so that we are allowed to change the lamports and data before
@@ -609,10 +598,13 @@ mod tests {
     use {
         super::*,
         crate::with_mock_invoke_context,
-        solana_account::{Account, AccountSharedData, WritableAccount},
+        solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         solana_account_info::AccountInfo,
         solana_program_entrypoint::deserialize,
+        solana_rent::Rent,
+        solana_sbpf::{memory_region::MemoryMapping, program::SBPFVersion, vm::Config},
         solana_sdk_ids::bpf_loader,
+        solana_system_interface::MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION,
         solana_transaction_context::InstructionAccount,
         std::{
             cell::RefCell,
@@ -636,13 +628,13 @@ mod tests {
                     .iter()
                     .position(|account_index| account_index == index_in_transaction)
                     .unwrap_or(index_in_instruction);
-                InstructionAccount {
-                    index_in_transaction: *index_in_transaction,
-                    index_in_caller: *index_in_transaction,
-                    index_in_callee: index_in_callee as IndexOfAccount,
-                    is_signer: false,
-                    is_writable: is_writable(index_in_instruction),
-                }
+                InstructionAccount::new(
+                    *index_in_transaction,
+                    *index_in_transaction,
+                    index_in_callee as IndexOfAccount,
+                    false,
+                    is_writable(index_in_instruction),
+                )
             })
             .collect()
     }
@@ -1324,15 +1316,230 @@ mod tests {
     }
 
     fn concat_regions(regions: &[MemoryRegion]) -> AlignedMemory<HOST_ALIGN> {
-        let len = regions.iter().fold(0, |len, region| len + region.len) as usize;
-        let mut mem = AlignedMemory::zero_filled(len);
+        let last_region = regions.last().unwrap();
+        let mut mem = AlignedMemory::zero_filled(
+            (last_region.vm_addr - MM_INPUT_START + last_region.len) as usize,
+        );
         for region in regions {
             let host_slice = unsafe {
-                slice::from_raw_parts(region.host_addr.get() as *const u8, region.len as usize)
+                slice::from_raw_parts(region.host_addr as *const u8, region.len as usize)
             };
             mem.as_slice_mut()[(region.vm_addr - MM_INPUT_START) as usize..][..region.len as usize]
                 .copy_from_slice(host_slice)
         }
         mem
+    }
+
+    #[test]
+    fn test_access_violation_handler() {
+        let program_id = Pubkey::new_unique();
+        let shared_account = AccountSharedData::new(0, 4, &program_id);
+        let mut transaction_context = TransactionContext::new(
+            vec![
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(0, 4, &program_id),
+                ), // readonly
+                (Pubkey::new_unique(), shared_account.clone()), // writable shared
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(0, 0, &program_id),
+                ), // another writable account
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(
+                        0,
+                        MAX_PERMITTED_DATA_LENGTH as usize - 0x100,
+                        &program_id,
+                    ),
+                ), // almost max sized writable account
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(0, 0, &program_id),
+                ), // writable dummy to burn accounts_resize_delta
+                (
+                    Pubkey::new_unique(),
+                    AccountSharedData::new(0, 0x3000, &program_id),
+                ), // writable dummy to burn accounts_resize_delta
+                (program_id, AccountSharedData::default()),     // program
+            ],
+            Rent::default(),
+            /* max_instruction_stack_depth */ 1,
+            /* max_instruction_trace_length */ 1,
+        );
+        let program_indices = [6];
+        let transaction_accounts_indexes = [0, 1, 2, 3, 4, 5];
+        let instruction_accounts =
+            deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
+        let instruction_data = [];
+        transaction_context
+            .get_next_instruction_context()
+            .unwrap()
+            .configure(&program_indices, &instruction_accounts, &instruction_data);
+        transaction_context.push().unwrap();
+        let instruction_context = transaction_context
+            .get_current_instruction_context()
+            .unwrap();
+        let account_start_offsets = [
+            MM_INPUT_START,
+            MM_INPUT_START + 4 + MAX_PERMITTED_DATA_INCREASE as u64,
+            MM_INPUT_START + (4 + MAX_PERMITTED_DATA_INCREASE as u64) * 2,
+            MM_INPUT_START + (4 + MAX_PERMITTED_DATA_INCREASE as u64) * 3,
+        ];
+        let regions = account_start_offsets
+            .iter()
+            .enumerate()
+            .map(|(index_in_instruction, account_start_offset)| {
+                create_memory_region_of_account(
+                    &mut instruction_context
+                        .try_borrow_instruction_account(
+                            &transaction_context,
+                            index_in_instruction as IndexOfAccount,
+                        )
+                        .unwrap(),
+                    *account_start_offset,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let config = Config {
+            aligned_memory_mapping: false,
+            ..Config::default()
+        };
+        let mut memory_mapping = MemoryMapping::new_with_access_violation_handler(
+            regions,
+            &config,
+            SBPFVersion::V3,
+            transaction_context.access_violation_handler(),
+        )
+        .unwrap();
+
+        // Reading readonly account is allowed
+        memory_mapping
+            .load::<u32>(account_start_offsets[0])
+            .unwrap();
+
+        // Reading writable account is allowed
+        memory_mapping
+            .load::<u32>(account_start_offsets[1])
+            .unwrap();
+
+        // Reading beyond readonly accounts current size is denied
+        memory_mapping
+            .load::<u32>(account_start_offsets[0] + 4)
+            .unwrap_err();
+
+        // Writing to readonly account is denied
+        memory_mapping
+            .store::<u32>(0, account_start_offsets[0])
+            .unwrap_err();
+
+        // Writing to shared writable account makes it unique (CoW logic)
+        assert!(transaction_context
+            .accounts()
+            .try_borrow(1)
+            .unwrap()
+            .is_shared());
+        memory_mapping
+            .store::<u32>(0, account_start_offsets[1])
+            .unwrap();
+        assert!(!transaction_context
+            .accounts()
+            .try_borrow(1)
+            .unwrap()
+            .is_shared());
+        assert_eq!(
+            transaction_context
+                .accounts()
+                .try_borrow(1)
+                .unwrap()
+                .data()
+                .len(),
+            4,
+        );
+
+        // Reading beyond writable accounts current size grows is denied
+        memory_mapping
+            .load::<u32>(account_start_offsets[1] + 4)
+            .unwrap_err();
+
+        // Writing beyond writable accounts current size grows it
+        // to original length plus MAX_PERMITTED_DATA_INCREASE
+        memory_mapping
+            .store::<u32>(0, account_start_offsets[1] + 4)
+            .unwrap();
+        assert_eq!(
+            transaction_context
+                .accounts()
+                .try_borrow(1)
+                .unwrap()
+                .data()
+                .len(),
+            4 + MAX_PERMITTED_DATA_INCREASE,
+        );
+        assert!(
+            transaction_context
+                .accounts()
+                .try_borrow(1)
+                .unwrap()
+                .data()
+                .len()
+                < 0x3000
+        );
+
+        // Writing beyond almost max sized writable accounts current size only grows it
+        // to MAX_PERMITTED_DATA_LENGTH
+        memory_mapping
+            .store::<u32>(0, account_start_offsets[3] + MAX_PERMITTED_DATA_LENGTH - 4)
+            .unwrap();
+        assert_eq!(
+            transaction_context
+                .accounts()
+                .try_borrow(3)
+                .unwrap()
+                .data()
+                .len(),
+            MAX_PERMITTED_DATA_LENGTH as usize,
+        );
+
+        // Accessing the rest of the address space reserved for
+        // the almost max sized writable account is denied
+        memory_mapping
+            .load::<u32>(account_start_offsets[3] + MAX_PERMITTED_DATA_LENGTH)
+            .unwrap_err();
+        memory_mapping
+            .store::<u32>(0, account_start_offsets[3] + MAX_PERMITTED_DATA_LENGTH)
+            .unwrap_err();
+
+        // Burn through most of the accounts_resize_delta budget
+        let remaining_allowed_growth: usize = 0x700;
+        for index_in_instruction in 4..6 {
+            let mut borrowed_account = instruction_context
+                .try_borrow_instruction_account(&transaction_context, index_in_instruction)
+                .unwrap();
+            borrowed_account
+                .set_data(vec![0u8; MAX_PERMITTED_DATA_LENGTH as usize])
+                .unwrap();
+        }
+        assert_eq!(
+            transaction_context.accounts_resize_delta().unwrap(),
+            MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+                - remaining_allowed_growth as i64,
+        );
+
+        // Writing beyond empty writable accounts current size
+        // only grows it to fill up MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION
+        memory_mapping
+            .store::<u32>(0, account_start_offsets[2] + 0x500)
+            .unwrap();
+        assert_eq!(
+            transaction_context
+                .accounts()
+                .try_borrow(2)
+                .unwrap()
+                .data()
+                .len(),
+            remaining_allowed_growth,
+        );
     }
 }

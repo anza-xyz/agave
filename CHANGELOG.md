@@ -33,6 +33,8 @@ Release channels have their own copy of this changelog:
 
 #### Changes
 * Reading snapshot archives requires increased `memlock` limits - recommended setting is `LimitMEMLOCK=2000000000` in systemd service configuration. Lack of sufficient limit will result slower startup times.
+* `--transaction-structure view` is now the default.
+* The default full snapshot interval is now 100,000 slots.
 
 ## 2.3.0
 
@@ -262,11 +264,8 @@ This simplifies the process of diffing between versions of the log.
   * Update the edge, beta, and stable links
   * Create new section: `vx.y+1.0 - Unreleased`
   * Remove `Unreleased` annotation from vx.y.0 section.
-* Create vx.y branch starting at that commit
-* Tag that commit as vx.y.0
-
-### When creating a new patch release:
-* Commit to the release branch updating the changelog:
-  * Remove `Unreleased` annotation from `vx.y.z` section
-  * Add a new section at the top for `vx.y.z+1 - Unreleased`
-* Tag that new commit as the new release
+* Create vx.y branch starting at that commit.
+* Commit to `vx.y` updating the changelog:
+  * Remove the `vx.y+1.0 - Unreleased` section
+  * Remove the channel links
+* Tag vx.y.0 on the new branch

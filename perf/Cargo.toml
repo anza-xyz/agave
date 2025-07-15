@@ -82,6 +82,9 @@ solana-logger = { workspace = true }
 solana-perf = { path = ".", features = ["dev-context-only-utils"] }
 test-case = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dev-dependencies]
+jemallocator = { workspace = true }
+
 [[bench]]
 name = "sigverify"
 

@@ -48,19 +48,10 @@ impl StakedStreamLoadEMA {
             max_streams_per_ms * EMA_WINDOW_MS
         };
 
-        let max_num_unstaked_connections =
-            u64::try_from(max_unstaked_connections).unwrap_or_else(|_| {
-                error!(
-                    "Failed to convert maximum number of unstaked connections {} to u64.",
-                    max_unstaked_connections
-                );
-                500
-            });
-
         let max_unstaked_load_in_throttling_window = if allow_unstaked_streams {
             Percentage::from(MAX_UNSTAKED_STREAMS_PERCENT)
                 .apply_to(max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS)
-                .saturating_div(max_num_unstaked_connections)
+                .saturating_div(max_unstaked_connections as u64)
         } else {
             0
         };

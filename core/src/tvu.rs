@@ -15,7 +15,7 @@ use {
         drop_bank_service::DropBankService,
         repair::repair_service::{OutstandingShredRepairs, RepairInfo, RepairServiceChannels},
         replay_stage::{ReplayReceivers, ReplaySenders, ReplayStage, ReplayStageConfig},
-        shred_fetch_stage::ShredFetchStage,
+        shred_fetch_stage::{ShredFetchStage, SHRED_FETCH_CHANNEL_SIZE},
         voting_service::VotingService,
         warm_quic_cache_service::WarmQuicCacheService,
         window_service::{WindowService, WindowServiceChannels},
@@ -60,7 +60,8 @@ use {
 
 /// Sets the upper bound on the number of batches stored in the retransmit
 /// stage ingress channel.
-/// Allows for a max of 16k batches of up to 64 packets each (NUM_RCVMMSGS).
+/// Allows for a max of 16k batches of up to 64 packets each
+/// (PACKETS_PER_BATCH).
 /// This translates to about 1 GB of RAM for packet storage in the worst case.
 /// In reality this means about 200K shreds since most batches are not full.
 const CHANNEL_SIZE_RETRANSMIT_INGRESS: usize = 16 * 1024;
@@ -181,7 +182,7 @@ impl Tvu {
             ancestor_hashes_requests: ancestor_hashes_socket,
         } = sockets;
 
-        let (fetch_sender, fetch_receiver) = unbounded();
+        let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);

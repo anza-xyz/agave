@@ -91,7 +91,7 @@ impl SnapshotTestConfig {
             vec![accounts_dir.clone()],
         );
         bank0.freeze();
-        bank0.set_startup_verification_complete();
+        bank0.set_initial_accounts_hash_verification_completed();
         let bank_forks_arc = BankForks::new_rw_arc(bank0);
 
         let snapshot_config = SnapshotConfig {
@@ -396,12 +396,10 @@ fn test_bank_forks_incremental_snapshot() {
     const LAST_SLOT: Slot = FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS * 2 - 1;
 
     info!(
-        "Running bank forks incremental snapshot test, full snapshot interval: {} slots, \
-         incremental snapshot interval: {} slots, last slot: {}, set root interval: {} slots",
-        FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        LAST_SLOT,
-        SET_ROOT_INTERVAL
+        "Running bank forks incremental snapshot test, full snapshot interval: \
+         {FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, incremental snapshot interval: \
+         {INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots, last slot: {LAST_SLOT}, set root \
+         interval: {SET_ROOT_INTERVAL} slots"
     );
 
     let snapshot_test_config = SnapshotTestConfig::new(
@@ -589,11 +587,6 @@ fn restore_from_snapshots_and_check_banks_are_equal(
 }
 
 #[derive(Debug, Eq, PartialEq)]
-enum VerifyAccountsKind {
-    Merkle,
-    Lattice,
-}
-#[derive(Debug, Eq, PartialEq)]
 enum VerifySnapshotHashKind {
     Merkle,
     Lattice,
@@ -601,13 +594,9 @@ enum VerifySnapshotHashKind {
 
 /// Spin up the background services fully then test taking & verifying snapshots
 #[test_matrix(
-    [VerifyAccountsKind::Merkle, VerifyAccountsKind::Lattice],
     [VerifySnapshotHashKind::Merkle, VerifySnapshotHashKind::Lattice]
 )]
-fn test_snapshots_with_background_services(
-    verify_accounts_kind: VerifyAccountsKind,
-    verify_snapshot_hash_kind: VerifySnapshotHashKind,
-) {
+fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnapshotHashKind) {
     solana_logger::setup();
 
     const SET_ROOT_INTERVAL_SLOTS: Slot = 2;
@@ -623,18 +612,14 @@ fn test_snapshots_with_background_services(
     const MAX_WAIT_DURATION: Duration = Duration::from_secs(10);
 
     info!("Running snapshots with background services test...");
+    #[rustfmt::skip]
     trace!(
         "Test configuration parameters:\
-         \n\tfull snapshot archive interval: {} slots\
-         \n\tincremental snapshot archive interval: {} slots\
-         \n\tbank snapshot interval: {} slots\
-         \n\tset root interval: {} slots\
-         \n\tlast slot: {}",
-        FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS,
-        BANK_SNAPSHOT_INTERVAL_SLOTS,
-        SET_ROOT_INTERVAL_SLOTS,
-        LAST_SLOT
+         \n\tfull snapshot archive interval: {FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots\
+         \n\tincremental snapshot archive interval: {INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS} slots\
+         \n\tbank snapshot interval: {BANK_SNAPSHOT_INTERVAL_SLOTS} slots\
+         \n\tset root interval: {SET_ROOT_INTERVAL_SLOTS} slots\
+         \n\tlast slot: {LAST_SLOT}"
     );
 
     let snapshot_test_config = SnapshotTestConfig::new(
@@ -707,12 +692,8 @@ fn test_snapshots_with_background_services(
         snapshot_controller.clone(),
     );
 
-    let accounts_background_service = AccountsBackgroundService::new(
-        bank_forks.clone(),
-        exit.clone(),
-        abs_request_handler,
-        false,
-    );
+    let accounts_background_service =
+        AccountsBackgroundService::new(bank_forks.clone(), exit.clone(), abs_request_handler);
 
     let mut latest_full_snapshot_slot = None;
     let mut latest_incremental_snapshot_slot = None;
@@ -793,7 +774,6 @@ fn test_snapshots_with_background_services(
     // Load the snapshot and ensure it matches what's in BankForks
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
     let accounts_db_config = AccountsDbConfig {
-        enable_experimental_accumulator_hash: verify_accounts_kind == VerifyAccountsKind::Lattice,
         snapshots_use_experimental_accumulator_hash: verify_snapshot_hash_kind
             == VerifySnapshotHashKind::Lattice,
         ..ACCOUNTS_DB_CONFIG_FOR_TESTING

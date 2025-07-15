@@ -204,7 +204,13 @@ impl<'a, CB: TransactionProcessingCallback> AccountLoader<'a, CB> {
 
         let account = self.load_account(account_key);
 
-        // Inspect prior to collecting rent, since rent collection can modify the account.
+        // Inspect prior to collecting rent, since rent collection can modify
+        // the account.
+        //
+        // Note that though rent collection is disabled, we still set the rent
+        // epoch of rent exempt if the account is rent-exempt but its rent epoch
+        // is not set to u64::MAX. In other words, an account can be updated
+        // during rent collection. Therefore, we must inspect prior to collecting rent.
         self.callbacks.inspect_account(
             account_key,
             if let Some(ref account) = account {
@@ -329,6 +335,10 @@ impl<CB: TransactionProcessingCallback> solana_svm_callback::InvokeContextCallba
 }
 
 /// Set the rent epoch to u64::MAX if the account is rent exempt.
+///
+/// TODO: This function is used to update the rent epoch of an account. Once we
+/// completely switched to lthash, where rent_epoch is ignored in accounts
+/// hashing, we can remove this function.
 pub fn update_rent_exempt_status_for_account(
     rent_collector: &dyn SVMRentCollector,
     account: &mut AccountSharedData,
@@ -771,9 +781,6 @@ fn load_transaction_account<CB: TransactionProcessingCallback>(
         loaded_account
     } else {
         let mut default_account = AccountSharedData::default();
-        // All new accounts must be rent-exempt (enforced in Bank::execute_loaded_transaction).
-        // Currently, rent collection sets rent_epoch to u64::MAX, but initializing the account
-        // with this field already set would allow us to skip rent collection for these accounts.
         default_account.set_rent_epoch(RENT_EXEMPT_RENT_EPOCH);
         LoadedTransactionAccount {
             loaded_size: default_account.data().len(),

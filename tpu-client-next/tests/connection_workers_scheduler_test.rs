@@ -558,11 +558,12 @@ async fn test_rate_limiting() {
         },
     );
 
+    // open a connection to consume the limit
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
     drop(connection_to_reach_limit);
 
-    // Setup sending txs
-    let tx_size = 1;
+    // Setup sending txs which are full packets in size
+    let tx_size = 1024;
     let expected_num_txs: usize = 16;
     let SpawnTxGenerator {
         tx_receiver,
@@ -583,11 +584,16 @@ async fn test_rate_limiting() {
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
-    // We do not expect to see any errors, as the connection is in the pending state still, when we
-    // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
-    // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
-    // accept both 0 and 1 as valid values for it.
-    assert_eq!(stats, SendTransactionStatsNonAtomic::default());
+    // we get 2 transactions registered as sent (but not acked) because of how QUIC works
+    // before ratelimiter kicks in.
+    assert!(
+        stats
+            == SendTransactionStatsNonAtomic {
+                successfully_sent: 2,
+                write_error_connection_lost: 2,
+                ..Default::default()
+            }
+    );
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);

@@ -354,7 +354,7 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
             Arg::with_name("tpu_disable_quic")
                 .long("tpu-disable-quic")
                 .takes_value(false)
-                .help("Do not submit transactions via QUIC; only affects TpuClient (default) sends"),
+                .help("DEPRECATED: Do not submit transactions via QUIC; only affects TpuClient (default) sends"),
         )
         .arg(
             Arg::with_name("tpu_connection_pool_size")
@@ -499,6 +499,7 @@ pub fn parse_args(matches: &ArgMatches) -> Result<Config, &'static str> {
     }
 
     if matches.is_present("tpu_disable_quic") {
+        eprintln!("Warning: TPU over UDP is deprecated");
         args.use_quic = false;
     }
 

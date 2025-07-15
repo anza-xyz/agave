@@ -48,15 +48,21 @@ pub fn tx_loop<T: AsRef<[u8]>>(
 
     // some drivers require frame_size=page_size
     let frame_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
-    const FRAME_COUNT: usize = 4096;
+
+    let queue = dev
+        .open_queue(queue_id)
+        .expect("failed to open queue for AF_XDP socket");
+    let rx_size = queue.rx_size();
+    let tx_size = queue.tx_size();
+    let frame_count = (rx_size + tx_size) * 2;
 
     // try to allocate huge pages first, then fall back to regular pages
     const HUGE_2MB: usize = 2 * 1024 * 1024;
     let mut memory =
-        PageAlignedMemory::alloc_with_page_size(frame_size, FRAME_COUNT, HUGE_2MB, true)
+        PageAlignedMemory::alloc_with_page_size(frame_size, frame_count, HUGE_2MB, true)
             .or_else(|_| {
                 log::warn!("huge page alloc failed, falling back to regular page size");
-                PageAlignedMemory::alloc(frame_size, FRAME_COUNT)
+                PageAlignedMemory::alloc(frame_size, frame_count)
             })
             .unwrap();
     let umem = SliceUmem::new(&mut memory, frame_size as u32).unwrap();
@@ -66,17 +72,7 @@ pub fn tx_loop<T: AsRef<[u8]>>(
         caps::raise(None, CapSet::Effective, cap).unwrap();
     }
 
-    // A nice round number. This is the size used by kernel selftests, so likely to work with all
-    // drivers.
-    const RING_SIZE: usize = 2048;
-
-    let Ok((mut socket, tx)) = Socket::tx(
-        dev.open_queue(queue_id),
-        umem,
-        zero_copy,
-        RING_SIZE,
-        RING_SIZE,
-    ) else {
+    let Ok((mut socket, tx)) = Socket::tx(queue, umem, zero_copy, tx_size * 2, tx_size) else {
         panic!("failed to create AF_XDP socket on queue {queue_id:?}");
     };
 

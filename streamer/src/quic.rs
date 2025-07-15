@@ -51,15 +51,15 @@ pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 pub const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
 
 pub fn default_num_tpu_transaction_forward_receive_threads() -> usize {
-    num_cpus::get()
+    num_cpus::get().min(16)
 }
 
 pub fn default_num_tpu_transaction_receive_threads() -> usize {
-    num_cpus::get()
+    num_cpus::get().min(8)
 }
 
 pub fn default_num_tpu_vote_transaction_receive_threads() -> usize {
-    num_cpus::get()
+    num_cpus::get().min(8)
 }
 
 pub struct SpawnServerResult {

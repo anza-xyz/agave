@@ -39,7 +39,7 @@ pub enum BankForksUtilsError {
          incremental snapshot archive: {incremental_snapshot_archive}"
     )]
     BankFromSnapshotsArchive {
-        source: snapshot_utils::SnapshotError,
+        source: Box<snapshot_utils::SnapshotError>,
         full_snapshot_archive: String,
         incremental_snapshot_archive: String,
     },
@@ -198,7 +198,7 @@ pub fn load_bank_forks(
                 .read()
                 .unwrap()
                 .root_bank()
-                .set_startup_verification_complete();
+                .set_initial_accounts_hash_verification_completed();
 
             (bank_forks, None)
         };
@@ -311,16 +311,16 @@ fn bank_forks_from_snapshot(
             process_options.debug_keys.clone(),
             None,
             process_options.limit_load_slot_count_from_snapshot,
-            process_options.accounts_db_test_hash_calculation,
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
             process_options.verify_index,
+            false, // verify_index. This will be removed separately.
             process_options.accounts_db_config.clone(),
             accounts_update_notifier,
             exit,
         )
         .map_err(|err| BankForksUtilsError::BankFromSnapshotsArchive {
-            source: err,
+            source: Box::new(err),
             full_snapshot_archive: full_snapshot_archive_info.path().display().to_string(),
             incremental_snapshot_archive: incremental_snapshot_archive_info
                 .as_ref()

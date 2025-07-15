@@ -1616,7 +1616,6 @@ mod tests {
             &blockstore,
             &ProcessOptions {
                 run_verification: true,
-                accounts_db_test_hash_calculation: true,
                 ..ProcessOptions::default()
             },
             Arc::default(),

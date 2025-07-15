@@ -286,7 +286,7 @@ impl SnapshotRequestHandler {
         } = snapshot_request;
 
         // we should not rely on the state of this validator until startup verification is complete
-        assert!(snapshot_root_bank.is_startup_verification_complete());
+        assert!(snapshot_root_bank.has_initial_accounts_hash_verification_completed());
 
         if accounts_package_kind == AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot) {
             // The latest full snapshot slot is what accounts-db uses to properly handle
@@ -338,7 +338,7 @@ impl SnapshotRequestHandler {
                         use_bg_thread_pool: true,
                         ancestors: None,
                         epoch_schedule: snapshot_root_bank.epoch_schedule(),
-                        rent_collector: snapshot_root_bank.rent_collector(),
+                        epoch: snapshot_root_bank.epoch(),
                         store_detailed_debug_info_on_failure: false,
                     },
                 );
@@ -536,7 +536,6 @@ impl AccountsBackgroundService {
         bank_forks: Arc<RwLock<BankForks>>,
         exit: Arc<AtomicBool>,
         request_handlers: AbsRequestHandlers,
-        test_hash_calculation: bool,
     ) -> Self {
         let is_running = Arc::new(AtomicBool::new(true));
         let stop = Arc::new(AtomicBool::new(false));
@@ -605,10 +604,10 @@ impl AccountsBackgroundService {
                         // request handling can both kick off accounts hash calculations in
                         // background threads, and these must not happen concurrently.
                         let snapshot_handle_result = bank
-                            .is_startup_verification_complete()
+                            .has_initial_accounts_hash_verification_completed()
                             .then(|| {
                                 request_handlers.handle_snapshot_requests(
-                                    test_hash_calculation,
+                                    false, // test_hash_calculation. Will be removed soon.
                                     non_snapshot_time,
                                     &exit,
                                 )
@@ -627,7 +626,7 @@ impl AccountsBackgroundService {
                                          snapshot request slot: {snapshot_slot}, \
                                          is startup verification complete: {}, \
                                          enqueued snapshot requests: {:?}",
-                                        bank.is_startup_verification_complete(),
+                                        bank.has_initial_accounts_hash_verification_completed(),
                                         request_handlers
                                             .snapshot_request_handler
                                             .snapshot_request_receiver
@@ -947,7 +946,7 @@ mod test {
         genesis_config_info.genesis_config.epoch_schedule =
             EpochSchedule::custom(SLOTS_PER_EPOCH, SLOTS_PER_EPOCH, false);
         let mut bank = Arc::new(Bank::new_for_tests(&genesis_config_info.genesis_config));
-        bank.set_startup_verification_complete();
+        bank.set_initial_accounts_hash_verification_completed();
         // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during
         // freeze when parent is in the EAH calculation window.
         bank.rc
@@ -1119,7 +1118,7 @@ mod test {
         };
         let genesis_config_info = create_genesis_config(10);
         let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
-        bank.set_startup_verification_complete();
+        bank.set_initial_accounts_hash_verification_completed();
         bank.rc.accounts.accounts_db.enable_bank_drop_callback();
         bank.set_callback(Some(Box::new(SendDroppedBankCallback::new(
             pruned_banks_sender,

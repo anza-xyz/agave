@@ -2790,6 +2790,10 @@ mod balance_collector {
                 test_entry.add_initial_account(charlie, &native_state);
             }
 
+            // test that fee-payer balances are reported correctly
+            // all we need to know is whether the transaction is processed or dropped
+            let mut transaction_discards = vec![];
+
             // every time we perform a transfer, we mutate user_balances
             // and then clone and push it into user_balance_history
             // this lets us go through every svm balance record and confirm correctness
@@ -2808,6 +2812,7 @@ mod balance_collector {
                     n if n < 0.95 => ExecutionStatus::ProcessedFailed,
                     _ => ExecutionStatus::Discarded,
                 };
+                transaction_discards.push(expected_status == ExecutionStatus::Discarded);
 
                 let mut transfer = Transfer::new_rand(&[alice, bob, charlie]);
                 let from_signer = vec![&alice_keypair, &bob_keypair, &charlie_keypair]
@@ -2937,33 +2942,60 @@ mod balance_collector {
             env.processing_config
                 .recording_config
                 .enable_transaction_balance_recording = true;
+
             let batch_output = env.execute();
+            let (pre_lamport_vecs, post_lamport_vecs, pre_token_vecs, post_token_vecs) =
+                batch_output.balance_collector.unwrap().into_vecs();
+
+            // first test the fee-payer balances
+            let mut running_fee_payer_balance = STARTING_BALANCE;
+            for (pre_bal, post_bal, was_discarded) in pre_lamport_vecs
+                .iter()
+                .zip(post_lamport_vecs.clone())
+                .zip(transaction_discards)
+                .map(|((pres, posts), discard)| (pres[0], posts[0], discard))
+            {
+                // we trigger discards with a non-existent fee-payer
+                if was_discarded {
+                    assert_eq!(pre_bal, 0);
+                    assert_eq!(post_bal, 0);
+                    continue;
+                }
+
+                let expected_post_balance = running_fee_payer_balance - LAMPORTS_PER_SIGNATURE * 2;
+
+                assert_eq!(pre_bal, running_fee_payer_balance);
+                assert_eq!(post_bal, expected_post_balance);
+
+                running_fee_payer_balance = expected_post_balance;
+            }
 
             // thanks to execute() we know user_balances is correct
             // now we test that every step in user_balance_history matches the svm recorded balances
             // in other words, the test effectively has three balance trackers and we can test they *all* agree
             // first get the collected balances in a manner that is system/token agnostic
             let (batch_pre, batch_post) = if use_tokens {
-                let (_, _, pre_vecs, post_vecs) =
-                    batch_output.balance_collector.unwrap().into_vecs();
-
-                let pre_tupls: Vec<_> = pre_vecs
+                let pre_tupls: Vec<_> = pre_token_vecs
                     .iter()
                     .map(|bals| (bals[0].amount, bals[1].amount))
                     .collect();
 
-                let post_tupls: Vec<_> = post_vecs
+                let post_tupls: Vec<_> = post_token_vecs
                     .iter()
                     .map(|bals| (bals[0].amount, bals[1].amount))
                     .collect();
 
                 (pre_tupls, post_tupls)
             } else {
-                let (pre_vecs, post_vecs, _, _) =
-                    batch_output.balance_collector.unwrap().into_vecs();
+                let pre_tupls: Vec<_> = pre_lamport_vecs
+                    .iter()
+                    .map(|bals| (bals[1], bals[2]))
+                    .collect();
 
-                let pre_tupls: Vec<_> = pre_vecs.iter().map(|bals| (bals[1], bals[2])).collect();
-                let post_tupls: Vec<_> = post_vecs.iter().map(|bals| (bals[1], bals[2])).collect();
+                let post_tupls: Vec<_> = post_lamport_vecs
+                    .iter()
+                    .map(|bals| (bals[1], bals[2]))
+                    .collect();
 
                 (pre_tupls, post_tupls)
             };

@@ -70,6 +70,9 @@ solana-version = { workspace = true }
 spl-instruction-padding = { version = "=0.3.0", features = ["no-entrypoint"] }
 thiserror = { workspace = true }
 
+[target.'cfg(not(any(target_env = "msvc", target_os = "freebsd")))'.dependencies]
+jemallocator = { workspace = true }
+
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 serial_test = { workspace = true }

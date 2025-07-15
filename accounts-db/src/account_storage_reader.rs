@@ -172,7 +172,7 @@ mod tests {
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.append_accounts(&(slot, &accounts[..]), 0);
+        storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
         let offset = 0;
         // Mark the obsolete accounts in storage
@@ -196,7 +196,7 @@ mod tests {
             (&Pubkey::new_unique(), &account2),
         ];
 
-        storage.accounts.append_accounts(&(slot, &accounts[..]), 0);
+        storage.accounts.write_accounts(&(slot, &accounts[..]), 0);
 
         let reader = AccountStorageReader::new(&storage, None).unwrap();
         assert_eq!(reader.len(), storage.accounts.len());
@@ -238,7 +238,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .append_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]), 0);
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();
@@ -339,7 +339,7 @@ mod tests {
 
         let offsets = storage
             .accounts
-            .append_accounts(&(slot, &accounts_to_append[..]), 0);
+            .write_accounts(&(slot, &accounts_to_append[..]), 0);
 
         // Generate a seed from entropy and log the original seed
         let seed: u64 = rand::random();

@@ -243,8 +243,21 @@ impl ProgramCacheStats {
         let empty_entries = self.empty_entries.load(Ordering::Relaxed);
         let water_level = self.water_level.load(Ordering::Relaxed);
         debug!(
-            "Loaded Programs Cache Stats -- Hits: {}, Misses: {}, Evictions: {}, Reloads: {}, Insertions: {}, Lost-Insertions: {}, Replacements: {}, One-Hit-Wonders: {}, Prunes-Orphan: {}, Prunes-Environment: {}, Empty: {}, Water-Level: {}",
-            hits, misses, evictions, reloads, insertions, lost_insertions, replacements, one_hit_wonders, prunes_orphan, prunes_environment, empty_entries, water_level
+            "Loaded Programs Cache Stats -- Hits: {}, Misses: {}, Evictions: {}, Reloads: {}, \
+             Insertions: {}, Lost-Insertions: {}, Replacements: {}, One-Hit-Wonders: {}, \
+             Prunes-Orphan: {}, Prunes-Environment: {}, Empty: {}, Water-Level: {}",
+            hits,
+            misses,
+            evictions,
+            reloads,
+            insertions,
+            lost_insertions,
+            replacements,
+            one_hit_wonders,
+            prunes_orphan,
+            prunes_environment,
+            empty_entries,
+            water_level
         );
         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {
             let mut evictions = self.evictions.iter().collect::<Vec<_>>();
@@ -902,7 +915,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             ) => {}
                             _ => {
                                 // Something is wrong, I can feel it ...
-                                error!("ProgramCache::assign_program() failed key={:?} existing={:?} entry={:?}", key, slot_versions, entry);
+                                error!(
+                                    "ProgramCache::assign_program() failed key={:?} existing={:?} \
+                                     entry={:?}",
+                                    key, slot_versions, entry
+                                );
                                 debug_assert!(false, "Unexpected replacement of an entry");
                                 self.stats.replacements.fetch_add(1, Ordering::Relaxed);
                                 return true;

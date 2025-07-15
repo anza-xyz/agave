@@ -8,12 +8,11 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     log::*,
     rayon::prelude::*,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_hash::{Hash, HASH_BYTES},
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_sha256_hasher::Hasher,
     solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
@@ -97,9 +96,10 @@ pub struct CalcAccountsHashConfig<'a> {
     /// does hash calc need to consider account data that exists in the write cache?
     /// if so, 'ancestors' will be used for this purpose as well as storages.
     pub epoch_schedule: &'a EpochSchedule,
-    pub rent_collector: &'a RentCollector,
     /// used for tracking down hash mismatches after the fact
     pub store_detailed_debug_info_on_failure: bool,
+    /// used to calculate the number of slots in the given epoch
+    pub epoch: Epoch,
 }
 
 // smallest, 3 quartiles, largest, average
@@ -1736,51 +1736,197 @@ mod tests {
             .collect();
 
         type ExpectedType = (String, bool, u64, String);
-        let expected:Vec<ExpectedType> = vec![
+        let expected: Vec<ExpectedType> = vec![
             // ("key/lamports key2/lamports ...",
             // is_last_slice
             // result lamports
             // result hashes)
             // "a5" = key_a, 5 lamports
             ("a1", false, 1, "[11111111111111111111111111111111]"),
-            ("a1b2", false, 3, "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("a1b2b3", false, 4, "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("a1b2b3b4", false, 5, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("a1b2b3b4c5", false, 10, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b2", false, 2, "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("b2b3", false, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b2b3b4", false, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b2b3b4c5", false, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b3", false, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b3b4", false, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b3b4c5", false, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b4", false, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b4c5", false, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("c5", false, 5, "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
+            (
+                "a1b2",
+                false,
+                3,
+                "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "a1b2b3",
+                false,
+                4,
+                "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "a1b2b3b4",
+                false,
+                5,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "a1b2b3b4c5",
+                false,
+                10,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b2",
+                false,
+                2,
+                "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "b2b3",
+                false,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b2b3b4",
+                false,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b2b3b4c5",
+                false,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b3",
+                false,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b3b4",
+                false,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b3b4c5",
+                false,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b4",
+                false,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b4c5",
+                false,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "c5",
+                false,
+                5,
+                "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
             ("a1", true, 1, "[11111111111111111111111111111111]"),
-            ("a1b2", true, 3, "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("a1b2b3", true, 4, "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("a1b2b3b4", true, 5, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("a1b2b3b4c5", true, 10, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b2", true, 2, "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("b2b3", true, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b2b3b4", true, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b2b3b4c5", true, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b3", true, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b3b4", true, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b3b4c5", true, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b4", true, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b4c5", true, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("c5", true, 5, "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ].into_iter().map(|item| {
-                let result: ExpectedType = (
-                    item.0.to_string(),
-                    item.1,
-                    item.2,
-                    item.3.to_string(),
-                );
-                result
-            }).collect();
+            (
+                "a1b2",
+                true,
+                3,
+                "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "a1b2b3",
+                true,
+                4,
+                "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "a1b2b3b4",
+                true,
+                5,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "a1b2b3b4c5",
+                true,
+                10,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b2",
+                true,
+                2,
+                "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "b2b3",
+                true,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b2b3b4",
+                true,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b2b3b4c5",
+                true,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b3",
+                true,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b3b4",
+                true,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b3b4c5",
+                true,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b4",
+                true,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b4c5",
+                true,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "c5",
+                true,
+                5,
+                "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+        ]
+        .into_iter()
+        .map(|item| {
+            let result: ExpectedType = (item.0.to_string(), item.1, item.2, item.3.to_string());
+            result
+        })
+        .collect();
 
         let dir_for_temp_cache_files = tempdir().unwrap();
         let hash = AccountsHasher::new(dir_for_temp_cache_files.path().to_path_buf());
