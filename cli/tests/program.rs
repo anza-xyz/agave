@@ -42,6 +42,7 @@ use {
         io::{Read, Seek, SeekFrom},
         path::{Path, PathBuf},
         str::FromStr,
+        sync::Arc,
     },
     test_case::test_case,
 };
@@ -99,8 +100,15 @@ fn test_cli_program_deploy_non_upgradeable() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -114,9 +122,7 @@ fn test_cli_program_deploy_non_upgradeable() {
         .get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program())
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -304,8 +310,15 @@ fn test_cli_program_deploy_no_authority() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -321,9 +334,7 @@ fn test_cli_program_deploy_no_authority() {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.command = CliCommand::Airdrop {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
@@ -414,8 +425,15 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(program_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -431,9 +449,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.command = CliCommand::Airdrop {
         pubkey: None,
         lamports: 100 * minimum_balance_for_programdata + minimum_balance_for_program,
@@ -539,8 +555,15 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
 
@@ -554,8 +577,6 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
-    config.json_rpc_url = test_validator.rpc_url();
     config.send_transaction_config.skip_preflight = false;
 
     let online_signer = Keypair::new();
@@ -687,8 +708,15 @@ fn test_cli_program_deploy_with_authority() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -704,9 +732,7 @@ fn test_cli_program_deploy_with_authority() {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -1089,8 +1115,15 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1112,9 +1145,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -1251,8 +1282,15 @@ fn test_cli_program_close_program() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1268,9 +1306,7 @@ fn test_cli_program_close_program() {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -1370,8 +1406,15 @@ fn test_cli_program_extend_program() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1387,9 +1430,7 @@ fn test_cli_program_extend_program() {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -1542,8 +1583,15 @@ fn test_cli_program_migrate_program() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1559,9 +1607,7 @@ fn test_cli_program_migrate_program() {
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -1627,8 +1673,15 @@ fn test_cli_program_write_buffer() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1645,9 +1698,7 @@ fn test_cli_program_write_buffer() {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -2017,8 +2068,15 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(program_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2030,9 +2088,7 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -2104,8 +2160,15 @@ fn test_cli_program_set_buffer_authority() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2117,9 +2180,7 @@ fn test_cli_program_set_buffer_authority() {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -2276,8 +2337,15 @@ fn test_cli_program_mismatch_buffer_authority() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2289,9 +2357,7 @@ fn test_cli_program_mismatch_buffer_authority() {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -2402,8 +2468,15 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
 
@@ -2416,9 +2489,6 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
             max_program_data_len,
         ))
         .unwrap();
-
-    let mut config = CliConfig::recent_for_tests();
-    config.json_rpc_url = test_validator.rpc_url();
 
     let online_signer = Keypair::new();
     let online_signer_identity = NullSigner::new(&online_signer.pubkey());
@@ -2595,8 +2665,15 @@ fn test_cli_program_show() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2608,9 +2685,7 @@ fn test_cli_program_show() {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.output_format = OutputFormat::Json;
 
     // Airdrop
@@ -2792,8 +2867,15 @@ fn test_cli_program_dump() {
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2805,9 +2887,7 @@ fn test_cli_program_dump() {
         ))
         .unwrap();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.output_format = OutputFormat::Json;
 
     // Airdrop
@@ -2936,8 +3016,15 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
 
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::confirmed());
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2953,9 +3040,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
         .unwrap();
     let upgrade_authority = Keypair::new();
 
-    let mut config = CliConfig::recent_for_tests();
     let keypair = Keypair::new();
-    config.json_rpc_url = test_validator.rpc_url();
     config.signers = vec![&keypair];
     config.command = CliCommand::Airdrop {
         pubkey: None,
@@ -3097,21 +3182,27 @@ fn test_cli_program_v4() {
     let test_validator = test_validator_genesis(mint_keypair)
         .start_with_mint_address(mint_pubkey, SocketAddrSpace::Unspecified)
         .expect("validator start failed");
-    let rpc_client =
-        RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::confirmed());
+
+    let mut config = CliConfig::recent_for_tests();
+    config.json_rpc_url = test_validator.rpc_url();
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
 
     let payer_keypair = Keypair::new();
     let upgrade_authority = Keypair::new();
     let program_keypair = Keypair::new();
     let buffer_keypair = Keypair::new();
-    let mut config = CliConfig::recent_for_tests();
     config.signers = vec![
         &payer_keypair,
         &upgrade_authority,
         &program_keypair,
         &buffer_keypair,
     ];
-    config.json_rpc_url = test_validator.rpc_url();
     config.command = CliCommand::Airdrop {
         pubkey: None,
         lamports: 10000000,
