@@ -13,7 +13,6 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-bencher = { workspace = true }
 Inflector = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
 base64 = { workspace = true }
@@ -56,6 +55,7 @@ name = "extract_memos"
 harness = false
 
 [dev-dependencies]
+bencher = { workspace = true }
 bytemuck = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 spl-token-confidential-transfer-proof-extraction = { workspace = true }
