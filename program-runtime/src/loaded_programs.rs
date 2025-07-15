@@ -243,9 +243,11 @@ impl ProgramCacheStats {
         let empty_entries = self.empty_entries.load(Ordering::Relaxed);
         let water_level = self.water_level.load(Ordering::Relaxed);
         debug!(
-            "Loaded Programs Cache Stats -- Hits: {hits}, Misses: {misses}, Evictions: {evictions}, Reloads: {reloads}, \
-             Insertions: {insertions}, Lost-Insertions: {lost_insertions}, Replacements: {replacements}, One-Hit-Wonders: {one_hit_wonders}, \
-             Prunes-Orphan: {prunes_orphan}, Prunes-Environment: {prunes_environment}, Empty: {empty_entries}, Water-Level: {water_level}"
+            "Loaded Programs Cache Stats -- Hits: {hits}, Misses: {misses}, Evictions: \
+             {evictions}, Reloads: {reloads}, Insertions: {insertions}, Lost-Insertions: \
+             {lost_insertions}, Replacements: {replacements}, One-Hit-Wonders: {one_hit_wonders}, \
+             Prunes-Orphan: {prunes_orphan}, Prunes-Environment: {prunes_environment}, Empty: \
+             {empty_entries}, Water-Level: {water_level}"
         );
         if log_enabled!(log::Level::Trace) && !self.evictions.is_empty() {
             let mut evictions = self.evictions.iter().collect::<Vec<_>>();
@@ -904,8 +906,8 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                             _ => {
                                 // Something is wrong, I can feel it ...
                                 error!(
-                                    "ProgramCache::assign_program() failed key={key:?} existing={slot_versions:?} \
-                                     entry={entry:?}"
+                                    "ProgramCache::assign_program() failed key={key:?} \
+                                     existing={slot_versions:?} entry={entry:?}"
                                 );
                                 debug_assert!(false, "Unexpected replacement of an entry");
                                 self.stats.replacements.fetch_add(1, Ordering::Relaxed);

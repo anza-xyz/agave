@@ -498,10 +498,8 @@ impl Default for ProgramTest {
     ///
     fn default() -> Self {
         solana_logger::setup_with_default(
-            "solana_sbpf::vm=debug,\
-             solana_runtime::message_processor=debug,\
-             solana_runtime::system_instruction_processor=trace,\
-             solana_program_test=info",
+            "solana_sbpf::vm=debug,solana_runtime::message_processor=debug,\
+             solana_runtime::system_instruction_processor=trace,solana_program_test=info",
         );
         let prefer_bpf =
             std::env::var("BPF_OUT_DIR").is_ok() || std::env::var("SBF_OUT_DIR").is_ok();
@@ -719,8 +717,8 @@ impl ProgramTest {
             }
 
             warn!(
-                "Possible bogus program name. Ensure the program name ({program_name}) \
-                matches one of the following recognizable program names:",
+                "Possible bogus program name. Ensure the program name ({program_name}) matches \
+                 one of the following recognizable program names:",
             );
             for name in valid_program_names {
                 warn!(" - {}", name.to_str().unwrap());
@@ -826,12 +824,14 @@ impl ProgramTest {
                 match genesis_config.accounts.remove(deactivate_feature_pk) {
                     Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
                     None => warn!(
-                        "Feature {deactivate_feature_pk:?} set for deactivation not found in genesis_config account list, ignored."
+                        "Feature {deactivate_feature_pk:?} set for deactivation not found in \
+                         genesis_config account list, ignored."
                     ),
                 }
             } else {
                 warn!(
-                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known Feature public key"
+                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
+                     Feature public key"
                 );
             }
         }
