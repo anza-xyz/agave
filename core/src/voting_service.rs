@@ -84,8 +84,11 @@ mod control_pubkey {
     solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
+#[repr(C)]
 struct TestControl {
+    _version: u8,         // This is part of Record program header
+    _authority: [u8; 32], // This is part of Record program header
     test_interval_slots: u8,
     _future_use: [u8; 3],
 }
@@ -99,6 +102,10 @@ fn get_test_interval(bank: &Bank) -> Option<Slot> {
         .0;
     let x: TestControl = data.deserialize_data().ok()?;
     if x.test_interval_slots > 0 {
+        debug!(
+            "Alpenglow test interval set to {} slots",
+            x.test_interval_slots
+        );
         Some(x.test_interval_slots as Slot)
     } else {
         None
