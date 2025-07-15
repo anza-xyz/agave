@@ -515,6 +515,7 @@ where
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
 
+            let mut exiting = false;
             loop {
                 sleep(pool_cleaner_interval);
                 trace!("Scheduler pool cleaner: start!!!",);
