@@ -1804,7 +1804,7 @@ impl Validator {
             ($expr:expr) => {
                 let label = stringify!($expr);
                 let r = $expr.join().expect(label);
-                trace!("joined {label} with {r:?} {:?}", std::thread::current());
+                error!("joined {label} with {r:?} {:?}", std::thread::current());
             };
         }
 
