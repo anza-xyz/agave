@@ -24,6 +24,7 @@ fn bench_extract_memos(b: &mut Bencher) {
         instructions,
         ..Message::default()
     };
+
     b.iter(|| message.extract_memos());
 }
 
