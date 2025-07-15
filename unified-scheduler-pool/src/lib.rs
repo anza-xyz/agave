@@ -515,6 +515,7 @@ where
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
 
+            let mut exiting = false;
             move || loop {
                 sleep(pool_cleaner_interval);
                 trace!("Scheduler pool cleaner: start!!!",);
@@ -551,6 +552,10 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
+                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
+                    exiting = true;
+                    scheduler_pool.unregister_banking_stage();
+                }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
@@ -2592,6 +2597,7 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub enum BankingStageStatus {
     Active,
     Inactive,
+    Exited,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
