@@ -156,6 +156,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
 }
 
@@ -515,28 +516,11 @@ where
         max_usage_queue_count: usize,
         timeout_duration: Duration,
     ) -> Arc<Self> {
-        let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
-            supported_scheduling_mode,
-            scheduler_inners: Mutex::default(),
-            block_production_scheduler_inner: Mutex::default(),
-            trashed_scheduler_inners: Mutex::default(),
-            timeout_listeners: Mutex::default(),
-            common_handler_context: CommonHandlerContext {
-                log_messages_bytes_limit,
-                transaction_status_sender,
-                replay_vote_sender,
-                prioritization_fee_cache,
-            },
-            block_verification_handler_count,
-            banking_stage_handler_context: Mutex::default(),
-            weak_self: weak_self.clone(),
-            next_scheduler_id: AtomicSchedulerId::default(),
-            max_usage_queue_count,
-            _phantom: PhantomData,
-        });
+        let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
         let cleaner_main_loop = {
-            let weak_scheduler_pool = Arc::downgrade(&scheduler_pool);
+            let weak_scheduler_pool: Weak<Self> =
+                scheduler_pool_receiver.into_iter().next().unwrap();
 
             let mut exiting = false;
             move || loop {
@@ -703,10 +687,34 @@ where
             }
         };
 
-        // No need to join; the spawned main loop will gracefully exit.
-        thread::Builder::new()
+        let cleaner_thread = thread::Builder::new()
             .name("solScCleaner".to_owned())
             .spawn_tracked(cleaner_main_loop)
+            .unwrap();
+
+        let scheduler_pool = Arc::new_cyclic(|weak_self| Self {
+            supported_scheduling_mode,
+            scheduler_inners: Mutex::default(),
+            block_production_scheduler_inner: Mutex::default(),
+            trashed_scheduler_inners: Mutex::default(),
+            timeout_listeners: Mutex::default(),
+            common_handler_context: CommonHandlerContext {
+                log_messages_bytes_limit,
+                transaction_status_sender,
+                replay_vote_sender,
+                prioritization_fee_cache,
+            },
+            block_verification_handler_count,
+            banking_stage_handler_context: Mutex::default(),
+            weak_self: weak_self.clone(),
+            next_scheduler_id: AtomicSchedulerId::default(),
+            max_usage_queue_count,
+            cleaner_thread,
+            _phantom: PhantomData,
+        });
+
+        scheduler_pool_sender
+            .send(Arc::downgrade(&scheduler_pool))
             .unwrap();
 
         scheduler_pool
@@ -1011,6 +1019,38 @@ where
             .lock()
             .unwrap()
             .push((timeout_listener, Instant::now()));
+    }
+
+    fn uninstalled_from_bank_forks(self: Arc<Self>) {
+        trace!("uninstalling: {}", Arc::strong_count(&self));
+
+        // Drop all schedulers in the pool
+        for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
+            listener.trigger(self.clone());
+        }
+        mem::take(&mut *self.scheduler_inners.lock().unwrap());
+        mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
+        mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
+
+        // At this point, there should be only 1 strong rerefence, take pool out of  Arc...
+        let mut this = self;
+        let pool: Self = loop {
+            match Arc::try_unwrap(this) {
+                Ok(pool) => {
+                    break pool;
+                }
+                Err(that) => {
+                    // seems solScCleaner is active... retry later
+                    this = that;
+                    sleep(Duration::from_millis(100));
+                    continue;
+                }
+            }
+        };
+        // join the cleaner thread as an extra sanity cleaning up.
+        pool.cleaner_thread.join().unwrap();
+
+        info!("uninstalled");
     }
 }
 
