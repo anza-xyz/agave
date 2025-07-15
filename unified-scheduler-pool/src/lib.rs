@@ -208,13 +208,6 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> BlockProductionSchedulerInner<S
         assert_matches!(mem::replace(self, Self::Pooled(inner)), Self::Taken(old) if old == new);
     }
 
-    fn can_take(&self) -> bool {
-        match self {
-            Self::NotSpawned | Self::Taken(_) => false,
-            Self::Pooled(_) => true,
-        }
-    }
-
     fn peek_pooled(&self) -> Option<&S::Inner> {
         match self {
             Self::NotSpawned | Self::Taken(_) => None,
@@ -522,7 +515,6 @@ where
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
 
-            let mut exiting = false;
             move || loop {
                 sleep(pool_cleaner_interval);
                 trace!("Scheduler pool cleaner: start!!!",);
@@ -559,10 +551,6 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
-                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
-                    exiting = true;
-                    scheduler_pool.unregister_banking_stage();
-                }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
@@ -634,7 +622,7 @@ where
                     trashed_inner_count
                 };
 
-                let (triggered_timeout_listener_count, active_timeout_listener_count) = {
+                let triggered_timeout_listener_count = {
                     // Pre-allocate rather large capacity to avoid reallocation inside the lock.
                     let mut expired_listeners = Vec::with_capacity(128);
                     let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
@@ -646,44 +634,27 @@ where
                             now.duration_since(*registered_at) > timeout_duration
                         },
                     ));
-                    let not_expired_count = timeout_listeners.len();
                     drop(timeout_listeners);
 
-                    let expired_count = expired_listeners.len();
+                    let count = expired_listeners.len();
                     // Now triggers all expired listeners. Usually, triggering timeouts does
                     // nothing because the callbacks will be no-op if already successfully
                     // `wait_for_termination()`-ed.
                     for (timeout_listener, _registered_at) in expired_listeners {
                         timeout_listener.trigger(scheduler_pool.clone());
                     }
-                    (expired_count, not_expired_count)
+                    count
                 };
 
                 info!(
-                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners, (exit: {:?})",
-                    idle_inner_count, trashed_inner_count, triggered_timeout_listener_count, exiting,
+                    "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
+                    idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
                 );
                 sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
                 sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
                 sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
                     triggered_timeout_listener_count,
                 ));
-
-                if exiting && active_timeout_listener_count == 0 {
-                    // Wait a bit to ensure the replay stage has gone.
-                    sleep(Duration::from_secs(1));
-
-                    let mut inner = scheduler_pool
-                        .block_production_scheduler_inner
-                        .lock()
-                        .unwrap();
-                    if inner.can_take() {
-                        // assert that block production scheduler isn't taken anymore and has been
-                        // returned to the pool
-                        inner.take_pooled();
-                        break;
-                    }
-                }
             }
         };
 
@@ -761,11 +732,7 @@ where
                 // preceding `.trash_taken()` and following `.put_spawned()` must be done
                 // atomically. That's why we pass around MutexGuard into
                 // spawn_block_production_scheduler().
-                if self.should_respawn() {
-                    info!("respawning scheduler after being trashed...");
-                    self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
-                    info!("respawned scheduler after being trashed.");
-                }
+                self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
             }
 
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
@@ -864,12 +831,11 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        assert!(self
-            .banking_stage_handler_context
+        self.banking_stage_handler_context
             .lock()
             .unwrap()
             .take()
-            .is_some());
+            .unwrap();
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
@@ -878,13 +844,6 @@ where
             .unwrap()
             .as_mut()
             .map(|context| context.banking_stage_monitor.status())
-    }
-
-    fn should_respawn(&self) -> bool {
-        !matches!(
-            self.banking_stage_status(),
-            None | Some(BankingStageStatus::Exited)
-        )
     }
 
     fn create_handler_context(
@@ -1023,6 +982,8 @@ where
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
         trace!("uninstalling: {}", Arc::strong_count(&self));
+
+        self.unregister_banking_stage();
 
         // Drop all schedulers in the pool
         for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
@@ -2631,7 +2592,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub enum BankingStageStatus {
     Active,
     Inactive,
-    Exited,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
