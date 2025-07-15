@@ -511,7 +511,6 @@ where
     ) -> Arc<Self> {
         let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
-        let mut exiting = false;
         let cleaner_main_loop = move || {
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
@@ -552,10 +551,6 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
-                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
-                    exiting = true;
-                    scheduler_pool.unregister_banking_stage();
-                }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
