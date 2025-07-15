@@ -259,6 +259,12 @@ impl HandlerContext {
         self.banking_stage_helper.as_ref().unwrap()
     }
 
+    fn clone_for_scheduler_thread(&self) -> Self {
+        let mut context = self.clone();
+        context.finish();
+        context
+    }
+
     fn finish(&mut self) {
         self.banking_packet_receiver = never();
         self.banking_packet_handler = Box::new(|_, _| {});
@@ -1965,11 +1971,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
         // 5. the handler thread reply back to the scheduler thread as an executed task.
         // 6. the scheduler thread post-processes the executed task.
         let scheduler_main_loop = {
-            let handler_context = {
-                let mut c = handler_context.clone();
-                c.finish();
-                c
-            };
+            let handler_context = handler_context.clone_for_scheduler_thread();
             let session_result_sender = self.session_result_sender.clone();
             // Taking new_task_receiver here is important to ensure there's a single receiver. In
             // this way, the replay stage will get .send() failures reliably, after this scheduler
