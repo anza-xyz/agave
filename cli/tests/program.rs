@@ -60,6 +60,17 @@ fn test_validator_genesis(mint_keypair: Keypair) -> TestValidatorGenesis {
     genesis
 }
 
+fn setup_rpc_client(config: &mut CliConfig) -> Arc<RpcClient> {
+    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
+        config.json_rpc_url.to_string(),
+        config.rpc_timeout,
+        config.commitment,
+        config.confirm_transaction_initial_timeout,
+    ));
+    config.rpc_client = Some(rpc_client.clone());
+    rpc_client
+}
+
 #[track_caller]
 fn expect_command_failure(config: &CliConfig, should_fail_because: &str, error_expected: &str) {
     let error_actual = process_command(config).expect_err(should_fail_because);
@@ -102,13 +113,7 @@ fn test_cli_program_deploy_non_upgradeable() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -312,13 +317,7 @@ fn test_cli_program_deploy_no_authority() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -427,13 +426,7 @@ fn test_cli_program_deploy_feature(enable_feature: bool, skip_preflight: bool) {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(program_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -557,13 +550,7 @@ fn test_cli_program_upgrade_with_feature(enable_feature: bool) {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
 
@@ -710,13 +697,7 @@ fn test_cli_program_deploy_with_authority() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1117,13 +1098,7 @@ fn test_cli_program_upgrade_auto_extend(skip_preflight: bool) {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1284,13 +1259,7 @@ fn test_cli_program_close_program() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1408,13 +1377,7 @@ fn test_cli_program_extend_program() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1585,13 +1548,7 @@ fn test_cli_program_migrate_program() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -1675,13 +1632,7 @@ fn test_cli_program_write_buffer() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2070,13 +2021,7 @@ fn test_cli_program_write_buffer_feature(enable_feature: bool) {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(program_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2162,13 +2107,7 @@ fn test_cli_program_set_buffer_authority() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2339,13 +2278,7 @@ fn test_cli_program_mismatch_buffer_authority() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2470,13 +2403,7 @@ fn test_cli_program_deploy_with_offline_signing(use_offline_signer_as_fee_payer:
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let blockhash = rpc_client.get_latest_blockhash().unwrap();
 
@@ -2667,13 +2594,7 @@ fn test_cli_program_show() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -2869,13 +2790,7 @@ fn test_cli_program_dump() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -3018,13 +2933,7 @@ fn test_cli_program_deploy_with_args(compute_unit_price: Option<u64>, use_rpc: b
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let mut file = File::open(noop_path.to_str().unwrap()).unwrap();
     let mut program_data = Vec::new();
@@ -3185,13 +3094,7 @@ fn test_cli_program_v4() {
 
     let mut config = CliConfig::recent_for_tests();
     config.json_rpc_url = test_validator.rpc_url();
-    let rpc_client = Arc::new(RpcClient::new_with_timeouts_and_commitment(
-        config.json_rpc_url.to_string(),
-        config.rpc_timeout,
-        config.commitment,
-        config.confirm_transaction_initial_timeout,
-    ));
-    config.rpc_client = Some(rpc_client.clone());
+    let rpc_client = setup_rpc_client(&mut config);
 
     let payer_keypair = Keypair::new();
     let upgrade_authority = Keypair::new();
