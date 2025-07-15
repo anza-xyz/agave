@@ -276,9 +276,7 @@ fn network_simulator_pull_only(thread_pool: &ThreadPool, network: &Network) {
         let _ = crds.insert(entry, timestamp(), GossipRoute::LocalMessage);
     }
     let (converged, bytes_tx) = network_run_pull(thread_pool, network, 0, num * 2, 0.9);
-    trace!(
-        "network_simulator_pull_{num}: converged: {converged} total_bytes: {bytes_tx}"
-    );
+    trace!("network_simulator_pull_{num}: converged: {converged} total_bytes: {bytes_tx}");
     assert!(converged >= 0.9);
 }
 
@@ -326,14 +324,13 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
         // push for a bit
         let (queue_size, bytes_tx) = network_run_push(thread_pool, network, start, end);
         total_bytes += bytes_tx;
-        trace!(
-            "network_simulator_push_{num}: queue_size: {queue_size} bytes: {bytes_tx}"
-        );
+        trace!("network_simulator_push_{num}: queue_size: {queue_size} bytes: {bytes_tx}");
         // pull for a bit
         let (converged, bytes_tx) = network_run_pull(thread_pool, network, start, end, 1.0);
         total_bytes += bytes_tx;
         trace!(
-            "network_simulator_push_{num}: converged: {converged} bytes: {bytes_tx} total_bytes: {total_bytes}"
+            "network_simulator_push_{num}: converged: {converged} bytes: {bytes_tx} total_bytes: \
+             {total_bytes}"
         );
         if converged > max_convergance {
             break;
@@ -479,8 +476,9 @@ fn network_run_push(
             .map(|node| node.gossip.push.num_pending(&node.gossip.crds))
             .sum();
         trace!(
-                "network_run_push_{num}: now: {now} queue: {total} bytes: {bytes} num_msgs: {num_msgs} prunes: {prunes} stake_pruned: {stake_pruned} delivered: {delivered}",
-            );
+            "network_run_push_{num}: now: {now} queue: {total} bytes: {bytes} num_msgs: \
+             {num_msgs} prunes: {prunes} stake_pruned: {stake_pruned} delivered: {delivered}",
+        );
     }
 
     network.stake_pruned += stake_pruned;
@@ -646,8 +644,9 @@ fn network_run_pull(
             break;
         }
         trace!(
-                "network_run_pull_{num}: now: {now} connections: {total} convergance: {convergance} bytes: {bytes} msgs: {msgs} overhead: {overhead}"
-            );
+            "network_run_pull_{num}: now: {now} connections: {total} convergance: {convergance} \
+             bytes: {bytes} msgs: {msgs} overhead: {overhead}"
+        );
     }
     (convergance, bytes)
 }

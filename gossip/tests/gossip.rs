@@ -401,9 +401,7 @@ pub fn cluster_info_scale() {
             sleep(Duration::from_millis(200));
         }
         time.stop();
-        warn!(
-            "propagated vote {num_votes} in {time} success: {success}"
-        );
+        warn!("propagated vote {num_votes} in {time} success: {success}");
         sleep(Duration::from_millis(200));
         for (node, _, _) in nodes.iter() {
             node.gossip.push.num_old.store(0, Ordering::Relaxed);
