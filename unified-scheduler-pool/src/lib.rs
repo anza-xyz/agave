@@ -268,7 +268,6 @@ impl HandlerContext {
     fn finish(&mut self) {
         self.banking_packet_receiver = never();
         self.banking_packet_handler = Box::new(|_, _| {});
-        self.banking_stage_helper = None;
         self.transaction_recorder = None;
     }
 }
