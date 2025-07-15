@@ -73,8 +73,8 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
     }
     let latest_version = get_latest_platform_tools_version().unwrap_or_else(|err| {
         debug!(
-            "Can't get the latest version of platform-tools: {}. Using built-in version {}.",
-            err, builtin_version,
+            "Can't get the latest version of platform-tools: {err}. Using built-in version \
+             {builtin_version}.",
         );
         builtin_version.to_string()
     });
@@ -84,8 +84,8 @@ fn validate_platform_tools_version(requested_version: &str, builtin_version: &st
         downloadable_version(requested_version)
     } else {
         warn!(
-            "Version {} is not valid, latest version is {}. Using the built-in version {}",
-            requested_version, latest_version, builtin_version,
+            "Version {requested_version} is not valid, latest version is {latest_version}. Using \
+             the built-in version {builtin_version}",
         );
         builtin_version.to_string()
     }
@@ -128,14 +128,14 @@ fn install_if_missing(
 ) -> Result<(), String> {
     if config.force_tools_install {
         if target_path.is_dir() {
-            debug!("Remove directory {:?}", target_path);
+            debug!("Remove directory {target_path:?}");
             fs::remove_dir_all(target_path).map_err(|err| err.to_string())?;
         }
         let source_base = config.sbf_sdk.join("dependencies");
         if source_base.exists() {
             let source_path = source_base.join(package);
             if source_path.exists() {
-                debug!("Remove file {:?}", source_path);
+                debug!("Remove file {source_path:?}");
                 fs::remove_file(source_path).map_err(|err| err.to_string())?;
             }
         }
@@ -151,7 +151,7 @@ fn install_if_missing(
             .next()
             .is_none()
     {
-        debug!("Remove directory {:?}", target_path);
+        debug!("Remove directory {target_path:?}");
         fs::remove_dir(target_path).map_err(|err| err.to_string())?;
     }
 
@@ -164,7 +164,7 @@ fn install_if_missing(
             .unwrap_or(false)
     {
         if target_path.exists() {
-            debug!("Remove file {:?}", target_path);
+            debug!("Remove file {target_path:?}");
             fs::remove_file(target_path).map_err(|err| err.to_string())?;
         }
         fs::create_dir_all(target_path).map_err(|err| err.to_string())?;
@@ -247,7 +247,7 @@ fn link_solana_toolchain(config: &Config) {
         config.generate_child_script_on_failure,
     );
     if config.verbose {
-        debug!("{}", rustup_output);
+        debug!("{rustup_output}");
     }
     let mut do_link = true;
     for line in rustup_output.lines() {
@@ -263,7 +263,7 @@ fn link_solana_toolchain(config: &Config) {
                     config.generate_child_script_on_failure,
                 );
                 if config.verbose {
-                    debug!("{}", output);
+                    debug!("{output}");
                 }
             } else {
                 do_link = false;
@@ -284,7 +284,7 @@ fn link_solana_toolchain(config: &Config) {
             config.generate_child_script_on_failure,
         );
         if config.verbose {
-            debug!("{}", output);
+            debug!("{output}");
         }
     }
 }
@@ -295,15 +295,30 @@ pub(crate) fn install_tools(
     metadata: &cargo_metadata::Metadata,
 ) {
     let platform_tools_version = config.platform_tools_version.unwrap_or_else(|| {
-        let workspace_tools_version = metadata.workspace_metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str());
-        let package_tools_version = package.map(|p| p.metadata.get("solana").and_then(|v| v.get("tools-version")).and_then(|v| v.as_str())).unwrap_or(None);
+        let workspace_tools_version = metadata
+            .workspace_metadata
+            .get("solana")
+            .and_then(|v| v.get("tools-version"))
+            .and_then(|v| v.as_str());
+        let package_tools_version = package
+            .map(|p| {
+                p.metadata
+                    .get("solana")
+                    .and_then(|v| v.get("tools-version"))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or(None);
         match (workspace_tools_version, package_tools_version) {
             (Some(workspace_version), Some(package_version)) => {
                 if workspace_version != package_version {
-                    warn!("Workspace and package specify conflicting tools versions, {workspace_version} and {package_version}, using package version {package_version}");
+                    warn!(
+                        "Workspace and package specify conflicting tools versions, \
+                         {workspace_version} and {package_version}, using package version \
+                         {package_version}"
+                    );
                 }
                 package_version
-            },
+            }
             (Some(workspace_version), None) => workspace_version,
             (None, Some(package_version)) => package_version,
             (None, None) => DEFAULT_PLATFORM_TOOLS_VERSION,
@@ -351,7 +366,7 @@ pub(crate) fn install_tools(
                     exit(1);
                 });
             }
-            error!("Failed to install platform-tools: {}", err);
+            error!("Failed to install platform-tools: {err}");
             exit(1);
         });
     }
@@ -367,7 +382,8 @@ pub(crate) fn install_tools(
         // this by removing RUSTC from the child process environment.
         if env::var("RUSTC").is_ok() {
             warn!(
-                "Removed RUSTC from cargo environment, because it overrides +solana cargo command line option."
+                "Removed RUSTC from cargo environment, because it overrides +solana cargo command \
+                 line option."
             );
             env::remove_var("RUSTC")
         }
@@ -380,7 +396,10 @@ fn check_solana_target_installed(target: &str) {
     let rustc = PathBuf::from(rustc);
     let output = spawn(&rustc, ["--print", "target-list"], false);
     if !output.contains(target) {
-        error!("Provided {:?} does not have {} target. The Solana rustc must be available in $PATH or the $RUSTC environment variable for the build to succeed.", rustc, target);
+        error!(
+            "Provided {rustc:?} does not have {target} target. The Solana rustc must be available \
+             in $PATH or the $RUSTC environment variable for the build to succeed."
+        );
         exit(1);
     }
 }
