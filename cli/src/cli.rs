@@ -90,6 +90,8 @@ pub enum CliCommand {
     },
     LeaderSchedule {
         epoch: Option<Epoch>,
+        show_times: bool,
+        local_time: bool,
     },
     LiveSlots,
     Logs {
@@ -929,8 +931,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         CliCommand::Inflation(inflation_subcommand) => {
             process_inflation_subcommand(&rpc_client, config, inflation_subcommand)
         }
-        CliCommand::LeaderSchedule { epoch } => {
-            process_leader_schedule(&rpc_client, config, *epoch)
+        CliCommand::LeaderSchedule { epoch, show_times, local_time } => {
+            process_leader_schedule(&rpc_client, config, *epoch, *show_times, *local_time)
         }
         CliCommand::LiveSlots => process_live_slots(config),
         CliCommand::Logs { filter } => process_logs(config, filter),

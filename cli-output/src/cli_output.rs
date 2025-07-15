@@ -1840,6 +1840,8 @@ impl fmt::Display for CliBlockTime {
 pub struct CliLeaderSchedule {
     pub epoch: Epoch,
     pub leader_schedule_entries: Vec<CliLeaderScheduleEntry>,
+    pub show_times: bool,
+    pub local_time: bool,
 }
 
 impl QuietDisplay for CliLeaderSchedule {}
@@ -1848,8 +1850,19 @@ impl VerboseDisplay for CliLeaderSchedule {}
 impl fmt::Display for CliLeaderSchedule {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for entry in &self.leader_schedule_entries {
-            let time_str = if let Some(timestamp) = entry.approximate_slot_time {
-                format!(" ({})", unix_timestamp_to_string(timestamp))
+            let time_str = if self.show_times {
+                if let Some(timestamp) = entry.approximate_slot_time {
+                    if self.local_time {
+                        let dt = chrono::Local.timestamp_opt(timestamp, 0).unwrap();
+                        format!(" ({} local)", dt.format("%Y-%m-%d %H:%M:%S.%f"))
+                    } else {
+                        // UTC
+                        let dt = chrono::Utc.timestamp_opt(timestamp, 0).unwrap();
+                        format!(" ({} UTC)", dt.format("%Y-%m-%d %H:%M:%S.%f"))
+                    }
+                } else {
+                    String::new()
+                }
             } else {
                 String::new()
             };
