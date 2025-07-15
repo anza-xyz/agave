@@ -477,7 +477,7 @@ fn network_run_push(
             .sum();
         trace!(
             "network_run_push_{num}: now: {now} queue: {total} bytes: {bytes} num_msgs: \
-             {num_msgs} prunes: {prunes} stake_pruned: {stake_pruned} delivered: {delivered}",
+             {num_msgs} prunes: {prunes} stake_pruned: {stake_pruned} delivered: {delivered}"
         );
     }
 
