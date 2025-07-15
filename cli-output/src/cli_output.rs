@@ -1848,7 +1848,12 @@ impl VerboseDisplay for CliLeaderSchedule {}
 impl fmt::Display for CliLeaderSchedule {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for entry in &self.leader_schedule_entries {
-            writeln!(f, "  {:<15} {:<44}", entry.slot, entry.leader)?;
+            let time_str = if let Some(timestamp) = entry.approximate_slot_time {
+                format!(" ({})", unix_timestamp_to_string(timestamp))
+            } else {
+                String::new()
+            };
+            writeln!(f, "  {:<15} {:<44}{}", entry.slot, entry.leader, time_str)?;
         }
         Ok(())
     }
@@ -1859,6 +1864,8 @@ impl fmt::Display for CliLeaderSchedule {
 pub struct CliLeaderScheduleEntry {
     pub slot: Slot,
     pub leader: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approximate_slot_time: Option<UnixTimestamp>,
 }
 
 #[derive(Serialize, Deserialize)]
