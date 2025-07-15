@@ -2196,22 +2196,22 @@ mod tests {
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((4, 4)), 8),
-            (Some(33), 40, 4)
+            (Some(33), 40, 2)
         );
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((4, 7)), 8),
-            (Some(33), 64, 2 * 8)
+            (Some(33), 64, 8)
         );
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 8),
-            (Some(49), 64, 8)
+            (Some(49), 64, 4)
         );
 
         assert_eq!(
             PohRecorder::compute_leader_slot_tick_heights(Some((6, 7)), 4),
-            (Some(25), 32, 4)
+            (Some(25), 32, 2)
         );
     }
 }
