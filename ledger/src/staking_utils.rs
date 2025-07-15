@@ -8,7 +8,7 @@ pub(crate) mod tests {
         solana_keypair::Keypair,
         solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
-        solana_signer::{signers::Signers, Signer},
+        solana_signer::{Signer, signers::Signers},
         solana_stake_interface::{
             instruction as stake_instruction,
             state::{Authorized, Lockup},
@@ -111,7 +111,7 @@ pub(crate) mod tests {
         let mut rng = rand::thread_rng();
         let vote_accounts = stakes.into_iter().map(|(stake, vote_state)| {
             let account = AccountSharedData::new_data(
-                rng.gen(), // lamports
+                rng.r#gen(), // lamports
                 &VoteStateVersions::new_current(vote_state),
                 &solana_vote_program::id(), // owner
             )

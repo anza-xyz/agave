@@ -4852,8 +4852,11 @@ pub mod tests {
         prev_entry_hash: Hash,
     ) -> result::Result<(), BlockstoreProcessorError> {
         let replay_tx_thread_pool = create_thread_pool(1);
+        let prioritization_fee_cache: &PrioritizationFeeCache = &PrioritizationFeeCache::new(0u64);
+        let recyclers = &VerifyRecyclers::default();
+        let bank = &BankWithScheduler::new_without_scheduler(bank.clone());
         confirm_slot_entries(
-            &BankWithScheduler::new_without_scheduler(bank.clone()),
+            bank,
             &replay_tx_thread_pool,
             (slot_entries, 0, slot_full),
             &mut ConfirmationTiming::default(),
@@ -4862,9 +4865,9 @@ pub mod tests {
             None,
             None,
             None,
-            &VerifyRecyclers::default(),
+            recyclers,
             None,
-            &PrioritizationFeeCache::new(0u64),
+            prioritization_fee_cache,
         )
     }
 
@@ -4962,12 +4965,15 @@ pub mod tests {
         .unwrap();
         assert_eq!(progress.num_txs, 2);
         let batch = transaction_status_receiver.recv().unwrap();
-        if let TransactionStatusMessage::Batch(batch) = batch {
-            assert_eq!(batch.transactions.len(), 2);
-            assert_eq!(batch.transaction_indexes.len(), 2);
-            assert_eq!(batch.transaction_indexes, [0, 1]);
-        } else {
-            panic!("batch should have been sent");
+        match batch {
+            TransactionStatusMessage::Batch(batch) => {
+                assert_eq!(batch.transactions.len(), 2);
+                assert_eq!(batch.transaction_indexes.len(), 2);
+                assert_eq!(batch.transaction_indexes, [0, 1]);
+            }
+            _ => {
+                panic!("batch should have been sent");
+            }
         }
 
         let tx1 = system_transaction::transfer(
@@ -5007,12 +5013,15 @@ pub mod tests {
         .unwrap();
         assert_eq!(progress.num_txs, 5);
         let batch = transaction_status_receiver.recv().unwrap();
-        if let TransactionStatusMessage::Batch(batch) = batch {
-            assert_eq!(batch.transactions.len(), 3);
-            assert_eq!(batch.transaction_indexes.len(), 3);
-            assert_eq!(batch.transaction_indexes, [2, 3, 4]);
-        } else {
-            panic!("batch should have been sent");
+        match batch {
+            TransactionStatusMessage::Batch(batch) => {
+                assert_eq!(batch.transactions.len(), 3);
+                assert_eq!(batch.transaction_indexes.len(), 3);
+                assert_eq!(batch.transaction_indexes, [2, 3, 4]);
+            }
+            _ => {
+                panic!("batch should have been sent");
+            }
         }
     }
 

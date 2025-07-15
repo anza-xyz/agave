@@ -3,20 +3,20 @@
 #![deny(clippy::indexing_slicing)]
 use {
     crate::shred::{
-        self, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred, Error, Nonce, ShredFlags, ShredId,
-        ShredType, ShredVariant, SignedData, SIZE_OF_COMMON_SHRED_HEADER,
+        self, Error, Nonce, SIZE_OF_COMMON_SHRED_HEADER, ShredFlags, ShredId, ShredType,
+        ShredVariant, SignedData, merkle_tree::SIZE_OF_MERKLE_ROOT, traits::Shred,
     },
     solana_clock::Slot,
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_perf::packet::{PacketRef, PacketRefMut},
-    solana_signature::{Signature, SIGNATURE_BYTES},
+    solana_signature::{SIGNATURE_BYTES, Signature},
     solana_signer::Signer,
     std::ops::Range,
 };
 #[cfg(test)]
 use {
-    rand::{seq::SliceRandom, Rng},
+    rand::{Rng, seq::SliceRandom},
     solana_perf::packet::Packet,
     std::collections::HashMap,
 };
@@ -334,7 +334,7 @@ pub fn set_retransmitter_signature(shred: &mut [u8], signature: &Signature) -> R
 pub fn resign_shred(shred: &mut [u8], keypair: &Keypair) -> Result<(), Error> {
     let (offset, merkle_root) = match get_shred_variant(shred)? {
         ShredVariant::LegacyCode | ShredVariant::LegacyData => {
-            return Err(Error::InvalidShredVariant)
+            return Err(Error::InvalidShredVariant);
         }
         ShredVariant::MerkleCode {
             proof_size,
@@ -378,7 +378,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
     fn modify_packet<R: Rng>(rng: &mut R, packet: &mut Packet, offsets: Range<usize>) {
         let buffer = packet.buffer_mut();
         let byte = buffer[offsets].choose_mut(rng).unwrap();
-        *byte = rng.gen::<u8>().max(1u8).wrapping_add(*byte);
+        *byte = rng.r#gen::<u8>().max(1u8).wrapping_add(*byte);
     }
     // We need to re-borrow the `packet` here, otherwise compiler considers it
     // as moved.
@@ -396,7 +396,7 @@ pub(crate) fn corrupt_packet<R: Rng>(
             ..
         } => Some((proof_size, resigned)),
     };
-    let coin_flip: bool = rng.gen();
+    let coin_flip: bool = rng.r#gen();
     if coin_flip {
         // Corrupt one byte within the signature offsets.
         modify_packet(rng, packet, 0..SIGNATURE_BYTES);
@@ -514,7 +514,7 @@ mod tests {
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
             }
-            let nonce = repaired.then(|| rng.gen::<Nonce>());
+            let nonce = repaired.then(|| rng.r#gen::<Nonce>());
             write_shred(&mut rng, shred.payload(), nonce, &mut packet);
             let mut packet = PacketRefMut::Packet(&mut packet);
             assert_eq!(

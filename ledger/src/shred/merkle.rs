@@ -3,7 +3,10 @@ use crate::shred::ShredType;
 use {
     crate::{
         shred::{
-            self,
+            self, CODING_SHREDS_PER_FEC_BLOCK, CodingShredHeader, DATA_SHREDS_PER_FEC_BLOCK,
+            DataShredHeader, Error, ProcessShredsStats, SHREDS_PER_FEC_BLOCK,
+            SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS, SIZE_OF_SIGNATURE,
+            ShredCommonHeader, ShredFlags, ShredVariant,
             common::impl_shred_common,
             dispatch,
             merkle_tree::*,
@@ -12,16 +15,12 @@ use {
             traits::{
                 Shred as ShredTrait, ShredCode as ShredCodeTrait, ShredData as ShredDataTrait,
             },
-            CodingShredHeader, DataShredHeader, Error, ProcessShredsStats, ShredCommonHeader,
-            ShredFlags, ShredVariant, CODING_SHREDS_PER_FEC_BLOCK, DATA_SHREDS_PER_FEC_BLOCK,
-            SHREDS_PER_FEC_BLOCK, SIZE_OF_CODING_SHRED_HEADERS, SIZE_OF_DATA_SHRED_HEADERS,
-            SIZE_OF_SIGNATURE,
         },
         shredder::ReedSolomonCache,
     },
     assert_matches::debug_assert_matches,
     itertools::{Either, Itertools},
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     reed_solomon_erasure::Error::{InvalidIndex, TooFewParityShards},
     solana_clock::Slot,
     solana_hash::Hash,
@@ -1299,10 +1298,11 @@ fn finish_erasure_batch(
         debug_assert!(shred.verify(&keypair.pubkey()));
         debug_assert_matches!(shred.sanitize(), Ok(()));
         // Assert that shred payload is fully populated.
-        debug_assert_eq!(shred, {
+        let expected = {
             let shred = shred.payload().clone();
-            &Shred::from_payload(shred).unwrap()
-        });
+            Shred::from_payload(shred).unwrap()
+        };
+        debug_assert_eq!(shred, &expected);
     }
     Ok(root)
 }
@@ -1311,10 +1311,10 @@ fn finish_erasure_batch(
 mod test {
     use {
         super::*,
-        crate::shred::{merkle_tree::get_proof_size, ShredFlags, ShredId, SignedData},
+        crate::shred::{ShredFlags, ShredId, SignedData, merkle_tree::get_proof_size},
         assert_matches::assert_matches,
         itertools::Itertools,
-        rand::{seq::SliceRandom, CryptoRng, Rng},
+        rand::{CryptoRng, Rng, seq::SliceRandom},
         rayon::ThreadPoolBuilder,
         reed_solomon_erasure::Error::TooFewShardsPresent,
         solana_keypair::Keypair,
@@ -1395,7 +1395,7 @@ mod test {
     #[test]
     fn test_merkle_proof_entry_from_hash() {
         let mut rng = rand::thread_rng();
-        let bytes: [u8; 32] = rng.gen();
+        let bytes: [u8; 32] = rng.r#gen();
         let hash = Hash::from(bytes);
         let entry = &hash.as_ref()[..SIZE_OF_MERKLE_PROOF_ENTRY];
         let entry = MerkleProofEntry::try_from(entry).unwrap();
@@ -1405,7 +1405,7 @@ mod test {
     #[test]
     fn test_make_merkle_proof_error() {
         let mut rng = rand::thread_rng();
-        let nodes = repeat_with(|| rng.gen::<[u8; 32]>()).map(Hash::from);
+        let nodes = repeat_with(|| rng.r#gen::<[u8; 32]>()).map(Hash::from);
         let nodes: Vec<_> = nodes.take(5).collect();
         let size = nodes.len();
         let tree = make_merkle_tree(nodes.into_iter().map(Ok)).unwrap();
@@ -1475,13 +1475,13 @@ mod test {
             },
             slot: 145_865_705,
             index: 1835,
-            version: rng.gen(),
+            version: rng.r#gen(),
             fec_set_index: 1835,
         };
         let data_header = {
             let reference_tick = rng.gen_range(0..0x40);
             DataShredHeader {
-                parent_offset: rng.gen::<u16>().max(1),
+                parent_offset: rng.r#gen::<u16>().max(1),
                 flags: ShredFlags::from_bits_retain(reference_tick),
                 size: 0,
             }
@@ -1690,11 +1690,11 @@ mod test {
     ) {
         let thread_pool = ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let keypair = Keypair::new();
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.r#gen()));
         let resigned = chained && is_last_in_slot;
         let slot = 149_745_689;
         let parent_slot = slot - rng.gen_range(1..65536);
-        let shred_version = rng.gen();
+        let shred_version = rng.r#gen();
         let reference_tick = rng.gen_range(1..64);
         let next_shred_index = rng.gen_range(0..671);
         let next_code_index = rng.gen_range(0..781);

@@ -1,13 +1,13 @@
 use {
     crate::shred::{
-        self, Error, ProcessShredsStats, Shred, ShredData, ShredFlags, DATA_SHREDS_PER_FEC_BLOCK,
+        self, DATA_SHREDS_PER_FEC_BLOCK, Error, ProcessShredsStats, Shred, ShredData, ShredFlags,
     },
     itertools::Itertools,
     lazy_lru::LruCache,
-    rayon::{prelude::*, ThreadPool},
+    rayon::{ThreadPool, prelude::*},
     reed_solomon_erasure::{
-        galois_8::ReedSolomon,
         Error::{InvalidIndex, TooFewDataShards, TooFewShardsPresent},
+        galois_8::ReedSolomon,
     },
     solana_clock::Slot,
     solana_entry::entry::Entry,
@@ -312,12 +312,13 @@ impl Shredder {
             )
         };
         assert_eq!(fec_set_index, index);
-        assert!(data
-            .iter()
-            .map(Borrow::borrow)
-            .all(|shred| shred.slot() == slot
-                && shred.version() == version
-                && shred.fec_set_index() == fec_set_index));
+        assert!(
+            data.iter()
+                .map(Borrow::borrow)
+                .all(|shred| shred.slot() == slot
+                    && shred.version() == version
+                    && shred.fec_set_index() == fec_set_index)
+        );
         let num_data = data.len();
         let is_last_in_slot = data
             .last()
@@ -378,14 +379,18 @@ impl Shredder {
                 shred.num_coding_shreds().unwrap(),
             ),
         };
-        debug_assert!(shreds
-            .iter()
-            .all(|shred| shred.slot() == slot && shred.fec_set_index() == fec_set_index));
-        debug_assert!(shreds
-            .iter()
-            .filter(|shred| shred.is_code())
-            .all(|shred| shred.num_data_shreds().unwrap() == num_data_shreds
-                && shred.num_coding_shreds().unwrap() == num_coding_shreds));
+        debug_assert!(
+            shreds
+                .iter()
+                .all(|shred| shred.slot() == slot && shred.fec_set_index() == fec_set_index)
+        );
+        debug_assert!(
+            shreds
+                .iter()
+                .filter(|shred| shred.is_code())
+                .all(|shred| shred.num_data_shreds().unwrap() == num_data_shreds
+                    && shred.num_coding_shreds().unwrap() == num_coding_shreds)
+        );
         let num_data_shreds = num_data_shreds as usize;
         let num_coding_shreds = num_coding_shreds as usize;
         let fec_set_size = num_data_shreds + num_coding_shreds;
@@ -544,12 +549,12 @@ mod tests {
         crate::{
             blockstore::MAX_DATA_SHREDS_PER_SLOT,
             shred::{
-                self, max_entries_per_n_shred, max_ticks_per_n_shreds, verify_test_data_shred,
-                ShredType, CODING_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT,
+                self, CODING_SHREDS_PER_FEC_BLOCK, MAX_CODE_SHREDS_PER_SLOT, ShredType,
+                max_entries_per_n_shred, max_ticks_per_n_shreds, verify_test_data_shred,
             },
         },
         assert_matches::assert_matches,
-        rand::{seq::SliceRandom, Rng},
+        rand::{Rng, seq::SliceRandom},
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hash,
@@ -602,7 +607,7 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             start_index, // next_shred_index
             start_index, // next_code_index
             true,        // merkle_variant
@@ -696,7 +701,7 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             369,  // next_shred_index
             776,  // next_code_index
             true, // merkle_variant
@@ -733,7 +738,7 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             0,    // next_shred_index
             0,    // next_code_index
             true, // merkle_variant
@@ -775,7 +780,7 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             0,    // next_shred_index
             0,    // next_code_index
             true, // merkle_variant
@@ -823,7 +828,7 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             0,    // next_shred_index
             0,    // next_code_index
             true, // merkle_variant
@@ -1096,7 +1101,7 @@ mod tests {
             let instruction = solana_system_interface::instruction::transfer(
                 &from_pubkey,
                 &Pubkey::new_unique(), // to
-                rng.gen(),             // lamports
+                rng.r#gen(),           // lamports
             );
             let message = solana_message::Message::new(&[instruction], Some(&from_pubkey));
             let mut tx = solana_transaction::Transaction::new_unsigned(message);
@@ -1119,7 +1124,7 @@ mod tests {
             slot,
             slot - rng.gen_range(1..27), // parent slot
             0,                           // reference tick
-            rng.gen(),                   // version
+            rng.r#gen(),                 // version
         )
         .unwrap();
         let next_shred_index = rng.gen_range(1..1024);
@@ -1195,17 +1200,19 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             0,    // next_shred_index
             0,    // next_code_index
             true, // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
-        assert!(!data_shreds
-            .iter()
-            .chain(coding_shreds.iter())
-            .any(|s| s.version() != version));
+        assert!(
+            !data_shreds
+                .iter()
+                .chain(coding_shreds.iter())
+                .any(|s| s.version() != version)
+        );
     }
 
     #[test_matrix(
@@ -1234,7 +1241,7 @@ mod tests {
             &entries,
             is_last_in_slot,
             // chained_merkle_root
-            chained.then(|| Hash::new_from_array(rand::thread_rng().gen())),
+            chained.then(|| Hash::new_from_array(rand::thread_rng().r#gen())),
             start_index, // next_shred_index
             start_index, // next_code_index
             true,        // merkle_variant
@@ -1248,12 +1255,16 @@ mod tests {
             .into_iter()
             .map(|(fec_set_index, chunk)| (fec_set_index, chunk.count()))
             .collect();
-        assert!(chunks
-            .iter()
-            .all(|(_, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE));
-        assert!(chunks
-            .iter()
-            .all(|(_, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE));
+        assert!(
+            chunks
+                .iter()
+                .all(|(_, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE)
+        );
+        assert!(
+            chunks
+                .iter()
+                .all(|(_, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE)
+        );
         assert_eq!(chunks[0].0, start_index);
         assert!(chunks.iter().tuple_windows().all(
             |((fec_set_index, chunk_size), (next_fec_set_index, _chunk_size))| fec_set_index
@@ -1261,10 +1272,12 @@ mod tests {
                 == *next_fec_set_index
         ));
         assert!(coding_shreds.len() >= data_shreds.len());
-        assert!(coding_shreds
-            .iter()
-            .zip(&data_shreds)
-            .all(|(code, data)| code.fec_set_index() == data.fec_set_index()));
+        assert!(
+            coding_shreds
+                .iter()
+                .zip(&data_shreds)
+                .all(|(code, data)| code.fec_set_index() == data.fec_set_index())
+        );
         assert_eq!(
             coding_shreds.last().unwrap().fec_set_index(),
             data_shreds.last().unwrap().fec_set_index()
@@ -1345,12 +1358,16 @@ mod tests {
                     .sum::<usize>(),
                 num_shreds
             );
-            assert!(chunks
-                .iter()
-                .all(|(_offset, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE));
-            assert!(chunks
-                .iter()
-                .all(|(_offset, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE));
+            assert!(
+                chunks
+                    .iter()
+                    .all(|(_offset, chunk_size)| *chunk_size >= MIN_CHUNK_SIZE)
+            );
+            assert!(
+                chunks
+                    .iter()
+                    .all(|(_offset, chunk_size)| *chunk_size < 2 * MIN_CHUNK_SIZE)
+            );
             assert_eq!(chunks[0].0, 0);
             assert!(chunks.iter().tuple_windows().all(
                 |((offset, chunk_size), (next_offset, _chunk_size))| offset + chunk_size
