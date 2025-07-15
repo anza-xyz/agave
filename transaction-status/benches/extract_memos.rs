@@ -1,8 +1,8 @@
 use {
-    criterion::{criterion_group, criterion_main, Criterion},
+    bencher::{benchmark_group, benchmark_main, Bencher},
     solana_message::{compiled_instruction::CompiledInstruction, Message},
     solana_pubkey::Pubkey,
-    solana_transaction_status::extract_memos::{spl_memo_id_v1, spl_memo_id_v3, ExtractMemos},
+    solana_transaction_status::extract_memos::ExtractMemos,
 };
 
 fn bench_extract_memos(b: &mut Bencher) {
@@ -24,7 +24,7 @@ fn bench_extract_memos(b: &mut Bencher) {
         instructions,
         ..Message::default()
     };
-        b.iter(|| message.extract_memos());
+    b.iter(|| message.extract_memos());
 }
 
 benchmark_group!(benches, bench_extract_memos);
