@@ -511,155 +511,149 @@ where
     ) -> Arc<Self> {
         let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
-        let cleaner_main_loop = {
-            move || {
-                let weak_scheduler_pool: Weak<Self> =
-                    scheduler_pool_receiver.into_iter().next().unwrap();
-                loop {
-                    sleep(pool_cleaner_interval);
-                    trace!("Scheduler pool cleaner: start!!!",);
+        let cleaner_main_loop = move || {
+            let weak_scheduler_pool: Weak<Self> =
+                scheduler_pool_receiver.into_iter().next().unwrap();
+            loop {
+                sleep(pool_cleaner_interval);
+                trace!("Scheduler pool cleaner: start!!!",);
 
-                    let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                    break;
+                };
+
+                let now = Instant::now();
+
+                let idle_inner_count = {
+                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                    let mut idle_inners = Vec::with_capacity(128);
+
+                    let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock() else {
+                        break;
+                    };
+                    // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
+                    // using a polyfill and allowing unstable_name_collisions, because it's
+                    // simplest to code and fastest to run (= O(n); single linear pass and no
+                    // reallocation).
+                    //
+                    // Note that this critical section could block the latency-sensitive replay
+                    // code-path via ::take_scheduler().
+                    idle_inners.extend(MakeExtractIf::extract_if(
+                        scheduler_inners.deref_mut(),
+                        |(_inner, pooled_at)| now.duration_since(*pooled_at) > max_pooling_duration,
+                    ));
+                    drop(scheduler_inners);
+
+                    let idle_inner_count = idle_inners.len();
+                    drop(idle_inners);
+                    idle_inner_count
+                };
+
+                let banking_stage_status = scheduler_pool.banking_stage_status();
+
+                if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
+                    let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
+                    else {
                         break;
                     };
 
-                    let now = Instant::now();
+                    if let Some(pooled) = inner.peek_pooled() {
+                        if pooled.is_overgrown() {
+                            // This code path will be touched sometimes when a given inactive
+                            // idling scheduler becomes overgrown due to buffering, which
+                            // previously passed the overgrown check at the last scheduler
+                            // returning.
+                            //
+                            // At the same time, this code path addresses a theoretically-possible
+                            // attack vector of unbounded mem consumption, which is very unlikely
+                            // to mount a successful one as explained below:
+                            //
+                            // To make that happen, banking stage would need to be tricked into
+                            // returning BankingStageStatus::Active to start buffering on idling,
+                            // which also indicates imminent leader slots to the replay stage.
+                            // Contrary to that, the replay stage needs to be tricked into NOT
+                            // taking that idling-yet-buffering bp scheduler out of SchedulerPool
+                            // at all for the tpu bank at the upcoming leader slots, for quite
+                            // extended duration of time. In this way, it's possible to bypass the
+                            // overgrown check on scheduler returning altogether, resulting in no
+                            // discarding of buffered tasks at all.
+                            //
+                            // This code-path mitigates that possibility. That's because it's not
+                            // possible to see BankingStageStatus::Active at the every iteration of
+                            // cleaner_main_loop, unless the attacker controls near 100% stake.
 
-                    let idle_inner_count = {
-                        // Pre-allocate rather large capacity to avoid reallocation inside the lock.
-                        let mut idle_inners = Vec::with_capacity(128);
+                            // The following steps are tightly in sync with the normal bp
+                            // spawning out of abundance of caution.
+                            let pooled = inner.take_and_trash_pooled();
+                            info!("idling BP scheduler ({}) is overgrown", pooled.id());
+                            scheduler_pool.spawn_block_production_scheduler(&mut inner);
 
-                        let Ok(mut scheduler_inners) = scheduler_pool.scheduler_inners.lock()
-                        else {
-                            break;
-                        };
-                        // Use the still-unstable Vec::extract_if() even on stable rust toolchain by
-                        // using a polyfill and allowing unstable_name_collisions, because it's
-                        // simplest to code and fastest to run (= O(n); single linear pass and no
-                        // reallocation).
-                        //
-                        // Note that this critical section could block the latency-sensitive replay
-                        // code-path via ::take_scheduler().
-                        idle_inners.extend(MakeExtractIf::extract_if(
-                            scheduler_inners.deref_mut(),
-                            |(_inner, pooled_at)| {
-                                now.duration_since(*pooled_at) > max_pooling_duration
-                            },
-                        ));
-                        drop(scheduler_inners);
-
-                        let idle_inner_count = idle_inners.len();
-                        drop(idle_inners);
-                        idle_inner_count
-                    };
-
-                    let banking_stage_status = scheduler_pool.banking_stage_status();
-
-                    if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
-                        let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
-                        else {
-                            break;
-                        };
-
-                        if let Some(pooled) = inner.peek_pooled() {
-                            if pooled.is_overgrown() {
-                                // This code path will be touched sometimes when a given inactive
-                                // idling scheduler becomes overgrown due to buffering, which
-                                // previously passed the overgrown check at the last scheduler
-                                // returning.
-                                //
-                                // At the same time, this code path addresses a theoretically-possible
-                                // attack vector of unbounded mem consumption, which is very unlikely
-                                // to mount a successful one as explained below:
-                                //
-                                // To make that happen, banking stage would need to be tricked into
-                                // returning BankingStageStatus::Active to start buffering on idling,
-                                // which also indicates imminent leader slots to the replay stage.
-                                // Contrary to that, the replay stage needs to be tricked into NOT
-                                // taking that idling-yet-buffering bp scheduler out of SchedulerPool
-                                // at all for the tpu bank at the upcoming leader slots, for quite
-                                // extended duration of time. In this way, it's possible to bypass the
-                                // overgrown check on scheduler returning altogether, resulting in no
-                                // discarding of buffered tasks at all.
-                                //
-                                // This code-path mitigates that possibility. That's because it's not
-                                // possible to see BankingStageStatus::Active at the every iteration of
-                                // cleaner_main_loop, unless the attacker controls near 100% stake.
-
-                                // The following steps are tightly in sync with the normal bp
-                                // spawning out of abundance of caution.
-                                let pooled = inner.take_and_trash_pooled();
-                                info!("idling BP scheduler ({}) is overgrown", pooled.id());
-                                scheduler_pool.spawn_block_production_scheduler(&mut inner);
-
-                                let Ok(mut trashed_inners) =
-                                    scheduler_pool.trashed_scheduler_inners.lock()
-                                else {
-                                    break;
-                                };
-                                trashed_inners.push(pooled);
-                                sleepless_testing::at(CheckPoint::IdlingSchedulerTrashed);
-                                drop(inner);
-                            } else {
-                                pooled.discard_buffer();
-                                // Prevent replay stage's OpenSubchannel from winning the race by
-                                // holding the inner lock for the duration of discard message sending
-                                // just above.  The message (internally SubchanneledPayload::Reset)
-                                // must be sent only during gaps of subchannels of the new task
-                                // channel.
-                                sleepless_testing::at(CheckPoint::DiscardRequested);
-                                drop(inner);
-                            }
+                            let Ok(mut trashed_inners) =
+                                scheduler_pool.trashed_scheduler_inners.lock()
+                            else {
+                                break;
+                            };
+                            trashed_inners.push(pooled);
+                            sleepless_testing::at(CheckPoint::IdlingSchedulerTrashed);
+                            drop(inner);
+                        } else {
+                            pooled.discard_buffer();
+                            // Prevent replay stage's OpenSubchannel from winning the race by
+                            // holding the inner lock for the duration of discard message sending
+                            // just above.  The message (internally SubchanneledPayload::Reset)
+                            // must be sent only during gaps of subchannels of the new task
+                            // channel.
+                            sleepless_testing::at(CheckPoint::DiscardRequested);
+                            drop(inner);
                         }
                     }
+                }
 
-                    let trashed_inner_count = {
-                        let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
-                        else {
-                            break;
-                        };
-                        let trashed_inner_count = trashed_inners.len();
-                        let trashed_inners: Vec<_> = mem::take(&mut *trashed_inners);
-                        // drop all the trashded schedulers outside the lock guard
-                        drop(trashed_inners);
-                        trashed_inner_count
+                let trashed_inner_count = {
+                    let Ok(mut trashed_inners) = scheduler_pool.trashed_scheduler_inners.lock()
+                    else {
+                        break;
                     };
+                    let trashed_inner_count = trashed_inners.len();
+                    let trashed_inners: Vec<_> = mem::take(&mut *trashed_inners);
+                    // drop all the trashded schedulers outside the lock guard
+                    drop(trashed_inners);
+                    trashed_inner_count
+                };
 
-                    let triggered_timeout_listener_count = {
-                        // Pre-allocate rather large capacity to avoid reallocation inside the lock.
-                        let mut expired_listeners = Vec::with_capacity(128);
-                        let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock()
-                        else {
-                            break;
-                        };
-                        expired_listeners.extend(MakeExtractIf::extract_if(
-                            timeout_listeners.deref_mut(),
-                            |(_callback, registered_at)| {
-                                now.duration_since(*registered_at) > timeout_duration
-                            },
-                        ));
-                        drop(timeout_listeners);
-
-                        let count = expired_listeners.len();
-                        // Now triggers all expired listeners. Usually, triggering timeouts does
-                        // nothing because the callbacks will be no-op if already successfully
-                        // `wait_for_termination()`-ed.
-                        for (timeout_listener, _registered_at) in expired_listeners {
-                            timeout_listener.trigger(scheduler_pool.clone());
-                        }
-                        count
+                let triggered_timeout_listener_count = {
+                    // Pre-allocate rather large capacity to avoid reallocation inside the lock.
+                    let mut expired_listeners = Vec::with_capacity(128);
+                    let Ok(mut timeout_listeners) = scheduler_pool.timeout_listeners.lock() else {
+                        break;
                     };
+                    expired_listeners.extend(MakeExtractIf::extract_if(
+                        timeout_listeners.deref_mut(),
+                        |(_callback, registered_at)| {
+                            now.duration_since(*registered_at) > timeout_duration
+                        },
+                    ));
+                    drop(timeout_listeners);
 
-                    info!(
+                    let count = expired_listeners.len();
+                    // Now triggers all expired listeners. Usually, triggering timeouts does
+                    // nothing because the callbacks will be no-op if already successfully
+                    // `wait_for_termination()`-ed.
+                    for (timeout_listener, _registered_at) in expired_listeners {
+                        timeout_listener.trigger(scheduler_pool.clone());
+                    }
+                    count
+                };
+
+                info!(
                     "Scheduler pool cleaner: dropped {} idle inners, {} trashed inners, triggered {} timeout listeners",
                     idle_inner_count, trashed_inner_count, triggered_timeout_listener_count,
                 );
-                    sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
-                    sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
-                    sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
-                        triggered_timeout_listener_count,
-                    ));
-                }
+                sleepless_testing::at(CheckPoint::IdleSchedulerCleaned(idle_inner_count));
+                sleepless_testing::at(CheckPoint::TrashedSchedulerCleaned(trashed_inner_count));
+                sleepless_testing::at(CheckPoint::TimeoutListenerTriggered(
+                    triggered_timeout_listener_count,
+                ));
             }
         };
 
