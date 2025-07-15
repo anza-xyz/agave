@@ -707,7 +707,7 @@ where
 
     // This fn needs to return immediately due to being part of the blocking
     // `::wait_for_termination()` call.
-    fn return_scheduler(&self, mut scheduler: S::Inner) {
+    fn return_scheduler(&self, scheduler: S::Inner) {
         // Refer to the comment in is_aborted() as to the exact definition of the concept of
         // _trashed_ and the interaction among different parts of unified scheduler.
         let should_trash = scheduler.is_trashed();
