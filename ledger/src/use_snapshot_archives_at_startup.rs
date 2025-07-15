@@ -29,16 +29,16 @@ pub mod cli {
     pub const HELP: &str = "When should snapshot archives be used at startup?";
     #[rustfmt::skip]
     pub const LONG_HELP: &str = "At startup, when should snapshot archives be extracted \
-        versus using what is already on disk?\
-        \nSpecifying \"always\" will always startup by extracting snapshot archives and disregard \
+        versus using what is already on disk?\n\
+        Specifying \"always\" will always startup by extracting snapshot archives and disregard \
         any snapshot-related state already on disk. Note that starting up from snapshot archives \
         will incur the runtime costs associated with extracting the archives and rebuilding the \
-        local state.\
-        \nSpecifying \"never\" will never startup from snapshot archives and will only use \
+        local state.\n\
+        Specifying \"never\" will never startup from snapshot archives and will only use \
         snapshot-related state already on disk. If there is no state already on disk, startup will \
         fail. Note, this will use the latest state available, which may be newer than the latest \
-        snapshot archive.\
-        \nSpecifying \"when-newest\" will use snapshot-related state already on disk unless there \
+        snapshot archive.\n\
+        Specifying \"when-newest\" will use snapshot-related state already on disk unless there \
         are snapshot archives newer than it. This can happen if a new snapshot archive is \
         downloaded while the node is stopped.";
 
