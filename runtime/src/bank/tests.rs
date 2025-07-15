@@ -943,10 +943,8 @@ fn test_bank_update_rewards_determinism() {
 impl VerifyAccountsHashConfig {
     fn default_for_test() -> Self {
         Self {
-            ignore_mismatch: false,
             require_rooted_bank: false,
             run_in_background: false,
-            store_hash_raw_data_for_debug: false,
         }
     }
 }
@@ -1020,11 +1018,7 @@ fn test_purge_empty_accounts() {
 
         if pass == 0 {
             add_root_and_flush_write_cache(&bank0);
-            assert!(bank0.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank0.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -1033,11 +1027,7 @@ fn test_purge_empty_accounts() {
         bank0.squash();
         add_root_and_flush_write_cache(&bank0);
         if pass == 1 {
-            assert!(bank0.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank0.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -1045,11 +1035,7 @@ fn test_purge_empty_accounts() {
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
         bank1.update_accounts_hash_for_tests();
-        assert!(bank1.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 
         // keypair should have 0 tokens on both forks
         assert_eq!(bank0.get_account(&keypair.pubkey()), None);
@@ -1057,11 +1043,7 @@ fn test_purge_empty_accounts() {
 
         bank1.clean_accounts_for_tests();
 
-        assert!(bank1.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
 
@@ -2198,7 +2180,7 @@ fn test_bank_hash_internal_state() {
     bank2.squash();
     bank2.force_flush_accounts_cache();
     bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
-    assert!(bank2.verify_accounts_hash(None, VerifyAccountsHashConfig::default_for_test(), None,));
+    assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
 #[test]
@@ -2233,11 +2215,7 @@ fn test_bank_hash_internal_state_verify() {
             bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
             bank2.update_accounts_hash_for_tests();
-            assert!(bank2.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
         }
         let bank3 = new_bank_from_parent_with_bank_forks(
             &bank_forks,
@@ -2248,11 +2226,7 @@ fn test_bank_hash_internal_state_verify() {
         assert_eq!(bank0_state, bank0.hash_internal_state());
         if pass == 0 {
             // this relies on us having set bank2's accounts hash in the pass==0 if above
-            assert!(bank2.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
         if pass == 1 {
@@ -2262,11 +2236,7 @@ fn test_bank_hash_internal_state_verify() {
             bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
             bank3.update_accounts_hash_for_tests();
-            assert!(bank3.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -2276,11 +2246,7 @@ fn test_bank_hash_internal_state_verify() {
         if pass == 2 {
             add_root_and_flush_write_cache(&bank2);
             bank2.update_accounts_hash_for_tests();
-            assert!(bank2.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 
             // Verifying the accounts lt hash is only intended to be called at startup, and
             // normally in the background.  Since here we're *not* at startup, and doing it
@@ -2296,11 +2262,7 @@ fn test_bank_hash_internal_state_verify() {
         bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
         bank3.update_accounts_hash_for_tests();
-        assert!(bank3.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
 
@@ -10877,7 +10839,6 @@ fn test_bank_verify_accounts_hash_with_base() {
     bank.force_flush_accounts_cache();
     bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
     let base_slot = bank.slot();
-    let base_capitalization = bank.capitalization();
 
     // make more banks, do more transactions, ensure there's more zero-lamport accounts
     for _ in 0..2 {
@@ -10897,11 +10858,7 @@ fn test_bank_verify_accounts_hash_with_base() {
     bank.update_incremental_accounts_hash(base_slot);
 
     // ensure the accounts hash verifies
-    assert!(bank.verify_accounts_hash(
-        Some((base_slot, base_capitalization)),
-        VerifyAccountsHashConfig::default_for_test(),
-        None,
-    ));
+    assert!(bank.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
 #[test]
