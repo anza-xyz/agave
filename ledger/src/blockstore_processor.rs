@@ -866,12 +866,11 @@ pub fn test_process_blockstore(
     opts: &ProcessOptions,
     exit: Arc<AtomicBool>,
 ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
-    let snapshot_config = SnapshotConfig::new_disabled();
     let (bank_forks, leader_schedule_cache, ..) = crate::bank_forks_utils::load_bank_forks(
         genesis_config,
         blockstore,
         Vec::new(),
-        &snapshot_config,
+        &SnapshotConfig::new_disabled(),
         opts,
         None,
         None,
@@ -880,13 +879,6 @@ pub fn test_process_blockstore(
     )
     .unwrap();
 
-    let (snapshot_request_sender, _snapshot_request_receiver) = crossbeam_channel::unbounded();
-    let snapshot_controller = SnapshotController::new(
-        snapshot_request_sender,
-        snapshot_config,
-        bank_forks.read().unwrap().root(),
-    );
-
     process_blockstore_from_root(
         blockstore,
         &bank_forks,
@@ -894,7 +886,7 @@ pub fn test_process_blockstore(
         opts,
         None,
         None,
-        Some(&snapshot_controller),
+        None, // snapshots are disabled
     )
     .unwrap();
 

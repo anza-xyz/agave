@@ -658,7 +658,6 @@ mod tests {
             genesis_utils::{
                 create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
             },
-            snapshot_config::SnapshotConfig,
         },
         assert_matches::assert_matches,
         solana_clock::UnixTimestamp,
@@ -769,19 +768,10 @@ mod tests {
         let slots_in_epoch = 32;
         genesis_config.epoch_schedule = EpochSchedule::new(slots_in_epoch);
 
-        let (snapshot_request_sender, _snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let snapshot_controller = SnapshotController::new(
-            snapshot_request_sender,
-            SnapshotConfig::new_disabled(),
-            0, /* root_slot */
-        );
-
         let bank0 = Bank::new_for_tests(&genesis_config);
         let bank_forks0 = BankForks::new_rw_arc(bank0);
         let mut bank_forks0 = bank_forks0.write().unwrap();
-        bank_forks0
-            .set_root(0, Some(&snapshot_controller), None)
-            .unwrap();
+        bank_forks0.set_root(0, None, None).unwrap();
 
         let bank1 = Bank::new_for_tests(&genesis_config);
         let bank_forks1 = BankForks::new_rw_arc(bank1);
@@ -816,9 +806,7 @@ mod tests {
 
             // Set root in bank_forks0 to truncate the ancestor history
             bank_forks0.insert(child1);
-            bank_forks0
-                .set_root(slot, Some(&snapshot_controller), None)
-                .unwrap();
+            bank_forks0.set_root(slot, None, None).unwrap();
 
             // Don't set root in bank_forks1 to keep the ancestor history
             bank_forks1.insert(child2);

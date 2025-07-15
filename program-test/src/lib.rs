@@ -40,8 +40,6 @@ use {
         commitment::BlockCommitmentCache,
         genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
-        snapshot_config::SnapshotConfig,
-        snapshot_controller::SnapshotController,
     },
     solana_signer::Signer,
     solana_stable_layout::stable_instruction::StableInstruction,
@@ -1170,17 +1168,10 @@ impl ProgramTestContext {
                 .clone_without_scheduler()
         };
 
-        let (snapshot_request_sender, _snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let snapshot_controller = SnapshotController::new(
-            snapshot_request_sender,
-            SnapshotConfig::new_disabled(),
-            bank_forks.root(),
-        );
-
         bank_forks
             .set_root(
                 pre_warp_slot,
-                Some(&snapshot_controller),
+                None, // snapshots are disabled
                 Some(pre_warp_slot),
             )
             .unwrap();
