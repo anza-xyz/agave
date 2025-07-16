@@ -984,7 +984,7 @@ where
 
             let mut a = &mut self.banking_stage_handler_context
                 .lock()
-                .unwrap()
+                .unwrap();
                 //.take()
                 //.unwrap();
             a.unwrap().banking_stage_monitor = Box::new(DummyBankingMinitor);
