@@ -226,7 +226,7 @@ mod tests {
 
         match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_one_iter(config),
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 
@@ -262,7 +262,7 @@ mod tests {
 
         match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_multi_iter(config),
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 

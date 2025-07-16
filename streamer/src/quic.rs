@@ -674,7 +674,7 @@ pub fn spawn_server_multi(
         .name(thread_name.into())
         .spawn(move || {
             if let Err(e) = runtime.block_on(result.thread) {
-                warn!("error from runtime.block_on: {:?}", e);
+                warn!("error from runtime.block_on: {e:?}");
             }
         })
         .unwrap();
