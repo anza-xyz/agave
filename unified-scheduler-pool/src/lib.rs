@@ -982,12 +982,12 @@ where
                 }
             }
 
-            let mut a = self.banking_stage_handler_context
+            let mut a = &mut *self.banking_stage_handler_context
                 .lock()
                 .unwrap();
                 //.take()
                 //.unwrap();
-            *a.banking_stage_monitor = Box::new(DummyBankingMinitor);
+            a.banking_stage_monitor = Box::new(DummyBankingMinitor);
         }
     }
 
