@@ -3,9 +3,7 @@ use {
     std::{
         cell::RefCell,
         net::{SocketAddr, UdpSocket},
-        sync::{
-            Arc,
-        },
+        sync::Arc,
     },
 };
 
@@ -80,7 +78,7 @@ impl SocketProvider for FixedSocketProvider {
 /// Hot-swappable `AtomicUdpSocket`
 pub struct AtomicSocketProvider {
     atomic: Arc<AtomicUdpSocket>,
-    current: RefCell<Arc<UdpSocket>>,   // per‑provider cached pointer
+    current: RefCell<Arc<UdpSocket>>, // per‑provider cached pointer
 }
 
 impl AtomicSocketProvider {
@@ -100,7 +98,7 @@ impl SocketProvider for AtomicSocketProvider {
         let mut cached = self.current.borrow_mut();
 
         if !Arc::ptr_eq(&new_sock, &*cached) {
-            *cached = new_sock.clone();               // update cache
+            *cached = new_sock.clone(); // update cache
             CurrentSocket::Changed(new_sock)
         } else {
             CurrentSocket::Same(new_sock)
@@ -109,7 +107,8 @@ impl SocketProvider for AtomicSocketProvider {
 
     #[inline]
     fn current_socket_ref(&self) -> Arc<UdpSocket> {
-        // clone the already‑cached pointer; no atomic load
-        self.current.borrow().clone()
+        match self.current_socket() {
+            CurrentSocket::Same(s) | CurrentSocket::Changed(s) => s,
+        }
     }
 }
