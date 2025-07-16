@@ -204,7 +204,7 @@ impl<'a, T: Backing> ContiguousBufFileRead<'a> for BufferedReader<'a, T> {
     }
 }
 
-impl<'a, T> BufferedReader<'a, T>
+impl<T> BufferedReader<'_, T>
 where
     T: Backing,
 {
