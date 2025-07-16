@@ -333,8 +333,8 @@ impl<'a> InvokeContext<'a> {
         // Note: This is an O(n^2) algorithm,
         // but performed on a very small slice and requires no heap allocations.
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let mut deduplicated_instruction_accounts =
-            InstructionAccountViewVector::with_capacity(instruction.accounts.len() as usize);
+        let mut deduplicated_instruction_accounts: Vec<InstructionAccountView> =
+            Vec::with_capacity(instruction.accounts.len() as usize);
         let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len() as usize);
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
@@ -349,7 +349,6 @@ impl<'a> InvokeContext<'a> {
                     InstructionError::MissingAccount
                 })?;
 
-            // TODO: This can be refactored into unique account indexes to avoid a copy!
             if let Some(duplicate_index) =
                 deduplicated_instruction_accounts
                     .iter()
@@ -359,7 +358,7 @@ impl<'a> InvokeContext<'a> {
             {
                 duplicate_indicies.push(duplicate_index);
                 let instruction_account = deduplicated_instruction_accounts
-                    .get_metadata_mut(duplicate_index)
+                    .get_mut(duplicate_index)
                     .ok_or(InstructionError::NotEnoughAccountKeys)?;
                 instruction_account
                     .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
@@ -424,9 +423,10 @@ impl<'a> InvokeContext<'a> {
             InstructionAccountViewVector::with_capacity(duplicate_indicies.len());
 
         for duplicate_index in duplicate_indicies.into_iter() {
-            instruction_accounts.push_raw(
+            instruction_accounts.push(
                 deduplicated_instruction_accounts
-                    .get_raw_cloned(duplicate_index)
+                    .get(duplicate_index)
+                    .cloned()
                     .ok_or(InstructionError::NotEnoughAccountKeys)?,
             );
         }

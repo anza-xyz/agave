@@ -704,9 +704,8 @@ mod tests {
                 let mut instruction_accounts =
                     deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
-                    let last_idx = instruction_accounts.len().saturating_sub(1);
-                    instruction_accounts
-                        .push_raw(instruction_accounts.get_raw_cloned(last_idx).unwrap());
+                    let last = instruction_accounts.iter().next_back().unwrap();
+                    instruction_accounts.push(last);
                 }
                 let program_indices = [0];
                 let instruction_data = vec![];

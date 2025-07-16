@@ -112,11 +112,6 @@ impl InstructionAccountViewVector {
             })
     }
 
-    /// Retrieve only an element of the `InstructionAccount` vector as mutable.
-    pub fn get_metadata_mut(&mut self, idx: usize) -> Option<&mut InstructionAccount> {
-        self.metadata.get_mut(idx)
-    }
-
     /// Retrieve a range of the `InstructionAccount` vector as immutable.
     pub fn get_metadata(&self, range: Range<usize>) -> Option<&[InstructionAccount]> {
         self.metadata.get(range)
@@ -131,30 +126,18 @@ impl InstructionAccountViewVector {
         debug_assert_eq!(self.metadata.len(), self.indexes.len());
         self.metadata.is_empty()
     }
-
-    pub fn get_raw_cloned(&self, idx: usize) -> Option<(InstructionAccount, AccountCallIndexes)> {
-        Some((
-            self.metadata.get(idx)?.clone(),
-            self.indexes.get(idx)?.clone(),
-        ))
-    }
-
-    pub fn push_raw(&mut self, elements: (InstructionAccount, AccountCallIndexes)) {
-        self.metadata.push(elements.0.clone());
-        self.indexes.push(elements.1.clone());
-    }
 }
-
 
 /// `InstructionAccountView` is a view struct that merges `InstructionAccount` and
 /// `AccountCallIndexes` for easier handling outside of runtime.
+#[derive(Clone)]
 pub struct InstructionAccountView {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
     /// Is this account supposed to sign
-    is_signer: bool,
+    pub is_signer: bool,
     /// Is this account allowed to become writable
-    is_writable: bool,
+    pub is_writable: bool,
     /// Points to the first occurrence in the parent `InstructionContext`
     ///
     /// This excludes the program accounts.
@@ -188,6 +171,14 @@ impl InstructionAccountView {
 
     pub fn is_writable(&self) -> bool {
         self.is_writable
+    }
+
+    pub fn set_is_signer(&mut self, value: bool) {
+        self.is_signer = value;
+    }
+
+    pub fn set_is_writable(&mut self, value: bool) {
+        self.is_writable = value;
     }
 }
 
@@ -243,14 +234,6 @@ impl InstructionAccount {
 
     pub fn is_writable(&self) -> bool {
         self.is_writable != 0
-    }
-
-    pub fn set_is_signer(&mut self, value: bool) {
-        self.is_signer = value as u8;
-    }
-
-    pub fn set_is_writable(&mut self, value: bool) {
-        self.is_writable = value as u8;
     }
 }
 
