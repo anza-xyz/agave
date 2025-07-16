@@ -55,20 +55,18 @@ impl AccountsPackage {
         status_cache_slot_deltas: Vec<BankSlotDelta>,
     ) -> Self {
         let slot = bank.slot();
-        if let AccountsPackageKind::Snapshot(snapshot_kind) = package_kind {
-            info!(
-                "Package snapshot for bank {} has {} account storage entries (snapshot kind: {:?})",
-                slot,
-                snapshot_storages.len(),
-                snapshot_kind,
+        let AccountsPackageKind::Snapshot(snapshot_kind) = package_kind;
+        info!(
+            "Package snapshot for bank {} has {} account storage entries (snapshot kind: {:?})",
+            slot,
+            snapshot_storages.len(),
+            snapshot_kind,
+        );
+        if let SnapshotKind::IncrementalSnapshot(incremental_snapshot_base_slot) = snapshot_kind {
+            assert!(
+                slot > incremental_snapshot_base_slot,
+                "Incremental snapshot base slot must be less than the bank being snapshotted!"
             );
-            if let SnapshotKind::IncrementalSnapshot(incremental_snapshot_base_slot) = snapshot_kind
-            {
-                assert!(
-                    slot > incremental_snapshot_base_slot,
-                    "Incremental snapshot base slot must be less than the bank being snapshotted!"
-                );
-            }
         }
 
         let snapshot_info = {
@@ -187,7 +185,6 @@ pub struct SupplementalSnapshotInfo {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsPackageKind {
     Snapshot(SnapshotKind),
-    EpochAccountsHash,
 }
 
 /// This struct packages up fields to send from AccountsHashVerifier to SnapshotPackagerService
@@ -216,11 +213,7 @@ impl SnapshotPackage {
         merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) -> Self {
-        let AccountsPackageKind::Snapshot(kind) = accounts_package.package_kind else {
-            panic!(
-                "The AccountsPackage must be of kind Snapshot in order to make a SnapshotPackage!"
-            );
-        };
+        let AccountsPackageKind::Snapshot(snapshot_kind) = accounts_package.package_kind;
         let Some(snapshot_info) = accounts_package.snapshot_info else {
             panic!(
                 "The AccountsPackage must have snapshot info in order to make a SnapshotPackage!"
@@ -250,7 +243,7 @@ impl SnapshotPackage {
         };
 
         Self {
-            snapshot_kind: kind,
+            snapshot_kind,
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
             hash: SnapshotHash::new(
