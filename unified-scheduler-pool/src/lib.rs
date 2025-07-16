@@ -988,6 +988,7 @@ where
                 //.take()
                 //.unwrap();
             a.as_mut().unwrap().banking_stage_monitor = Box::new(DummyBankingMinitor);
+            a.as_mut().unwrap().banking_packet_handler = Box::new(|_, _| unreachable!());
         }
     }
 
