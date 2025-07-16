@@ -237,7 +237,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
     executable.verify::<RequisiteVerifier>().unwrap();
 
     // Serialize account data
-    let (_serialized, regions, account_lengths) = serialize_parameters(
+    let (_serialized, regions, account_lengths, _instruction_data_offset) = serialize_parameters(
         invoke_context.transaction_context,
         invoke_context
             .transaction_context
@@ -272,7 +272,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
         .bpf_account_data_direct_mapping;
 
     // Serialize account data
-    let (_serialized, regions, account_lengths) = serialize_parameters(
+    let (_serialized, regions, account_lengths, _instruction_data_offset) = serialize_parameters(
         invoke_context.transaction_context,
         invoke_context
             .transaction_context
