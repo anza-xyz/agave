@@ -10,10 +10,12 @@ pub mod test_utils;
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
+use crate::buffered_reader::BufReaderWithOverflow;
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
 use meta::{AccountMeta, StoredMeta};
+
 use {
     crate::{
         account_info::Offset,
@@ -1049,17 +1051,20 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
+                // // 128KiB covers a reasonably large distribution of typical account sizes.
+                // // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                const MIN_CAPACITY: usize = 1024 * 128;
+                const MAX_CAPACITY: usize =
+                    STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file);
+                let mut reader = BufReaderWithOverflow::new(
+                    BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file),
+                    MIN_CAPACITY..(MAX_CAPACITY + 1),
+                );
                 let mut min_buf_len = STORE_META_OVERHEAD;
-                // Buffer for account data that doesn't fit within the stack allocated buffer.
-                // This will be re-used for each account that doesn't fit within the stack allocated buffer.
-                let mut data_overflow_buffer = vec![];
                 loop {
                     let offset = reader.get_file_offset();
-                    let bytes = match reader
-                        .fill_buf_required_or_overflow(min_buf_len, &mut data_overflow_buffer)
-                    {
+                    let bytes = match reader.fill_buf_required(min_buf_len) {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -1090,21 +1095,6 @@ impl AppendVec {
                     } else {
                         // repeat loop with required buffer size holding whole account data
                         min_buf_len = STORE_META_OVERHEAD + data_len;
-
-                        if min_buf_len > BUFFER_SIZE {
-                            const MAX_CAPACITY: usize =
-                                STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
-                            // 128KiB covers a reasonably large distribution of typical account sizes.
-                            // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-                            const MIN_CAPACITY: usize = 1024 * 128;
-                            if min_buf_len > data_overflow_buffer.capacity() {
-                                let next_cap = min_buf_len
-                                    .next_power_of_two()
-                                    .clamp(MIN_CAPACITY, MAX_CAPACITY);
-                                data_overflow_buffer
-                                    .reserve_exact(next_cap - data_overflow_buffer.len());
-                            }
-                        }
                     }
                 }
             }
