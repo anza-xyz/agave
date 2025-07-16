@@ -2297,32 +2297,40 @@ fn test_verify_snapshot_bank() {
 
 // Test that two bank forks with the same accounts should not hash to the same value.
 #[test]
-fn test_bank_hash_internal_state_same_account_different_fork() {
+fn test_bank_hash_same_account_different_fork() {
     solana_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
-    let amount = genesis_config.rent.minimum_balance(0);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let initial_state = bank0.hash_internal_state();
+    bank0.freeze();
+
+    // send the same transfer to both forks
+    let pubkey = solana_pubkey::new_rand();
+    let amount = genesis_config.rent.minimum_balance(0);
+
     let bank1 = new_bank_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &Pubkey::default(),
         1,
     );
-    assert_ne!(bank1.hash_internal_state(), initial_state);
-
-    info!("transfer bank1");
-    let pubkey = solana_pubkey::new_rand();
     bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_ne!(bank1.hash_internal_state(), initial_state);
+    bank1.freeze();
 
-    info!("transfer bank2");
-    // bank2 should not hash the same as bank1
-    let bank2 =
-        new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &Pubkey::default(), 2);
+    let bank2 = new_bank_from_parent_with_bank_forks(
+        bank_forks.as_ref(),
+        bank0.clone(),
+        &Pubkey::default(),
+        2,
+    );
     bank2.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_ne!(bank2.hash_internal_state(), initial_state);
-    assert_ne!(bank1.hash_internal_state(), bank2.hash_internal_state());
+    bank2.freeze();
+
+    let bank0_hash = bank0.hash();
+    let bank1_hash = bank1.hash();
+    let bank2_hash = bank2.hash();
+    assert_ne!(bank0_hash, bank1_hash);
+    assert_ne!(bank0_hash, bank2_hash);
+    assert_ne!(bank1_hash, bank2_hash);
 }
 
 #[test]
