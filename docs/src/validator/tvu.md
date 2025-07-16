@@ -23,13 +23,13 @@ Internally, TVU is actually bound with multiple sockets to improve kernel's hand
 
 > **NOTE:** TPU sockets use similar logic
 
-A node advertises one external ip/port for TVU while binding multiple sockets to that same port using SO_REUSEPORT:
+A node advertises one external ip/port for TVU while binding multiple sockets to that same port:
 
 ```rust
 let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
     bind_ip_addr,
     port_range,
-    socket_config_reuseport,
+    socket_config,
     num_tvu_sockets.get(),
 )
 .expect("tvu multi_bind");
