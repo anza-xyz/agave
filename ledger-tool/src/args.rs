@@ -226,8 +226,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
     let verify_index = arg_matches.is_present("verify_accounts_index");
     let limit_load_slot_count_from_snapshot =
         value_t!(arg_matches, "limit_load_slot_count_from_snapshot", usize).ok();
-    let on_halt_store_hash_raw_data_for_debug =
-        arg_matches.is_present("halt_at_slot_store_hash_raw_data");
     let run_final_accounts_hash_calc = arg_matches.is_present("run_final_hash_calc");
     let debug_keys = pubkeys_of(arg_matches, "debug_key")
         .map(|pubkeys| Arc::new(pubkeys.into_iter().collect::<HashSet<_>>()));
@@ -242,7 +240,6 @@ pub fn parse_process_options(ledger_path: &Path, arg_matches: &ArgMatches<'_>) -
         accounts_db_skip_shrink,
         verify_index,
         limit_load_slot_count_from_snapshot,
-        on_halt_store_hash_raw_data_for_debug,
         run_final_accounts_hash_calc,
         debug_keys,
         run_verification,
