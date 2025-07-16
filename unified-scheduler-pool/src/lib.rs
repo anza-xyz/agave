@@ -985,7 +985,7 @@ where
             let handler_context = &mut self.banking_stage_handler_context
                 .lock()
                 .unwrap();
-            let mut handler_context = handler_context.as_mut().unwrap();
+            let handler_context = handler_context.as_mut().unwrap();
             handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
             handler_context.banking_packet_receiver = never();
             handler_context.banking_packet_handler = Box::new(|_, _| unreachable!());
