@@ -11462,6 +11462,7 @@ dependencies = [
  "agave-feature-set",
  "agave-xdp",
  "assert_matches",
+ "bencher",
  "bincode",
  "bs58",
  "bytes",
