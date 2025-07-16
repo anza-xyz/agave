@@ -33,7 +33,6 @@ pub struct AccountsPackage {
     pub block_height: Slot,
     pub snapshot_storages: Vec<Arc<AccountStorageEntry>>,
     pub expected_capitalization: u64,
-    pub accounts_hash_for_testing: Option<AccountsHash>,
     pub accounts: Arc<Accounts>,
     pub epoch_schedule: EpochSchedule,
     pub rent_collector: RentCollector,
@@ -54,7 +53,6 @@ impl AccountsPackage {
         bank: &Bank,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
         status_cache_slot_deltas: Vec<BankSlotDelta>,
-        accounts_hash_for_testing: Option<AccountsHash>,
     ) -> Self {
         let slot = bank.slot();
         if let AccountsPackageKind::Snapshot(snapshot_kind) = package_kind {
@@ -107,7 +105,6 @@ impl AccountsPackage {
             package_kind,
             bank,
             snapshot_storages,
-            accounts_hash_for_testing,
             accounts_hash_algorithm,
             Some(snapshot_info),
         )
@@ -117,7 +114,6 @@ impl AccountsPackage {
         package_kind: AccountsPackageKind,
         bank: &Bank,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-        accounts_hash_for_testing: Option<AccountsHash>,
         accounts_hash_algorithm: AccountsHashAlgorithm,
         snapshot_info: Option<SupplementalSnapshotInfo>,
     ) -> Self {
@@ -127,7 +123,6 @@ impl AccountsPackage {
             block_height: bank.block_height(),
             snapshot_storages,
             expected_capitalization: bank.capitalization(),
-            accounts_hash_for_testing,
             accounts: bank.accounts(),
             epoch_schedule: bank.epoch_schedule().clone(),
             rent_collector: bank.rent_collector().clone(),
@@ -150,7 +145,6 @@ impl AccountsPackage {
             block_height: Slot::default(),
             snapshot_storages: Vec::default(),
             expected_capitalization: u64::default(),
-            accounts_hash_for_testing: Option::default(),
             accounts: Arc::new(accounts),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),

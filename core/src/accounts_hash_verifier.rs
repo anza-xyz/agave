@@ -379,10 +379,6 @@ impl AccountsHashVerifier {
             );
         }
 
-        if let Some(expected_hash) = accounts_package.accounts_hash_for_testing {
-            assert_eq!(expected_hash, accounts_hash);
-        };
-
         datapoint_info!(
             "accounts_hash_verifier",
             ("calculate_hash", measure_hash_us, i64),

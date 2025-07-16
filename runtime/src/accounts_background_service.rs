@@ -17,9 +17,6 @@ use {
     crossbeam_channel::{Receiver, SendError, Sender},
     log::*,
     rayon::iter::{IntoParallelIterator, ParallelIterator},
-    solana_accounts_db::{
-        accounts_db::CalcAccountsHashDataSource, accounts_hash::CalcAccountsHashConfig,
-    },
     solana_clock::{BankId, Slot},
     solana_measure::{measure::Measure, measure_us},
     stats::StatsManager,
@@ -147,7 +144,6 @@ impl SnapshotRequestHandler {
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
-        test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
     ) -> Option<Result<Slot, SnapshotError>> {
@@ -167,7 +163,6 @@ impl SnapshotRequestHandler {
 
         let accounts_package_kind = new_accounts_package_kind(&snapshot_request)?;
         Some(self.handle_snapshot_request(
-            test_hash_calculation,
             non_snapshot_time_us,
             snapshot_request,
             accounts_package_kind,
@@ -270,7 +265,6 @@ impl SnapshotRequestHandler {
 
     fn handle_snapshot_request(
         &self,
-        test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         snapshot_request: SnapshotRequest,
         accounts_package_kind: AccountsPackageKind,
@@ -299,14 +293,6 @@ impl SnapshotRequestHandler {
                 .set_latest_full_snapshot_slot(snapshot_root_bank.slot());
         }
 
-        let previous_accounts_hash = test_hash_calculation.then(|| {
-            // We have to use the index version here.
-            // We cannot calculate the non-index way because cache
-            // has not been flushed and stores don't match reality.
-            snapshot_root_bank
-                .update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false)
-        });
-
         let mut flush_accounts_cache_time = Measure::start("flush_accounts_cache_time");
         // Forced cache flushing MUST flush all roots <= snapshot_root_bank.slot().
         // That's because `snapshot_root_bank.slot()` must be root at this point,
@@ -326,26 +312,6 @@ impl SnapshotRequestHandler {
                     .fetch_max_flush_root()
         );
         flush_accounts_cache_time.stop();
-
-        let accounts_hash_for_testing = previous_accounts_hash.map(|previous_accounts_hash| {
-            let (this_accounts_hash, capitalization) = snapshot_root_bank
-                .accounts()
-                .accounts_db
-                .calculate_accounts_hash_from(
-                    CalcAccountsHashDataSource::Storages,
-                    snapshot_root_bank.slot(),
-                    &CalcAccountsHashConfig {
-                        use_bg_thread_pool: true,
-                        ancestors: None,
-                        epoch_schedule: snapshot_root_bank.epoch_schedule(),
-                        epoch: snapshot_root_bank.epoch(),
-                        store_detailed_debug_info_on_failure: false,
-                    },
-                );
-            assert_eq!(previous_accounts_hash, this_accounts_hash);
-            assert_eq!(capitalization, snapshot_root_bank.capitalization());
-            this_accounts_hash
-        });
 
         let mut clean_time = Measure::start("clean_time");
         snapshot_root_bank.clean_accounts();
@@ -368,7 +334,6 @@ impl SnapshotRequestHandler {
                         &snapshot_root_bank,
                         snapshot_storages,
                         status_cache_slot_deltas,
-                        accounts_hash_for_testing,
                     ),
                     AccountsPackageKind::EpochAccountsHash => panic!(
                         "Illegal account package type: EpochAccountsHash packages must \
@@ -509,15 +474,11 @@ impl AbsRequestHandlers {
     #[allow(clippy::type_complexity)]
     pub fn handle_snapshot_requests(
         &self,
-        test_hash_calculation: bool,
         non_snapshot_time_us: u128,
         exit: &AtomicBool,
     ) -> Option<Result<Slot, SnapshotError>> {
-        self.snapshot_request_handler.handle_snapshot_requests(
-            test_hash_calculation,
-            non_snapshot_time_us,
-            exit,
-        )
+        self.snapshot_request_handler
+            .handle_snapshot_requests(non_snapshot_time_us, exit)
     }
 }
 
@@ -601,11 +562,7 @@ impl AccountsBackgroundService {
                         let snapshot_handle_result = bank
                             .has_initial_accounts_hash_verification_completed()
                             .then(|| {
-                                request_handlers.handle_snapshot_requests(
-                                    false, // test_hash_calculation. Will be removed soon.
-                                    non_snapshot_time,
-                                    &exit,
-                                )
+                                request_handlers.handle_snapshot_requests(non_snapshot_time, &exit)
                             })
                             .flatten();
 
