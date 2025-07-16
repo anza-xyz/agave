@@ -70,6 +70,8 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "cluster_info"
+harness = false
 
 [[bench]]
 name = "cluster_nodes"
+harness = false
