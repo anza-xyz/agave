@@ -1492,8 +1492,15 @@ impl Validator {
                 None
             };
 
-        let enable_all2all_tests = genesis_config.cluster_type == ClusterType::Testnet
-            || genesis_config.cluster_type == ClusterType::Development;
+        // disable all2all tests if not allowed for a given cluster type
+        let alpenglow_socket = if genesis_config.cluster_type == ClusterType::Testnet
+            || genesis_config.cluster_type == ClusterType::Development
+        {
+            node.sockets.alpenglow
+        } else {
+            None
+        };
+
         let tvu = Tvu::new(
             vote_account,
             authorized_voter_keypairs,
@@ -1504,7 +1511,7 @@ impl Validator {
                 retransmit: node.sockets.retransmit_sockets,
                 fetch: node.sockets.tvu,
                 ancestor_hashes_requests: node.sockets.ancestor_hashes_requests,
-                alpenglow: node.sockets.alpenglow,
+                alpenglow: alpenglow_socket,
             },
             blockstore.clone(),
             ledger_signal_receiver,
@@ -1536,7 +1543,6 @@ impl Validator {
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
                 retransmit_xdp: config.retransmit_xdp.clone(),
-                enable_all2all_tests,
             },
             &max_slots,
             block_metadata_notifier,

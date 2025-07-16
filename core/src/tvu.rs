@@ -101,7 +101,6 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub retransmit_xdp: Option<XdpConfig>,
-    pub(crate) enable_all2all_tests: bool,
 }
 
 impl Default for TvuConfig {
@@ -116,7 +115,6 @@ impl Default for TvuConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             retransmit_xdp: None,
-            enable_all2all_tests: false,
         }
     }
 }
@@ -183,13 +181,9 @@ impl Tvu {
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
-            alpenglow: mut alpenglow_socket,
+            alpenglow: alpenglow_socket,
         } = sockets;
 
-        // disable all2all if not enabled for a given cluster type
-        if !tvu_config.enable_all2all_tests {
-            alpenglow_socket = None;
-        }
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
 
         let repair_socket = Arc::new(repair_socket);
