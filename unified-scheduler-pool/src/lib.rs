@@ -981,11 +981,13 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        self.banking_stage_handler_context
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap();
+        if self.block_production_supported() {
+            self.banking_stage_handler_context
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap();
+        }
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
