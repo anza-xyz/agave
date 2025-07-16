@@ -405,7 +405,9 @@ impl BankingStageHelper {
     }
 
     pub fn send_new_task(&self, task: Task) {
-        let _ = self.new_task_sender.send(NewTaskPayload::Payload(task));
+        self.new_task_sender
+            .send(NewTaskPayload::Payload(task))
+            .unwrap();
     }
 }
 
@@ -2505,11 +2507,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
     }
 
     fn discard_buffered_tasks(&self) {
-        // new_task_sender could fail anytime because of uncontrollable timing of abort_scheduler()
-        // by disconnected banking_packet_receiver...
-        if let Err(err) = self.new_task_sender.send(NewTaskPayload::Reset) {
-            warn!("failed to send a reset due to error: {err:?}");
-        }
+        self.new_task_sender.send(NewTaskPayload::Reset).unwrap();
     }
 
     #[must_use]
