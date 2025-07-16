@@ -1869,10 +1869,17 @@ impl Validator {
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
+        error!("before tvu");
         join_then_log!(self.tvu);
-        // Needs to signal unified scheduler about shutdown to join tpu...
+        error!("after tvu");
+        // Tvu (i.e. the replay stage) has now gone. So scheduler taking shouldn't
+        // occur anymore. So, let's signal unified scheduler about shutdown to join tpu...
+        error!("before unregister");
         self.bank_forks.read().unwrap().unregister_banking_stage();
+        error!("after unregister");
+        error!("before tpu");
         join_then_log!(self.tpu);
+        error!("after tpu");
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
             self.turbine_quic_endpoint_runtime
                 .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
