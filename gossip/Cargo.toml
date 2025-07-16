@@ -115,12 +115,15 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "crds"
+harness = false
 
 [[bench]]
 name = "crds_gossip_pull"
+harness = false
 
 [[bench]]
 name = "crds_shards"
+harness = false
 
 [[bench]]
 name = "weighted_shuffle"
