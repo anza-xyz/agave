@@ -972,24 +972,26 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        if self.block_production_supported() {
-            #[derive(Debug)]
-            struct DummyBankingMinitor;
-
-            impl BankingStageMonitor for DummyBankingMinitor {
-                fn status(&mut self) -> BankingStageStatus {
-                    BankingStageStatus::Active
-                }
-            }
-
-            let handler_context = &mut self.banking_stage_handler_context
-                .lock()
-                .unwrap();
-            let handler_context = handler_context.as_mut().unwrap();
-            handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
-            handler_context.banking_packet_receiver = never();
-            handler_context.banking_packet_handler = Box::new(|_, _| unreachable!());
+        if !self.block_production_supported() {
+            return;
         }
+
+        #[derive(Debug)]
+        struct DummyBankingMinitor;
+
+        impl BankingStageMonitor for DummyBankingMinitor {
+            fn status(&mut self) -> BankingStageStatus {
+                BankingStageStatus::Active
+            }
+        }
+
+        let handler_context = &mut self.banking_stage_handler_context
+            .lock()
+            .unwrap();
+        let handler_context = handler_context.as_mut().unwrap();
+        handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
+        handler_context.banking_packet_receiver = never();
+        handler_context.banking_packet_handler = Box::new(|_, _| unreachable!());
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
