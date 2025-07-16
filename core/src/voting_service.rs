@@ -12,7 +12,7 @@ use {
     solana_gossip::{cluster_info::ClusterInfo, epoch_specs::EpochSpecs},
     solana_measure::measure::Measure,
     solana_poh::poh_recorder::PohRecorder,
-    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    solana_runtime::bank_forks::BankForks,
     solana_transaction::Transaction,
     solana_transaction_error::TransportError,
     std::{
@@ -80,38 +80,6 @@ pub struct VotingService {
     thread_hdl: JoinHandle<()>,
 }
 
-mod control_pubkey {
-    solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
-}
-
-#[derive(Deserialize, Debug)]
-#[repr(C)]
-struct TestControl {
-    _version: u8,         // This is part of Record program header
-    _authority: [u8; 32], // This is part of Record program header
-    test_interval_slots: u8,
-    _future_use: [u8; 1],
-}
-
-// Returns the current test periodicity
-fn get_test_interval(bank: &Bank) -> Option<Slot> {
-    let data = bank
-        .accounts()
-        .accounts_db
-        .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
-        .0;
-    let x: TestControl = data.deserialize_data().ok()?;
-    if x.test_interval_slots > 0 {
-        debug!(
-            "Alpenglow test interval set to {} slots",
-            x.test_interval_slots
-        );
-        Some(x.test_interval_slots as Slot)
-    } else {
-        None
-    }
-}
-
 impl VotingService {
     pub fn new(
         vote_receiver: Receiver<VoteOp>,
@@ -150,13 +118,8 @@ impl VotingService {
                         // trigger mock alpenglow vote if we have just cast an actual vote
                         if let Some(slot) = vote_slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
-                                if let Some(interval) =
-                                    get_test_interval(&bank_forks.read().unwrap().root_bank())
-                                {
-                                    ag.signal_new_slot(slot, interval);
-                                } else {
-                                    debug!("Alpenglow votes disabled by on-chain config")
-                                };
+                                let root_bank = { bank_forks.read().unwrap().root_bank() };
+                                ag.signal_new_slot(slot, &root_bank);
                             }
                         }
                     }

@@ -1,4 +1,3 @@
-//#[allow(unused_imports)]
 #![allow(warnings)]
 use {
     crate::consensus::Stake,
@@ -15,6 +14,7 @@ use {
     solana_keypair::Keypair,
     solana_packet::{Meta, Packet, PACKET_DATA_SIZE},
     solana_pubkey::{Pubkey, PUBKEY_BYTES},
+    solana_runtime::bank::Bank,
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     solana_streamer::{recvmmsg::recv_mmsg, sendmmsg::batch_send},
@@ -25,7 +25,7 @@ use {
         io::Error,
         net::{SocketAddr, SocketAddrV4, UdpSocket},
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU16, Ordering},
             Arc, Mutex,
         },
         thread::{self, JoinHandle},
@@ -91,6 +91,8 @@ pub(crate) struct MockAlpenglowConsensus {
     epoch_specs: EpochSpecs,
     highest_slot: Slot,
     should_exit: Arc<AtomicBool>,
+    verify_signatures: Arc<AtomicBool>,
+    packet_size: Arc<AtomicU16>,
 }
 
 fn get_state_for_slot(states: &[Mutex<SharedState>], slot: Slot) -> &Mutex<SharedState> {
@@ -134,8 +136,8 @@ struct MockVotePacketHeader {
 const MOCK_VOTE_HEADER_SIZE: usize = std::mem::size_of::<MockVotePacketHeader>();
 
 /// The actual alpenglow votor packets are all smaller than this,
-/// but this is deliberately overtuned to model the worst case.
-const MOCK_VOTE_PACKET_SIZE: usize = 512;
+/// but this is deliberately overtuned to be able to model the worst case.
+const MOCK_VOTE_PACKET_MAX_SIZE: usize = 1024;
 
 impl MockVotePacketHeader {
     fn from_bytes_mut(buf: &mut [u8]) -> &mut Self {
@@ -170,11 +172,14 @@ impl MockAlpenglowConsensus {
             Mutex::new(SharedState::new(0)),
         ]);
         let should_exit = Arc::new(AtomicBool::new(false));
+        let verify_signatures = Arc::new(AtomicBool::new(false));
+        let packet_size = Arc::new(AtomicU16::new(512));
         Self {
             state: shared_state.clone(),
             listener_thread: thread::spawn({
                 let shared_state = shared_state.clone();
                 let should_exit = should_exit.clone();
+                let verify_signatures = verify_signatures.clone();
                 let socket = socket.clone();
                 let cluster_info = cluster_info.clone();
                 let epoch_specs = epoch_specs.clone();
@@ -183,6 +188,7 @@ impl MockAlpenglowConsensus {
                     Self::listener_thread(
                         shared_state,
                         should_exit,
+                        verify_signatures,
                         cluster_info,
                         epoch_specs,
                         socket,
@@ -194,10 +200,12 @@ impl MockAlpenglowConsensus {
                 let epoch_specs = epoch_specs.clone();
                 let should_exit = should_exit.clone();
                 let cluster_info = cluster_info.clone();
+                let packet_size = packet_size.clone();
                 move || {
                     Self::sender_thread(
                         shared_state,
                         should_exit,
+                        packet_size,
                         cluster_info,
                         epoch_specs,
                         socket.clone(),
@@ -206,9 +214,11 @@ impl MockAlpenglowConsensus {
                 }
             }),
             should_exit,
+            packet_size,
             epoch_specs,
             command_sender,
             cluster_info,
+            verify_signatures,
             highest_slot: 0,
         }
     }
@@ -254,6 +264,7 @@ impl MockAlpenglowConsensus {
     fn listener_thread(
         self_state: Arc<[Mutex<SharedState>; 3]>,
         should_exit: Arc<AtomicBool>,
+        verify_signatures: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
@@ -272,6 +283,8 @@ impl MockAlpenglowConsensus {
             }
             // recv_mmsg should timeout in 1 second
             let n = match recv_mmsg(&socket, &mut packets) {
+                // we may have received no packets, in this case we can safely skip the rest
+                Ok(0) => continue,
                 Ok(n) => n,
                 Err(e) => {
                     match e.kind() {
@@ -288,11 +301,8 @@ impl MockAlpenglowConsensus {
             if should_exit.load(Ordering::Relaxed) {
                 return;
             }
-            // we may have received no packets, in this case we can safely skip the rest
-            if n == 0 {
-                continue;
-            }
 
+            let verify_signatures = verify_signatures.load(Ordering::Relaxed);
             for pkt in packets.iter().take(n) {
                 if pkt.meta().size < MOCK_VOTE_HEADER_SIZE {
                     continue;
@@ -302,6 +312,16 @@ impl MockAlpenglowConsensus {
                 };
                 let vote_pkt = MockVotePacketHeader::from_bytes(pkt_buf);
                 let pk = Pubkey::new_from_array(vote_pkt.sender);
+                let signature = Signature::from(vote_pkt.signature);
+                if verify_signatures
+                    && !signature.verify(
+                        pk.as_array(),
+                        &pkt_buf[SIGNATURE_BYTES..MOCK_VOTE_HEADER_SIZE],
+                    )
+                {
+                    trace!("Sigverify failed");
+                    continue;
+                }
 
                 let mut state = get_state_for_slot(self_state.as_slice(), vote_pkt.slot_number)
                     .lock()
@@ -321,7 +341,6 @@ impl MockAlpenglowConsensus {
                 let Some(peer_info) = state.peers.get_mut(&pk) else {
                     continue;
                 };
-                let signature = Signature::from(vote_pkt.signature);
                 trace!(
                     "RX slot {}: {:?} from {}",
                     vote_pkt.slot_number,
@@ -340,19 +359,6 @@ impl MockAlpenglowConsensus {
                 let stake = peer_info.stake;
                 match votor_msg {
                     VotorMessageType::Notarize => {
-                        /*let c = state.alpenglow_state.notarize_stake_collected;
-                        trace!("{id}:{c} + {}", peer_info.stake);
-                        trace!(
-                            "{id}:{} of {}",
-                            state.alpenglow_state.notarize_stake_collected,
-                            stake_60_percent
-                        );*/
-                        if !state.alpenglow_state.block_finalized {
-                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
-                                trace!("Sigverify failed");
-                                continue;
-                            }
-                        }
                         if !state.alpenglow_state.block_notarized {
                             state.alpenglow_state.notarize_stake_collected += stake;
                             trace!(
@@ -385,10 +391,6 @@ impl MockAlpenglowConsensus {
                     }
                     VotorMessageType::NotarizeCertificate => {
                         if !state.alpenglow_state.block_has_notar_cert {
-                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
-                                trace!("Sigverify failed");
-                                continue;
-                            }
                             state.alpenglow_state.block_has_notar_cert = true;
                             trace!(
                                 "{id} has notarized slot {} by observing notar certificate",
@@ -401,10 +403,6 @@ impl MockAlpenglowConsensus {
                     }
                     VotorMessageType::Finalize => {
                         if !state.alpenglow_state.block_finalized {
-                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
-                                trace!("Sigverify failed");
-                                continue;
-                            }
                             state.alpenglow_state.finalize_stake_collected += stake;
                             if state.alpenglow_state.finalize_stake_collected > stake_60_percent {
                                 state.alpenglow_state.block_finalized = true;
@@ -419,10 +417,6 @@ impl MockAlpenglowConsensus {
                     }
                     VotorMessageType::FinalizeCertificate => {
                         if !state.alpenglow_state.block_finalized {
-                            if !signature.verify(pk.as_array(), &pkt_buf[SIGNATURE_BYTES..]) {
-                                trace!("Sigverify failed");
-                                continue;
-                            }
                             state.alpenglow_state.block_finalized = true;
                             command_sender
                                 .try_send(Command::SendFinalizeCertificate(state.current_slot));
@@ -437,12 +431,13 @@ impl MockAlpenglowConsensus {
     fn sender_thread(
         state: Arc<[Mutex<SharedState>; 3]>,
         should_exit: Arc<AtomicBool>,
+        packet_size: Arc<AtomicU16>,
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
         command: Receiver<Command>,
     ) {
-        let mut packet_buf = vec![0u8; MOCK_VOTE_PACKET_SIZE];
+        let mut packet_buf = vec![0u8; MOCK_VOTE_PACKET_MAX_SIZE];
         let id = cluster_info.id();
         loop {
             let Ok(command) = command.recv_timeout(EXIT_CHECK_INTERVAL) else {
@@ -461,6 +456,9 @@ impl MockAlpenglowConsensus {
                     (slot, VotorMessageType::FinalizeCertificate)
                 }
             };
+            let packet_size = (packet_size.load(Ordering::Relaxed) as usize)
+                .clamp(MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_MAX_SIZE);
+
             prep_and_sign_packet(
                 &mut packet_buf,
                 slot,
@@ -475,7 +473,7 @@ impl MockAlpenglowConsensus {
                 let mut state = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
 
                 for (peer, info) in state.peers.iter() {
-                    send_instructions.push((packet_buf.as_slice(), info.address));
+                    send_instructions.push((&packet_buf[0..packet_size], info.address));
                     trace!(
                         "{id}: send {votor_msg:?} for slot {slot} to {} for {peer}",
                         info.address
@@ -561,7 +559,11 @@ impl MockAlpenglowConsensus {
         );
     }
 
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot, interval: Slot) {
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, bank: &Bank) {
+        let Some(config) = get_test_config_from_account(bank) else {
+            debug!("Alpenglow votes disabled by on-chain config");
+            return;
+        };
         if slot < self.highest_slot || slot < 3 {
             trace!(
                 "Skipping AG logic for slot {slot}, current highest slot is {}",
@@ -569,8 +571,11 @@ impl MockAlpenglowConsensus {
             );
             return;
         }
+        let interval = config.test_interval_slots as u64;
+        if interval == 0 {
+            return;
+        }
         self.highest_slot = slot;
-        assert!(interval >= 1);
         let concurrent_tests = 3u64.saturating_sub(interval) + 1;
         assert!(1 <= concurrent_tests && concurrent_tests <= 3);
         // since we may be running up to 3 voting processes concurrently,
@@ -643,9 +648,42 @@ fn prep_and_sign_packet(
         pkt.signature = [0; SIGNATURE_BYTES];
         pkt.state = state as u64;
     }
-    let signature = keypair.sign_message(&packet_buf[SIGNATURE_BYTES..]);
+    let signature = keypair.sign_message(&packet_buf[SIGNATURE_BYTES..MOCK_VOTE_HEADER_SIZE]);
     {
         let pkt = MockVotePacketHeader::from_bytes_mut(packet_buf);
         pkt.signature = *signature.as_array();
+    }
+}
+
+mod control_pubkey {
+    solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
+}
+
+#[derive(Deserialize, Debug)]
+#[repr(C)]
+pub(crate) struct TestConfig {
+    _version: u8,         // This is part of Record program header
+    _authority: [u8; 32], // This is part of Record program header
+    test_interval_slots: u8,
+    verify_signatures: bool,
+    packet_extra_size: u16, // packet size above header size
+}
+
+// Returns the current test periodicity
+pub(crate) fn get_test_config_from_account(bank: &Bank) -> Option<TestConfig> {
+    let data = bank
+        .accounts()
+        .accounts_db
+        .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
+        .0;
+    let x: TestConfig = data.deserialize_data().ok()?;
+    if x.test_interval_slots > 0 {
+        debug!(
+            "Alpenglow test interval set to {} slots",
+            x.test_interval_slots
+        );
+        Some(x)
+    } else {
+        None
     }
 }

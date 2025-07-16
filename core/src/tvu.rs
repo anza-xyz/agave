@@ -183,14 +183,17 @@ impl Tvu {
             fetch: fetch_sockets,
             retransmit: retransmit_sockets,
             ancestor_hashes_requests: ancestor_hashes_socket,
-            alpenglow: mut alpenglow_socket,
+            alpenglow: alpenglow_socket,
         } = sockets;
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
+<<<<<<< HEAD
         // disable all2all if not enabled
         if !tvu_config.enable_all2all_tests {
             alpenglow_socket = None;
         }
+=======
+>>>>>>> 86b7ac779e (address code review feedback from Brennan and Wen)
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
