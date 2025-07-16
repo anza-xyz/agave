@@ -982,14 +982,13 @@ where
                 }
             }
 
-            let mut a = &mut self.banking_stage_handler_context
+            let handler_context = &mut self.banking_stage_handler_context
                 .lock()
                 .unwrap();
-                //.take()
-                //.unwrap();
-            a.as_mut().unwrap().banking_stage_monitor = Box::new(DummyBankingMinitor);
-            a.as_mut().unwrap().banking_packet_receiver = never();
-            a.as_mut().unwrap().banking_packet_handler = Box::new(|_, _| unreachable!());
+            let mut handler_context = handler_context.as_mut().unwrap();
+            handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
+            handler_context.banking_packet_receiver = never();
+            handler_context.banking_packet_handler = Box::new(|_, _| unreachable!());
         }
     }
 
