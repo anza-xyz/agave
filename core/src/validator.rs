@@ -2320,7 +2320,6 @@ fn maybe_warp_slot(
             root_bank,
             &Pubkey::default(),
             warp_slot,
-            solana_accounts_db::accounts_db::CalcAccountsHashDataSource::Storages,
         ));
         bank_forks
             .set_root(warp_slot, Some(snapshot_controller), Some(warp_slot))

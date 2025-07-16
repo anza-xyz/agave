@@ -1689,12 +1689,7 @@ impl Bank {
     ///   in the past
     /// * Adjusts the new bank's tick height to avoid having to run PoH for millions of slots
     /// * Freezes the new bank, assuming that the user will `Bank::new_from_parent` from this bank
-    pub fn warp_from_parent(
-        parent: Arc<Bank>,
-        collector_id: &Pubkey,
-        slot: Slot,
-        _data_source: CalcAccountsHashDataSource, // will be removed next
-    ) -> Self {
+    pub fn warp_from_parent(parent: Arc<Bank>, collector_id: &Pubkey, slot: Slot) -> Self {
         parent.freeze();
         let parent_timestamp = parent.clock().unix_timestamp;
         let mut new = Bank::new_from_parent(parent, collector_id, slot);

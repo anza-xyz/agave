@@ -22,10 +22,7 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::{
-        accounts_db::CalcAccountsHashDataSource,
-        accounts_index::{ScanConfig, ScanOrder},
-    },
+    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
@@ -2381,7 +2378,6 @@ fn main() {
                             bank.clone(),
                             bank.collector_id(),
                             warp_slot,
-                            CalcAccountsHashDataSource::Storages,
                         ))
                     } else {
                         bank
