@@ -417,6 +417,7 @@ impl Tpu {
         ];
         let broadcast_result = self.broadcast_stage.join();
         for result in results {
+            error!("hiho");
             result?;
         }
         if let Some(tpu_entry_notifier) = self.tpu_entry_notifier {
