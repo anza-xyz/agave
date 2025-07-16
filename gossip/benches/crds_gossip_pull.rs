@@ -28,19 +28,16 @@ fn bench_build_crds_filters(b: &mut Bencher) {
     let mut rng = thread_rng();
     let crds_gossip_pull = CrdsGossipPull::default();
     let mut crds = Crds::default();
-    let mut num_inserts = 0;
-    for _ in 0..90_000 {
-        if crds
-            .insert(
+    let num_inserts = (0..90_000)
+        .filter(|_| {
+            crds.insert(
                 CrdsValue::new_rand(&mut rng, None),
                 rng.gen(),
                 GossipRoute::LocalMessage,
             )
             .is_ok()
-        {
-            num_inserts += 1;
-        }
-    }
+        })
+        .count();
     assert_eq!(num_inserts, 90_000);
     let crds = RwLock::new(crds);
     b.iter(|| {
