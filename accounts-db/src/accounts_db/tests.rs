@@ -4791,8 +4791,8 @@ fn test_cache_flush_delayed_remove_unrooted_race() {
     account.set_lamports(lamports);
 
     // Start up a thread to flush the accounts cache
-    let (flush_trial_start_sender, flush_trial_start_receiver) = unbounded();
-    let (flush_done_sender, flush_done_receiver) = unbounded();
+    let (flush_trial_start_sender, flush_trial_start_receiver) = crossbeam_channel::unbounded();
+    let (flush_done_sender, flush_done_receiver) = crossbeam_channel::unbounded();
     let t_flush_cache = {
         let db = db.clone();
         std::thread::Builder::new()
@@ -4809,8 +4809,8 @@ fn test_cache_flush_delayed_remove_unrooted_race() {
     };
 
     // Start up a thread remove the slot
-    let (remove_trial_start_sender, remove_trial_start_receiver) = unbounded();
-    let (remove_done_sender, remove_done_receiver) = unbounded();
+    let (remove_trial_start_sender, remove_trial_start_receiver) = crossbeam_channel::unbounded();
+    let (remove_done_sender, remove_done_receiver) = crossbeam_channel::unbounded();
     let t_remove = {
         let db = db.clone();
         std::thread::Builder::new()
@@ -4850,8 +4850,8 @@ fn test_cache_flush_remove_unrooted_race_multiple_slots() {
     let num_cached_slots = 100;
 
     let num_trials = 100;
-    let (new_trial_start_sender, new_trial_start_receiver) = unbounded();
-    let (flush_done_sender, flush_done_receiver) = unbounded();
+    let (new_trial_start_sender, new_trial_start_receiver) = crossbeam_channel::unbounded();
+    let (flush_done_sender, flush_done_receiver) = crossbeam_channel::unbounded();
     // Start up a thread to flush the accounts cache
     let t_flush_cache = {
         let db = db.clone();
