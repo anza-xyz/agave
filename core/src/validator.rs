@@ -1895,7 +1895,7 @@ impl Validator {
         if let Some(bank_forks) = Arc::into_inner(self.bank_forks) {
             drop::<BankForks>(bank_forks.into_inner().unwrap());
         } else {
-            warn!("seems bankforks are leaking...{}:", sc);
+            panic!("seems bankforks are leaking...{}:", sc);
         }
 
         trace!("completed joining all services");
