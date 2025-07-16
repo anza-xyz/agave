@@ -203,8 +203,7 @@ pub fn run_kill_partition_switch_threshold<C>(
     // with the confirmation supermajority 2/3
     static_assertions::const_assert!(SWITCH_FORK_THRESHOLD >= 1f64 / 3f64);
     info!(
-        "stakes_to_kill: {:?}, alive_stakes: {:?}",
-        stakes_to_kill, alive_stakes
+        "stakes_to_kill: {stakes_to_kill:?}, alive_stakes: {alive_stakes:?}"
     );
 
     // This test:
@@ -237,7 +236,7 @@ pub fn run_kill_partition_switch_threshold<C>(
             [0..stakes_to_kill.len()]
             .iter()
             .map(|validator_to_kill| {
-                info!("Killing validator with id: {}", validator_to_kill);
+                info!("Killing validator with id: {validator_to_kill}");
                 cluster.exit_node(validator_to_kill)
             })
             .collect();
