@@ -1798,8 +1798,6 @@ impl Validator {
     }
 
     pub fn join(self) {
-        self.bank_forks.read().unwrap().unregister_banking_stage();
-
         drop(self.cluster_info);
 
         macro_rules! join_then_log {
@@ -1871,6 +1869,8 @@ impl Validator {
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
+        // Needs to signal unified scheduler about shutdown to join tpu...
+        self.bank_forks.read().unwrap().unregister_banking_stage();
         join_then_log!(self.tpu);
         join_then_log!(self.tvu);
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
