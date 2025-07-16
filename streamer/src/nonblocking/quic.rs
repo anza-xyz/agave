@@ -466,7 +466,7 @@ pub fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stak
             if total_stake == 0 || peer_stake > total_stake {
                 warn!(
                     "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: \
-                     {total_stake:?}",
+                     {total_stake:?}"
                 );
 
                 QUIC_MIN_STAKED_CONCURRENT_STREAMS
