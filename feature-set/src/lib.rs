@@ -156,6 +156,8 @@ impl FeatureSet {
             reenable_zk_elgamal_proof_program: self
                 .is_active(&reenable_zk_elgamal_proof_program::id()),
             raise_cpi_nesting_limit_to_8: self.is_active(&raise_cpi_nesting_limit_to_8::id()),
+            provide_instruction_data_offset_in_vm_r2: self
+                .is_active(&provide_instruction_data_offset_in_vm_r2::id()),
         }
     }
 }
@@ -1126,6 +1128,10 @@ pub mod enforce_fixed_fec_set {
     solana_pubkey::declare_id!("fixfecLZYMfkGzwq6NJA11Yw6KYztzXiK9QcL3K78in");
 }
 
+pub mod provide_instruction_data_offset_in_vm_r2 {
+    solana_pubkey::declare_id!("5xXZc66h4UdB6Yq7FzdBxBiRAFMMScMLwHxk2QZDaNZL");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2034,6 +2040,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             enforce_fixed_fec_set::id(),
             "SIMD-0317: Enforce 32 data + 32 coding shreds",
+        ),
+        (
+            provide_instruction_data_offset_in_vm_r2::id(),
+            "SIMD-0321: Provide instruction data offset in VM r2",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
