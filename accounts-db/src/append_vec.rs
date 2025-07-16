@@ -1222,11 +1222,11 @@ impl AppendVec {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
                 let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
-                const REQUIRED_DATA_LEN: usize =
+                const REQUIRED_READ_LEN: usize =
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
                     let offset = reader.get_file_offset();
-                    let bytes = match reader.fill_buf_required(REQUIRED_DATA_LEN) {
+                    let bytes = match reader.fill_buf_required(REQUIRED_READ_LEN) {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
