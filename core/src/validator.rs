@@ -1875,7 +1875,7 @@ impl Validator {
         // Tvu (i.e. the replay stage) has now gone. So scheduler taking shouldn't
         // occur anymore. So, let's signal unified scheduler about shutdown to join tpu...
         error!("before unregister");
-        //self.bank_forks.read().unwrap().unregister_banking_stage();
+        self.bank_forks.read().unwrap().unregister_banking_stage();
         error!("after unregister");
         error!("before tpu");
         join_then_log!(self.tpu);
