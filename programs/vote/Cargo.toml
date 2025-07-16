@@ -73,6 +73,7 @@ solana-pubkey = { workspace = true, features = ["rand"] }
 solana-rent = { workspace = true }
 solana-sdk-ids = { workspace = true }
 solana-sha256-hasher = { workspace = true }
+solana-transaction-context = { workspace = true, features = ['bincode', 'dev-context-only-utils']}
 test-case = { workspace = true }
 
 [[bench]]
