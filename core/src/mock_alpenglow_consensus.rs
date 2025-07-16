@@ -5,6 +5,7 @@ use {
     bytemuck::{Pod, Zeroable},
     chrono::TimeDelta,
     crossbeam_channel::{bounded, Receiver, Sender},
+    dashmap::DashMap,
     futures::future::err,
     solana_clock::Slot,
     solana_gossip::{
@@ -23,7 +24,10 @@ use {
         collections::HashMap,
         io::Error,
         net::{SocketAddr, SocketAddrV4, UdpSocket},
-        sync::{atomic::AtomicBool, Arc, Mutex},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+        },
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     },
@@ -52,7 +56,6 @@ struct SharedState {
     current_slot_start: Instant,
     peers: HashMap<Pubkey, PeerData>,
     total_staked: Stake,
-    should_exit: bool,
     current_slot: Slot,
     alpenglow_state: AgStateMachine,
 }
@@ -66,6 +69,15 @@ impl SharedState {
         self.alpenglow_state = AgStateMachine::default();
         peers
     }
+    fn new(current_slot: Slot) -> Self {
+        Self {
+            current_slot_start: Instant::now(),
+            peers: HashMap::new(),
+            current_slot,
+            total_staked: 0,
+            alpenglow_state: AgStateMachine::default(),
+        }
+    }
 }
 
 /// This is a placeholder that is only used for load-testing.
@@ -74,9 +86,15 @@ pub(crate) struct MockAlpenglowConsensus {
     cluster_info: Arc<ClusterInfo>,
     sender_thread: JoinHandle<()>,
     listener_thread: JoinHandle<()>,
-    state: Arc<Mutex<SharedState>>,
+    state: Arc<[Mutex<SharedState>; 3]>,
     command_sender: Sender<Command>,
     epoch_specs: EpochSpecs,
+    highest_slot: Slot,
+    should_exit: Arc<AtomicBool>,
+}
+
+fn get_state_for_slot(states: &[Mutex<SharedState>], slot: Slot) -> &Mutex<SharedState> {
+    &states[(slot % 3) as usize]
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -146,18 +164,17 @@ impl MockAlpenglowConsensus {
         info!("Mock Alpenglow consensus is enabled");
         let socket = Arc::new(alpenglow_socket);
         let (command_sender, vote_command_receiver) = bounded(4);
-        let shared_state = Arc::new(Mutex::new(SharedState {
-            should_exit: false,
-            current_slot_start: Instant::now(),
-            peers: HashMap::new(),
-            current_slot: 0,
-            total_staked: 0,
-            alpenglow_state: AgStateMachine::default(),
-        }));
+        let shared_state = Arc::new([
+            Mutex::new(SharedState::new(0)),
+            Mutex::new(SharedState::new(0)),
+            Mutex::new(SharedState::new(0)),
+        ]);
+        let should_exit = Arc::new(AtomicBool::new(false));
         Self {
             state: shared_state.clone(),
             listener_thread: thread::spawn({
                 let shared_state = shared_state.clone();
+                let should_exit = should_exit.clone();
                 let socket = socket.clone();
                 let cluster_info = cluster_info.clone();
                 let epoch_specs = epoch_specs.clone();
@@ -165,6 +182,7 @@ impl MockAlpenglowConsensus {
                 move || {
                     Self::listener_thread(
                         shared_state,
+                        should_exit,
                         cluster_info,
                         epoch_specs,
                         socket,
@@ -174,10 +192,12 @@ impl MockAlpenglowConsensus {
             }),
             sender_thread: thread::spawn({
                 let epoch_specs = epoch_specs.clone();
+                let should_exit = should_exit.clone();
                 let cluster_info = cluster_info.clone();
                 move || {
                     Self::sender_thread(
                         shared_state,
+                        should_exit,
                         cluster_info,
                         epoch_specs,
                         socket.clone(),
@@ -185,15 +205,24 @@ impl MockAlpenglowConsensus {
                     )
                 }
             }),
+            should_exit,
             epoch_specs,
             command_sender,
             cluster_info,
+            highest_slot: 0,
         }
     }
 
     fn prepare_to_receive(&mut self, slot: Slot) {
+        trace!(
+            "{}: preparing to receive for slot {slot}",
+            self.cluster_info.id()
+        );
         let staked_nodes = self.epoch_specs.current_epoch_staked_nodes();
-        let mut state = self.state.lock().unwrap();
+
+        let mut state = get_state_for_slot(self.state.as_slice(), slot)
+            .lock()
+            .unwrap();
         state.reset();
         state.current_slot = slot;
         state.current_slot_start = Instant::now();
@@ -223,7 +252,8 @@ impl MockAlpenglowConsensus {
 
     /// Collects votes and changes states
     fn listener_thread(
-        self_state: Arc<Mutex<SharedState>>,
+        self_state: Arc<[Mutex<SharedState>; 3]>,
+        should_exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
@@ -255,18 +285,14 @@ impl MockAlpenglowConsensus {
                     }
                 }
             };
-            let mut state = self_state.lock().unwrap();
-            if state.should_exit {
+            if should_exit.load(Ordering::Relaxed) {
                 return;
             }
             // we may have received no packets, in this case we can safely skip the rest
             if n == 0 {
                 continue;
             }
-            let elapsed = state.current_slot_start.elapsed();
 
-            let stake_60_percent = (state.total_staked as f64 * 0.6) as Stake;
-            let stake_80_percent = (state.total_staked as f64 * 0.8) as Stake;
             for pkt in packets.iter().take(n) {
                 if pkt.meta().size < MOCK_VOTE_HEADER_SIZE {
                     continue;
@@ -276,9 +302,19 @@ impl MockAlpenglowConsensus {
                 };
                 let vote_pkt = MockVotePacketHeader::from_bytes(pkt_buf);
                 let pk = Pubkey::new_from_array(vote_pkt.sender);
+
+                let mut state = get_state_for_slot(self_state.as_slice(), vote_pkt.slot_number)
+                    .lock()
+                    .unwrap();
+
                 if vote_pkt.slot_number != state.current_slot {
                     continue;
                 }
+
+                let elapsed = state.current_slot_start.elapsed();
+
+                let stake_60_percent = (state.total_staked as f64 * 0.6) as Stake;
+                let stake_80_percent = (state.total_staked as f64 * 0.8) as Stake;
                 let Ok(votor_msg) = VotorMessageType::try_from(vote_pkt.state) else {
                     continue;
                 };
@@ -399,7 +435,8 @@ impl MockAlpenglowConsensus {
 
     /// Sends mock packets to everyone in the cluster
     fn sender_thread(
-        state: Arc<Mutex<SharedState>>,
+        state: Arc<[Mutex<SharedState>; 3]>,
+        should_exit: Arc<AtomicBool>,
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
         socket: Arc<UdpSocket>,
@@ -409,7 +446,7 @@ impl MockAlpenglowConsensus {
         let id = cluster_info.id();
         loop {
             let Ok(command) = command.recv_timeout(EXIT_CHECK_INTERVAL) else {
-                if state.lock().unwrap().should_exit {
+                if should_exit.load(Ordering::Relaxed) {
                     return;
                 }
                 continue;
@@ -434,14 +471,16 @@ impl MockAlpenglowConsensus {
 
             // prepare addresses to send the packets
             let mut send_instructions = Vec::with_capacity(2000);
-            let mut lockguard = state.lock().unwrap();
+            {
+                let mut state = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
 
-            for (peer, info) in lockguard.peers.iter() {
-                send_instructions.push((packet_buf.as_slice(), info.address));
-                trace!(
-                    "{id}: send {votor_msg:?} for slot {slot} to {} for {peer}",
-                    info.address
-                );
+                for (peer, info) in state.peers.iter() {
+                    send_instructions.push((packet_buf.as_slice(), info.address));
+                    trace!(
+                        "{id}: send {votor_msg:?} for slot {slot} to {} for {peer}",
+                        info.address
+                    );
+                }
             }
             // broadcast to everybody at once
             batch_send(&socket, send_instructions);
@@ -523,48 +562,67 @@ impl MockAlpenglowConsensus {
     }
 
     pub(crate) fn signal_new_slot(&mut self, slot: Slot, interval: Slot) {
-        // constraint interval to be above 3 to keep current logic working
-        let interval = interval.max(3);
-        let phase = slot % interval;
-        // this is currently set up to work over a course of 3 slots.
-        // it will only work correctly if we do not actually fork within those 3 slots, and
-        // are consistently casting votes for all 3.
-        match phase {
-            // Clear the stats for the previous slots in preparation for the new one
-            0 => {
-                // prepare to receive votes for the next slot in advance
-                // in case we are really late getting shreds
-                self.prepare_to_receive(slot + 1);
-            }
-            // send Notarize votes (rest of the consensus happens based on received packets)
-            1 => {
-                trace!("Starting voting in slot {slot}");
-                self.command_sender.send(Command::SendNotarize(slot));
-            }
-            // report metrics
-            2 => {
-                trace!("Reporting statistics for slot {}", slot - 1);
-                // avoid holding locks while reporting metrics
-                let (peers, total_staked) = {
-                    let mut lockguard = self.state.lock().unwrap();
-                    let total_staked = lockguard.total_staked;
-                    let peers = lockguard.reset();
-                    (peers, total_staked)
-                };
-                Self::report_collected_votes(&peers, total_staked);
-            }
-            // in case we have missed previous slot, clean up and block reception
-            // but do not report stats (as they will be all garbled by now)
-            _ => {
-                let mut lockguard = self.state.lock().unwrap();
-                // block reception of votes
-                lockguard.reset();
+        if slot < self.highest_slot || slot < 3 {
+            trace!(
+                "Skipping AG logic for slot {slot}, current highest slot is {}",
+                self.highest_slot
+            );
+            return;
+        }
+        self.highest_slot = slot;
+        assert!(interval >= 1);
+        let concurrent_tests = 3u64.saturating_sub(interval) + 1;
+        assert!(1 <= concurrent_tests && concurrent_tests <= 3);
+        // since we may be running up to 3 voting processes concurrently,
+        // they will all be in their own phase
+        for ct in 0..concurrent_tests {
+            // this is currently set up to work over a course of 3 slots.
+            // it will only work correctly if we do not actually fork within those 3 slots, and
+            // are consistently casting votes for all 3.
+            let phase = (slot % interval) + ct;
+            match phase {
+                // Clear the stats for the previous slots in preparation for the new one
+                0 => {
+                    // prepare to receive votes for the next slot in advance
+                    // in case we are really late getting shreds
+                    self.prepare_to_receive(slot + 1);
+                }
+                // send Notarize votes (rest of the consensus happens based on received packets)
+                1 => {
+                    trace!("Starting voting in slot {slot}");
+                    self.command_sender.send(Command::SendNotarize(slot));
+                }
+                // report metrics
+                2 => {
+                    trace!("Reporting statistics for slot {}", slot - 1);
+                    // avoid holding locks while reporting metrics
+                    let (peers, total_staked) = {
+                        let mut lockguard = get_state_for_slot(self.state.as_slice(), slot - 1)
+                            .lock()
+                            .unwrap();
+                        let total_staked = lockguard.total_staked;
+                        let peers = lockguard.reset();
+                        (peers, total_staked)
+                    };
+                    Self::report_collected_votes(&peers, total_staked);
+                }
+                // in case we have missed previous slot, clean up and block reception
+                // but do not report stats (as they will be all garbled by now)
+                n => {
+                    for state in self.state.iter() {
+                        let mut lockguard = state.lock().unwrap();
+                        if lockguard.current_slot > 0 && (n > lockguard.current_slot + 1) {
+                            // block reception of votes
+                            lockguard.reset();
+                        }
+                    }
+                }
             }
         }
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {
-        self.state.lock().unwrap().should_exit = true;
+        self.should_exit.store(true, Ordering::Relaxed);
         self.sender_thread.join()?;
         self.listener_thread.join()
     }
