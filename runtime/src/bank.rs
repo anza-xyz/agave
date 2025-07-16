@@ -2488,29 +2488,8 @@ impl Bank {
     /// Note that the account state is *not* allowed to change by rehashing.
     /// If modifying accounts in ledger-tool is needed, create a new bank.
     pub fn rehash(&self) {
-        let get_delta_hash = || {
-            (!self
-                .feature_set
-                .is_active(&feature_set::remove_accounts_delta_hash::id()))
-            .then(|| {
-                self.rc
-                    .accounts
-                    .accounts_db
-                    .get_accounts_delta_hash(self.slot())
-            })
-            .flatten()
-        };
-
         let mut hash = self.hash.write().unwrap();
-        let curr_accounts_delta_hash = get_delta_hash();
         let new = self.hash_internal_state();
-        if let Some(curr_accounts_delta_hash) = curr_accounts_delta_hash {
-            let new_accounts_delta_hash = get_delta_hash().unwrap();
-            assert_eq!(
-                new_accounts_delta_hash, curr_accounts_delta_hash,
-                "rehashing is not allowed to change the account state",
-            );
-        }
         if new != *hash {
             warn!("Updating bank hash to {new}");
             *hash = new;
@@ -4097,14 +4076,6 @@ impl Bank {
             );
         }
 
-        // If the accounts delta hash is still in use, start the background account hasher
-        if !self
-            .feature_set
-            .is_active(&feature_set::remove_accounts_delta_hash::id())
-        {
-            self.rc.accounts.accounts_db.start_background_hasher();
-        }
-
         if !debug_do_not_add_builtins {
             for builtin in BUILTINS
                 .iter()
@@ -4475,32 +4446,11 @@ impl Bank {
         let measure_total = Measure::start("");
         let slot = self.slot();
 
-        let delta_hash_info = (!self
-            .feature_set
-            .is_active(&feature_set::remove_accounts_delta_hash::id()))
-        .then(|| {
-            measure_us!({
-                self.rc
-                    .accounts
-                    .accounts_db
-                    .calculate_accounts_delta_hash_internal(slot, None)
-            })
-        });
-
-        let mut hash = if let Some((accounts_delta_hash, _measure)) = delta_hash_info.as_ref() {
-            hashv(&[
-                self.parent_hash.as_ref(),
-                accounts_delta_hash.0.as_ref(),
-                &self.signature_count().to_le_bytes(),
-                self.last_blockhash().as_ref(),
-            ])
-        } else {
-            hashv(&[
-                self.parent_hash.as_ref(),
-                &self.signature_count().to_le_bytes(),
-                self.last_blockhash().as_ref(),
-            ])
-        };
+        let mut hash = hashv(&[
+            self.parent_hash.as_ref(),
+            &self.signature_count().to_le_bytes(),
+            self.last_blockhash().as_ref(),
+        ]);
 
         let accounts_lt_hash_checksum = {
             let accounts_lt_hash = &*self.accounts_lt_hash.lock().unwrap();
@@ -4547,22 +4497,18 @@ impl Bank {
 
         let total_us = measure_total.end_as_us();
 
-        let (accounts_delta_hash_us, accounts_delta_hash_log) = delta_hash_info
-            .map(|(hash, us)| (us, format!(" accounts_delta: {}", hash.0)))
-            .unzip();
         datapoint_info!(
             "bank-hash_internal_state",
             ("slot", slot, i64),
             ("total_us", total_us, i64),
-            ("accounts_delta_hash_us", accounts_delta_hash_us, Option<i64>),
         );
         info!(
-            "bank frozen: {slot} hash: {hash}{} signature_count: {} last_blockhash: {} capitalization: {}, accounts_lt_hash checksum: {}, stats: {bank_hash_stats:?}",
-            accounts_delta_hash_log.unwrap_or_default(),
+            "bank frozen: {slot} hash: {hash} signature_count: {} last_blockhash: {} \
+             capitalization: {}, accounts_lt_hash checksum: {accounts_lt_hash_checksum}, \
+             stats: {bank_hash_stats:?}",
             self.signature_count(),
             self.last_blockhash(),
             self.capitalization(),
-            accounts_lt_hash_checksum,
         );
         hash
     }
@@ -5534,12 +5480,6 @@ impl Bank {
                 block_cost_limit,
                 vote_cost_limit,
             );
-        }
-
-        if new_feature_activations.contains(&feature_set::remove_accounts_delta_hash::id()) {
-            // If the accounts delta hash has been removed, then we no longer need to compute the
-            // AccountHash for modified accounts, and can stop the background account hasher.
-            self.rc.accounts.accounts_db.stop_background_hasher();
         }
     }
 

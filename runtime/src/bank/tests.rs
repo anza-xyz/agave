@@ -12037,20 +12037,10 @@ fn test_bank_epoch_stakes() {
 }
 
 /// Ensure rehash() does *not* change the bank hash if accounts are unmodified
-#[test_case(true; "with accounts delta hash")]
-#[test_case(false; "without accounts delta hash")]
-fn test_rehash_accounts_unmodified(has_accounts_delta_hash: bool) {
+#[test]
+fn test_rehash_accounts_unmodified() {
     let ten_sol = 10 * LAMPORTS_PER_SOL;
-    let mut genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
-    if has_accounts_delta_hash {
-        // Keep the accounts delta hash by removing the 'remove_accounts_delta_hash'
-        // feature account from genesis.
-        genesis_config_info
-            .genesis_config
-            .accounts
-            .remove(&feature_set::remove_accounts_delta_hash::id())
-            .unwrap();
-    }
+    let genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
     let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
 
     let lamports = 123_456_789;
@@ -12066,38 +12056,6 @@ fn test_rehash_accounts_unmodified(has_accounts_delta_hash: bool) {
     bank.rehash();
     let post_bank_hash = bank.hash();
     assert_eq!(post_bank_hash, prev_bank_hash);
-}
-
-/// Ensure rehash() *does* change the bank hash if accounts are modified
-#[test]
-#[should_panic(expected = "rehashing is not allowed to change the account state")]
-fn test_rehash_accounts_modified() {
-    let ten_sol = 10 * LAMPORTS_PER_SOL;
-    let mut genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
-    // Keep the accounts delta hash by removing the 'remove_accounts_delta_hash'
-    // feature account from genesis.
-    genesis_config_info
-        .genesis_config
-        .accounts
-        .remove(&feature_set::remove_accounts_delta_hash::id())
-        .unwrap();
-    let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
-
-    let mut account = AccountSharedData::new(ten_sol, 0, &Pubkey::default());
-    let pubkey = Pubkey::new_unique();
-    bank.store_account_and_update_capitalization(&pubkey, &account);
-
-    // freeze the bank to trigger hash calculation
-    bank.freeze();
-
-    // change an account, which will cause rehashing to panic
-    account.checked_add_lamports(ten_sol).unwrap();
-    bank.rc
-        .accounts
-        .store_accounts_cached((bank.slot(), [(&pubkey, &account)].as_slice()));
-
-    // let the show begin
-    bank.rehash();
 }
 
 #[test]

@@ -143,7 +143,7 @@ mod tests {
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                accounts_db.get_accounts_delta_hash(bank2_slot).unwrap(),
+                AccountsDeltaHash(Hash::default()), // obsolete, will be removed next
                 expected_accounts_hash,
                 &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
                 ExtraFieldsToSerialize {
