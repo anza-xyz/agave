@@ -407,7 +407,7 @@ impl Shred {
     dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
     // Returns the shard index within the erasure coding set.
     dispatch!(pub(crate) fn erasure_shard_index(&self) -> Result<usize, Error>);
-    dispatch!(pub fn retransmitter_signature(&self) -> Result<Signature, Error>);
+    dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
     dispatch!(pub fn merkle_root(&self) -> Result<Hash, Error>);
@@ -654,20 +654,7 @@ impl Shred {
         get_payload(self) != get_payload(other)
     }
 
-    pub fn set_retransmitter_signature(&mut self, signature: &Signature) -> Result<(), Error> {
-        match self {
-            Self::ShredCode(ShredCode::Merkle(shred)) => {
-                shred.set_retransmitter_signature(signature)
-            }
-            Self::ShredData(ShredData::Merkle(shred)) => {
-                shred.set_retransmitter_signature(signature)
-            }
-            Self::ShredCode(ShredCode::Legacy(_)) => Err(Error::InvalidShredVariant),
-            Self::ShredData(ShredData::Legacy(_)) => Err(Error::InvalidShredVariant),
-        }
-    }
-
-    pub fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
+    fn retransmitter_signature_offset(&self) -> Result<usize, Error> {
         match self {
             Self::ShredCode(ShredCode::Merkle(shred)) => shred.retransmitter_signature_offset(),
             Self::ShredData(ShredData::Merkle(shred)) => shred.retransmitter_signature_offset(),

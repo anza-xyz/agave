@@ -575,7 +575,7 @@ mod tests {
         },
         solana_perf::packet::{Packet, PacketFlags, PinnedPacketBatch},
         solana_runtime::bank::Bank,
-        solana_signature::{Signature, SIGNATURE_BYTES},
+        solana_signature::Signature,
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
@@ -700,13 +700,10 @@ mod tests {
 
         for shred in shreds.iter_mut() {
             let keypair = Keypair::new();
-            let signature = Signature::new_unique();
             let nonce = repaired.then(|| rng.gen::<Nonce>());
             if is_last_in_slot {
-                shred.set_retransmitter_signature(&signature).unwrap();
-                let signature_offset = shred.retransmitter_signature_offset().unwrap();
-
                 let packet = &mut shred.payload().to_packet(nonce);
+                let buf_before = packet.buffer_mut().to_vec();
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -722,16 +719,14 @@ mod tests {
                 );
                 assert!(!packet.meta().discard());
 
-                // Check whether the shred was resigned.
-                let modified_shred = get_shred(packet).unwrap();
-                let new_signature =
-                    &modified_shred[signature_offset..signature_offset + SIGNATURE_BYTES];
-                assert_ne!(signature.as_array(), new_signature);
+                // Check whether the packet was modified.
+                assert_ne!(&buf_before, &packet.data(..).unwrap());
 
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
+                let buf_addr = bytes_packet.buffer().as_ptr().addr();
                 maybe_verify_and_resign_packet(
                     &mut bytes_packet.as_mut(),
                     &root_bank,
@@ -744,17 +739,10 @@ mod tests {
                 );
                 assert!(!bytes_packet.meta().discard());
 
-                // Check whether the shred was resigned.
-                let modified_shred = get_shred(bytes_packet.as_ref()).unwrap();
-                let new_signature =
-                    &modified_shred[signature_offset..signature_offset + SIGNATURE_BYTES];
-                assert_ne!(signature.as_array(), new_signature);
+                // Check whether the packet was modified.
+                let buf_addr_after = bytes_packet.buffer().as_ptr().addr();
+                assert_ne!(buf_addr, buf_addr_after);
             } else {
-                assert_matches!(
-                    shred.set_retransmitter_signature(&signature),
-                    Err(shred::Error::InvalidShredVariant)
-                );
-
                 let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
@@ -770,16 +758,6 @@ mod tests {
                     &keypair,
                 );
                 assert!(!packet.meta().discard());
-
-                // Getting signature should fail.
-                assert_matches!(
-                    shred.retransmitter_signature(),
-                    Err(shred::Error::InvalidShredVariant)
-                );
-                assert_matches!(
-                    shred.retransmitter_signature_offset(),
-                    Err(shred::Error::InvalidShredVariant)
-                );
 
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
