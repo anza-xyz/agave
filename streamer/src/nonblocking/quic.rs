@@ -258,7 +258,8 @@ impl ClientConnectionTracker {
         if open_connections >= max_concurrent_connections {
             stats.open_connections.fetch_sub(1, Ordering::Relaxed);
             debug!(
-                "There are too many concurrent connections opened already: open: {open_connections}, max: {max_concurrent_connections}"
+                "There are too many concurrent connections opened already: open: \
+                 {open_connections}, max: {max_concurrent_connections}"
             );
             return Err(());
         }
@@ -464,7 +465,8 @@ pub fn compute_max_allowed_uni_streams(peer_type: ConnectionPeerType, total_stak
             // No checked math for f64 type. So let's explicitly check for 0 here
             if total_stake == 0 || peer_stake > total_stake {
                 warn!(
-                    "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: {total_stake:?}",
+                    "Invalid stake values: peer_stake: {peer_stake:?}, total_stake: \
+                     {total_stake:?}",
                 );
 
                 QUIC_MIN_STAKED_CONCURRENT_STREAMS
@@ -706,9 +708,7 @@ async fn setup_connection(
             Ok(new_connection) => {
                 debug!("Got a connection {from:?}");
                 if !rate_limiter.is_allowed(&from.ip()) {
-                    debug!(
-                        "Reject connection from {from:?} -- rate limiting exceeded"
-                    );
+                    debug!("Reject connection from {from:?} -- rate limiting exceeded");
                     stats
                         .connection_rate_limited_per_ipaddr
                         .fetch_add(1, Ordering::Relaxed);
@@ -1095,9 +1095,12 @@ async fn handle_connection(
                 STREAM_THROTTLING_INTERVAL.saturating_sub(throttle_interval_start.elapsed());
 
             if !throttle_duration.is_zero() {
-                debug!("Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total stake: {total_stake}, \
-                                    max_streams_per_interval: {max_streams_per_throttling_interval}, read_interval_streams: {streams_read_in_throttle_interval} \
-                                    throttle_duration: {throttle_duration:?}");
+                debug!(
+                    "Throttling stream from {remote_addr:?}, peer type: {peer_type:?}, total \
+                     stake: {total_stake}, max_streams_per_interval: \
+                     {max_streams_per_throttling_interval}, read_interval_streams: \
+                     {streams_read_in_throttle_interval} throttle_duration: {throttle_duration:?}"
+                );
                 stats.throttled_streams.fetch_add(1, Ordering::Relaxed);
                 match peer_type {
                     ConnectionPeerType::Unstaked => {
