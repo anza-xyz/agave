@@ -26,7 +26,7 @@ use {
     solana_sysvar::{self as sysvar, stake_history::StakeHistory},
     solana_vote_program::{
         vote_instruction,
-        vote_state::{TowerSync, VoteInit, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+        vote_state::{TowerSync, VoteInit, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
     },
     std::sync::{Arc, RwLock},
 };
@@ -322,7 +322,7 @@ fn test_stake_account_lifetime() {
     let (vote_balance, stake_rent_exempt_reserve, stake_minimum_delegation) = {
         let rent = &bank.rent_collector().rent;
         (
-            rent.minimum_balance(VoteState::size_of()),
+            rent.minimum_balance(VoteStateV3::size_of()),
             rent.minimum_balance(StakeStateV2::size_of()),
             solana_stake_program::get_minimum_delegation(
                 bank.feature_set
@@ -430,7 +430,7 @@ fn test_stake_account_lifetime() {
 
     // Test that votes and credits are there
     let account = bank.get_account(&vote_pubkey).expect("account not found");
-    let vote_state: VoteState = StateMut::<VoteStateVersions>::state(&account)
+    let vote_state: VoteStateV3 = StateMut::<VoteStateVersions>::state(&account)
         .expect("couldn't unpack account data")
         .convert_to_current();
 

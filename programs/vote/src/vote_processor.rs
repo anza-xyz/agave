@@ -1777,14 +1777,14 @@ mod tests {
             },
             101,
             CreateVoteAccountConfig {
-                space: vote_state::VoteState::size_of() as u64,
+                space: vote_state::VoteStateV3::size_of() as u64,
                 ..CreateVoteAccountConfig::default()
             },
         );
         // grab the `space` value from SystemInstruction::CreateAccount by directly indexing, for
         // expediency
         let space = usize::from_le_bytes(instructions[0].data[12..20].try_into().unwrap());
-        assert_eq!(space, vote_state::VoteState::size_of());
+        assert_eq!(space, vote_state::VoteStateV3::size_of());
         let empty_vote_account = AccountSharedData::new(101, space, &id());
 
         let transaction_accounts = vec![

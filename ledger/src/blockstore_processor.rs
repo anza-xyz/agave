@@ -2358,7 +2358,7 @@ pub mod tests {
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
-            vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},
@@ -4804,12 +4804,15 @@ pub mod tests {
             roots_stakes
                 .into_iter()
                 .map(|(root, stake)| {
-                    let mut vote_state = VoteState::default();
+                    let mut vote_state = VoteStateV3::default();
                     vote_state.root_slot = Some(root);
-                    let mut vote_account =
-                        AccountSharedData::new(1, VoteState::size_of(), &solana_vote_program::id());
+                    let mut vote_account = AccountSharedData::new(
+                        1,
+                        VoteStateV3::size_of(),
+                        &solana_vote_program::id(),
+                    );
                     let versioned = VoteStateVersions::new_current(vote_state);
-                    VoteState::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
+                    VoteStateV3::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),
                         (stake, VoteAccount::try_from(vote_account).unwrap()),

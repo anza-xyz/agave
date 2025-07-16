@@ -50,7 +50,7 @@ use {
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
@@ -806,7 +806,7 @@ impl ProgramTest {
         };
         let bootstrap_validator_pubkey = Pubkey::new_unique();
         let bootstrap_validator_stake_lamports =
-            rent.minimum_balance(VoteState::size_of()) + sol_to_lamports(1_000_000.0);
+            rent.minimum_balance(VoteStateV3::size_of()) + sol_to_lamports(1_000_000.0);
 
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
