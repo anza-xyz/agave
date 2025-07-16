@@ -53,16 +53,16 @@ static_assertions::const_assert_eq!(
 );
 
 /// `InstructionViewAccountVector` manages the creation of vectors for `InstructionAccount` and
-/// `AccountCallIndexes`, by accepting `InstructionAccountView`, and exposing an iterator of it.
+/// `InstructionAccountCallIndexes`, by accepting `InstructionAccountView`, and exposing an iterator of it.
 #[derive(Default, Clone)]
 pub struct InstructionAccountViewVector {
     metadata: Vec<InstructionAccount>,
-    indexes: Vec<AccountCallIndexes>,
+    indexes: Vec<InstructionAccountCallIndexes>,
 }
 
 type InstructionViewIterator<'a> = Map<
-    Zip<Iter<'a, InstructionAccount>, Iter<'a, AccountCallIndexes>>,
-    fn((&InstructionAccount, &AccountCallIndexes)) -> InstructionAccountView,
+    Zip<Iter<'a, InstructionAccount>, Iter<'a, InstructionAccountCallIndexes>>,
+    fn((&InstructionAccount, &InstructionAccountCallIndexes)) -> InstructionAccountView,
 >;
 
 impl InstructionAccountViewVector {
@@ -84,7 +84,7 @@ impl InstructionAccountViewVector {
             element.is_writable,
         ));
 
-        self.indexes.push(AccountCallIndexes {
+        self.indexes.push(InstructionAccountCallIndexes {
             index_in_caller: element.index_in_caller,
             index_in_callee: element.index_in_callee,
         });
@@ -133,7 +133,7 @@ impl InstructionAccountViewVector {
 pub type IndexOfAccount = u16;
 
 /// `InstructionAccountView` is a view struct that merges `InstructionAccount` and
-/// `AccountCallIndexes` for easier handling outside of runtime.
+/// `InstructionAccountCallIndexes` for easier handling outside of runtime.
 #[derive(Clone)]
 pub struct InstructionAccountView {
     /// Points to the account and its key in the `TransactionContext`
@@ -152,10 +152,10 @@ pub struct InstructionAccountView {
     pub index_in_callee: IndexOfAccount,
 }
 
-/// `AccountCallIndexes` saves indexes of the account relative to the caller and callee.
+/// `InstructionAccountCallIndexes` saves indexes of the account relative to the caller and callee.
 /// These values are only used by the runtime and are not accessible to programs.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AccountCallIndexes {
+pub struct InstructionAccountCallIndexes {
     /// Points to the first occurrence in the parent `InstructionContext`
     ///
     /// This excludes the program accounts.
@@ -715,7 +715,7 @@ pub struct InstructionContext {
     instruction_accounts_lamport_sum: u128,
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
-    account_call_indexes: Vec<AccountCallIndexes>,
+    instruction_account_call_indexes: Vec<InstructionAccountCallIndexes>,
     instruction_data: Vec<u8>,
 }
 
@@ -734,7 +734,7 @@ impl InstructionContext {
         );
         self.program_accounts = program_accounts.to_vec();
         self.instruction_accounts = instruction_accounts.metadata;
-        self.account_call_indexes = instruction_accounts.indexes;
+        self.instruction_account_call_indexes = instruction_accounts.indexes;
         self.instruction_data = instruction_data.to_vec();
     }
 
@@ -836,7 +836,7 @@ impl InstructionContext {
         instruction_account_index: IndexOfAccount,
     ) -> Result<Option<IndexOfAccount>, InstructionError> {
         let index_in_callee = self
-            .account_call_indexes
+            .instruction_account_call_indexes
             .get(instruction_account_index as usize)
             .ok_or(InstructionError::NotEnoughAccountKeys)?
             .index_in_callee;
