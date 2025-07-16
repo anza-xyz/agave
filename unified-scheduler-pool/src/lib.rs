@@ -982,7 +982,7 @@ where
                 }
             }
 
-            let mut a = &mut *self.banking_stage_handler_context
+            let mut a = &mut self.banking_stage_handler_context
                 .lock()
                 .unwrap().unwrap();
                 //.take()
