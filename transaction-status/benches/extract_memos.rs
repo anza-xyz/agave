@@ -5,6 +5,7 @@ use {
     solana_transaction_status::extract_memos::ExtractMemos,
 };
 
+#[allow(clippy::arithmetic_side_effects)]
 fn bench_extract_memos(b: &mut Bencher) {
     let mut account_keys: Vec<Pubkey> = (0..64).map(|_| Pubkey::new_unique()).collect();
     account_keys[62] = spl_memo::v1::id();
