@@ -405,7 +405,8 @@ pub fn check_for_new_roots(
             done = num_roots >= num_new_roots;
             if done || last_print.elapsed().as_secs() > 3 {
                 info!(
-                    "{test_name} waiting for {num_new_roots} new roots.. observed: {num_roots_map:?}"
+                    "{test_name} waiting for {num_new_roots} new roots.. observed: \
+                     {num_roots_map:?}"
                 );
                 last_print = Instant::now();
             }

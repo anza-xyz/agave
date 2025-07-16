@@ -538,9 +538,7 @@ impl LocalCluster {
                 .get_balance_with_commitment(&validator_pubkey, CommitmentConfig::processed())
                 .expect("received response")
                 .value;
-            info!(
-                "validator {validator_pubkey} balance {validator_balance}"
-            );
+            info!("validator {validator_pubkey} balance {validator_balance}");
             Self::setup_vote_and_stake_accounts(
                 &client,
                 voting_keypair.as_ref().unwrap(),
@@ -640,9 +638,7 @@ impl LocalCluster {
         socket_addr_space: SocketAddrSpace,
     ) {
         let alive_node_contact_infos = self.discover_nodes(socket_addr_space, test_name);
-        info!(
-            "{test_name} looking minimum root {min_root} on all nodes"
-        );
+        info!("{test_name} looking minimum root {min_root} on all nodes");
         cluster_tests::check_min_slot_is_rooted(
             min_root,
             &alive_node_contact_infos,
@@ -884,9 +880,7 @@ impl LocalCluster {
                 )
                 .expect("get balance");
         } else {
-            warn!(
-                "{vote_account_pubkey} vote_account already has a balance?!?"
-            );
+            warn!("{vote_account_pubkey} vote_account already has a balance?!?");
         }
         info!("Checking for vote account registration of {node_pubkey}");
         match (
@@ -912,9 +906,7 @@ impl LocalCluster {
                                 } else if vote_state.node_pubkey != node_pubkey {
                                     Err(Error::other("invalid vote account state"))
                                 } else {
-                                    info!(
-                                        "node {node_pubkey} {stake_state:?} {vote_state:?}"
-                                    );
+                                    info!("node {node_pubkey} {stake_state:?} {vote_state:?}");
 
                                     return Ok(());
                                 }
