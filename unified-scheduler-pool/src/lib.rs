@@ -987,7 +987,7 @@ where
                 .unwrap();
                 //.take()
                 //.unwrap();
-            a.unwrap().banking_stage_monitor = Box::new(DummyBankingMinitor);
+            a.as_mut().unwrap().banking_stage_monitor = Box::new(DummyBankingMinitor);
         }
     }
 
