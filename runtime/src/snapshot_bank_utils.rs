@@ -168,7 +168,6 @@ pub fn bank_from_snapshot_archives(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
@@ -278,29 +277,11 @@ pub fn bank_from_snapshot_archives(
         snapshot_archive_info.hash,
     )?;
 
-    let base = if bank.is_snapshots_lt_hash_enabled() {
-        None
-    } else {
-        incremental_snapshot_archive_info.is_some().then(|| {
-            let base_slot = full_snapshot_archive_info.slot();
-            let base_capitalization = bank
-                .rc
-                .accounts
-                .accounts_db
-                .get_accounts_hash(base_slot)
-                .expect("accounts hash must exist at full snapshot's slot")
-                .1;
-            (base_slot, base_capitalization)
-        })
-    };
-
     let mut measure_verify = Measure::start("verify");
     if !bank.verify_snapshot_bank(
-        test_hash_calculation,
         accounts_db_skip_shrink || !full_snapshot_archive_info.is_remote(),
         accounts_db_force_initial_clean,
         full_snapshot_archive_info.slot(),
-        base,
         info.duplicates_lt_hash,
     ) && limit_load_slot_count_from_snapshot.is_none()
     {
@@ -350,7 +331,6 @@ pub fn bank_from_latest_snapshot_archives(
     debug_keys: Option<Arc<HashSet<Pubkey>>>,
     additional_builtins: Option<&[BuiltinPrototype]>,
     limit_load_slot_count_from_snapshot: Option<usize>,
-    test_hash_calculation: bool,
     accounts_db_skip_shrink: bool,
     accounts_db_force_initial_clean: bool,
     verify_index: bool,
@@ -382,7 +362,6 @@ pub fn bank_from_latest_snapshot_archives(
         debug_keys,
         additional_builtins,
         limit_load_slot_count_from_snapshot,
-        test_hash_calculation,
         accounts_db_skip_shrink,
         accounts_db_force_initial_clean,
         verify_index,
@@ -1123,7 +1102,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -1221,7 +1199,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -1323,7 +1300,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -1446,7 +1422,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -1553,7 +1528,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -1686,7 +1660,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -1743,7 +1716,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,
@@ -2123,7 +2095,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -2295,7 +2266,6 @@ mod tests {
             None,
             None,
             None,
-            false,
             false,
             false,
             false,

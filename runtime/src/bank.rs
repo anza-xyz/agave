@@ -5014,11 +5014,9 @@ impl Bank {
     /// calculation and could shield other real accounts.
     pub fn verify_snapshot_bank(
         &self,
-        _test_hash_calculation: bool,
         skip_shrink: bool,
         force_clean: bool,
         latest_full_snapshot_slot: Slot,
-        _base: Option<(Slot, /*capitalization*/ u64)>, // will be removed next
         duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
     ) -> bool {
         // If we verify the accounts using the lattice-based hash *and* with storages (as opposed

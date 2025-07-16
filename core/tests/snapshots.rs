@@ -123,7 +123,6 @@ fn restore_from_snapshot(
     let old_bank_forks = old_bank_forks.read().unwrap();
     let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
-    let check_hash_calculation = false;
     let full_snapshot_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         &snapshot_config.full_snapshot_archives_dir,
         old_last_bank.slot(),
@@ -143,7 +142,6 @@ fn restore_from_snapshot(
         None,
         None,
         None,
-        check_hash_calculation,
         false,
         false,
         false,
@@ -552,7 +550,6 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         false,
         false,
         false,
-        false,
         Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
         Arc::default(),
@@ -767,7 +764,6 @@ fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnap
         None,
         None,
         None,
-        false,
         false,
         false,
         false,
