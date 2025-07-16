@@ -1,3 +1,5 @@
+#![allow(clippy::arithmetic_side_effects)]
+
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
     bv::BitVec,
