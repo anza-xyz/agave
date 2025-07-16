@@ -987,9 +987,13 @@ where
 
         let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
         let handler_context = handler_context.as_mut().unwrap();
-        handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
+        // Replace with dummy ones to unblock validator shutdown.
+        // Note that replacing banking_stage_handler_context with None altogether will create a
+        // very short window of race condition due to untimely spawning of block production
+        // scheduler.
         handler_context.banking_packet_receiver = never();
         handler_context.banking_packet_handler = Box::new(|_, _| unreachable!());
+        handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
