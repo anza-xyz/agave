@@ -1168,9 +1168,13 @@ mod tests {
         );
         let mut instruction_context = InstructionContext::default();
         let instruction_accounts =
-            InstructionAccountViewVector::from_vector(vec![InstructionAccountView::new(
-                1, 1, 0, false, true,
-            )]);
+            InstructionAccountViewVector::from_vector(vec![InstructionAccountView {
+                index_in_transaction: 1,
+                index_in_caller: 1,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            }]);
         instruction_context.configure(&[0], instruction_accounts, &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account
@@ -1317,9 +1321,13 @@ mod tests {
         );
         let mut instruction_context = InstructionContext::default();
         let instruction_accounts =
-            InstructionAccountViewVector::from_vector(vec![InstructionAccountView::new(
-                1, 1, 0, false, true,
-            )]);
+            InstructionAccountViewVector::from_vector(vec![InstructionAccountView {
+                index_in_transaction: 1,
+                index_in_caller: 1,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            }]);
         instruction_context.configure(&[0], instruction_accounts, &[]);
 
         // Get the BorrowedAccount from the InstructionContext which is what is used to manipulate and inspect account

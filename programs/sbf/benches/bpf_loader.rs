@@ -61,9 +61,13 @@ macro_rules! with_mock_invoke_context {
             ),
         ];
         let instruction_accounts =
-            InstructionAccountViewVector::from_vector(vec![InstructionAccountView::new(
-                2, 2, 0, false, true,
-            )]);
+            InstructionAccountViewVector::from_vector(vec![InstructionAccountView {
+                index_in_transaction: 2,
+                index_in_caller: 2,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            }]);
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,

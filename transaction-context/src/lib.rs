@@ -90,6 +90,7 @@ impl InstructionAccountViewVector {
         });
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn from_vector(vector: Vec<InstructionAccountView>) -> InstructionAccountViewVector {
         let mut view_owner = Self::with_capacity(vector.len());
         for item in vector {
@@ -113,7 +114,7 @@ impl InstructionAccountViewVector {
     }
 
     /// Retrieve a range of the `InstructionAccount` vector as immutable.
-    pub fn get_metadata(&self, range: Range<usize>) -> Option<&[InstructionAccount]> {
+    pub fn get_metadata_for_test(&self, range: Range<usize>) -> Option<&[InstructionAccount]> {
         self.metadata.get(range)
     }
 
@@ -127,6 +128,9 @@ impl InstructionAccountViewVector {
         self.metadata.is_empty()
     }
 }
+
+/// Index of an account inside the TransactionContext or an InstructionContext.
+pub type IndexOfAccount = u16;
 
 /// `InstructionAccountView` is a view struct that merges `InstructionAccount` and
 /// `AccountCallIndexes` for easier handling outside of runtime.
@@ -147,43 +151,6 @@ pub struct InstructionAccountView {
     /// This excludes the program accounts.
     pub index_in_callee: IndexOfAccount,
 }
-
-impl InstructionAccountView {
-    pub fn new(
-        index_in_transaction: IndexOfAccount,
-        index_in_caller: IndexOfAccount,
-        index_in_callee: IndexOfAccount,
-        is_signer: bool,
-        is_writable: bool,
-    ) -> InstructionAccountView {
-        InstructionAccountView {
-            index_in_transaction,
-            index_in_caller,
-            index_in_callee,
-            is_writable,
-            is_signer,
-        }
-    }
-
-    pub fn is_signer(&self) -> bool {
-        self.is_signer
-    }
-
-    pub fn is_writable(&self) -> bool {
-        self.is_writable
-    }
-
-    pub fn set_is_signer(&mut self, value: bool) {
-        self.is_signer = value;
-    }
-
-    pub fn set_is_writable(&mut self, value: bool) {
-        self.is_writable = value;
-    }
-}
-
-/// Index of an account inside the TransactionContext or an InstructionContext.
-pub type IndexOfAccount = u16;
 
 /// `AccountCallIndexes` saves indexes of the account relative to the caller and callee.
 /// These values are only used by the runtime and are not accessible to programs.

@@ -41,13 +41,13 @@ pub(crate) fn process_message(
                 .unwrap_or(instruction_account_index)
                 as IndexOfAccount;
             let index_in_transaction = *index_in_transaction as usize;
-            instruction_accounts.push(InstructionAccountView::new(
-                index_in_transaction as IndexOfAccount,
-                index_in_transaction as IndexOfAccount,
+            instruction_accounts.push(InstructionAccountView {
+                index_in_transaction: index_in_transaction as IndexOfAccount,
+                index_in_caller: index_in_transaction as IndexOfAccount,
                 index_in_callee,
-                message.is_signer(index_in_transaction),
-                message.is_writable(index_in_transaction),
-            ));
+                is_signer: message.is_signer(index_in_transaction),
+                is_writable: message.is_writable(index_in_transaction),
+            });
         }
 
         let mut compute_units_consumed = 0;

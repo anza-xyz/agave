@@ -411,7 +411,13 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccountView::new(0, 0, 0, false, true));
+            instruction_accounts.push(InstructionAccountView {
+                index_in_transaction: 0,
+                index_in_caller: 0,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            });
             vec![]
         }
         Err(_) => {
@@ -481,13 +487,13 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                     idx
                 };
 
-                let instr_acc = InstructionAccountView::new(
-                    txn_acct_index as IndexOfAccount,
-                    txn_acct_index as IndexOfAccount,
-                    txn_acct_index as IndexOfAccount,
-                    account_info.is_signer.unwrap_or(false),
-                    account_info.is_writable.unwrap_or(false),
-                );
+                let instr_acc = InstructionAccountView {
+                    index_in_transaction: txn_acct_index as IndexOfAccount,
+                    index_in_caller: txn_acct_index as IndexOfAccount,
+                    index_in_callee: txn_acct_index as IndexOfAccount,
+                    is_signer: account_info.is_signer.unwrap_or(false),
+                    is_writable: account_info.is_writable.unwrap_or(false),
+                };
                 new_instr_accs.push(instr_acc);
             }
             instruction_accounts = std::mem::take(&mut new_instr_accs);

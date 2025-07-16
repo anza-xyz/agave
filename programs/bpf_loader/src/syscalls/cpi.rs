@@ -875,8 +875,8 @@ where
             accounts.push(TranslatedAccount {
                 index_in_caller: instruction_account.index_in_caller,
                 caller_account,
-                update_caller_account_region: instruction_account.is_writable() || update_caller,
-                update_caller_account_info: instruction_account.is_writable(),
+                update_caller_account_region: instruction_account.is_writable || update_caller,
+                update_caller_account_info: instruction_account.is_writable,
             });
         } else {
             ic_msg!(
@@ -1326,13 +1326,13 @@ mod tests {
             let mut instruction_accounts = InstructionAccountViewVector::new();
             for (index_in_callee, index_in_transaction) in $instruction_accounts.iter().enumerate()
             {
-                instruction_accounts.push(InstructionAccountView::new(
-                    *index_in_transaction as IndexOfAccount,
-                    *index_in_transaction as IndexOfAccount,
-                    index_in_callee as IndexOfAccount,
-                    false,
-                    $transaction_accounts[*index_in_transaction as usize].2,
-                ));
+                instruction_accounts.push(InstructionAccountView {
+                    index_in_transaction: *index_in_transaction as IndexOfAccount,
+                    index_in_caller: *index_in_transaction as IndexOfAccount,
+                    index_in_callee: index_in_callee as IndexOfAccount,
+                    is_signer: false,
+                    is_writable: $transaction_accounts[*index_in_transaction as usize].2,
+                });
             }
             let transaction_accounts = $transaction_accounts
                 .into_iter()
@@ -1878,8 +1878,20 @@ mod tests {
         mock_create_vm!(_vm, Vec::new(), vec![account_metadata], &mut invoke_context);
 
         let instruction_accounts = InstructionAccountViewVector::from_vector(vec![
-            InstructionAccountView::new(1, 0, 0, false, true),
-            InstructionAccountView::new(1, 0, 0, false, true),
+            InstructionAccountView {
+                index_in_transaction: 1,
+                index_in_caller: 0,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            },
+            InstructionAccountView {
+                index_in_transaction: 1,
+                index_in_caller: 0,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            },
         ]);
         let accounts = SyscallInvokeSignedRust::translate_accounts(
             &instruction_accounts,
