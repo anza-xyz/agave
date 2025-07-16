@@ -973,11 +973,21 @@ where
 
     fn unregister_banking_stage(&self) {
         if self.block_production_supported() {
-            self.banking_stage_handler_context
+            #[derive(Debug)]
+            struct DummyBankingMinitor;
+
+            impl BankingStageMonitor for DummyBankingMinitor {
+                fn status(&mut self) -> BankingStageStatus {
+                    BankingStageStatus::Active
+                }
+            }
+
+            let mut a = self.banking_stage_handler_context
                 .lock()
-                .unwrap()
-                .take()
                 .unwrap();
+                //.take()
+                //.unwrap();
+            a.banking_stage_monitor = Box::new(DummyBankingMinitor);
         }
     }
 
