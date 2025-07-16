@@ -15,6 +15,12 @@ Release channels have their own copy of this changelog:
 <a name="edge-channel"></a>
 ## 3.0.0 - Unreleased
 
+### RPC
+
+#### Breaking
+* Added a `slot` property to `EpochRewardsPeriodActiveErrorData`
+* Created `SlotNotEpochBoundaryErrorData` which newly materializes as error data on `RpcCustomError::SlotNotEpochBoundary` where there was none before
+
 ### Validator
 
 #### Breaking
