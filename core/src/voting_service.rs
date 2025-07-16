@@ -90,7 +90,7 @@ struct TestControl {
     _version: u8,         // This is part of Record program header
     _authority: [u8; 32], // This is part of Record program header
     test_interval_slots: u8,
-    _future_use: [u8; 3],
+    _future_use: [u8; 1],
 }
 
 // Returns the current test periodicity
@@ -126,13 +126,12 @@ impl VotingService {
         let thread_hdl = Builder::new()
             .name("solVoteService".to_string())
             .spawn({
-                let cluster_info = cluster_info.clone();
                 let mut mock_alpenglow = alpenglow_socket
                     .map(|s| MockAlpenglowConsensus::new(s, cluster_info.clone(), epoch_specs));
                 move || {
                     for vote_op in vote_receiver.iter() {
                         // Figure out if we are casting a vote for a new slot, and what slot it is for
-                        let slot = match vote_op {
+                        let vote_slot = match vote_op {
                             VoteOp::PushVote {
                                 tx: _,
                                 ref tower_slots,
@@ -149,14 +148,14 @@ impl VotingService {
                             connection_cache.clone(),
                         );
                         // trigger mock alpenglow vote if we have just cast an actual vote
-                        if let Some(slot) = slot {
+                        if let Some(slot) = vote_slot {
                             if let Some(ag) = mock_alpenglow.as_mut() {
                                 if let Some(interval) =
                                     get_test_interval(&bank_forks.read().unwrap().root_bank())
                                 {
                                     ag.signal_new_slot(slot, interval);
                                 } else {
-                                    info!("Alpenglow votes disabled by on-chain config")
+                                    debug!("Alpenglow votes disabled by on-chain config")
                                 };
                             }
                         }
