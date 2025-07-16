@@ -401,12 +401,14 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
                     .get(start..start + pre_len)
                     .ok_or(InstructionError::InvalidArgument)?;
                 // The redundant check helps to avoid the expensive data comparison if we can
-                match borrowed_account.can_data_be_resized(data.len()) {
+                match borrowed_account.can_data_be_resized(pre_len) {
                     Ok(()) => borrowed_account.set_data_from_slice(data)?,
                     Err(err) if borrowed_account.get_data() != data => return Err(err),
                     _ => {}
                 }
                 start += pre_len; // data
+            } else if borrowed_account.get_data().len() != pre_len {
+                borrowed_account.set_data_length(pre_len)?;
             }
             start += size_of::<Pubkey>() // owner
                 + size_of::<u8>() // executable
