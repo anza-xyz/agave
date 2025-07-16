@@ -571,7 +571,7 @@ mod tests {
         solana_keypair::Keypair,
         solana_ledger::{
             genesis_utils::create_genesis_config_with_leader,
-            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+            shred::{Nonce, ProcessShredsStats, ReedSolomonCache, Shredder},
         },
         solana_perf::packet::{Packet, PacketFlags, PinnedPacketBatch},
         solana_runtime::bank::Bank,
@@ -652,10 +652,9 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [true, false],
         [true, false]
     )]
-    fn test_maybe_verify_and_resign_packet(repaired: bool, chained: bool, is_last_in_slot: bool) {
+    fn test_maybe_verify_and_resign_packet(repaired: bool, is_last_in_slot: bool) {
         let mut rng = rand::thread_rng();
 
         let leader_keypair = Arc::new(Keypair::new());
@@ -670,7 +669,7 @@ mod tests {
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
 
-        let chained_merkle_root = chained.then(|| Hash::new_from_array(rng.gen()));
+        let chained_merkle_root = Some(Hash::new_from_array(rng.gen()));
 
         let shredder = Shredder::new(root_bank.slot(), root_bank.parent_slot(), 0, 0).unwrap();
         let entries = vec![Entry::new(&Hash::default(), 0, vec![])];
@@ -702,12 +701,12 @@ mod tests {
         for shred in shreds.iter_mut() {
             let keypair = Keypair::new();
             let signature = Signature::new_unique();
-
-            if chained && is_last_in_slot {
+            let nonce = repaired.then(|| rng.gen::<Nonce>());
+            if is_last_in_slot {
                 shred.set_retransmitter_signature(&signature).unwrap();
                 let signature_offset = shred.retransmitter_signature_offset().unwrap();
 
-                let packet = &mut shred.payload().to_packet();
+                let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -729,7 +728,7 @@ mod tests {
                     &modified_shred[signature_offset..signature_offset + SIGNATURE_BYTES];
                 assert_ne!(signature.as_array(), new_signature);
 
-                let mut bytes_packet = shred.payload().to_bytes_packet();
+                let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -756,7 +755,7 @@ mod tests {
                     Err(shred::Error::InvalidShredVariant)
                 );
 
-                let packet = &mut shred.payload().to_packet();
+                let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -782,7 +781,7 @@ mod tests {
                     Err(shred::Error::InvalidShredVariant)
                 );
 
-                let mut bytes_packet = shred.payload().to_bytes_packet();
+                let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     bytes_packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }

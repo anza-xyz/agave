@@ -489,16 +489,17 @@ mod tests {
         for shred in shreds.iter_mut() {
             let keypair = Keypair::new();
             let signature = make_dummy_signature(&mut rng);
+            let nonce = repaired.then(|| rng.gen::<Nonce>());
             if chained && is_last_in_slot {
                 shred.set_retransmitter_signature(&signature).unwrap();
 
-                let packet = &mut shred.payload().to_packet();
+                let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
                 resign_packet(&mut packet.into(), &keypair).unwrap();
 
-                let packet = &mut shred.payload().to_bytes_packet();
+                let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -509,7 +510,7 @@ mod tests {
                     Err(Error::InvalidShredVariant)
                 );
 
-                let packet = &mut shred.payload().to_packet();
+                let packet = &mut shred.payload().to_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -518,7 +519,7 @@ mod tests {
                     Err(Error::InvalidShredVariant)
                 );
 
-                let packet = &mut shred.payload().to_bytes_packet();
+                let packet = &mut shred.payload().to_bytes_packet(nonce);
                 if repaired {
                     packet.meta_mut().flags |= PacketFlags::REPAIR;
                 }
@@ -555,7 +556,7 @@ mod tests {
         }
         for shred in &shreds {
             let nonce = repaired.then(|| rng.gen::<Nonce>());
-            let mut packet = shred.payload().to_packet();
+            let mut packet = shred.payload().to_packet(nonce);
             if repaired {
                 packet.meta_mut().flags |= PacketFlags::REPAIR;
             }
