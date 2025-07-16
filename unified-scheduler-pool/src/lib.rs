@@ -731,11 +731,7 @@ where
                 // preceding `.trash_taken()` and following `.put_spawned()` must be done
                 // atomically. That's why we pass around MutexGuard into
                 // spawn_block_production_scheduler().
-                if self.should_respawn() {
-                    info!("respawning scheduler after being trashed...");
-                    self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
-                    info!("respawned scheduler after being trashed.");
-                }
+                self.spawn_block_production_scheduler(&mut block_production_scheduler_inner);
             }
 
             // Delay drop()-ing this trashed returned scheduler inner by stashing it in
@@ -839,13 +835,6 @@ where
             .unwrap()
             .as_mut()
             .map(|context| context.banking_stage_monitor.status())
-    }
-
-    fn should_respawn(&self) -> bool {
-        !matches!(
-            self.banking_stage_status(),
-            None | Some(BankingStageStatus::Exited)
-        )
     }
 
     fn create_handler_context(
@@ -2599,7 +2588,6 @@ impl<TH: TaskHandler> SpawnableScheduler<TH> for PooledScheduler<TH> {
 pub enum BankingStageStatus {
     Active,
     Inactive,
-    Exited,
 }
 
 pub trait BankingStageMonitor: Send + Debug {
