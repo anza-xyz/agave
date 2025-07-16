@@ -4578,10 +4578,7 @@ impl Bank {
 
     /// Used by ledger tool to run a final hash calculation once all ledger replay has completed.
     /// This should not be called by validator code.
-    pub fn run_final_hash_calc(
-        &self,
-        _on_halt_store_hash_raw_data_for_debug: bool, // will be removed next
-    ) {
+    pub fn run_final_hash_calc(&self) {
         self.force_flush_accounts_cache();
         // note that this slot may not be a root
         _ = self.verify_accounts_hash(

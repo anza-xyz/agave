@@ -846,7 +846,7 @@ pub struct ProcessOptions {
     pub accounts_db_config: Option<AccountsDbConfig>,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
-    pub on_halt_store_hash_raw_data_for_debug: bool,
+    pub on_halt_store_hash_raw_data_for_debug: bool, // will be removed next
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
@@ -2009,7 +2009,7 @@ fn load_frozen_forks(
                 .unwrap_or(false);
             if done_processing {
                 if opts.run_final_accounts_hash_calc {
-                    bank.run_final_hash_calc(on_halt_store_hash_raw_data_for_debug);
+                    bank.run_final_hash_calc();
                 }
                 break;
             }
@@ -2024,11 +2024,7 @@ fn load_frozen_forks(
             )?;
         }
     } else if on_halt_store_hash_raw_data_for_debug {
-        bank_forks
-            .read()
-            .unwrap()
-            .root_bank()
-            .run_final_hash_calc(on_halt_store_hash_raw_data_for_debug);
+        bank_forks.read().unwrap().root_bank().run_final_hash_calc();
     }
 
     Ok((total_slots_processed, total_rooted_slots))
