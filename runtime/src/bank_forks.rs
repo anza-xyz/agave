@@ -317,7 +317,7 @@ impl BankForks {
         self.banks.values().map(|bank| bank.slot()).max().unwrap()
     }
 
-    pub fn unregister_banking_stage(&self) {
+    pub fn unregister_banking_stage_from_unified_scheduler(&self) {
         if let Some(scheduler_pool) = &self.scheduler_pool {
             scheduler_pool.unregister_banking_stage();
         }
