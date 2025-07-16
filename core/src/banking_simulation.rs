@@ -528,7 +528,12 @@ struct SimulatorThreads {
 }
 
 impl SimulatorThreads {
-    fn finish(self, sender_thread: EventSenderThread, retransmit_slots_sender: Sender<Slot>) {
+    fn finish(
+        self,
+        bank_forks: Arc<RwLock<BankForks>>,
+        sender_thread: EventSenderThread,
+        retransmit_slots_sender: Sender<Slot>,
+    ) {
         info!("Sleeping a bit before signaling exit");
         sleep(Duration::from_millis(100));
         self.exit.store(true, Ordering::Relaxed);
@@ -544,7 +549,20 @@ impl SimulatorThreads {
 
         info!("Joining broadcast stage...");
         drop(retransmit_slots_sender);
+        bank_forks
+            .read()
+            .unwrap()
+            .unregister_banking_stage_from_unified_scheduler();
+
         self.broadcast_stage.join().unwrap();
+
+        trace!("dropping bank_forks...");
+        let sc = Arc::strong_count(&bank_forks);
+        if let Some(bank_forks) = Arc::into_inner(bank_forks) {
+            drop::<BankForks>(bank_forks.into_inner().unwrap());
+        } else {
+            panic!("seems bankforks are leaking...{}:", sc);
+        }
     }
 }
 
@@ -926,7 +944,7 @@ impl BankingSimulator {
     ) -> Result<(), SimulateError> {
         let (sender_loop, simulator_loop, simulator_threads) = self.prepare_simulation(
             genesis_config,
-            bank_forks,
+            bank_forks.clone(),
             blockstore,
             block_production_method,
             transaction_struct,
@@ -941,7 +959,7 @@ impl BankingSimulator {
         let (sender_thread, retransmit_slots_sender) =
             simulator_loop.enter(base_simulation_time, sender_thread);
 
-        simulator_threads.finish(sender_thread, retransmit_slots_sender);
+        simulator_threads.finish(bank_forks, sender_thread, retransmit_slots_sender);
 
         Ok(())
     }
