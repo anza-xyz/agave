@@ -1,5 +1,5 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    bencher::{benchmark_group, benchmark_main, black_box, Bencher},
     rand::{Rng, SeedableRng},
     rand_chacha::ChaChaRng,
     solana_gossip::weighted_shuffle::WeightedShuffle,
