@@ -276,6 +276,70 @@ impl<T: Backing> BufRead for BufferedReader<'_, T> {
     }
 }
 
+struct BufReaderWithOverflow<R> {
+    reader: R,
+    overflow_buf: Vec<u8>,
+}
+
+impl<R: BufRead> BufReaderWithOverflow<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            overflow_buf: Vec::new(),
+        }
+    }
+}
+
+impl<R: BufRead> BufRead for BufReaderWithOverflow<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.overflow_buf.is_empty() {
+            self.reader.fill_buf()
+        } else {
+            Ok(&self.overflow_buf)
+        }
+    }
+
+    fn consume(&mut self, mut amt: usize) {
+        if !self.overflow_buf.is_empty() {
+            amt = amt
+                .checked_sub(self.overflow_buf.len())
+                .expect("all overflow bytes are required to be consumed");
+            self.overflow_buf.clear();
+        }
+        self.reader.consume(amt);
+    }
+}
+
+impl<R: BufRead> ContiguousBufFileRead for BufReaderWithOverflow<R> {
+    fn get_file_offset(&self) -> usize {
+        todo!()
+    }
+
+    fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]> {
+        let buf = self.reader.fill_buf()?;
+        let available_len = buf.len();
+        if available_len >= required_len || available_len == 0 {
+            return Ok(buf);
+        }
+        self.overflow_buf.resize(required_len, 0);
+        self.overflow_buf[..available_len].copy_from_slice(buf);
+        self.reader.consume(available_len);
+        self.reader.read(&mut self.overflow_buf[available_len..]);
+        Ok(&self.overflow_buf.as_slice())
+    }
+
+    fn fill_buf_required_or_overflow<'b>(
+        &'b mut self,
+        required_len: usize,
+        overflow_buffer: &'b mut Vec<u8>,
+    ) -> io::Result<&'b [u8]>
+    where
+        'a: 'b,
+    {
+        todo!()
+    }
+}
+
 /// Open file at `path` with buffering reader using `buf_size` memory and doing
 /// read-ahead IO reads (if `io_uring` is supported by the host)
 pub fn large_file_buf_reader(
