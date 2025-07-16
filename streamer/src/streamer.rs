@@ -3,10 +3,6 @@
 
 use {
     crate::{
-        atomic_udp_socket::{
-            AtomicSocketProvider, AtomicUdpSocket, CurrentSocket, FixedSocketProvider,
-            SocketProvider,
-        },
         packet::{
             self, PacketBatch, PacketBatchRecycler, PacketRef, PinnedPacketBatch, PACKETS_PER_BATCH,
         },
@@ -16,6 +12,9 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
+    solana_net_utils::multihomed_sockets::{
+        BindIpAddrs, CurrentSocket, FixedSocketProvider, MultihomedSocketProvider, SocketProvider,
+    },
     solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
@@ -293,7 +292,8 @@ pub fn receiver(
 #[allow(clippy::too_many_arguments)]
 pub fn receiver_atomic(
     thread_name: String,
-    socket: Arc<AtomicUdpSocket>,
+    sockets: Vec<Arc<UdpSocket>>,
+    bind_ip_addrs: Arc<BindIpAddrs>,
     exit: Arc<AtomicBool>,
     packet_batch_sender: impl ChannelSend<PacketBatch>,
     recycler: PacketBatchRecycler,
@@ -306,7 +306,7 @@ pub fn receiver_atomic(
     Builder::new()
         .name(thread_name)
         .spawn(move || {
-            let mut provider = AtomicSocketProvider::new(socket);
+            let mut provider = MultihomedSocketProvider::new(sockets, bind_ip_addrs);
             let _ = recv_loop(
                 &mut provider,
                 &exit,
@@ -539,7 +539,8 @@ pub fn recv_packet_batches(
 
 pub fn responder_atomic(
     name: &'static str,
-    sock: Arc<AtomicUdpSocket>,
+    sockets: Vec<Arc<UdpSocket>>,
+    bind_ip_addrs: Arc<BindIpAddrs>,
     r: PacketBatchReceiver,
     socket_addr_space: SocketAddrSpace,
     stats_reporter_sender: Option<Sender<Box<dyn FnOnce() + Send>>>,
@@ -548,7 +549,7 @@ pub fn responder_atomic(
         .name(format!("solRspndr{name}"))
         .spawn(move || {
             responder_loop(
-                AtomicSocketProvider::new(sock),
+                MultihomedSocketProvider::new(sockets, bind_ip_addrs),
                 name,
                 r,
                 socket_addr_space,

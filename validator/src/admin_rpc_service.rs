@@ -16,9 +16,11 @@ use {
         validator::ValidatorStartProgress,
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
-    solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+    solana_gossip::{
+        contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},
+        egress_socket_select,
+    },
     solana_keypair::{read_keypair_file, Keypair},
-    solana_net_utils::sockets::bind_to,
     solana_pubkey::Pubkey,
     solana_rpc::rpc::verify_pubkey,
     solana_rpc_client_api::{config::RpcAccountIndex, custom_error::RpcCustomError},
@@ -28,7 +30,7 @@ use {
         collections::{HashMap, HashSet},
         env, error,
         fmt::{self, Display},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, Ordering},
@@ -222,8 +224,28 @@ pub trait AdminRpc {
     #[rpc(meta, name = "contactInfo")]
     fn contact_info(&self, meta: Self::Metadata) -> Result<AdminRpcContactInfo>;
 
-    #[rpc(meta, name = "setGossipSocket")]
-    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()>;
+    // #[rpc(meta, name = "setGossipSocket")]
+    // fn set_gossip_socket(&self, meta: Self::Metadata, interface_index: usize, port: u16) -> Result<()>;
+
+    // #[rpc(meta, name = "setTvuIngressAdvertisedAddress")]
+    // fn set_tvu_ingress_advertised_address(
+    //     &self,
+    //     meta: Self::Metadata,
+    //     interface_index: usize,
+    // ) -> Result<()>;
+
+    // #[rpc(meta, name = "setRetransmitSocketsInterface")]
+    // fn set_retransmit_sockets_interface(
+    //     &self,
+    //     meta: Self::Metadata,
+    //     interface_index: usize,
+    // ) -> Result<()>;
+
+    #[rpc(meta, name = "getActiveInterface")]
+    fn active_interface(&self, meta: Self::Metadata) -> Result<String>;
+
+    #[rpc(meta, name = "selectActiveInterface")]
+    fn select_active_interface(&self, meta: Self::Metadata, interface_index: usize) -> Result<()>;
 
     #[rpc(meta, name = "repairShredFromPeer")]
     fn repair_shred_from_peer(
@@ -548,31 +570,217 @@ impl AdminRpc for AdminRpcImpl {
         meta.with_post_init(|post_init| Ok(post_init.cluster_info.my_contact_info().into()))
     }
 
-    fn set_gossip_socket(&self, meta: Self::Metadata, ip: String, port: u16) -> Result<()> {
-        let ip: IpAddr = ip
-            .parse()
-            .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Invalid IP address: {e}")))?;
-        let new_addr = SocketAddr::new(ip, port);
+    // fn set_gossip_socket(&self, meta: Self::Metadata, interface_index: usize, port: u16) -> Result<()> {
+    //     meta.with_post_init(|post_init| {
+    //         if let Some(node) = &post_init.node {
+    //             let ip_addr = node.bind_ip_addrs.set_active(interface_index).map_err(|e| {
+    //                 jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+    //             })?;
+    //             let new_addr = SocketAddr::new(ip_addr, port);
+    //             let socket = &node.sockets.gossip;
+    //             let new_socket = bind_to(new_addr.ip(), new_addr.port()).map_err(|e| {
+    //                 jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
+    //             })?;
 
+    //             // hot-swap new socket
+    //             socket.swap(new_socket);
+
+    //             // update gossip socket in cluster info
+    //             post_init
+    //                 .cluster_info
+    //                 .set_gossip_socket(new_addr)
+    //                 .map_err(|e| {
+    //                     jsonrpc_core::Error::invalid_params(format!(
+    //                         "Failed to refresh gossip ContactInfo: {e}"
+    //                     ))
+    //                 })?;
+    //         }
+    //         Ok(())
+    //     })
+    // }
+
+    // fn set_tvu_ingress_advertised_address(
+    //     &self,
+    //     meta: Self::Metadata,
+    //     interface_index: usize,
+    // ) -> Result<()> {
+    //     info!(
+    //         "greg: set_tvu_ingress_advertised_address interface received: {}",
+    //         interface_index
+    //     );
+    //     meta.with_post_init(|post_init| {
+    //         if let Some(node) = &post_init.node {
+    //             let sockets_per_interface = node.num_tvu_receive_sockets.get();
+    //             let offset = interface_index.saturating_mul(sockets_per_interface);
+    //             if offset >= node.sockets.tvu.len() {
+    //                 return Err(jsonrpc_core::Error::invalid_params( format!(
+    //                     "Interface index {interface_index} out of range: tvu has {} sockets but needs offset {offset}",
+    //                     node.sockets.tvu.len()
+    //                 )));
+    //             }
+    //             let socket_address = node.sockets.tvu[offset]
+    //                 .local_addr()
+    //                 .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Failed to get socket address at tvu socket offset {}: {}", offset, e)))?;
+
+    //             let ip_addr = node.bind_ip_addrs.set_active(interface_index).map_err(|e| {
+    //                 jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+    //             })?;
+
+    //             if ip_addr != socket_address.ip() {
+    //                 return Err(jsonrpc_core::Error::invalid_params(format!("IP address mismatch: expected {} but got {}", ip_addr, socket_address.ip())));
+    //             }
+
+    //             post_init.cluster_info.set_tvu_socket(socket_address).map_err(|e| {
+    //                 jsonrpc_core::Error::invalid_params(format!("Failed to set TVU socket: {}", e))
+    //             })?;
+
+    //             info!("greg: set_tvu_ingress_advertised_address success.");
+    //         }
+    //         Ok(())
+    //     })
+    // }
+
+    // fn set_retransmit_sockets_interface(
+    //     &self,
+    //     meta: Self::Metadata,
+    //     interface_index: usize,
+    // ) -> Result<()> {
+    //     info!(
+    //         "greg: set_retransmit_sockets interface received: {}",
+    //         interface_index
+    //     );
+    //     meta.with_post_init(|post_init| {
+    //         if let Some(node) = &post_init.node {
+    //             let sockets_per_interface = node.num_tvu_retransmit_sockets.get();
+    //             let offset = interface_index.saturating_mul(sockets_per_interface);
+    //             if offset >= node.sockets.retransmit_sockets.len() {
+    //                 return Err(jsonrpc_core::Error::invalid_params(format!(
+    //                     "Interface index {interface_index} out of range: retransmit_sockets has {} sockets but needs offset {offset}",
+    //                     node.sockets.retransmit_sockets.len()
+    //                 )));
+    //             }
+
+    //             let socket_address = node.sockets.retransmit_sockets[offset]
+    //                 .local_addr()
+    //                 .map_err(|e| jsonrpc_core::Error::invalid_params(format!(
+    //                     "Failed to get socket address at retransmit_sockets offset {}: {}", offset, e
+    //                 )))?;
+
+    //             let ip_addr = node.bind_ip_addrs.set_active(interface_index).map_err(|e| {
+    //                 jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+    //             })?;
+
+    //             if ip_addr != socket_address.ip() {
+    //                 return Err(jsonrpc_core::Error::invalid_params(format!(
+    //                     "IP address mismatch: expected {} but got {}",
+    //                     ip_addr,
+    //                     socket_address.ip()
+    //                 )));
+    //             }
+
+    //             egress_socket_select::select_interface(interface_index);
+
+    //             info!("greg: set_retransmit_sockets_interface success.");
+    //         }
+    //         Ok(())
+    //     })
+    // }
+
+    fn active_interface(&self, meta: Self::Metadata) -> Result<String> {
         meta.with_post_init(|post_init| {
-            if let Some(socket) = &post_init.gossip_socket {
-                let new_socket = bind_to(new_addr.ip(), new_addr.port()).map_err(|e| {
-                    jsonrpc_core::Error::invalid_params(format!("Gossip socket rebind failed: {e}"))
-                })?;
+            if let Some(node) = &post_init.node {
+                let interface_ip = node.bind_ip_addrs.active().to_string();
 
-                // hot-swap new socket
-                socket.swap(new_socket);
+                info!(
+                    "greg: active_interface queried. Current interface: {}",
+                    interface_ip
+                );
 
-                // update gossip socket in cluster info
-                post_init
-                    .cluster_info
-                    .set_gossip_socket(new_addr)
-                    .map_err(|e| {
-                        jsonrpc_core::Error::invalid_params(format!(
-                            "Failed to refresh gossip ContactInfo: {e}"
-                        ))
-                    })?;
+                Ok(interface_ip)
+            } else {
+                Err(jsonrpc_core::Error::invalid_params(
+                    "`Node` not initialized in `post_init`",
+                ))
             }
+        })
+    }
+
+    /// Implementation Question: Do we force these all switch at once?
+    /// Or do we allow them to switch independently?
+    fn select_active_interface(&self, meta: Self::Metadata, interface_index: usize) -> Result<()> {
+        info!(
+            "greg: select_active_interface received: {}",
+            interface_index
+        );
+        meta.with_post_init(|post_init| {
+            let node = post_init.node.as_ref().ok_or_else(|| {
+                jsonrpc_core::Error::invalid_params("`Node` not initialized in post_init")
+            })?;
+
+            let ip_addr = node.bind_ip_addrs.set_active(interface_index).map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!("Invalid interface index: {}", e))
+            })?;
+
+            // ---- 2. Update every ContactInfo address ----
+            // (a) Gossip
+            let gossip_sock = &node.sockets.gossip[interface_index];
+            let gossip_addr = gossip_sock.local_addr().map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!("Failed to get socket address at gossip socket offset {}: {}", interface_index, e))
+            })?;
+
+            // (b) TVU ingress
+            let sockets_per_interface = node.num_tvu_receive_sockets.get();
+            let offset = interface_index.saturating_mul(sockets_per_interface);
+            if offset >= node.sockets.tvu.len() {
+                return Err(jsonrpc_core::Error::invalid_params( format!(
+                    "Interface index {interface_index} out of range: tvu has {} sockets but needs offset {offset}",
+                    node.sockets.tvu.len()
+                )));
+            }
+            let tvu_ingress_socket_address = node.sockets.tvu[offset]
+                .local_addr()
+                .map_err(|e| jsonrpc_core::Error::invalid_params(format!("Failed to get socket address at tvu socket offset {}: {}", offset, e)))?;
+
+            // Sanity Check
+            if ip_addr != tvu_ingress_socket_address.ip() {
+                return Err(jsonrpc_core::Error::invalid_params(format!("IP address mismatch: expected {} but got {}", ip_addr, tvu_ingress_socket_address.ip())));
+            }
+
+            // (c) TVU Retransmit - Just update send sockets. These are not advertised.
+            let sockets_per_interface = node.num_tvu_retransmit_sockets.get();
+            let offset = interface_index.saturating_mul(sockets_per_interface);
+            if offset >= node.sockets.retransmit_sockets.len() {
+                return Err(jsonrpc_core::Error::invalid_params(format!(
+                    "Interface index {interface_index} out of range: retransmit_sockets has {} sockets but needs offset {offset}",
+                    node.sockets.retransmit_sockets.len()
+                )));
+            }
+
+            let tvu_retransmit_socket_address = node.sockets.retransmit_sockets[offset]
+                .local_addr()
+                .map_err(|e| jsonrpc_core::Error::invalid_params(format!(
+                    "Failed to get socket address at retransmit_sockets offset {}: {}", offset, e
+                )))?;
+
+            // Sanity Check
+            if ip_addr != tvu_retransmit_socket_address.ip() {
+                return Err(jsonrpc_core::Error::invalid_params(format!(
+                    "IP address mismatch: expected {} but got {}",
+                    ip_addr,
+                    tvu_retransmit_socket_address.ip()
+                )));
+            }
+
+            // Set the new socket addresses
+            post_init.cluster_info.refresh_sockets(gossip_addr, tvu_ingress_socket_address).map_err(|e| {
+                jsonrpc_core::Error::invalid_params(format!("Failed to refresh sockets: {}", e))
+            })?;
+            // Send from correct tvu retransmit sockets
+            egress_socket_select::select_interface(interface_index);
+
+            info!("Switched interface to {interface_index} ({ip_addr}); \
+            Gossip={gossip_addr} TVU={tvu_ingress_socket_address} TVU_RETRANSMIT={tvu_retransmit_socket_address}");
+
             Ok(())
         })
     }
@@ -1037,7 +1245,7 @@ mod tests {
                     cluster_slots: Arc::new(
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
-                    gossip_socket: None,
+                    node: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

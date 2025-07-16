@@ -24,10 +24,10 @@ use {
         snapshot_utils,
     },
     solana_signer::Signer,
-    solana_streamer::{atomic_udp_socket::AtomicUdpSocket, socket::SocketAddrSpace},
+    solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{hash_map::RandomState, HashMap, HashSet},
-        net::{SocketAddr, TcpListener, TcpStream},
+        net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
         path::Path,
         process::exit,
         sync::{
@@ -78,8 +78,8 @@ fn verify_reachable_ports(
             .unwrap_or_default()
     };
 
-    let gossip_socket = node.sockets.gossip.load();
-    let mut udp_sockets = vec![&gossip_socket, &node.sockets.repair];
+    let mut udp_sockets = vec![&node.sockets.repair];
+    udp_sockets.extend(node.sockets.gossip.iter().map(|socket| socket.as_ref()));
 
     if verify_address(&node.info.serve_repair(Protocol::UDP)) {
         udp_sockets.push(&node.sockets.serve_repair);
@@ -96,9 +96,14 @@ fn verify_reachable_ports(
         udp_sockets.extend(node.sockets.tpu_vote.iter());
     }
     if verify_address(&node.info.tvu(Protocol::UDP)) {
-        udp_sockets.extend(node.sockets.tvu.iter());
+        udp_sockets.extend(node.sockets.tvu.iter().map(|socket| socket.as_ref()));
         udp_sockets.extend(node.sockets.broadcast.iter());
-        udp_sockets.extend(node.sockets.retransmit_sockets.iter());
+        udp_sockets.extend(
+            node.sockets
+                .retransmit_sockets
+                .iter()
+                .map(|socket| socket.as_ref()),
+        );
     }
     if !solana_net_utils::verify_all_reachable_udp(
         &cluster_entrypoint.gossip().unwrap(),
@@ -143,7 +148,7 @@ fn start_gossip_node(
     cluster_entrypoints: &[ContactInfo],
     ledger_path: &Path,
     gossip_addr: &SocketAddr,
-    gossip_socket: AtomicUdpSocket,
+    gossip_sockets: Vec<Arc<UdpSocket>>,
     expected_shred_version: u16,
     gossip_validators: Option<HashSet<Pubkey>>,
     should_check_duplicate_instance: bool,
@@ -163,7 +168,7 @@ fn start_gossip_node(
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
-        gossip_socket,
+        gossip_sockets,
         gossip_validators,
         should_check_duplicate_instance,
         None,

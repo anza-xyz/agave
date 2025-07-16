@@ -12,7 +12,7 @@ use {
     rand::Rng,
     rayon::{prelude::*, ThreadPool, ThreadPoolBuilder},
     solana_clock::Slot,
-    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
+    solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol, egress_socket_select},
     solana_ledger::{
         leader_schedule_cache::LeaderScheduleCache,
         shred::{self, ShredFlags, ShredId, ShredType},
@@ -231,7 +231,7 @@ fn retransmit(
     leader_schedule_cache: &LeaderScheduleCache,
     cluster_info: &ClusterInfo,
     retransmit_receiver: &Receiver<Vec<shred::Payload>>,
-    retransmit_sockets: &[UdpSocket],
+    retransmit_sockets: &[Arc<UdpSocket>],
     quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     xdp_sender: Option<&XdpSender>,
     stats: &mut RetransmitStats,
@@ -342,9 +342,28 @@ fn retransmit(
         )
     };
 
-    let retransmit_socket = |index| {
+    let num_retransmit_sockets_per_interface =
+        egress_socket_select::num_retransmit_sockets_per_interface();
+    let retransmit_socket = |index: usize| {
         let socket = xdp_sender.map(RetransmitSocket::Xdp).unwrap_or_else(|| {
-            RetransmitSocket::Socket(&retransmit_sockets[index % retransmit_sockets.len()])
+            let interface_offset = egress_socket_select::active_offset();
+
+            // greg: todo if we do this we need to make sure our offset index does not exceed the number of retransmit sockets
+            let socket: &UdpSocket = retransmit_sockets
+                [interface_offset + (index % num_retransmit_sockets_per_interface)]
+                .as_ref();
+            if rand::thread_rng().gen_ratio(1, 5000) {
+                error!(
+                    "greg: retransmit_socket index: {}, interface_offset: {}",
+                    index, interface_offset
+                );
+                info!("greg: retransmit_socket socket: {:?}", socket.local_addr());
+            }
+            RetransmitSocket::Socket(socket)
+            // RetransmitSocket::Socket(
+            //     &retransmit_sockets
+            //         [(interface_offset + index) % num_retransmit_sockets_per_interface],
+            // )
         });
         socket
     };
@@ -443,10 +462,7 @@ fn retransmit_shred(
             RetransmitSocket::Socket(socket) => match multi_target_send(socket, shred, &addrs) {
                 Ok(()) => num_addrs,
                 Err(SendPktsError::IoError(ioerr, num_failed)) => {
-                    error!(
-                        "retransmit_to multi_target_send error: {ioerr:?}, \
-                         {num_failed}/{num_addrs} packets failed"
-                    );
+                    error!("retransmit_to multi_target_send error: {ioerr:?}, {num_failed}/{} packets failed", num_addrs);
                     num_addrs - num_failed
                 }
             },
@@ -583,7 +599,7 @@ impl RetransmitStage {
         bank_forks: Arc<RwLock<BankForks>>,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
         cluster_info: Arc<ClusterInfo>,
-        retransmit_sockets: Arc<Vec<UdpSocket>>,
+        retransmit_sockets: Vec<Arc<UdpSocket>>,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         retransmit_receiver: Receiver<Vec<shred::Payload>>,
         max_slots: Arc<MaxSlots>,

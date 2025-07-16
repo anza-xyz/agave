@@ -25,7 +25,7 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
+        cluster_info::{ClusterInfo, Node, NodeConfig},
         contact_info::Protocol,
     },
     solana_inflation::Inflation,
@@ -38,7 +38,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::sol_to_lamports,
-    solana_net_utils::{find_available_ports_in_range, PortRange},
+    solana_net_utils::{find_available_ports_in_range, multihomed_sockets::BindIpAddrs, PortRange},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -1035,7 +1035,7 @@ impl TestValidator {
         let node = {
             let bind_ip_addr = config.node_config.bind_ip_addr;
             let validator_node_config = NodeConfig {
-                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                bind_ip_addrs: Arc::new(BindIpAddrs::new(vec![bind_ip_addr])?),
                 gossip_port: config.node_config.gossip_addr.port(),
                 port_range: config.node_config.port_range,
                 advertised_ip: bind_ip_addr,

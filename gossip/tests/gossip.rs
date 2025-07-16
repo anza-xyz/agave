@@ -34,7 +34,7 @@ use {
     },
 };
 
-fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
+fn test_node(exit: Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, Arc<UdpSocket>) {
     let keypair = Arc::new(Keypair::new());
     let mut test_node = Node::new_localhost_with_pubkey(&keypair.pubkey());
     let cluster_info = Arc::new(ClusterInfo::new(
@@ -63,7 +63,7 @@ fn test_node_with_bank(
     node_keypair: Arc<Keypair>,
     exit: Arc<AtomicBool>,
     bank_forks: Arc<RwLock<BankForks>>,
-) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
+) -> (Arc<ClusterInfo>, GossipService, Arc<UdpSocket>) {
     let mut test_node = Node::new_localhost_with_pubkey(&node_keypair.pubkey());
     let cluster_info = Arc::new(ClusterInfo::new(
         test_node.info.clone(),
@@ -93,7 +93,7 @@ fn test_node_with_bank(
 /// tests that actually use this function are below
 fn run_gossip_topo<F>(num: usize, topo: F)
 where
-    F: Fn(&Vec<(Arc<ClusterInfo>, GossipService, UdpSocket)>),
+    F: Fn(&Vec<(Arc<ClusterInfo>, GossipService, Arc<UdpSocket>)>),
 {
     let exit = Arc::new(AtomicBool::new(false));
     let listen: Vec<_> = (0..num).map(|_| test_node(exit.clone())).collect();
