@@ -136,7 +136,7 @@ impl<'a> SyncIoFileCreator<'a> {
     }
 }
 
-#[cfg(windows)]
+#[cfg(not(unix))]
 pub(super) fn set_file_readonly(path: &std::path::Path, readonly: bool) -> io::Result<()> {
     let mut perm = std::fs::metadata(path)?.permissions();
     perm.set_readonly(readonly);
@@ -162,7 +162,7 @@ impl FileCreator for SyncIoFileCreator<'_> {
         io::copy(contents, &mut file_buf)?;
         file_buf.flush()?;
 
-        #[cfg(windows)]
+        #[cfg(not(unix))]
         set_file_readonly(&path, mode & 0o200 == 0)?;
 
         self.file_complete(path);
@@ -343,8 +343,8 @@ mod tests {
 
         let dir = Arc::new(File::open(temp_dir.path())?);
         for i in 0..5 {
-            let file_path = temp_dir.path().join(format!("file_{}.txt", i));
-            let data = format!("File {}", i);
+            let file_path = temp_dir.path().join(format!("file_{i}.txt"));
+            let data = format!("File {i}");
             creator.schedule_create_at_dir(
                 file_path,
                 0o600,

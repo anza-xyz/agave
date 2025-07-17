@@ -52,7 +52,7 @@ const MAX_GENESIS_ARCHIVE_UNPACKED_COUNT: u64 = 100;
 // - Many small files: each file consumes at least one write-capacity-sized chunk (0.5-1 MiB).
 // - Large files: their data may accumulate in backlog buffers while waiting for file open
 //   operations to complete.
-const UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
+const MAX_UNPACK_WRITE_BUF_SIZE: usize = 512 * 1024 * 1024;
 // Minimum for unpacking small archives - allows ~2-4 write-capacity-sized operations concurrently.
 const MIN_UNPACK_WRITE_BUF_SIZE: usize = 2 * 1024 * 1024;
 
@@ -117,7 +117,7 @@ where
     // e.g. 25%, of absolute maximum won't be necessary) - this works well for genesis,
     // while normal case hit the UNPACK_WRITE_BUF_SIZE tuned for it prod snapshot archive.
     let buf_size = (apparent_limit_size.div_ceil(4) as usize)
-        .clamp(MIN_UNPACK_WRITE_BUF_SIZE, UNPACK_WRITE_BUF_SIZE);
+        .clamp(MIN_UNPACK_WRITE_BUF_SIZE, MAX_UNPACK_WRITE_BUF_SIZE);
     let mut files_creator = file_creator(buf_size, file_path_processor)?;
 
     for entry in archive.entries()? {
@@ -324,14 +324,10 @@ fn sanitize_path_and_open_dir(
 fn validate_inside_dst(dst: &Path, file_dst: &Path) -> Result<PathBuf> {
     // Abort if target (canonical) parent is outside of `dst`
     let canon_parent = file_dst.canonicalize().map_err(|err| {
-        UnpackError::Archive(format!(
-            "{} while canonicalizing {}",
-            err,
-            file_dst.display()
-        ))
+        UnpackError::Archive(format!("{err} while canonicalizing {}", file_dst.display()))
     })?;
     let canon_target = dst.canonicalize().map_err(|err| {
-        UnpackError::Archive(format!("{} while canonicalizing {}", err, dst.display()))
+        UnpackError::Archive(format!("{err} while canonicalizing {}", dst.display()))
     })?;
     if !canon_parent.starts_with(&canon_target) {
         return Err(UnpackError::Archive(format!(
