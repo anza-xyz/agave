@@ -29,10 +29,9 @@ pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> A
                 .takes_value(true)
                 .global(true)
                 .help("Configuration file to use");
-            if let Some(ref config_file) = *CONFIG_FILE {
-                arg.default_value(config_file)
-            } else {
-                arg
+            match *CONFIG_FILE {
+                Some(ref config_file) => arg.default_value(config_file),
+                _ => arg,
             }
         })
         .arg(

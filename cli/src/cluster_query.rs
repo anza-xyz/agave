@@ -800,7 +800,8 @@ pub fn process_catchup(
     };
 
     let reported_node_pubkey = loop {
-        match node_client.get_identity() {
+        let identity = node_client.get_identity();
+        match identity {
             Ok(reported_node_pubkey) => break reported_node_pubkey,
             Err(err) => {
                 if let ClientErrorKind::Reqwest(err) = err.kind() {
@@ -943,17 +944,18 @@ pub fn process_catchup(
 
 pub fn process_cluster_date(rpc_client: &RpcClient, config: &CliConfig) -> ProcessResult {
     let result = rpc_client.get_account_with_commitment(&sysvar::clock::id(), config.commitment)?;
-    if let Some(clock_account) = result.value {
-        let clock: Clock = from_account(&clock_account).ok_or_else(|| {
-            CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
-        })?;
-        let block_time = CliBlockTime {
-            slot: result.context.slot,
-            timestamp: clock.unix_timestamp,
-        };
-        Ok(config.output_format.formatted_string(&block_time))
-    } else {
-        Err(format!("AccountNotFound: pubkey={}", sysvar::clock::id()).into())
+    match result.value {
+        Some(clock_account) => {
+            let clock: Clock = from_account(&clock_account).ok_or_else(|| {
+                CliError::RpcRequestError("Failed to deserialize clock sysvar".to_string())
+            })?;
+            let block_time = CliBlockTime {
+                slot: result.context.slot,
+                timestamp: clock.unix_timestamp,
+            };
+            Ok(config.output_format.formatted_string(&block_time))
+        }
+        _ => Err(format!("AccountNotFound: pubkey={}", sysvar::clock::id()).into()),
     }
 }
 
@@ -1685,7 +1687,8 @@ pub fn process_logs(config: &CliConfig, filter: &RpcTransactionLogsFilter) -> Pr
     )?;
 
     loop {
-        match receiver.recv() {
+        let response = receiver.recv();
+        match response {
             Ok(logs) => {
                 println!("Transaction executed in slot {}:", logs.context.slot);
                 println!("  Signature: {}", logs.value.signature);

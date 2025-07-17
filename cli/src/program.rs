@@ -706,22 +706,22 @@ pub fn parse_program_subcommand(
                 .value_of("program_location")
                 .map(|location| location.to_string());
 
-            let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
-                signer_of(matches, "buffer", wallet_manager)
-            {
-                bulk_signers.push(buffer_signer);
-                Some(buffer_pubkey)
-            } else {
-                pubkey_of_signer(matches, "buffer", wallet_manager)?
+            let signer = signer_of(matches, "buffer", wallet_manager);
+            let buffer_pubkey = match signer {
+                Ok((buffer_signer, Some(buffer_pubkey))) => {
+                    bulk_signers.push(buffer_signer);
+                    Some(buffer_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "buffer", wallet_manager)?,
             };
 
-            let program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
-                signer_of(matches, "program_id", wallet_manager)
-            {
-                bulk_signers.push(program_signer);
-                Some(program_pubkey)
-            } else {
-                pubkey_of_signer(matches, "program_id", wallet_manager)?
+            let signer = signer_of(matches, "program_id", wallet_manager);
+            let program_pubkey = match signer {
+                Ok((program_signer, Some(program_pubkey))) => {
+                    bulk_signers.push(program_signer);
+                    Some(program_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "program_id", wallet_manager)?,
             };
 
             let (upgrade_authority, upgrade_authority_pubkey) =
@@ -815,13 +815,13 @@ pub fn parse_program_subcommand(
                 fee_payer, // if None, default signer will be supplied
             ];
 
-            let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
-                signer_of(matches, "buffer", wallet_manager)
-            {
-                bulk_signers.push(buffer_signer);
-                Some(buffer_pubkey)
-            } else {
-                pubkey_of_signer(matches, "buffer", wallet_manager)?
+            let signer = signer_of(matches, "buffer", wallet_manager);
+            let buffer_pubkey = match signer {
+                Ok((buffer_signer, Some(buffer_pubkey))) => {
+                    bulk_signers.push(buffer_signer);
+                    Some(buffer_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "buffer", wallet_manager)?,
             };
 
             let (buffer_authority, buffer_authority_pubkey) =
@@ -941,15 +941,13 @@ pub fn parse_program_subcommand(
             }
         }
         ("show", Some(matches)) => {
-            let authority_pubkey = if let Some(authority_pubkey) =
-                pubkey_of_signer(matches, "buffer_authority", wallet_manager)?
-            {
-                authority_pubkey
-            } else {
-                default_signer
-                    .signer_from_path(matches, wallet_manager)?
-                    .pubkey()
-            };
+            let authority_pubkey =
+                match pubkey_of_signer(matches, "buffer_authority", wallet_manager)? {
+                    Some(authority_pubkey) => authority_pubkey,
+                    _ => default_signer
+                        .signer_from_path(matches, wallet_manager)?
+                        .pubkey(),
+                };
 
             CliCommandInfo::without_signers(CliCommand::Program(ProgramCliCommand::Show {
                 account_pubkey: pubkey_of(matches, "account"),
@@ -973,15 +971,13 @@ pub fn parse_program_subcommand(
                 pubkey_of(matches, "account")
             };
 
-            let recipient_pubkey = if let Some(recipient_pubkey) =
-                pubkey_of_signer(matches, "recipient_account", wallet_manager)?
-            {
-                recipient_pubkey
-            } else {
-                default_signer
-                    .signer_from_path(matches, wallet_manager)?
-                    .pubkey()
-            };
+            let recipient_pubkey =
+                match pubkey_of_signer(matches, "recipient_account", wallet_manager)? {
+                    Some(recipient_pubkey) => recipient_pubkey,
+                    _ => default_signer
+                        .signer_from_path(matches, wallet_manager)?
+                        .pubkey(),
+                };
 
             let (authority_signer, authority_pubkey) =
                 signer_of(matches, "authority", wallet_manager)?;
@@ -1271,10 +1267,10 @@ fn get_default_program_keypair(program_location: &Option<String>) -> Keypair {
             filename.push("-keypair");
             keypair_file.set_file_name(filename);
             keypair_file.set_extension("json");
-            if let Ok(keypair) = read_keypair_file(keypair_file.to_str().unwrap()) {
-                keypair
-            } else {
-                Keypair::new()
+            let keypair = read_keypair_file(keypair_file.to_str().unwrap());
+            match keypair {
+                Ok(keypair) => keypair,
+                _ => Keypair::new(),
             }
         } else {
             Keypair::new()
@@ -1332,10 +1328,10 @@ fn process_program_deploy(
         )
     };
 
-    let do_initial_deploy = if let Some(account) = rpc_client
+    let account = rpc_client
         .get_account_with_commitment(&program_pubkey, config.commitment)?
-        .value
-    {
+        .value;
+    let do_initial_deploy = if let Some(account) = account {
         if account.owner != bpf_loader_upgradeable::id() {
             return Err(format!(
                 "Account {program_pubkey} is not an upgradeable program or already in use"
@@ -1350,10 +1346,10 @@ fn process_program_deploy(
             programdata_address,
         }) = account.state()
         {
-            if let Some(account) = rpc_client
+            let account = rpc_client
                 .get_account_with_commitment(&programdata_address, config.commitment)?
-                .value
-            {
+                .value;
+            if let Some(account) = account {
                 if let Ok(UpgradeableLoaderState::ProgramData {
                     slot: _,
                     upgrade_authority_address: program_authority_pubkey,
@@ -2048,10 +2044,10 @@ fn process_show(
     use_lamports_unit: bool,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        let account = rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)?
-            .value
-        {
+            .value;
+        if let Some(account) = account {
             if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id() {
                 Ok(config.output_format.formatted_string(&CliProgram {
                     program_id: account_pubkey.to_string(),
@@ -2063,10 +2059,10 @@ fn process_show(
                     programdata_address,
                 }) = account.state()
                 {
-                    if let Some(programdata_account) = rpc_client
+                    let programdata_account = rpc_client
                         .get_account_with_commitment(&programdata_address, config.commitment)?
-                        .value
-                    {
+                        .value;
+                    if let Some(programdata_account) = programdata_account {
                         if let Ok(UpgradeableLoaderState::ProgramData {
                             upgrade_authority_address,
                             slot,
@@ -2143,10 +2139,10 @@ fn process_dump(
     output_location: &str,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        let account = rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)?
-            .value
-        {
+            .value;
+        if let Some(account) = account {
             if account.owner == bpf_loader::id() || account.owner == bpf_loader_deprecated::id() {
                 let mut f = File::create(output_location)?;
                 f.write_all(&account.data)?;
@@ -2156,10 +2152,10 @@ fn process_dump(
                     programdata_address,
                 }) = account.state()
                 {
-                    if let Some(programdata_account) = rpc_client
+                    let programdata_account = rpc_client
                         .get_account_with_commitment(&programdata_address, config.commitment)?
-                        .value
-                    {
+                        .value;
+                    if let Some(programdata_account) = programdata_account {
                         if let Ok(UpgradeableLoaderState::ProgramData { .. }) =
                             programdata_account.state()
                         {
@@ -2224,22 +2220,26 @@ fn close(
         config.send_transaction_config,
     );
     if let Err(err) = result {
-        if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidInstructionData,
-        )) = err.kind()
-        {
-            return Err("Closing a buffer account is not supported by the cluster".into());
-        } else if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidArgument,
-        )) = err.kind()
-        {
-            return Err("Closing a program account is not supported by the cluster".into());
-        } else {
-            return Err(format!("Close failed: {err}").into());
+        let kind = err.kind();
+        match kind {
+            ClientErrorKind::TransactionError(TransactionError::InstructionError(
+                _,
+                InstructionError::InvalidInstructionData,
+            )) => {
+                return Err("Closing a buffer account is not supported by the cluster".into());
+            }
+            ClientErrorKind::TransactionError(TransactionError::InstructionError(
+                _,
+                InstructionError::InvalidArgument,
+            )) => {
+                return Err("Closing a program account is not supported by the cluster".into());
+            }
+            _ => {
+                return Err(format!("Close failed: {err}").into());
+            }
         }
     }
+
     Ok(())
 }
 
@@ -2255,10 +2255,10 @@ fn process_close(
     let authority_signer = config.signers[authority_index];
 
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        let account = rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)?
-            .value
-        {
+            .value;
+        if let Some(account) = account {
             match account.state() {
                 Ok(UpgradeableLoaderState::Buffer { authority_address }) => {
                     if authority_address != Some(authority_signer.pubkey()) {
@@ -2296,10 +2296,10 @@ fn process_close(
                 Ok(UpgradeableLoaderState::Program {
                     programdata_address: programdata_pubkey,
                 }) => {
-                    if let Some(account) = rpc_client
+                    let account = rpc_client
                         .get_account_with_commitment(&programdata_pubkey, config.commitment)?
-                        .value
-                    {
+                        .value;
+                    if let Some(account) = account {
                         if let Ok(UpgradeableLoaderState::ProgramData {
                             slot: _,
                             upgrade_authority_address: authority_pubkey,
@@ -2465,14 +2465,16 @@ fn process_extend_program(
         config.send_transaction_config,
     );
     if let Err(err) = result {
-        if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
-            _,
-            InstructionError::InvalidInstructionData,
-        )) = err.kind()
-        {
-            return Err("Extending a program is not supported by the cluster".into());
-        } else {
-            return Err(format!("Extend program failed: {err}").into());
+        match err.kind() {
+            ClientErrorKind::TransactionError(TransactionError::InstructionError(
+                _,
+                InstructionError::InvalidInstructionData,
+            )) => {
+                return Err("Extending a program is not supported by the cluster".into());
+            }
+            _ => {
+                return Err(format!("Extend program failed: {err}").into());
+            }
         }
     }
 
@@ -2560,10 +2562,11 @@ fn process_migrate_program(
         config.send_transaction_config,
     );
     if let Err(err) = result {
+        let kind = err.kind();
         if let ClientErrorKind::TransactionError(TransactionError::InstructionError(
             _,
             InstructionError::InvalidInstructionData,
-        )) = err.kind()
+        )) = kind
         {
             return Err("Migrating a program is not supported by the cluster".into());
         } else {

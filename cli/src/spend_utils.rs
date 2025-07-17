@@ -234,18 +234,16 @@ where
             let mut dummy_message = build_message(lamports);
 
             dummy_message.recent_blockhash = *blockhash;
-            let compute_unit_info =
-                if let UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) =
-                    simulate_and_update_compute_unit_limit(
-                        &compute_unit_limit,
-                        rpc_client,
-                        &mut dummy_message,
-                    )?
-                {
+            let compute_unit_info = match simulate_and_update_compute_unit_limit(
+                &compute_unit_limit,
+                rpc_client,
+                &mut dummy_message,
+            )? {
+                UpdateComputeUnitLimitResult::UpdatedInstructionIndex(ix_index) => {
                     Some((ix_index, dummy_message.instructions[ix_index].data.clone()))
-                } else {
-                    None
-                };
+                }
+                _ => None,
+            };
             (
                 get_fee_for_messages(rpc_client, &[&dummy_message])?,
                 compute_unit_info,

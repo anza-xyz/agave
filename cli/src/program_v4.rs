@@ -368,25 +368,25 @@ pub fn parse_program_v4_subcommand(
                 .map(|location| location.to_string());
 
             let program_address = pubkey_of(matches, "program-id");
-            let mut program_pubkey = if let Ok((program_signer, Some(program_pubkey))) =
-                signer_of(matches, "program-keypair", wallet_manager)
-            {
-                bulk_signers.push(program_signer);
-                Some(program_pubkey)
-            } else {
-                pubkey_of_signer(matches, "program-keypair", wallet_manager)?
+            let signer = signer_of(matches, "program-keypair", wallet_manager);
+            let mut program_pubkey = match signer {
+                Ok((program_signer, Some(program_pubkey))) => {
+                    bulk_signers.push(program_signer);
+                    Some(program_pubkey)
+                }
+                _ => pubkey_of_signer(matches, "program-keypair", wallet_manager)?,
             };
 
-            let buffer_pubkey = if let Ok((buffer_signer, Some(buffer_pubkey))) =
-                signer_of(matches, "buffer", wallet_manager)
-            {
-                if program_address.is_none() && program_pubkey.is_none() {
-                    program_pubkey = Some(buffer_pubkey);
+            let signer = signer_of(matches, "buffer", wallet_manager);
+            let buffer_pubkey = match signer {
+                Ok((buffer_signer, Some(buffer_pubkey))) => {
+                    if program_address.is_none() && program_pubkey.is_none() {
+                        program_pubkey = Some(buffer_pubkey);
+                    }
+                    bulk_signers.push(buffer_signer);
+                    Some(buffer_pubkey)
                 }
-                bulk_signers.push(buffer_signer);
-                Some(buffer_pubkey)
-            } else {
-                pubkey_of_signer(matches, "buffer", wallet_manager)?
+                _ => pubkey_of_signer(matches, "buffer", wallet_manager)?,
             };
 
             let (authority, authority_pubkey) = signer_of(matches, "authority", wallet_manager)?;
@@ -507,14 +507,12 @@ pub fn parse_program_v4_subcommand(
             }
         }
         ("show", Some(matches)) => {
-            let authority =
-                if let Some(authority) = pubkey_of_signer(matches, "authority", wallet_manager)? {
-                    authority
-                } else {
-                    default_signer
-                        .signer_from_path(matches, wallet_manager)?
-                        .pubkey()
-                };
+            let authority = match pubkey_of_signer(matches, "authority", wallet_manager)? {
+                Some(authority) => authority,
+                _ => default_signer
+                    .signer_from_path(matches, wallet_manager)?
+                    .pubkey(),
+            };
 
             CliCommandInfo::without_signers(CliCommand::ProgramV4(ProgramV4CliCommand::Show {
                 account_pubkey: pubkey_of(matches, "program-id"),
@@ -951,10 +949,10 @@ fn process_transfer_authority_of_program(
     new_auth_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
-    if let Some(program_account) = rpc_client
+    let program_account = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
-        .value
-    {
+        .value;
+    if let Some(program_account) = program_account {
         if !loader_v4::check_id(&program_account.owner) {
             return Err(format!("{program_address} is not owned by loader-v4").into());
         }
@@ -995,10 +993,10 @@ fn process_finalize_program(
     next_version_signer_index: &SignerIndex,
     program_address: &Pubkey,
 ) -> ProcessResult {
-    if let Some(program_account) = rpc_client
+    let program_account = rpc_client
         .get_account_with_commitment(program_address, config.commitment)?
-        .value
-    {
+        .value;
+    if let Some(program_account) = program_account {
         if !loader_v4::check_id(&program_account.owner) {
             return Err(format!("{program_address} is not owned by loader-v4").into());
         }
@@ -1039,10 +1037,10 @@ fn process_show(
     all: bool,
 ) -> ProcessResult {
     if let Some(program_address) = program_address {
-        if let Some(account) = rpc_client
+        let account = rpc_client
             .get_account_with_commitment(&program_address, config.commitment)?
-            .value
-        {
+            .value;
+        if let Some(account) = account {
             if loader_v4::check_id(&account.owner) {
                 if let Ok(state) = solana_loader_v4_program::get_state(&account.data) {
                     let status = match state.status {
@@ -1084,10 +1082,10 @@ pub fn process_dump(
     output_location: &str,
 ) -> ProcessResult {
     if let Some(account_pubkey) = account_pubkey {
-        if let Some(account) = rpc_client
+        let account = rpc_client
             .get_account_with_commitment(&account_pubkey, config.commitment)?
-            .value
-        {
+            .value;
+        if let Some(account) = account {
             if loader_v4::check_id(&account.owner) {
                 let mut f = File::create(output_location)?;
                 f.write_all(&account.data[LoaderV4State::program_data_offset()..])?;

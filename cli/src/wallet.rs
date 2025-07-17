@@ -702,21 +702,22 @@ pub fn process_airdrop(
     let pre_balance = rpc_client.get_balance(&pubkey)?;
 
     let result = request_and_confirm_airdrop(rpc_client, config, &pubkey, lamports);
-    if let Ok(signature) = result {
-        let signature_cli_message = log_instruction_custom_error::<SystemError>(result, config)?;
-        println!("{signature_cli_message}");
+    match result {
+        Ok(signature) => {
+            let signature_cli_message =
+                log_instruction_custom_error::<SystemError>(result, config)?;
+            println!("{signature_cli_message}");
 
-        let current_balance = rpc_client.get_balance(&pubkey)?;
-
-        if current_balance < pre_balance.saturating_add(lamports) {
-            println!("Balance unchanged");
-            println!("Run `solana confirm -v {signature:?}` for more info");
-            Ok("".to_string())
-        } else {
-            Ok(build_balance_message(current_balance, false, true))
+            let current_balance = rpc_client.get_balance(&pubkey)?;
+            if current_balance < pre_balance.saturating_add(lamports) {
+                println!("Balance unchanged");
+                println!("Run `solana confirm -v {signature:?}` for more info");
+                Ok("".to_string())
+            } else {
+                Ok(build_balance_message(current_balance, false, true))
+            }
         }
-    } else {
-        log_instruction_custom_error::<SystemError>(result, config)
+        _ => log_instruction_custom_error::<SystemError>(result, config),
     }
 }
 
@@ -751,57 +752,58 @@ pub fn process_confirm(
 ) -> ProcessResult {
     match rpc_client.get_signature_statuses_with_history(&[*signature]) {
         Ok(status) => {
-            let cli_transaction = if let Some(transaction_status) = &status.value[0] {
-                let mut transaction = None;
-                let mut get_transaction_error = None;
-                if config.verbose {
-                    match rpc_client.get_transaction_with_config(
-                        signature,
-                        RpcTransactionConfig {
-                            encoding: Some(UiTransactionEncoding::Base64),
-                            commitment: Some(CommitmentConfig::confirmed()),
-                            max_supported_transaction_version: Some(0),
-                        },
-                    ) {
-                        Ok(confirmed_transaction) => {
-                            let EncodedConfirmedTransactionWithStatusMeta {
-                                block_time,
-                                slot,
-                                transaction: transaction_with_meta,
-                            } = confirmed_transaction;
+            let cli_transaction = match &status.value[0] {
+                Some(transaction_status) => {
+                    let mut transaction = None;
+                    let mut get_transaction_error = None;
+                    if config.verbose {
+                        match rpc_client.get_transaction_with_config(
+                            signature,
+                            RpcTransactionConfig {
+                                encoding: Some(UiTransactionEncoding::Base64),
+                                commitment: Some(CommitmentConfig::confirmed()),
+                                max_supported_transaction_version: Some(0),
+                            },
+                        ) {
+                            Ok(confirmed_transaction) => {
+                                let EncodedConfirmedTransactionWithStatusMeta {
+                                    block_time,
+                                    slot,
+                                    transaction: transaction_with_meta,
+                                } = confirmed_transaction;
 
-                            let decoded_transaction =
-                                transaction_with_meta.transaction.decode().unwrap();
-                            let json_transaction = decoded_transaction.json_encode();
+                                let decoded_transaction =
+                                    transaction_with_meta.transaction.decode().unwrap();
+                                let json_transaction = decoded_transaction.json_encode();
 
-                            transaction = Some(CliTransaction {
-                                transaction: json_transaction,
-                                meta: transaction_with_meta.meta,
-                                block_time,
-                                slot: Some(slot),
-                                decoded_transaction,
-                                prefix: "  ".to_string(),
-                                sigverify_status: vec![],
-                            });
-                        }
-                        Err(err) => {
-                            get_transaction_error = Some(format!("{err:?}"));
+                                transaction = Some(CliTransaction {
+                                    transaction: json_transaction,
+                                    meta: transaction_with_meta.meta,
+                                    block_time,
+                                    slot: Some(slot),
+                                    decoded_transaction,
+                                    prefix: "  ".to_string(),
+                                    sigverify_status: vec![],
+                                });
+                            }
+                            Err(err) => {
+                                get_transaction_error = Some(format!("{err:?}"));
+                            }
                         }
                     }
+                    CliTransactionConfirmation {
+                        confirmation_status: Some(transaction_status.confirmation_status()),
+                        transaction,
+                        get_transaction_error,
+                        err: transaction_status.err.clone().map(Into::into),
+                    }
                 }
-                CliTransactionConfirmation {
-                    confirmation_status: Some(transaction_status.confirmation_status()),
-                    transaction,
-                    get_transaction_error,
-                    err: transaction_status.err.clone().map(Into::into),
-                }
-            } else {
-                CliTransactionConfirmation {
+                _ => CliTransactionConfirmation {
                     confirmation_status: None,
                     transaction: None,
                     get_transaction_error: None,
                     err: None,
-                }
+                },
             };
             Ok(config.output_format.formatted_string(&cli_transaction))
         }
