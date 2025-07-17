@@ -3837,10 +3837,10 @@ pub mod rpc_full {
                 max_retries,
                 min_context_slot,
             } = config.unwrap_or_default();
-            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base64);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
                 Error::invalid_params(format!(
-                    "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+                    "unsupported encoding: {tx_encoding}. Supported encodings: base64"
                 ))
             })?;
             let (wire_transaction, unsanitized_tx) =
@@ -3966,10 +3966,10 @@ pub mod rpc_full {
                 min_context_slot,
                 inner_instructions: enable_cpi_recording,
             } = config.unwrap_or_default();
-            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let tx_encoding = encoding.unwrap_or(UiTransactionEncoding::Base64);
             let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
                 Error::invalid_params(format!(
-                    "unsupported encoding: {tx_encoding}. Supported encodings: base58, base64"
+                    "unsupported encoding: {tx_encoding}. Supported encodings: base64"
                 ))
             })?;
             let (_, mut unsanitized_tx) =
@@ -4325,7 +4325,6 @@ fn rpc_perf_sample_from_perf_sample(slot: u64, sample: PerfSample) -> RpcPerfSam
     }
 }
 
-const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
 fn decode_and_deserialize<T>(
     encoded: String,
@@ -4335,21 +4334,6 @@ where
     T: serde::de::DeserializeOwned,
 {
     let wire_output = match encoding {
-        TransactionBinaryEncoding::Base58 => {
-            inc_new_counter_info!("rpc-base58_encoded_tx", 1);
-            if encoded.len() > MAX_BASE58_SIZE {
-                return Err(Error::invalid_params(format!(
-                    "base58 encoded {} too large: {} bytes (max: encoded/raw {}/{})",
-                    type_name::<T>(),
-                    encoded.len(),
-                    MAX_BASE58_SIZE,
-                    PACKET_DATA_SIZE,
-                )));
-            }
-            bs58::decode(encoded)
-                .into_vec()
-                .map_err(|e| Error::invalid_params(format!("invalid base58 encoding: {e:?}")))?
-        }
         TransactionBinaryEncoding::Base64 => {
             inc_new_counter_info!("rpc-base64_encoded_tx", 1);
             if encoded.len() > MAX_BASE64_SIZE {
@@ -5995,11 +5979,11 @@ pub mod tests {
             rent_exempt_amount,
             recent_blockhash,
         );
-        let tx_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_serialized_encoded = BASE64_STANDARD.encode(serialize(&tx).unwrap());
         tx.signatures[0] = Signature::default();
-        let tx_badsig_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_badsig_serialized_encoded = BASE64_STANDARD.encode(serialize(&tx).unwrap());
         tx.message.recent_blockhash = Hash::default();
-        let tx_invalid_recent_blockhash = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_invalid_recent_blockhash = BASE64_STANDARD.encode(serialize(&tx).unwrap());
 
         // Simulation bank must be frozen
         bank.freeze();
@@ -6340,7 +6324,7 @@ pub mod tests {
         let recent_blockhash = bank.confirmed_last_blockhash();
         let tx =
             system_transaction::transfer(&fee_payer, &token_account_pubkey, 1, recent_blockhash);
-        let tx_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_serialized_encoded = BASE64_STANDARD.encode(serialize(&tx).unwrap());
 
         // Simulation bank must be frozen
         bank.freeze();
@@ -6631,7 +6615,7 @@ pub mod tests {
 
         let bob_pubkey = Pubkey::new_unique();
         let tx = system_transaction::transfer(&mint_keypair, &bob_pubkey, 1234, recent_blockhash);
-        let tx_serialized_encoded = bs58::encode(serialize(&tx).unwrap()).into_string();
+        let tx_serialized_encoded = BASE64_STANDARD.encode(serialize(&tx).unwrap());
 
         assert!(!bank.is_frozen());
 
@@ -6847,7 +6831,7 @@ pub mod tests {
         // sendTransaction will fail because the blockhash is invalid
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            BASE64_STANDARD.encode(serialize(&bad_transaction).unwrap())
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6863,7 +6847,7 @@ pub mod tests {
         bad_transaction.sign(&[&mint_keypair], recent_blockhash);
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            BASE64_STANDARD.encode(serialize(&bad_transaction).unwrap())
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6883,7 +6867,7 @@ pub mod tests {
         health.stub_set_health_status(Some(RpcHealthStatus::Behind { num_slots: 42 }));
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            BASE64_STANDARD.encode(serialize(&bad_transaction).unwrap())
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6899,7 +6883,7 @@ pub mod tests {
 
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            BASE64_STANDARD.encode(serialize(&bad_transaction).unwrap())
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6913,7 +6897,7 @@ pub mod tests {
         // transaction
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}", {{"skipPreflight": true}}]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            BASE64_STANDARD.encode(serialize(&bad_transaction).unwrap())
         );
         let res = io.handle_request_sync(&req, meta.clone());
         assert_eq!(
@@ -6927,7 +6911,7 @@ pub mod tests {
         bad_transaction.signatures.clear();
         let req = format!(
             r#"{{"jsonrpc":"2.0","id":1,"method":"sendTransaction","params":["{}"]}}"#,
-            bs58::encode(serialize(&bad_transaction).unwrap()).into_string()
+            BASE64_STANDARD.encode(serialize(&bad_transaction).unwrap())
         );
         let res = io.handle_request_sync(&req, meta);
         assert_eq!(
@@ -7311,9 +7295,9 @@ pub mod tests {
                 version, None,
                 "requests which don't set max_supported_transaction_version shouldn't receive a version"
             );
-            if let EncodedTransaction::LegacyBinary(transaction) = transaction {
+            if let EncodedTransaction::Binary(transaction, _) = transaction {
                 let decoded_transaction: Transaction =
-                    deserialize(&bs58::decode(&transaction).into_vec().unwrap()).unwrap();
+                    deserialize(&BASE64_STANDARD.decode(&transaction).unwrap()).unwrap();
                 if decoded_transaction.signatures[0] == confirmed_block_signatures[0] {
                     let meta = meta.unwrap();
                     assert_eq!(meta.status, Ok(()));
@@ -8919,50 +8903,10 @@ pub mod tests {
     }
 
     #[test]
-    fn test_worst_case_encoded_tx_goldens() {
-        let ff_tx = vec![0xffu8; PACKET_DATA_SIZE];
-        let tx58 = bs58::encode(&ff_tx).into_string();
-        assert_eq!(tx58.len(), MAX_BASE58_SIZE);
-        let tx64 = BASE64_STANDARD.encode(&ff_tx);
-        assert_eq!(tx64.len(), MAX_BASE64_SIZE);
-    }
-
-    #[test]
     fn test_decode_and_deserialize_too_large_payloads_fail() {
         // +2 because +1 still fits in base64 encoded worst-case
         let too_big = PACKET_DATA_SIZE + 2;
         let tx_ser = vec![0xffu8; too_big];
-
-        let tx58 = bs58::encode(&tx_ser).into_string();
-        let tx58_len = tx58.len();
-        assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
-            Error::invalid_params(format!(
-                "base58 encoded solana_transaction::Transaction too large: {tx58_len} bytes (max: encoded/raw {MAX_BASE58_SIZE}/{PACKET_DATA_SIZE})",
-            )
-        ));
-
-        let tx64 = BASE64_STANDARD.encode(&tx_ser);
-        let tx64_len = tx64.len();
-        assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
-                .unwrap_err(),
-            Error::invalid_params(format!(
-                "base64 encoded solana_transaction::Transaction too large: {tx64_len} bytes (max: encoded/raw {MAX_BASE64_SIZE}/{PACKET_DATA_SIZE})",
-            )
-        ));
-
-        let too_big = PACKET_DATA_SIZE + 1;
-        let tx_ser = vec![0x00u8; too_big];
-        let tx58 = bs58::encode(&tx_ser).into_string();
-        assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
-            Error::invalid_params(format!(
-                "decoded solana_transaction::Transaction too large: {too_big} bytes (max: {PACKET_DATA_SIZE} bytes)"
-            ))
-        );
 
         let tx64 = BASE64_STANDARD.encode(&tx_ser);
         assert_eq!(
@@ -8991,44 +8935,23 @@ pub mod tests {
                 .unwrap_err(),
             Error::invalid_params("invalid base64 encoding: InvalidByte(1640, 33)".to_string())
         );
-
-        let mut tx58 = bs58::encode(&tx_ser).into_string();
-        assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58.clone(), TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
-            Error::invalid_params(
-                "failed to deserialize solana_transaction::Transaction: invalid value: \
-                continue signal on byte-three, expected a terminal signal on or before byte-three"
-                    .to_string()
-            )
-        );
-
-        tx58.push('!');
-        assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
-                .unwrap_err(),
-            Error::invalid_params(
-                "invalid base58 encoding: InvalidCharacter { character: '!', index: 1680 }"
-                    .to_string(),
-            )
-        );
     }
 
     #[test]
     fn test_sanitize_unsanitary() {
-        let unsanitary_tx58 = "ju9xZWuDBX4pRxX2oZkTjxU5jB4SSTgEGhX8bQ8PURNzyzqKMPPpNvWihx8zUe\
-             FfrbVNoAaEsNKZvGzAnTDy5bhNT9kt6KFCTBixpvrLCzg4M5UdFUQYrn1gdgjX\
-             pLHxcaShD81xBNaFDgnA2nkkdHnKtZt4hVSfKAmw3VRZbjrZ7L2fKZBx21CwsG\
-             hD6onjM2M3qZW5C8J6d1pj41MxKmZgPBSha3MyKkNLkAGFASK"
+        let unsanitary_tx64 = "ASQffZKTaGW1YaJ5haQqVH7ZtK/zVZiYy/W5NaYO1aSqKiMvIGell7X\
+        Ko5wimQwVSMMTEr4lm5O9+DkF5QrvyAkBAAAC70MCfWZjFFXbkIVru6heL6R1kkGN+IIjav1\
+        M/yCDigdy9cB+bX6mz0z3jZRqMKamWbSZZq0y+INBh+LY4YWCOwE\
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf8ABAAAAAA="
             .to_string();
 
         let unsanitary_versioned_tx = decode_and_deserialize::<VersionedTransaction>(
-            unsanitary_tx58,
-            TransactionBinaryEncoding::Base58,
+            unsanitary_tx64,
+            TransactionBinaryEncoding::Base64,
         )
         .unwrap()
         .1;
-        let expect58 = Error::invalid_params(
+        let expect64 = Error::invalid_params(
             "invalid transaction: Transaction failed to sanitize accounts offsets correctly"
                 .to_string(),
         );
@@ -9039,7 +8962,7 @@ pub mod tests {
                 &ReservedAccountKeys::empty_key_set()
             )
             .unwrap_err(),
-            expect58
+            expect64
         );
     }
 
