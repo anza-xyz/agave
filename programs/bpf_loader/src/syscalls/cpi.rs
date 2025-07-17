@@ -1507,13 +1507,8 @@ mod tests {
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let config = Config {
             aligned_memory_mapping: false,
@@ -1564,20 +1559,15 @@ mod tests {
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            account.lamports(),
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(account.lamports(), *account.owner(), account.data(), false);
 
         let config = Config {
             aligned_memory_mapping: false,
             ..Config::default()
         };
         let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.split_off(0),
+            mock_caller_account.regions.clone(),
             &config,
             SBPFVersion::V3,
         )
@@ -1683,13 +1673,8 @@ mod tests {
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let caller_account = mock_caller_account.caller_account();
 
@@ -1720,13 +1705,8 @@ mod tests {
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let mut caller_account = mock_caller_account.caller_account();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -1795,13 +1775,8 @@ mod tests {
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
         let mut caller_account = mock_caller_account.caller_account();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
 
@@ -1910,18 +1885,20 @@ mod tests {
         fn new(
             lamports: u64,
             owner: Pubkey,
-            vm_addr: u64,
             data: &[u8],
             direct_mapping: bool,
         ) -> MockCallerAccount {
+            let vm_addr = MM_INPUT_START;
+            let mut region_addr = vm_addr;
+            let region_len = mem::size_of::<u64>()
+                + if direct_mapping {
+                    0
+                } else {
+                    data.len() + MAX_PERMITTED_DATA_INCREASE
+                };
+            let mut d = vec![0; region_len];
             let mut regions = vec![];
 
-            let mut d = vec![
-                0;
-                mem::size_of::<u64>()
-                    + if direct_mapping { 0 } else { data.len() }
-                    + MAX_PERMITTED_DATA_INCREASE
-            ];
             // always write the [len] part even when direct mapping
             unsafe { ptr::write_unaligned::<u64>(d.as_mut_ptr().cast(), data.len() as u64) };
 
@@ -1931,13 +1908,6 @@ mod tests {
             }
 
             // create a region for [len][data+realloc if !direct_mapping]
-            let mut region_addr = vm_addr;
-            let region_len = mem::size_of::<u64>()
-                + if direct_mapping {
-                    0
-                } else {
-                    data.len() + MAX_PERMITTED_DATA_INCREASE
-                };
             regions.push(MemoryRegion::new_writable(&mut d[..region_len], vm_addr));
             region_addr += region_len as u64;
 
