@@ -2334,7 +2334,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // receiver then continue much like block verification handler
                                 // thread after that to be cleaned up properly.
                                 error!("disconnected banking_packet_receiver");
-                                handler_context.finish();
+                                handler_context.disable_banking_packet_receiver();
                                 continue;
                             };
                             banking_packet_handler(banking_stage_helper, banking_packet);
