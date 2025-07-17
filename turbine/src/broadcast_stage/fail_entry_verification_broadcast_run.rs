@@ -182,14 +182,14 @@ impl BroadcastRun for FailEntryVerificationBroadcastRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
         let (shreds, _) = receiver.recv()?;
         broadcast_shreds(
             sock,
-            &shreds,
+            shreds,
             &self.cluster_nodes_cache,
             &AtomicInterval::default(),
             &mut TransmitShredsStats::default(),

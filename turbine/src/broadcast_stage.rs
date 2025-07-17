@@ -8,7 +8,10 @@ use {
         fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
-    crate::cluster_nodes::{self, ClusterNodes, ClusterNodesCache},
+    crate::{
+        cluster_nodes::{self, ClusterNodes, ClusterNodesCache},
+        xdp::{XdpSender, XdpShredPayload},
+    },
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, RecvError, RecvTimeoutError, Sender},
     itertools::{Either, Itertools},
@@ -52,7 +55,7 @@ mod broadcast_fake_shreds_run;
 pub mod broadcast_metrics;
 pub(crate) mod broadcast_utils;
 mod fail_entry_verification_broadcast_run;
-mod standard_broadcast_run;
+pub(crate) mod standard_broadcast_run;
 
 const_assert_eq!(CLUSTER_NODES_CACHE_NUM_EPOCH_CAP, 5);
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = MAX_LEADER_SCHEDULE_STAKES as usize;
@@ -77,6 +80,8 @@ pub enum Error {
     Recv(#[from] crossbeam_channel::RecvError),
     #[error(transparent)]
     RecvTimeout(#[from] crossbeam_channel::RecvTimeoutError),
+    #[error("Xdp channel full")]
+    XdpChannelFull,
     #[error("Send")]
     Send,
     #[error(transparent)]
@@ -119,6 +124,7 @@ impl BroadcastStageType {
         bank_forks: Arc<RwLock<BankForks>>,
         shred_version: u16,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
+        xdp_sender: Option<XdpSender>,
     ) -> BroadcastStage {
         match self {
             BroadcastStageType::Standard => BroadcastStage::new(
@@ -131,6 +137,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 StandardBroadcastRun::new(shred_version),
+                xdp_sender,
             ),
 
             BroadcastStageType::FailEntryVerification => BroadcastStage::new(
@@ -143,6 +150,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 FailEntryVerificationBroadcastRun::new(shred_version),
+                xdp_sender,
             ),
 
             BroadcastStageType::BroadcastFakeShreds => BroadcastStage::new(
@@ -155,6 +163,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 BroadcastFakeShredsRun::new(0, shred_version),
+                xdp_sender,
             ),
 
             BroadcastStageType::BroadcastDuplicates(config) => BroadcastStage::new(
@@ -167,6 +176,7 @@ impl BroadcastStageType {
                 bank_forks,
                 quic_endpoint_sender,
                 BroadcastDuplicatesRun::new(shred_version, config.clone()),
+                xdp_sender,
             ),
         }
     }
@@ -185,7 +195,7 @@ trait BroadcastRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()>;
@@ -284,6 +294,7 @@ impl BroadcastStage {
         bank_forks: Arc<RwLock<BankForks>>,
         quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         mut broadcast_stage_run: impl BroadcastRun + Send + 'static + Clone,
+        xdp_sender: Option<XdpSender>,
     ) -> Self {
         let (socket_sender, socket_receiver) = unbounded();
         let (blockstore_sender, blockstore_receiver) = unbounded();
@@ -315,11 +326,16 @@ impl BroadcastStage {
             let cluster_info = cluster_info.clone();
             let bank_forks = bank_forks.clone();
             let quic_endpoint_sender = quic_endpoint_sender.clone();
+            let xdp_sender = xdp_sender.clone();
             let run_transmit = move || loop {
+                let sock = match xdp_sender.as_ref() {
+                    Some(xdp_sender) => BroadcastSocket::Xdp(xdp_sender),
+                    None => BroadcastSocket::Udp(&sock),
+                };
                 let res = bs_transmit.transmit(
                     &socket_receiver,
                     &cluster_info,
-                    &sock,
+                    sock,
                     &bank_forks,
                     &quic_endpoint_sender,
                 );
@@ -429,11 +445,17 @@ fn update_peer_stats(
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum BroadcastSocket<'a> {
+    Udp(&'a UdpSocket),
+    Xdp(&'a XdpSender),
+}
+
 /// Broadcasts shreds from the leader (i.e. this node) to the root of the
 /// turbine retransmit tree for each shred.
 pub fn broadcast_shreds(
-    s: &UdpSocket,
-    shreds: &[Shred],
+    s: BroadcastSocket,
+    shreds: Arc<Vec<Shred>>,
     cluster_nodes_cache: &ClusterNodesCache<BroadcastStage>,
     last_datapoint_submit: &AtomicInterval,
     transmit_stats: &mut TransmitShredsStats,
@@ -449,15 +471,28 @@ pub fn broadcast_shreds(
         let bank_forks = bank_forks.read().unwrap();
         (bank_forks.root_bank(), bank_forks.working_bank())
     };
+    // Implementation note:
+    // We are gathering the indexes of the shreds in the `shreds` vector rather than the shred
+    // payloads themselves. This is because, in the XDP case, the shred payloads will be sent to
+    // the XDP thread(s) via a channel, and the lifetime of the shred payloads must extend to that
+    // of the XDP thread(s).
+    //
+    // Because the `shreds` vector is behind a shared (`Arc`) reference, we must pass that reference
+    // along to the XDP thread(s) via the Xdp channel message payload. This allows us to extend the
+    // lifetime of the shred payloads to the XDP thread(s) without cloning each payload.
+    //
+    // When `shred::Payload` is refactored to use `Bytes`, this can be adjusted to simply pass the payload
+    // `Bytes` directly to the XDP thread(s).
     let (packets, quic_packets): (Vec<_>, Vec<_>) = shreds
         .iter()
-        .group_by(|shred| shred.slot())
+        .enumerate()
+        .group_by(|(_, shred)| shred.slot())
         .into_iter()
         .flat_map(|(slot, shreds)| {
             let cluster_nodes =
                 cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
-            shreds.filter_map(move |shred| {
+            shreds.filter_map(move |(idx, shred)| {
                 let key = shred.id();
                 let protocol = cluster_nodes::get_broadcast_protocol(&key);
                 cluster_nodes
@@ -468,7 +503,7 @@ pub fn broadcast_shreds(
                         (match protocol {
                             Protocol::QUIC => Either::Right,
                             Protocol::UDP => Either::Left,
-                        })((shred.payload(), addr))
+                        })((idx, addr))
                     })
             })
         })
@@ -476,19 +511,49 @@ pub fn broadcast_shreds(
     shred_select.stop();
     transmit_stats.shred_select += shred_select.as_us();
     let num_udp_packets = packets.len();
-    let mut send_mmsg_time = Measure::start("send_mmsg");
-    match batch_send(s, packets) {
-        Ok(()) => (),
-        Err(SendPktsError::IoError(ioerr, num_failed)) => {
-            transmit_stats.dropped_packets_udp += num_failed;
-            result = Err(Error::Io(ioerr));
+    match s {
+        BroadcastSocket::Udp(s) => {
+            let mut send_mmsg_time = Measure::start("send_mmsg");
+            match batch_send(
+                s,
+                packets
+                    .iter()
+                    .map(|(idx, addr)| (shreds[*idx].payload(), *addr)),
+            ) {
+                Ok(()) => (),
+                Err(SendPktsError::IoError(ioerr, num_failed)) => {
+                    transmit_stats.dropped_packets_udp += num_failed;
+                    result = Err(Error::Io(ioerr));
+                }
+            }
+            send_mmsg_time.stop();
+            transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+        }
+        BroadcastSocket::Xdp(s) => {
+            let mut send_xdp_time = Measure::start("send_xdp");
+            for (idx, addr) in packets.into_iter() {
+                if let Err(e) = s.try_send(
+                    idx,
+                    vec![addr],
+                    XdpShredPayload::Shared {
+                        ptr: Arc::clone(&shreds),
+                        index: idx,
+                    },
+                ) {
+                    log::warn!("xdp channel full: {e:?}");
+                    transmit_stats.dropped_packets_xdp += 1;
+                    result = Err(Error::XdpChannelFull);
+                }
+            }
+            send_xdp_time.stop();
+            transmit_stats.send_xdp_elapsed += send_xdp_time.as_us();
         }
     }
-    send_mmsg_time.stop();
-    transmit_stats.send_mmsg_elapsed += send_mmsg_time.as_us();
+
     let mut quic_send_time = Measure::start("send shreds via quic");
     transmit_stats.total_packets += num_udp_packets + quic_packets.len();
-    for (shred, addr) in quic_packets {
+    for (idx, addr) in quic_packets {
+        let shred = shreds[idx].payload();
         let shred = Bytes::from(shred::Payload::unwrap_or_clone(shred.clone()));
         if let Err(err) = quic_endpoint_sender.blocking_send((addr, shred)) {
             transmit_stats.dropped_packets_quic += 1;
@@ -701,6 +766,7 @@ pub mod test {
             bank_forks,
             quic_endpoint_sender,
             StandardBroadcastRun::new(0),
+            None,
         );
 
         MockBroadcastStage {

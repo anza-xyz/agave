@@ -23,7 +23,8 @@ use {
     solana_time_utils::{timestamp, AtomicInterval},
     solana_turbine::{
         broadcast_stage::{
-            broadcast_metrics::TransmitShredsStats, broadcast_shreds, BroadcastStage,
+            broadcast_metrics::TransmitShredsStats, broadcast_shreds, BroadcastSocket,
+            BroadcastStage,
         },
         cluster_nodes::ClusterNodesCache,
     },
@@ -44,6 +45,7 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
         SocketAddrSpace::Unspecified,
     );
     let socket = bind_to_unspecified().unwrap();
+    let socket = BroadcastSocket::Udp(&socket);
     let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
     let bank = Bank::new_for_benches(&genesis_config);
     let bank_forks = BankForks::new_rw_arc(bank);
@@ -90,8 +92,8 @@ fn broadcast_shreds_bench(bencher: &mut Bencher) {
     bencher.iter(move || {
         let shreds = shreds.clone();
         broadcast_shreds(
-            &socket,
-            &shreds,
+            socket,
+            shreds,
             &cluster_nodes_cache,
             &last_datapoint,
             &mut TransmitShredsStats::default(),

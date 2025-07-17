@@ -175,7 +175,13 @@ impl StandardBroadcastRun {
             &mut ProcessShredsStats::default(),
         )?;
         // Data and coding shreds are sent in a single batch.
-        let _ = self.transmit(&srecv, cluster_info, sock, bank_forks, quic_endpoint_sender);
+        let _ = self.transmit(
+            &srecv,
+            cluster_info,
+            BroadcastSocket::Udp(sock),
+            bank_forks,
+            quic_endpoint_sender,
+        );
         let _ = self.record(&brecv, blockstore);
         Ok(())
     }
@@ -370,7 +376,7 @@ impl StandardBroadcastRun {
 
     fn broadcast(
         &mut self,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         cluster_info: &ClusterInfo,
         shreds: Arc<Vec<Shred>>,
         broadcast_shred_batch_info: Option<BroadcastShredBatchInfo>,
@@ -382,9 +388,11 @@ impl StandardBroadcastRun {
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
 
+        transmit_stats.num_shreds = shreds.len();
+
         broadcast_shreds(
             sock,
-            &shreds,
+            shreds,
             &self.cluster_nodes_cache,
             &self.last_datapoint_submit,
             &mut transmit_stats,
@@ -396,7 +404,6 @@ impl StandardBroadcastRun {
         transmit_time.stop();
 
         transmit_stats.transmit_elapsed = transmit_time.as_us();
-        transmit_stats.num_shreds = shreds.len();
 
         // Process metrics
         self.update_transmit_metrics(&transmit_stats, &broadcast_shred_batch_info);
@@ -462,7 +469,7 @@ impl BroadcastRun for StandardBroadcastRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {

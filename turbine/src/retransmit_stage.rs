@@ -4,7 +4,7 @@ use {
     crate::{
         addr_cache::AddrCache,
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
-        xdp::{XdpConfig, XdpRetransmitter, XdpSender},
+        xdp::{XdpSender, XdpShredPayload},
     },
     bytes::Bytes,
     crossbeam_channel::{Receiver, RecvError, TryRecvError},
@@ -430,7 +430,11 @@ fn retransmit_shred(
             RetransmitSocket::Xdp(sender) => {
                 let mut sent = num_addrs;
                 if num_addrs > 0 {
-                    if let Err(e) = sender.try_send(key.index(), addrs.to_vec(), shred) {
+                    if let Err(e) = sender.try_send(
+                        key.index() as usize,
+                        addrs.to_vec(),
+                        XdpShredPayload::Owned(shred),
+                    ) {
                         log::warn!("xdp channel full: {e:?}");
                         stats
                             .num_shreds_dropped_xdp_full
@@ -562,7 +566,6 @@ fn cache_retransmit_addrs(
 /// Service to retransmit messages received from other peers in turbine.
 pub struct RetransmitStage {
     retransmit_thread_handle: JoinHandle<()>,
-    xdp_retransmitter: Option<XdpRetransmitter>,
 }
 
 impl RetransmitStage {
@@ -586,7 +589,7 @@ impl RetransmitStage {
         max_slots: Arc<MaxSlots>,
         rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         slot_status_notifier: Option<SlotStatusNotifier>,
-        xdp_config: Option<XdpConfig>,
+        xdp_sender: Option<XdpSender>,
     ) -> Self {
         let cluster_nodes_cache = ClusterNodesCache::<RetransmitStage>::new(
             CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
@@ -604,18 +607,6 @@ impl RetransmitStage {
                 .thread_name(|i| format!("solRetransmit{i:02}"))
                 .build()
                 .unwrap()
-        };
-
-        let (xdp_retransmitter, xdp_sender) = if let Some(xdp_config) = xdp_config {
-            let src_port = retransmit_sockets[0]
-                .local_addr()
-                .expect("failed to get local address")
-                .port();
-            let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port)
-                .expect("failed to create xdp retransmitter");
-            (Some(rtx), Some(sender))
-        } else {
-            (None, None)
         };
 
         let retransmit_thread_handle = Builder::new()
@@ -649,14 +640,10 @@ impl RetransmitStage {
 
         Self {
             retransmit_thread_handle,
-            xdp_retransmitter,
         }
     }
 
     pub fn join(self) -> thread::Result<()> {
-        if let Some(rtx) = self.xdp_retransmitter {
-            rtx.join()?;
-        }
         self.retransmit_thread_handle.join()
     }
 }

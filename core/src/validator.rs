@@ -123,7 +123,11 @@ use {
     solana_tpu_client::tpu_client::{
         DEFAULT_TPU_CONNECTION_POOL_SIZE, DEFAULT_TPU_USE_QUIC, DEFAULT_VOTE_USE_QUIC,
     },
-    solana_turbine::{self, broadcast_stage::BroadcastStageType, xdp::XdpConfig},
+    solana_turbine::{
+        self,
+        broadcast_stage::BroadcastStageType,
+        xdp::{XdpConfig, XdpRetransmitter},
+    },
     solana_unified_scheduler_pool::DefaultSchedulerPool,
     solana_validator_exit::Exit,
     solana_vote_program::vote_state,
@@ -564,6 +568,7 @@ pub struct Validator {
     repair_quic_endpoints: Option<[Endpoint; 3]>,
     repair_quic_endpoints_runtime: Option<TokioRuntime>,
     repair_quic_endpoints_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
+    xdp_retransmitter: Option<XdpRetransmitter>,
     // This runtime is used to run the client owned by SendTransactionService.
     // We don't wait for its JoinHandle here because ownership and shutdown
     // are managed elsewhere. This variable is intentionally unused.
@@ -1491,6 +1496,18 @@ impl Validator {
             } else {
                 None
             };
+        let (xdp_retransmitter, xdp_sender) =
+            if let Some(xdp_config) = config.retransmit_xdp.clone() {
+                let src_port = node.sockets.retransmit_sockets[0]
+                    .local_addr()
+                    .expect("failed to get local address")
+                    .port();
+                let (rtx, sender) = XdpRetransmitter::new(xdp_config, src_port)
+                    .expect("failed to create xdp retransmitter");
+                (Some(rtx), Some(sender))
+            } else {
+                (None, None)
+            };
 
         let tvu = Tvu::new(
             vote_account,
@@ -1532,7 +1549,7 @@ impl Validator {
                 replay_forks_threads: config.replay_forks_threads,
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
-                retransmit_xdp: config.retransmit_xdp.clone(),
+                xdp_sender: xdp_sender.clone(),
             },
             &max_slots,
             block_metadata_notifier,
@@ -1615,6 +1632,7 @@ impl Validator {
             entry_notification_sender,
             blockstore.clone(),
             &config.broadcast_stage_type,
+            xdp_sender,
             exit,
             node.info.shred_version(),
             vote_tracker,
@@ -1713,6 +1731,7 @@ impl Validator {
             repair_quic_endpoints,
             repair_quic_endpoints_runtime,
             repair_quic_endpoints_join_handle,
+            xdp_retransmitter,
             _tpu_client_next_runtime: tpu_client_next_runtime,
         })
     }
@@ -1840,6 +1859,9 @@ impl Validator {
             .expect("accounts_hash_verifier");
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
+        }
+        if let Some(xdp_retransmitter) = self.xdp_retransmitter {
+            xdp_retransmitter.join().expect("xdp_retransmitter");
         }
         self.tpu.join().expect("tpu");
         self.tvu.join().expect("tvu");
