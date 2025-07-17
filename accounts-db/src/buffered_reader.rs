@@ -171,9 +171,8 @@ impl<'a, T: Backing> ContiguousBufFileRead<'a> for BufferedReader<'a, T> {
             return self.fill_buf_required(required_len);
         }
 
-        let capacity = overflow_buffer.capacity();
-        if required_len > capacity {
-            overflow_buffer.reserve(required_len - capacity);
+        if required_len > overflow_buffer.len() {
+            overflow_buffer.reserve_exact(required_len - overflow_buffer.len());
         }
         // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
         // Later, we ensure we only read from the initialized portion of the buffer.
@@ -187,7 +186,7 @@ impl<'a, T: Backing> ContiguousBufFileRead<'a> for BufferedReader<'a, T> {
         overflow_buffer[..leftover].copy_from_slice(available_valid_data);
 
         // Read remaining data into overflow buffer.
-        let read_dst = &mut overflow_buffer[leftover..required_len];
+        let read_dst = &mut overflow_buffer[leftover..];
         let bytes_read = read_into_buffer(
             self.file,
             self.file_len_valid,
