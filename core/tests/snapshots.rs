@@ -5,7 +5,7 @@ use {
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
-    solana_accounts_db::accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
+    solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_clock::Slot,
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -46,7 +46,6 @@ use {
         time::{Duration, Instant},
     },
     tempfile::TempDir,
-    test_case::test_matrix,
 };
 
 struct SnapshotTestConfig {
@@ -561,17 +560,9 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     Ok(())
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum VerifySnapshotHashKind {
-    Merkle,
-    Lattice,
-}
-
 /// Spin up the background services fully then test taking & verifying snapshots
-#[test_matrix(
-    [VerifySnapshotHashKind::Merkle, VerifySnapshotHashKind::Lattice]
-)]
-fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnapshotHashKind) {
+#[test]
+fn test_snapshots_with_background_services() {
     solana_logger::setup();
 
     const SET_ROOT_INTERVAL_SLOTS: Slot = 2;
@@ -748,11 +739,6 @@ fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnap
 
     // Load the snapshot and ensure it matches what's in BankForks
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
-    let accounts_db_config = AccountsDbConfig {
-        snapshots_use_experimental_accumulator_hash: verify_snapshot_hash_kind
-            == VerifySnapshotHashKind::Lattice,
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
     let snapshot_config = snapshot_controller.snapshot_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
         &snapshot_config.bank_snapshots_dir,
@@ -767,7 +753,7 @@ fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnap
         false,
         false,
         false,
-        Some(accounts_db_config),
+        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
         exit.clone(),
     )

@@ -342,7 +342,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
-    snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -366,7 +365,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
-    snapshots_use_experimental_accumulator_hash: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -494,7 +492,6 @@ pub struct AccountsDbConfig {
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
-    pub snapshots_use_experimental_accumulator_hash: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
@@ -1447,10 +1444,6 @@ pub struct AccountsDb {
     /// Note, this is None if we're told to *not* take snapshots
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
 
-    /// Flag to indicate if the experimental accounts lattice hash is used for snapshots.
-    /// (For R&D only; a feature-gate also exists to turn this on.)
-    pub snapshots_use_experimental_accumulator_hash: AtomicBool,
-
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
     /// are sorted from the largest dead bytes to the smallest.
@@ -1858,9 +1851,6 @@ impl AccountsDb {
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
             storage_access: accounts_db_config.storage_access,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
-            snapshots_use_experimental_accumulator_hash: accounts_db_config
-                .snapshots_use_experimental_accumulator_hash
-                .into(),
             thread_pool,
             thread_pool_clean,
             thread_pool_hash,
@@ -1934,18 +1924,6 @@ impl AccountsDb {
             size,
             self.accounts_file_provider,
         )
-    }
-
-    /// Returns if snapshots use the experimental accounts lattice hash
-    pub fn snapshots_use_experimental_accumulator_hash(&self) -> bool {
-        self.snapshots_use_experimental_accumulator_hash
-            .load(Ordering::Acquire)
-    }
-
-    /// Sets if snapshots use the experimental accounts lattice hash
-    pub fn set_snapshots_use_experimental_accumulator_hash(&self, is_enabled: bool) {
-        self.snapshots_use_experimental_accumulator_hash
-            .store(is_enabled, Ordering::Release);
     }
 
     /// While scanning cleaning candidates obtain slots that can be

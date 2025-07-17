@@ -1475,12 +1475,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_snapshots_use_experimental_accumulator_hash")
-            .long("accounts-db-snapshots-use-experimental-accumulator-hash")
-            .help("Snapshots use the experimental accumulator hash")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("accounts_index_scan_results_limit_mb")
             .long("accounts-index-scan-results-limit-mb")
             .value_name("MEGABYTES")
