@@ -18,7 +18,7 @@ use {
     in_mem_accounts_index::{
         ExistedLocation, InMemAccountsIndex, InsertNewEntryResults, StartupStats,
     },
-    iter::{AccountsIndexIterator, AccountsIndexIteratorReturnsItems},
+    iter::{AccountsIndexPubkeyIterOrder, AccountsIndexPubkeyIterator},
     log::*,
     rand::{thread_rng, Rng},
     rayon::iter::{IntoParallelIterator, ParallelIterator},
@@ -419,12 +419,12 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
     fn iter<'a, R>(
         &'a self,
         range: Option<&'a R>,
-        returns_items: AccountsIndexIteratorReturnsItems,
-    ) -> AccountsIndexIterator<'a, T, U>
+        iter_order: AccountsIndexPubkeyIterOrder,
+    ) -> AccountsIndexPubkeyIterator<'a, T, U>
     where
         R: RangeBounds<Pubkey>,
     {
-        AccountsIndexIterator::new(self, range, returns_items)
+        AccountsIndexPubkeyIterator::new(self, range, iter_order)
     }
 
     /// is the accounts index using disk as a backing store
@@ -699,8 +699,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndex<T, U> {
         R: RangeBounds<Pubkey> + std::fmt::Debug,
     {
         let returns_items = match config.scan_order {
-            ScanOrder::Unsorted => AccountsIndexIteratorReturnsItems::Unsorted,
-            ScanOrder::Sorted => AccountsIndexIteratorReturnsItems::Sorted,
+            ScanOrder::Unsorted => AccountsIndexPubkeyIterOrder::Unsorted,
+            ScanOrder::Sorted => AccountsIndexPubkeyIterOrder::Sorted,
         };
 
         // TODO: expand to use mint index to find the `pubkey_list` below more efficiently
