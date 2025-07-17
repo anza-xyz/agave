@@ -841,15 +841,6 @@ where
             return;
         }
 
-        #[derive(Debug)]
-        struct DummyBankingMinitor;
-
-        impl BankingStageMonitor for DummyBankingMinitor {
-            fn status(&mut self) -> BankingStageStatus {
-                BankingStageStatus::Inactive
-            }
-        }
-
         let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
         let handler_context = handler_context.as_mut().unwrap();
         // Replace with dummy ones to unblock validator shutdown.
@@ -861,7 +852,7 @@ where
             // This is safe because of the paired use of never() just above.
             unreachable!()
         });
-        handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
+        handler_context.banking_stage_monitor = Box::new(ExitedBankingMonitor);
     }
 
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
@@ -1032,9 +1023,11 @@ where
                     break pool;
                 }
                 Err(that) => {
-                    // seems solScCleaner is active... retry later
+                    // It seems solScCleaner is active... retry later
                     this = that;
                     sleep(Duration::from_millis(100));
+                    // Yes, indefinite loop, but the situation isn't so different from the
+                    // following join(), which indefinitely waits as well.
                     continue;
                 }
             }
@@ -2332,7 +2325,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // associated scheduler thread always. So, disable banking packet
                                 // receiver then continue to be cleaned up properly later, much
                                 // like block verification handler thread.
-                                error!("disconnected banking_packet_receiver");
+                                info!("disconnected banking_packet_receiver");
                                 handler_context.disable_banking_packet_handler();
                                 continue;
                             };
@@ -2625,6 +2618,15 @@ pub enum BankingStageStatus {
 
 pub trait BankingStageMonitor: Send + Debug {
     fn status(&mut self) -> BankingStageStatus;
+}
+
+#[derive(Debug)]
+struct ExitedBankingMonitor;
+
+impl BankingStageMonitor for ExitedBankingMonitor {
+    fn status(&mut self) -> BankingStageStatus {
+        BankingStageStatus::Exited
+    }
 }
 
 impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
