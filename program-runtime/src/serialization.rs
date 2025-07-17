@@ -50,18 +50,18 @@ struct Serializer {
     regions: Vec<MemoryRegion>,
     vaddr: u64,
     region_start: usize,
-    aligned: bool,
+    is_loader_v1: bool,
     direct_mapping: bool,
 }
 
 impl Serializer {
-    fn new(size: usize, start_addr: u64, aligned: bool, direct_mapping: bool) -> Serializer {
+    fn new(size: usize, start_addr: u64, is_loader_v1: bool, direct_mapping: bool) -> Serializer {
         Serializer {
             buffer: AlignedMemory::with_capacity(size),
             regions: Vec::new(),
             region_start: 0,
             vaddr: start_addr,
-            aligned,
+            is_loader_v1,
             direct_mapping,
         }
     }
@@ -116,7 +116,7 @@ impl Serializer {
         } else {
             self.push_region();
             let vaddr = self.vaddr;
-            let address_space_reserved_for_account = if self.aligned {
+            let address_space_reserved_for_account = if !self.is_loader_v1 {
                 account
                     .get_data()
                     .len()
@@ -132,7 +132,7 @@ impl Serializer {
             vaddr
         };
 
-        if self.aligned {
+        if !self.is_loader_v1 {
             let align_offset =
                 (account.get_data().len() as *const u8).align_offset(BPF_ALIGN_OF_U128);
             if !self.direct_mapping {
@@ -171,7 +171,7 @@ impl Serializer {
 
     fn debug_assert_alignment<T>(&self) {
         debug_assert!(
-            !self.aligned
+            self.is_loader_v1
                 || self
                     .buffer
                     .as_slice()
@@ -319,7 +319,7 @@ fn serialize_parameters_unaligned(
          + instruction_data.len() // instruction data
          + size_of::<Pubkey>(); // program id
 
-    let mut s = Serializer::new(size, MM_INPUT_START, false, direct_mapping);
+    let mut s = Serializer::new(size, MM_INPUT_START, true, direct_mapping);
 
     let mut accounts_metadata: Vec<SerializedAccountMetadata> = Vec::with_capacity(accounts.len());
     s.write::<u64>((accounts.len() as u64).to_le());
@@ -464,7 +464,7 @@ fn serialize_parameters_aligned(
     + instruction_data.len()
     + size_of::<Pubkey>(); // program id;
 
-    let mut s = Serializer::new(size, MM_INPUT_START, true, direct_mapping);
+    let mut s = Serializer::new(size, MM_INPUT_START, false, direct_mapping);
 
     // Serialize into the buffer
     s.write::<u64>((accounts.len() as u64).to_le());
