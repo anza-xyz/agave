@@ -224,10 +224,10 @@ impl GroupedCiphertext3HandlesValidityProof {
                 &Y_1,     // Y_1
                 P_second, // P_second
                 D_second, // D_second
-                &Y_2,     // Y_1
+                &Y_2,     // Y_2
                 P_third,  // P_third
                 D_third,  // D_third
-                &Y_3,     // Y_2
+                &Y_3,     // Y_3
             ],
         );
 
