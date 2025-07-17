@@ -227,11 +227,12 @@ fn invoke_cargo(config: &Config, validated_toolchain_version: String) {
 
     let cargo_build = PathBuf::from("cargo");
     let mut cargo_build_args = vec![];
-    let toolchain_name = generate_toolchain_name(validated_toolchain_version.as_str());
-    let toolchain_argument = format!("+{toolchain_name}");
 
+    let mut toolchain_name: String;
     if !config.no_rustup_override {
-        cargo_build_args.push(toolchain_argument.as_str());
+        toolchain_name = generate_toolchain_name(validated_toolchain_version.as_str());
+        toolchain_name = format!("+{toolchain_name}");
+        cargo_build_args.push(toolchain_name.as_str());
     };
 
     cargo_build_args.append(&mut vec!["build", "--release", "--target", &target_triple]);
