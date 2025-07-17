@@ -198,10 +198,8 @@ where
         total_entries += 1;
     }
     files_creator.drain()?;
-    drop(open_dirs);
 
     info!("unpacked {total_entries} entries total");
-
     Ok(())
 }
 
@@ -219,6 +217,8 @@ fn unpack_entry<'a, R: Read>(
         tar::EntryType::Directory
         | tar::EntryType::Link
         | tar::EntryType::Symlink
+        | tar::EntryType::XGlobalHeader
+        | tar::EntryType::XHeader
         | tar::EntryType::GNULongName
         | tar::EntryType::GNULongLink => {
             entry.unpack(&dst)?;

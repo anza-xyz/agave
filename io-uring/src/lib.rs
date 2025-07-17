@@ -2,6 +2,7 @@
 mod ring;
 mod slab;
 pub use ring::*;
+pub use slab::FixedSlab;
 use {
     io_uring::IoUring,
     std::{io, sync::Once},

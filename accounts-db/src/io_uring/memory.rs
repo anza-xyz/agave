@@ -176,7 +176,7 @@ impl FixedIoBuffer {
         self.size
     }
 
-    pub fn as_mut_ptr(&self) -> *mut u8 {
+    pub unsafe fn as_mut_ptr(&self) -> *mut u8 {
         self.ptr
     }
 
@@ -223,12 +223,6 @@ impl std::fmt::Debug for FixedIoBuffer {
 impl AsRef<[u8]> for FixedIoBuffer {
     fn as_ref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.size) }
-    }
-}
-
-impl AsMut<[u8]> for FixedIoBuffer {
-    fn as_mut(&mut self) -> &mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.ptr, self.size) }
     }
 }
 

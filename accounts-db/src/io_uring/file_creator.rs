@@ -6,10 +6,10 @@ use {
             IO_PRIO_BE_HIGHEST,
         },
     },
-    agave_io_uring::{Completion, Ring, RingOp},
+    agave_io_uring::{Completion, FixedSlab, Ring, RingOp},
+    core::slice,
     io_uring::{opcode, squeue, types, IoUring},
     libc::{O_CREAT, O_NOATIME, O_NOFOLLOW, O_NONBLOCK, O_TRUNC, O_WRONLY},
-    slab::Slab,
     smallvec::SmallVec,
     std::{
         collections::VecDeque,
@@ -114,11 +114,12 @@ impl<'a, B: AsMut<[u8]>> IoUringFileCreator<'a, B> {
         let state = FileCreatorState::new(buffers.collect(), file_complete);
         let ring = Ring::new(ring, state);
 
-        // Safety: kernel holds unsafe pointers to `buffer`, struct field layout guarantees
-        // that the ring is destroyed before `backing_buffer` is dropped.
+        // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
+        // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
         unsafe { FixedIoBuffer::register(buffer, &ring)? };
 
-        // Those are fixed file descriptor slots - OpenAt will active them by index
+        // Fixed file descriptor slots. OpenAt will update them to valid fds. Length of registered
+        // slots must match the `state.files` slab whose indices are used as fd slot indices.
         let fds = vec![-1; MAX_OPEN_FILES];
         ring.register_files(&fds)?;
 
@@ -194,12 +195,17 @@ impl<B> IoUringFileCreator<'_, B> {
     fn write_and_close(&mut self, mut src: impl Read, file_key: usize) -> io::Result<()> {
         let mut offset = 0;
         loop {
-            let mut buf = self.wait_free_buf()?;
+            let buf = self.wait_free_buf()?;
 
             let state = self.ring.context_mut();
-            let file = &mut state.files[file_key];
+            let file = state.files.get_mut(file_key).unwrap();
 
-            let len = src.read(buf.as_mut())?;
+            // Safety: the buffer points to the valid memory backed by `self._backing_buffer`.
+            // It's obtained from the queue of free buffers and is written to exclusively
+            // here before being handled to the kernel or backlog in `file`.
+            let mut_slice = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr(), buf.len()) };
+            let len = src.read(mut_slice)?;
+
             if len == 0 {
                 file.eof = true;
 
@@ -249,7 +255,7 @@ impl<B> IoUringFileCreator<'_, B> {
 }
 
 struct FileCreatorState<'a> {
-    files: Slab<PendingFile>,
+    files: FixedSlab<PendingFile>,
     buffers: VecDeque<FixedIoBuffer>,
     /// Externally provided callback to be called on paths of files that were written
     file_complete: Box<dyn FnMut(PathBuf) + 'a>,
@@ -262,7 +268,7 @@ struct FileCreatorState<'a> {
 impl<'a> FileCreatorState<'a> {
     fn new(buffers: VecDeque<FixedIoBuffer>, file_complete: impl FnMut(PathBuf) + 'a) -> Self {
         Self {
-            files: Slab::with_capacity(MAX_OPEN_FILES),
+            files: FixedSlab::with_capacity(MAX_OPEN_FILES),
             buffers,
             file_complete: Box::new(file_complete),
             open_fds: 0,
@@ -273,7 +279,7 @@ impl<'a> FileCreatorState<'a> {
 
     /// Returns write backlog that needs to be submitted to IO ring
     fn mark_file_opened(&mut self, file_key: usize) -> BacklogVec {
-        let file = &mut self.files[file_key];
+        let file = self.files.get_mut(file_key).unwrap();
         file.completed_open = true;
         self.open_fds += 1;
         if self.buffers.len() * 2 > self.buffers.capacity() {
@@ -292,7 +298,7 @@ impl<'a> FileCreatorState<'a> {
         self.submitted_writes_size -= write_len;
         self.buffers.push_front(buf);
 
-        let file = &mut self.files[file_key];
+        let file = self.files.get_mut(file_key).unwrap();
         file.writes_completed += 1;
         if file.is_completed() {
             (self.file_complete)(mem::take(&mut file.path));
@@ -434,9 +440,11 @@ impl<'a> WriteOp {
             write_len,
         } = self;
 
+        // Safety: buf is owned by `WriteOp` during the operation handling by the kernel and
+        // reclaimed after completion passed in a call to `mark_write_completed`.
         opcode::WriteFixed::new(
             types::Fixed(*file_key as u32),
-            buf.as_mut_ptr(),
+            unsafe { buf.as_mut_ptr() },
             *write_len as u32,
             buf.io_buf_index()
                 .expect("should have a valid fixed buffer"),

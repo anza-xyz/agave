@@ -114,8 +114,8 @@ impl<B: AsMut<[u8]>> SequentialFileReader<B> {
             },
         );
 
-        // Safety: kernel holds unsafe pointers to `buffer`, struct field layout guarantees
-        // that the ring is destroyed before `backing_buffer` is dropped.
+        // Safety: kernel holds unsafe pointers to `buffer`, struct field declaration order
+        // guarantees that the ring is destroyed before `_backing_buffer` is dropped.
         unsafe { FixedIoBuffer::register(buffer, &ring)? };
 
         let mut reader = Self {
