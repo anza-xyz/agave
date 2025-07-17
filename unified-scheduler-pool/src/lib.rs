@@ -864,7 +864,6 @@ where
         handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
     }
 
-
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.banking_stage_handler_context
             .lock()
