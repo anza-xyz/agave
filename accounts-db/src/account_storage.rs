@@ -63,6 +63,9 @@ impl AccountStorage {
 
     /// returns true if shrink in progress is NOT active
     pub(crate) fn no_shrink_in_progress(&self) -> bool {
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
         self.shrink_in_progress_map.is_empty()
     }
 
@@ -113,7 +116,11 @@ impl AccountStorage {
 
     /// initialize the storage map to 'all_storages'
     pub fn initialize(&mut self, all_storages: AccountStorageMap) {
-        assert!(self.map.is_empty());
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
+        let is_empty = self.map.is_empty();
+        assert!(is_empty);
         assert!(self.no_shrink_in_progress());
         self.map.extend(all_storages)
     }
@@ -125,7 +132,11 @@ impl AccountStorage {
         slot: &Slot,
         shrink_can_be_active: bool,
     ) -> Option<Arc<AccountStorageEntry>> {
-        assert!(shrink_can_be_active || self.shrink_in_progress_map.is_empty());
+        // Usage of is_empty on dashmap should be avoided, but allowing it for now to avoid
+        // breaking existing code.
+        #[allow(clippy::disallowed_methods)]
+        let is_empty = self.shrink_in_progress_map.is_empty();
+        assert!(shrink_can_be_active || is_empty);
         self.map.remove(slot).map(|(_, storage)| storage)
     }
 
