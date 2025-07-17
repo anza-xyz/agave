@@ -2295,9 +2295,9 @@ fn test_verify_snapshot_bank() {
     assert!(!bank.verify_snapshot_bank(false, false, bank.slot(), None));
 }
 
-// Test that two bank forks with the same accounts should not hash to the same value.
+// Test that two bank forks with the same transactions should not hash to the same value.
 #[test]
-fn test_bank_hash_same_account_different_fork() {
+fn test_bank_hash_same_transactions_different_fork() {
     solana_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
