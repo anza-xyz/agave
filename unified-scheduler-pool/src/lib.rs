@@ -261,14 +261,16 @@ impl HandlerContext {
 
     fn clone_for_scheduler_thread(&self) -> Self {
         let mut context = self.clone();
-        context.finish();
+        context.disable_banking_packet_receiver();
         context
     }
 
-    fn finish(&mut self) {
+    fn disable_banking_packet_receiver(&mut self) {
         self.banking_packet_receiver = never();
-        self.banking_packet_handler = Box::new(|_, _| {});
-        self.transaction_recorder = None;
+        self.banking_packet_handler = Box::new(|_, _| {
+            // This is safe because of the paired use of never() just above.
+            unreachable!()
+        });
     }
 }
 
@@ -2327,6 +2329,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
                             let Ok(banking_packet) = banking_packet else {
+                                // Don't break here; handler threads are expected to outlive its
+                                // associated scheduler thread always. So, disable banking packet
+                                // receiver then continue much like block verification handler
+                                // thread after that to be cleaned up properly.
                                 error!("disconnected banking_packet_receiver");
                                 handler_context.finish();
                                 continue;
