@@ -70,16 +70,14 @@ impl<'a> SnapshotMinimizer<'a> {
             .bank
             .set_capitalization_for_tests(minimizer.bank.calculate_capitalization_for_tests());
 
-        if minimizer.bank.is_accounts_lt_hash_enabled() {
-            // Since the account state has changed, the accounts lt hash must be recalculated
-            let new_accounts_lt_hash = minimizer
-                .accounts_db()
-                .calculate_accounts_lt_hash_at_startup_from_index(
-                    &minimizer.bank.ancestors,
-                    minimizer.bank.slot(),
-                );
-            bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
-        }
+        // Since the account state has changed, the accounts lt hash must be recalculated
+        let new_accounts_lt_hash = minimizer
+            .accounts_db()
+            .calculate_accounts_lt_hash_at_startup_from_index(
+                &minimizer.bank.ancestors,
+                minimizer.bank.slot(),
+            );
+        bank.set_accounts_lt_hash_for_snapshot_minimizer(new_accounts_lt_hash);
     }
 
     /// Helper function to measure time and number of accounts added
@@ -593,10 +591,6 @@ mod tests {
         let genesis_config_info = genesis_utils::create_genesis_config(123_456_789_000_000_000);
         let (bank, bank_forks) =
             Bank::new_with_bank_forks_for_tests(&genesis_config_info.genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise minimization
-        // doesn't need to recalculate it
-        assert!(bank.is_accounts_lt_hash_enabled());
 
         // write to multiple accounts and keep track of one, for minimization later
         let pubkey_to_keep = Pubkey::new_unique();

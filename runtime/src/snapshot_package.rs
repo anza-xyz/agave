@@ -248,11 +248,13 @@ impl SnapshotPackage {
             block_height: accounts_package.block_height,
             hash: SnapshotHash::new(
                 &merkle_or_lattice_accounts_hash,
-                snapshot_info
-                    .bank_fields_to_serialize
-                    .accounts_lt_hash
-                    .as_ref()
-                    .map(|accounts_lt_hash| accounts_lt_hash.0.checksum()),
+                Some(
+                    snapshot_info
+                        .bank_fields_to_serialize
+                        .accounts_lt_hash
+                        .0
+                        .checksum(),
+                ),
             ),
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,

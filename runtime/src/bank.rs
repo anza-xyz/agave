@@ -480,8 +480,7 @@ pub struct BankFieldsToSerialize {
     pub is_delta: bool,
     pub accounts_data_len: u64,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
-    // When removing the accounts lt hash featurization code, also remove this Option wrapper
-    pub accounts_lt_hash: Option<AccountsLtHash>,
+    pub accounts_lt_hash: AccountsLtHash,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -596,8 +595,7 @@ impl PartialEq for Bank {
             // different Mutexes.
             && (Arc::ptr_eq(hash_overrides, &other.hash_overrides) ||
                 *hash_overrides.lock().unwrap() == *other.hash_overrides.lock().unwrap())
-            && !(self.is_accounts_lt_hash_enabled() && other.is_accounts_lt_hash_enabled()
-                && *accounts_lt_hash.lock().unwrap() != *other.accounts_lt_hash.lock().unwrap())
+            && *accounts_lt_hash.lock().unwrap() == *other.accounts_lt_hash.lock().unwrap()
             && *block_id.read().unwrap() == *other.block_id.read().unwrap()
     }
 }
@@ -637,7 +635,7 @@ impl BankFieldsToSerialize {
             is_delta: bool::default(),
             accounts_data_len: u64::default(),
             versioned_epoch_stakes: HashMap::default(),
-            accounts_lt_hash: Some(AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS]))),
+            accounts_lt_hash: AccountsLtHash(LtHash([0x7E57; LtHash::NUM_ELEMENTS])),
         }
     }
 }
@@ -1405,29 +1403,25 @@ impl Bank {
             .transaction_processor
             .fill_missing_sysvar_cache_entries(&new));
 
-        let (num_accounts_modified_this_slot, populate_cache_for_accounts_lt_hash_us) = new
-            .is_accounts_lt_hash_enabled()
-            .then(|| {
-                measure_us!({
-                    // The cache for accounts lt hash needs to be made aware of accounts modified
-                    // before transaction processing begins.  Otherwise we may calculate the wrong
-                    // accounts lt hash due to having the wrong initial state of the account.  The
-                    // lt hash cache's initial state must always be from an ancestor, and cannot be
-                    // an intermediate state within this Bank's slot.  If the lt hash cache has the
-                    // wrong initial account state, we'll mix out the wrong lt hash value, and thus
-                    // have the wrong overall accounts lt hash, and diverge.
-                    let accounts_modified_this_slot =
-                        new.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
-                    let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
-                    for pubkey in accounts_modified_this_slot {
-                        new.cache_for_accounts_lt_hash
-                            .entry(pubkey)
-                            .or_insert(AccountsLtHashCacheValue::BankNew);
-                    }
-                    num_accounts_modified_this_slot
-                })
-            })
-            .unzip();
+        let (num_accounts_modified_this_slot, populate_cache_for_accounts_lt_hash_us) =
+            measure_us!({
+                // The cache for accounts lt hash needs to be made aware of accounts modified
+                // before transaction processing begins.  Otherwise we may calculate the wrong
+                // accounts lt hash due to having the wrong initial state of the account.  The
+                // lt hash cache's initial state must always be from an ancestor, and cannot be
+                // an intermediate state within this Bank's slot.  If the lt hash cache has the
+                // wrong initial account state, we'll mix out the wrong lt hash value, and thus
+                // have the wrong overall accounts lt hash, and diverge.
+                let accounts_modified_this_slot =
+                    new.rc.accounts.accounts_db.get_pubkeys_for_slot(slot);
+                let num_accounts_modified_this_slot = accounts_modified_this_slot.len();
+                for pubkey in accounts_modified_this_slot {
+                    new.cache_for_accounts_lt_hash
+                        .entry(pubkey)
+                        .or_insert(AccountsLtHashCacheValue::BankNew);
+                }
+                num_accounts_modified_this_slot
+            });
 
         time.stop();
         report_new_bank_metrics(
@@ -1926,9 +1920,7 @@ impl Bank {
             is_delta: self.is_delta.load(Relaxed),
             accounts_data_len: self.load_accounts_data_size(),
             versioned_epoch_stakes: self.epoch_stakes.clone(),
-            accounts_lt_hash: self
-                .is_accounts_lt_hash_enabled()
-                .then(|| self.accounts_lt_hash.lock().unwrap().clone()),
+            accounts_lt_hash: self.accounts_lt_hash.lock().unwrap().clone(),
         }
     }
 
@@ -2538,11 +2530,9 @@ impl Bank {
 
             // freeze is a one-way trip, idempotent
             self.freeze_started.store(true, Relaxed);
-            if self.is_accounts_lt_hash_enabled() {
-                // updating the accounts lt hash must happen *outside* of hash_internal_state() so
-                // that rehash() can be called and *not* modify self.accounts_lt_hash.
-                self.update_accounts_lt_hash();
-            }
+            // updating the accounts lt hash must happen *outside* of hash_internal_state() so
+            // that rehash() can be called and *not* modify self.accounts_lt_hash.
+            self.update_accounts_lt_hash();
             *hash = self.hash_internal_state();
             self.rc.accounts.accounts_db.mark_slot_frozen(self.slot());
         }
@@ -5897,9 +5887,7 @@ impl TransactionProcessingCallback for Bank {
     }
 
     fn inspect_account(&self, address: &Pubkey, account_state: AccountState, is_writable: bool) {
-        if self.is_accounts_lt_hash_enabled() {
-            self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
-        }
+        self.inspect_account_for_accounts_lt_hash(address, &account_state, is_writable);
     }
 }
 

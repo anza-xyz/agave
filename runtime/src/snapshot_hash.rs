@@ -33,7 +33,7 @@ impl SnapshotHash {
     #[must_use]
     pub fn new(
         merkle_or_lattice_accounts_hash: &MerkleOrLatticeAccountsHash,
-        accounts_lt_hash_checksum: Option<AccountsLtHashChecksum>,
+        accounts_lt_hash_checksum: Option<AccountsLtHashChecksum>, // option wrapper will be removed next
     ) -> Self {
         let accounts_hash = match merkle_or_lattice_accounts_hash {
             MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind) => {

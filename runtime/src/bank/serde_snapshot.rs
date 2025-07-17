@@ -138,7 +138,7 @@ mod tests {
         {
             let mut bank_fields = bank2.get_fields_to_serialize();
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
-            let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
+            let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
             serde_snapshot::serialize_bank_snapshot_into(
                 &mut writer,
                 bank_fields,
