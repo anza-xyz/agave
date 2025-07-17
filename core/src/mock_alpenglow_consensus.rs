@@ -83,16 +83,18 @@ impl SharedState {
 /// This is a placeholder that is only used for load-testing.
 /// This is not representative of the actual alpenglow implementation.
 pub(crate) struct MockAlpenglowConsensus {
-    cluster_info: Arc<ClusterInfo>,
     sender_thread: JoinHandle<()>,
     listener_thread: JoinHandle<()>,
-    state: Arc<[Mutex<SharedState>; 3]>,
+    state: Arc<[Mutex<SharedState>; 3]>, // internal state of the test
     command_sender: Sender<Command>,
-    epoch_specs: EpochSpecs,
-    highest_slot: Slot,
+    highest_slot: Slot,         // highest slot we have observed so far
+    safety_latch_engaged: bool, // will be set to true if root bank is too far behind the slot we are voting for
     should_exit: Arc<AtomicBool>,
     verify_signatures: Arc<AtomicBool>,
     packet_size: Arc<AtomicU16>,
+    // external state
+    epoch_specs: EpochSpecs,
+    cluster_info: Arc<ClusterInfo>,
 }
 
 fn get_state_for_slot(states: &[Mutex<SharedState>], slot: Slot) -> &Mutex<SharedState> {
@@ -148,6 +150,10 @@ impl MockVotePacketHeader {
     }
 }
 const EXIT_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Max number of slots we can be ahead of the root bank
+/// before triggering safety latching
+const MAX_TOWER_HEIGHT: Slot = 8;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Command {
@@ -220,9 +226,13 @@ impl MockAlpenglowConsensus {
             cluster_info,
             verify_signatures,
             highest_slot: 0,
+            safety_latch_engaged: false,
         }
     }
 
+    /// prepare to receive votes for the slot indicated
+    /// This should be called in advance
+    /// in case we are really late getting shreds
     fn prepare_to_receive(&mut self, slot: Slot) {
         trace!(
             "{}: preparing to receive for slot {slot}",
@@ -233,7 +243,10 @@ impl MockAlpenglowConsensus {
         let mut state = get_state_for_slot(self.state.as_slice(), slot)
             .lock()
             .unwrap();
-        state.reset();
+        if state.current_slot != 0 {
+            datapoint_info!("mock_alpenglow", ("report_failed", 1, i64),);
+            state.reset();
+        }
         state.current_slot = slot;
         state.current_slot_start = Instant::now();
         for (peer, &stake) in staked_nodes.iter() {
@@ -427,6 +440,14 @@ impl MockAlpenglowConsensus {
         }
     }
 
+    fn lockdown(&self) {
+        for state in self.state.iter() {
+            let mut lockguard = state.lock().unwrap();
+            // block reception of votes
+            lockguard.reset();
+        }
+    }
+
     /// Sends mock packets to everyone in the cluster
     fn sender_thread(
         state: Arc<[Mutex<SharedState>; 3]>,
@@ -485,7 +506,22 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    fn report_collected_votes(peers: &HashMap<Pubkey, PeerData>, total_staked: Stake) {
+    fn report_collected_votes(&self, slot: Slot) {
+        trace!("Reporting statistics for slot {}", slot);
+        // avoid holding locks while reporting metrics
+        let (peers, total_staked) = {
+            let mut lockguard = get_state_for_slot(self.state.as_slice(), slot)
+                .lock()
+                .unwrap();
+            if lockguard.current_slot == 0 {
+                // no point collecting stats when there is nothing there
+                return;
+            }
+            let total_staked = lockguard.total_staked;
+            let peers = lockguard.reset();
+            (peers, total_staked)
+        };
+
         let mut total_voted_stake: [Stake; 4] = [0; 4];
         let mut total_voted_nodes: [usize; 4] = [0; 4];
         let mut total_delay_ms = [0u128; 4];
@@ -564,6 +600,14 @@ impl MockAlpenglowConsensus {
             debug!("Alpenglow votes disabled by on-chain config");
             return;
         };
+        // copy basic parameters from the config
+        self.packet_size
+            .store(config.packet_size, Ordering::Relaxed);
+        self.verify_signatures
+            .store(config.verify_signatures, Ordering::Relaxed);
+        let interval = config.test_interval_slots as u64;
+
+        // ensure we do not start process to early
         if slot < self.highest_slot || slot < 3 {
             trace!(
                 "Skipping AG logic for slot {slot}, current highest slot is {}",
@@ -571,56 +615,55 @@ impl MockAlpenglowConsensus {
             );
             return;
         }
-        let interval = config.test_interval_slots as u64;
-        if interval == 0 {
+
+        // If we fall too far behind and can not root banks, engage safety latch to stop the test
+        if interval > 0 && bank.slot() < slot - MAX_TOWER_HEIGHT {
+            error!(
+                "root bank is too far behind ({} vs {slot}). safety latch triggered, test is disabled",
+                self.highest_slot
+            );
+            self.safety_latch_engaged = true;
+            self.lockdown();
+            datapoint_info!("mock_alpenglow", ("forking_backoff", 1, i64),);
             return;
         }
         self.highest_slot = slot;
-        let concurrent_tests = 3u64.saturating_sub(interval) + 1;
-        assert!(1 <= concurrent_tests && concurrent_tests <= 3);
-        // since we may be running up to 3 voting processes concurrently,
-        // they will all be in their own phase
-        for ct in 0..concurrent_tests {
-            // this is currently set up to work over a course of 3 slots.
-            // it will only work correctly if we do not actually fork within those 3 slots, and
-            // are consistently casting votes for all 3.
-            let phase = (slot % interval) + ct;
-            match phase {
-                // Clear the stats for the previous slots in preparation for the new one
-                0 => {
-                    // prepare to receive votes for the next slot in advance
-                    // in case we are really late getting shreds
+
+        // each test takes 3 slots to complete:
+        // 1. prep
+        // 2. initiate voting notarize
+        // 3. closing vote window and reporting stats.
+        //
+        // If we are set to vote every slot, we will be running at most 3
+        // concurrent processes at once to ensure we are voting every slot.
+        // Generally we'd be trigering some phase of the test for a slot
+        // that divides by interval.
+
+        match interval {
+            0 => {
+                // If test is explicitly disabled, deactivate the safety latch
+                self.safety_latch_engaged = false;
+                return;
+            }
+            n => {
+                // prep to receive next slot's votes
+                if (slot + 1) % interval == 0 {
                     self.prepare_to_receive(slot + 1);
                 }
-                // send Notarize votes (rest of the consensus happens based on received packets)
-                1 => {
+                if slot % interval == 0 {
                     trace!("Starting voting in slot {slot}");
                     self.command_sender.send(Command::SendNotarize(slot));
                 }
-                // report metrics
-                2 => {
-                    trace!("Reporting statistics for slot {}", slot - 1);
-                    // avoid holding locks while reporting metrics
-                    let (peers, total_staked) = {
-                        let mut lockguard = get_state_for_slot(self.state.as_slice(), slot - 1)
-                            .lock()
-                            .unwrap();
-                        let total_staked = lockguard.total_staked;
-                        let peers = lockguard.reset();
-                        (peers, total_staked)
-                    };
-                    Self::report_collected_votes(&peers, total_staked);
+                if (slot - 1) % interval == 0 {
+                    // collect stuff from previous slot
+                    self.report_collected_votes(slot - 1);
                 }
-                // in case we have missed previous slot, clean up and block reception
-                // but do not report stats (as they will be all garbled by now)
-                n => {
-                    for state in self.state.iter() {
-                        let mut lockguard = state.lock().unwrap();
-                        if lockguard.current_slot > 0 && (n > lockguard.current_slot + 1) {
-                            // block reception of votes
-                            lockguard.reset();
-                        }
-                    }
+                // in case of large intervals, prevent us from replying
+                // to stray packets by locking down replies
+                // even if we have missed slot where we should have reported
+                if (slot + 1) - ((slot + 1) / interval) * interval >= 3 {
+                    datapoint_info!("mock_alpenglow", ("report_failed", 1, i64));
+                    self.lockdown();
                 }
             }
         }
@@ -666,7 +709,8 @@ pub(crate) struct TestConfig {
     _authority: [u8; 32], // This is part of Record program header
     test_interval_slots: u8,
     verify_signatures: bool,
-    packet_extra_size: u16, // packet size above header size
+    packet_size: u16, // packet size
+    _future_use: [u8; 16],
 }
 
 // Returns the current test periodicity
