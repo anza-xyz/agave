@@ -8,12 +8,12 @@ use {
         tx_loop::tx_loop,
     },
     crossbeam_channel::TryRecvError,
-    std::{sync::Arc, thread::Builder, time::Duration},
+    std::{thread::Builder, time::Duration},
 };
 use {
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
-    std::{error::Error, net::SocketAddr, thread},
+    std::{error::Error, net::SocketAddr, sync::Arc, thread},
 };
 
 #[derive(Clone, Debug)]
