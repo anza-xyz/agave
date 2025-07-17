@@ -1,3 +1,8 @@
+// Deprecate the crate
+#![deprecated]
+// Allow deprecated warnings to be suppressed in the crate
+#![allow(deprecated)]
+
 #![allow(clippy::arithmetic_side_effects, clippy::op_ref)]
 
 // The warning `clippy::op_ref` is disabled to allow efficient operator arithmetic of structs that

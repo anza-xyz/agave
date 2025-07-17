@@ -7462,7 +7462,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
- "solana-zk-token-sdk",
+ "solana-zk-sdk 3.0.0",
  "tempfile",
  "thiserror 2.0.12",
  "tiny-bip39",
