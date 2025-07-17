@@ -94,8 +94,8 @@ fn create_inputs(owner: Pubkey, num_instruction_accounts: usize) -> TransactionC
             .position(|account| account.index_in_transaction == index_in_transaction)
             .unwrap_or(instruction_account_index) as IndexOfAccount;
         instruction_accounts.push(InstructionAccount::new(
-            instruction_account_index as IndexOfAccount,
             index_in_transaction,
+            instruction_account_index as IndexOfAccount,
             index_in_callee,
             false,
             instruction_account_index >= 4,
