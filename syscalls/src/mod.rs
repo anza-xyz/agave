@@ -12,7 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-    crate::syscalls::mem_ops::is_nonoverlapping,
+    self::mem_ops::is_nonoverlapping,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -294,6 +294,7 @@ macro_rules! register_feature_gated_function {
     };
 }
 
+#[allow(dead_code)]
 pub(crate) fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
