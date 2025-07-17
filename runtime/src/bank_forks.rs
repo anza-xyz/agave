@@ -687,11 +687,16 @@ impl ForkGraph for BankForks {
 
 impl Drop for BankForks {
     fn drop(&mut self) {
+        error!("BankForks::drop(): started...");
+        // it's okay to abruptly drop all banks here albeit BankForks provides panic-happy Index
+        // impl on them. We're inside the very end of life of it (i.e. the Drop impl block!),
+        // considering it's Arc-ed elsewhere.
         self.banks.clear();
-        if let Some(sp) = self.scheduler_pool.take() {
-            sp.uninstalled_from_bank_forks();
+
+        if let Some(scheduler_pool) = self.scheduler_pool.take() {
+            scheduler_pool.uninstalled_from_bank_forks();
         }
-        error!("BankForks::drop(): successfully dropped");
+        error!("BankForks::drop(): finished...");
     }
 }
 
