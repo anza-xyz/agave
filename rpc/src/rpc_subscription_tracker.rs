@@ -279,38 +279,31 @@ impl SubscriptionControl {
 
     #[cfg(test)]
     pub fn account_subscribed(&self, pubkey: &Pubkey) -> bool {
-        self.0.subscriptions.iter().any(|item| {
-            if let SubscriptionParams::Account(params) = item.key() {
-                &params.pubkey == pubkey
-            } else {
-                false
-            }
+        self.0.subscriptions.iter().any(|item| match item.key() {
+            SubscriptionParams::Account(params) => &params.pubkey == pubkey,
+            _ => false,
         })
     }
 
     #[cfg(test)]
     pub fn logs_subscribed(&self, pubkey: Option<&Pubkey>) -> bool {
-        self.0.subscriptions.iter().any(|item| {
-            if let SubscriptionParams::Logs(params) = item.key() {
+        self.0.subscriptions.iter().any(|item| match item.key() {
+            SubscriptionParams::Logs(params) => {
                 let subscribed_pubkey = match &params.kind {
                     LogsSubscriptionKind::All | LogsSubscriptionKind::AllWithVotes => None,
                     LogsSubscriptionKind::Single(pubkey) => Some(pubkey),
                 };
                 subscribed_pubkey == pubkey
-            } else {
-                false
             }
+            _ => false,
         })
     }
 
     #[cfg(test)]
     pub fn signature_subscribed(&self, signature: &Signature) -> bool {
-        self.0.subscriptions.iter().any(|item| {
-            if let SubscriptionParams::Signature(params) = item.key() {
-                &params.signature == signature
-            } else {
-                false
-            }
+        self.0.subscriptions.iter().any(|item| match item.key() {
+            SubscriptionParams::Signature(params) => &params.signature == signature,
+            _ => false,
         })
     }
 }
@@ -620,22 +613,27 @@ mod tests {
         }
 
         fn assert_subscribed(&self, expected_params: &SubscriptionParams, expected_id: u64) {
-            if let NotificationEntry::Subscribed(params, id) = self.receiver.recv().unwrap().entry {
-                assert_eq!(&params, expected_params);
-                assert_eq!(id, SubscriptionId::from(expected_id));
-            } else {
-                panic!("unexpected notification");
+            match self.receiver.recv().unwrap().entry {
+                NotificationEntry::Subscribed(params, id) => {
+                    assert_eq!(&params, expected_params);
+                    assert_eq!(id, SubscriptionId::from(expected_id));
+                }
+                _ => {
+                    panic!("unexpected notification");
+                }
             }
             self.assert_silence();
         }
 
         fn assert_unsubscribed(&self, expected_params: &SubscriptionParams, expected_id: u64) {
-            if let NotificationEntry::Unsubscribed(params, id) = self.receiver.recv().unwrap().entry
-            {
-                assert_eq!(&params, expected_params);
-                assert_eq!(id, SubscriptionId::from(expected_id));
-            } else {
-                panic!("unexpected notification");
+            match self.receiver.recv().unwrap().entry {
+                NotificationEntry::Unsubscribed(params, id) => {
+                    assert_eq!(&params, expected_params);
+                    assert_eq!(id, SubscriptionId::from(expected_id));
+                }
+                _ => {
+                    panic!("unexpected notification");
+                }
             }
             self.assert_silence();
         }
