@@ -2331,7 +2331,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // Don't break here; handler threads are expected to outlive its
                                 // associated scheduler thread always. So, disable banking packet
                                 // receiver then continue to be cleaned up properly later, much
-                                // like block verification handler thread 
+                                // like block verification handler thread.
                                 error!("disconnected banking_packet_receiver");
                                 handler_context.disable_banking_packet_handler();
                                 continue;
