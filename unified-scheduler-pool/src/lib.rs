@@ -999,22 +999,22 @@ where
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
         info!("SchedulerPool::uninstalled_from_bank_forks(): started...");
 
-        // Forcibly, return back all taken schedulers back to this scheduler pool
+        // Forcibly return back all taken schedulers back to this scheduler pool.
         for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
             listener.trigger(self.clone());
         }
 
-        // Drop all schedulers in the pool
+        // Then, drop all schedulers in the pool.
         mem::take(&mut *self.scheduler_inners.lock().unwrap());
         mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
         mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
 
         // At this point, all circular references of this pool has been cut. And there should be
-        // only 1 strong rerefence unless the cleaner thread is active right now.  Wait a bit to
-        // unwrap the pool out of the signful Arc finally here. note that we can't resort to the
-        // Drop impl because of the need to take the ownership of the join handle of the cleaner
+        // only 1 strong rerefence unless the cleaner thread is active right now.
+
+        // So, wait a bit to unwrap the pool out of the sinful Arc finally here. Note that we can't resort to the
+        // Drop impl, because of the need to take the ownership of the join handle of the cleaner
         // thread...
-        //
         let mut this = self;
         let this: Self = loop {
             match Arc::try_unwrap(this) {
@@ -1030,6 +1030,7 @@ where
             }
         };
         this.cleaner_thread.join().unwrap();
+
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
     }
 }
