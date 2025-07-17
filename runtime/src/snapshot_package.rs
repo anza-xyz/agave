@@ -35,7 +35,6 @@ pub struct AccountsPackage {
     pub accounts: Arc<Accounts>,
     pub epoch_schedule: EpochSchedule,
     pub rent_collector: RentCollector,
-    pub accounts_hash_algorithm: AccountsHashAlgorithm,
 
     /// Supplemental information needed for snapshots
     pub snapshot_info: Option<SupplementalSnapshotInfo>,
@@ -83,21 +82,13 @@ impl AccountsPackage {
             }
         };
 
-        let accounts_hash_algorithm = AccountsHashAlgorithm::Lattice;
-        Self::_new(
-            package_kind,
-            bank,
-            snapshot_storages,
-            accounts_hash_algorithm,
-            Some(snapshot_info),
-        )
+        Self::_new(package_kind, bank, snapshot_storages, Some(snapshot_info))
     }
 
     fn _new(
         package_kind: AccountsPackageKind,
         bank: &Bank,
         snapshot_storages: Vec<Arc<AccountStorageEntry>>,
-        accounts_hash_algorithm: AccountsHashAlgorithm,
         snapshot_info: Option<SupplementalSnapshotInfo>,
     ) -> Self {
         Self {
@@ -109,7 +100,6 @@ impl AccountsPackage {
             accounts: bank.accounts(),
             epoch_schedule: bank.epoch_schedule().clone(),
             rent_collector: bank.rent_collector().clone(),
-            accounts_hash_algorithm,
             snapshot_info,
             enqueued: Instant::now(),
         }
@@ -131,7 +121,6 @@ impl AccountsPackage {
             accounts: Arc::new(accounts),
             epoch_schedule: EpochSchedule::default(),
             rent_collector: RentCollector::default(),
-            accounts_hash_algorithm: AccountsHashAlgorithm::Merkle,
             snapshot_info: Some(SupplementalSnapshotInfo {
                 status_cache_slot_deltas: Vec::default(),
                 bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
@@ -150,7 +139,6 @@ impl std::fmt::Debug for AccountsPackage {
             .field("kind", &self.package_kind)
             .field("slot", &self.slot)
             .field("block_height", &self.block_height)
-            .field("accounts_hash_algorithm", &self.accounts_hash_algorithm)
             .finish_non_exhaustive()
     }
 }
@@ -302,13 +290,4 @@ impl SnapshotKind {
     pub fn is_incremental_snapshot(&self) -> bool {
         matches!(self, SnapshotKind::IncrementalSnapshot(_))
     }
-}
-
-/// Which algorithm should be used to calculate the accounts hash?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum AccountsHashAlgorithm {
-    /// Merkle-based accounts hash algorithm
-    Merkle,
-    /// Lattice-based accounts hash algorithm
-    Lattice,
 }
