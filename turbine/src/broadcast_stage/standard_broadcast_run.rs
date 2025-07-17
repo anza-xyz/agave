@@ -834,7 +834,7 @@ mod test {
         assert!(!coding.is_empty());
 
         let r = bs.entries_to_shreds(&keypair, &entries, 0, false, &mut stats, 10, 10);
-        info!("{:?}", r);
+        info!("{r:?}");
         assert_matches!(r, Err(BroadcastError::TooManyShreds));
     }
 }

@@ -81,13 +81,13 @@ impl From<PackageMetaData> for IndexEntry {
 impl RegistryIndex {
     pub(crate) fn new(root: &str, server_url: &str) -> Self {
         let registry_config = RegistryConfig {
-            dl: format!("{}/api/v1/crates", server_url),
+            dl: format!("{server_url}/api/v1/crates"),
             api: Some(server_url.to_string()),
         };
         let config =
             serde_json::to_string(&registry_config).expect("Failed to create registry config");
 
-        info!("Registry index is available at {}{}/", server_url, root);
+        info!("Registry index is available at {server_url}{root}/");
         Self {
             index_root: root.to_string(),
             config,
@@ -127,7 +127,7 @@ impl RegistryIndex {
         let mut write_index = self
             .index
             .write()
-            .map_err(|e| format!("Failed to lock the index for writing: {}", e))?;
+            .map_err(|e| format!("Failed to lock the index for writing: {e}"))?;
         info!("Inserting {}-{} in registry index", entry.name, entry.vers);
         write_index.insert(entry.name.clone(), entry);
         Ok(())
@@ -144,12 +144,12 @@ impl RegistryIndex {
             2 => path == "/2",
             3 => {
                 let first_char = crate_name.chars().next()?;
-                path == format!("/3/{}", first_char)
+                path == format!("/3/{first_char}")
             }
             _ => {
                 let (first_two_char, rest) = crate_name.split_at(2);
                 let (next_two_char, _) = rest.split_at(2);
-                path == format!("/{}/{}", first_two_char, next_two_char)
+                path == format!("/{first_two_char}/{next_two_char}")
             }
         }
         .then_some(crate_name)
@@ -167,7 +167,7 @@ impl RegistryIndex {
             );
         };
 
-        info!("Looking up index for {:?}", crate_name);
+        info!("Looking up index for {crate_name:?}");
 
         let Ok(read_index) = self.index.read() else {
             return response_builder::error_response(

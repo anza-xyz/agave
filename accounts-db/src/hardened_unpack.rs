@@ -267,12 +267,7 @@ impl<R: Read> ArchiveChunker<R> {
 }
 
 fn checked_total_size_sum(total_size: u64, entry_size: u64, limit_size: u64) -> Result<u64> {
-    trace!(
-        "checked_total_size_sum: {} + {} < {}",
-        total_size,
-        entry_size,
-        limit_size,
-    );
+    trace!("checked_total_size_sum: {total_size} + {entry_size} < {limit_size}");
     let total_size = total_size.saturating_add(entry_size);
     if total_size > limit_size {
         return Err(UnpackError::Archive(format!(
@@ -413,7 +408,7 @@ where
 
         total_entries += 1;
     }
-    info!("unpacked {} entries total", total_entries);
+    info!("unpacked {total_entries} entries total");
 
     return Ok(());
 
@@ -697,7 +692,7 @@ pub fn unpack_genesis_archive(
     destination_dir: &Path,
     max_genesis_archive_unpacked_size: u64,
 ) -> std::result::Result<(), UnpackError> {
-    info!("Extracting {:?}...", archive_filename);
+    info!("Extracting {archive_filename:?}...");
     let extract_start = Instant::now();
 
     fs::create_dir_all(destination_dir)?;
@@ -733,7 +728,7 @@ fn is_valid_genesis_archive_entry<'a>(
     parts: &[&str],
     kind: tar::EntryType,
 ) -> UnpackPath<'a> {
-    trace!("validating: {:?} {:?}", parts, kind);
+    trace!("validating: {parts:?} {kind:?}");
     #[allow(clippy::match_like_matches_macro)]
     match (parts, kind) {
         ([DEFAULT_GENESIS_FILE], GNUSparse) => UnpackPath::Valid(unpack_dir),

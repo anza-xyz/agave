@@ -45,7 +45,7 @@ impl std::fmt::Debug for RollingBitField {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut bits = String::from("[");
         let mut prev = self.bits[0];
-        bits.push_str(&format!("{}", prev));
+        bits.push_str(&format!("{prev}"));
         let mut index = 1;
         while index < self.bits.len() {
             if self.bits[index] != prev {
@@ -55,26 +55,26 @@ impl std::fmt::Debug for RollingBitField {
             index += 1;
         }
         if index > 1 {
-            bits.push_str(&format!(";{}", index));
+            bits.push_str(&format!(";{index}"));
         }
         if index < self.bits.len() {
-            bits.push_str(&format!(", {}", prev));
+            bits.push_str(&format!(", {prev}"));
         }
         let mut count = 0;
         while index < self.bits.len() {
             if self.bits[index] != prev {
                 if count > 1 {
-                    bits.push_str(&format!(";{}", count));
+                    bits.push_str(&format!(";{count}"));
                 }
                 count = 0;
                 prev = self.bits[index];
-                bits.push_str(&format!(", {}", prev));
+                bits.push_str(&format!(", {prev}"));
             }
             count += 1;
             index += 1;
         }
         if count > 1 {
-            bits.push_str(&format!(";{}", count));
+            bits.push_str(&format!(";{count}"));
         }
         bits.push(']');
         // The order of the `count` and `bits` fields is changed on

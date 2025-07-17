@@ -55,7 +55,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let data = instruction_context.get_instruction_data();
 
-    trace!("process_instruction: {:?}", data);
+    trace!("process_instruction: {data:?}");
 
     let mut me = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
     if *me.get_owner() != id() {
@@ -1777,14 +1777,14 @@ mod tests {
             },
             101,
             CreateVoteAccountConfig {
-                space: vote_state::VoteState::size_of() as u64,
+                space: vote_state::VoteStateV3::size_of() as u64,
                 ..CreateVoteAccountConfig::default()
             },
         );
         // grab the `space` value from SystemInstruction::CreateAccount by directly indexing, for
         // expediency
         let space = usize::from_le_bytes(instructions[0].data[12..20].try_into().unwrap());
-        assert_eq!(space, vote_state::VoteState::size_of());
+        assert_eq!(space, vote_state::VoteStateV3::size_of());
         let empty_vote_account = AccountSharedData::new(101, space, &id());
 
         let transaction_accounts = vec![

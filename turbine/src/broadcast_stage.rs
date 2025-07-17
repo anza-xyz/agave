@@ -250,7 +250,7 @@ impl BroadcastStage {
                 | Error::ClusterInfo(ClusterInfoError::NoPeers) => (), // TODO: Why are the unit-tests throwing hundreds of these?
                 _ => {
                     inc_new_counter_error!("streamer-broadcaster-error", 1, 1);
-                    error!("{} broadcaster error: {:?}", name, e);
+                    error!("{name} broadcaster error: {e:?}");
                 }
             }
         }
@@ -745,10 +745,8 @@ pub mod test {
         }
 
         trace!(
-            "[broadcast_ledger] max_tick_height: {}, start_tick_height: {}, ticks_per_slot: {}",
-            max_tick_height,
-            start_tick_height,
-            ticks_per_slot,
+            "[broadcast_ledger] max_tick_height: {max_tick_height}, start_tick_height: \
+             {start_tick_height}, ticks_per_slot: {ticks_per_slot}",
         );
 
         let mut entries = vec![];

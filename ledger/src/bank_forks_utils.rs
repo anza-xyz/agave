@@ -314,7 +314,6 @@ fn bank_forks_from_snapshot(
             process_options.accounts_db_skip_shrink,
             process_options.accounts_db_force_initial_clean,
             process_options.verify_index,
-            false, // verify_index. This will be removed separately.
             process_options.accounts_db_config.clone(),
             accounts_update_notifier,
             exit,

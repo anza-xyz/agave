@@ -17,7 +17,7 @@ pub(crate) mod tests {
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
         solana_vote_program::{
             vote_instruction,
-            vote_state::{VoteInit, VoteState, VoteStateVersions},
+            vote_state::{VoteInit, VoteStateV3, VoteStateVersions},
         },
     };
 
@@ -85,7 +85,7 @@ pub(crate) mod tests {
         for i in 0..3 {
             stakes.push((
                 i,
-                VoteState::new(
+                VoteStateV3::new(
                     &VoteInit {
                         node_pubkey: node1,
                         ..VoteInit::default()
@@ -100,7 +100,7 @@ pub(crate) mod tests {
 
         stakes.push((
             5,
-            VoteState::new(
+            VoteStateV3::new(
                 &VoteInit {
                     node_pubkey: node2,
                     ..VoteInit::default()

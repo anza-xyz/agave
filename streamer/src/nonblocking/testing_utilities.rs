@@ -151,7 +151,7 @@ pub async fn check_multiple_streams(
     let conn2 = Arc::new(make_client_endpoint(&server_address, client_keypair).await);
     let mut num_expected_packets = 0;
     for i in 0..10 {
-        info!("sending: {}", i);
+        info!("sending: {i}");
         let c1 = conn1.clone();
         let c2 = conn2.clone();
         let mut s1 = c1.open_uni().await.unwrap();

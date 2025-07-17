@@ -29,7 +29,6 @@ use {
     std::{
         cmp::Reverse,
         collections::{BinaryHeap, HashMap, HashSet},
-        ops::RangeBounds,
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
@@ -516,19 +515,6 @@ impl Accounts {
             .scan_accounts(ancestors, bank_id, scan_func, &ScanConfig::new(scan_order))
     }
 
-    pub fn hold_range_in_memory<R>(
-        &self,
-        range: &R,
-        start_holding: bool,
-        thread_pool: &rayon::ThreadPool,
-    ) where
-        R: RangeBounds<Pubkey> + std::fmt::Debug + Sync,
-    {
-        self.accounts_db
-            .accounts_index
-            .hold_range_in_memory(range, start_holding, thread_pool)
-    }
-
     /// This function will prevent multiple threads from modifying the same account state at the
     /// same time, possibly excluding transactions based on prior results
     #[must_use]
@@ -659,61 +645,6 @@ mod tests {
         ));
 
         SanitizedTransaction::new_for_tests(sanitized_message, vec![Signature::new_unique()], false)
-    }
-
-    #[test]
-    fn test_hold_range_in_memory() {
-        let accounts_db = AccountsDb::default_for_tests();
-        let accts = Accounts::new(Arc::new(accounts_db));
-        let range = Pubkey::from([0; 32])..=Pubkey::from([0xff; 32]);
-        accts.hold_range_in_memory(&range, true, &test_thread_pool());
-        accts.hold_range_in_memory(&range, false, &test_thread_pool());
-        accts.hold_range_in_memory(&range, true, &test_thread_pool());
-        accts.hold_range_in_memory(&range, true, &test_thread_pool());
-        accts.hold_range_in_memory(&range, false, &test_thread_pool());
-        accts.hold_range_in_memory(&range, false, &test_thread_pool());
-    }
-
-    #[test]
-    fn test_hold_range_in_memory2() {
-        let accounts_db = AccountsDb::default_for_tests();
-        let accts = Accounts::new(Arc::new(accounts_db));
-        let range = Pubkey::from([0; 32])..=Pubkey::from([0xff; 32]);
-        let idx = &accts.accounts_db.accounts_index;
-        let bins = idx.account_maps.len();
-        // use bins * 2 to get the first half of the range within bin 0
-        let bins_2 = bins * 2;
-        let binner = crate::pubkey_bins::PubkeyBinCalculator24::new(bins_2);
-        let range2 = binner.lowest_pubkey_from_bin(0)..binner.lowest_pubkey_from_bin(1);
-        let range2_inclusive = range2.start..=range2.end;
-        assert_eq!(0, idx.bin_calculator.bin_from_pubkey(&range2.start));
-        assert_eq!(0, idx.bin_calculator.bin_from_pubkey(&range2.end));
-        accts.hold_range_in_memory(&range, true, &test_thread_pool());
-        idx.account_maps.iter().for_each(|map| {
-            assert_eq!(
-                map.cache_ranges_held.read().unwrap().to_vec(),
-                vec![range.clone()]
-            );
-        });
-        accts.hold_range_in_memory(&range2, true, &test_thread_pool());
-        idx.account_maps.iter().enumerate().for_each(|(bin, map)| {
-            let expected = if bin == 0 {
-                vec![range.clone(), range2_inclusive.clone()]
-            } else {
-                vec![range.clone()]
-            };
-            assert_eq!(
-                map.cache_ranges_held.read().unwrap().to_vec(),
-                expected,
-                "bin: {bin}"
-            );
-        });
-        accts.hold_range_in_memory(&range, false, &test_thread_pool());
-        accts.hold_range_in_memory(&range2, false, &test_thread_pool());
-    }
-
-    fn test_thread_pool() -> rayon::ThreadPool {
-        crate::accounts_db::make_min_priority_thread_pool()
     }
 
     #[test]
@@ -1417,7 +1348,7 @@ mod tests {
             accounts.add_root_and_flush_write_cache(i);
 
             if i % 1_000 == 0 {
-                info!("  store {}", i);
+                info!("  store {i}");
             }
         }
         info!("done..cleaning..");

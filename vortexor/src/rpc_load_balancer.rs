@@ -104,7 +104,8 @@ impl RpcLoadBalancer {
             .iter()
             .enumerate()
             .map(|(i, (_, websocket_url))| {
-                let ws_url_no_token = websocket_url.as_str()
+                let ws_url_no_token = websocket_url
+                    .as_str()
                     .split('/')
                     .nth(2)
                     .unwrap_or_default()
@@ -116,7 +117,9 @@ impl RpcLoadBalancer {
                 let highest_slot = highest_slot.clone();
 
                 Builder::new()
-                    .name(format!("load_balancer_subscription_thread-{ws_url_no_token}"))
+                    .name(format!(
+                        "load_balancer_subscription_thread-{ws_url_no_token}"
+                    ))
                     .spawn(move || {
                         while !exit.load(Ordering::Relaxed) {
                             info!("running slot_subscribe() with url: {websocket_url}");
@@ -125,12 +128,13 @@ impl RpcLoadBalancer {
                             match PubsubClient::slot_subscribe(websocket_url.as_str()) {
                                 Ok((_subscription, receiver)) => {
                                     while !exit.load(Ordering::Relaxed) {
-                                        match receiver.recv_timeout(Duration::from_millis(100))
-                                        {
+                                        match receiver.recv_timeout(Duration::from_millis(100)) {
                                             Ok(slot) => {
                                                 last_slot_update = Instant::now();
 
-                                                server_to_slot.1.store(slot.slot, Ordering::Relaxed);
+                                                server_to_slot
+                                                    .1
+                                                    .store(slot.slot, Ordering::Relaxed);
                                                 datapoint_info!(
                                                         "rpc_load_balancer-slot_count",
                                                         "url" => ws_url_no_token,
@@ -138,7 +142,8 @@ impl RpcLoadBalancer {
                                                 );
 
                                                 {
-                                                    let old_slot = highest_slot.fetch_max(slot.slot, Ordering::Relaxed);
+                                                    let old_slot = highest_slot
+                                                        .fetch_max(slot.slot, Ordering::Relaxed);
                                                     if slot.slot > old_slot {
                                                         if let Err(e) = slot_sender.send(slot.slot)
                                                         {
@@ -151,7 +156,8 @@ impl RpcLoadBalancer {
                                             Err(RecvTimeoutError::Timeout) => {
                                                 // RPC servers occasionally stop sending slot updates and never recover.
                                                 // If enough time has passed, attempt to recover by forcing a new connection
-                                                if last_slot_update.elapsed() >= Self::DISCONNECT_WEBSOCKET_TIMEOUT
+                                                if last_slot_update.elapsed()
+                                                    >= Self::DISCONNECT_WEBSOCKET_TIMEOUT
                                                 {
                                                     datapoint_error!(
                                                         "rpc_load_balancer-force_disconnect",
@@ -162,7 +168,10 @@ impl RpcLoadBalancer {
                                                 }
                                             }
                                             Err(RecvTimeoutError::Disconnected) => {
-                                                warn!("slot subscribe disconnected. url: {ws_url_no_token}");
+                                                warn!(
+                                                    "slot subscribe disconnected. url: \
+                                                     {ws_url_no_token}"
+                                                );
                                                 break;
                                             }
                                         }
@@ -170,7 +179,8 @@ impl RpcLoadBalancer {
                                 }
                                 Err(e) => {
                                     error!(
-                                        "slot subscription error client: {ws_url_no_token}, error: {e:?}"
+                                        "slot subscription error client: {ws_url_no_token}, \
+                                         error: {e:?}"
                                     );
                                 }
                             }

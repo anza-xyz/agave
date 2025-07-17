@@ -42,7 +42,7 @@ use {
     solana_signer::Signer,
     solana_stake_interface::state::StakeStateV2,
     solana_stake_program::stake_state,
-    solana_vote_program::vote_state::{self, VoteState},
+    solana_vote_program::vote_state::{self, VoteStateV3},
     std::{
         collections::HashMap,
         error,
@@ -253,7 +253,7 @@ fn add_validator_accounts(
             identity_pubkey,
             identity_pubkey,
             commission,
-            VoteState::get_rent_exempt_reserve(rent).max(1),
+            VoteStateV3::get_rent_exempt_reserve(rent).max(1),
         );
 
         genesis_config.add_account(
@@ -314,7 +314,7 @@ fn main() -> Result<(), Box<dyn error::Error>> {
 
     // vote account
     let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
-        .max(VoteState::get_rent_exempt_reserve(&rent))
+        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
         .to_string();
     // stake account
     let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
@@ -1306,7 +1306,7 @@ mod tests {
                 // check vote account
                 let vote_pk = b64_account.vote_account.parse().unwrap();
                 let vote_data = genesis_config.accounts[&vote_pk].data.clone();
-                let vote_state = VoteState::deserialize(&vote_data).unwrap();
+                let vote_state = VoteStateV3::deserialize(&vote_data).unwrap();
                 assert_eq!(vote_state.node_pubkey, identity_pk);
                 assert_eq!(vote_state.authorized_withdrawer, identity_pk);
                 let authorized_voters = vote_state.authorized_voters();

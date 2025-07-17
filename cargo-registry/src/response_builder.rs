@@ -1,7 +1,7 @@
 use log::error;
 
 pub(crate) fn error_response(status: hyper::StatusCode, msg: &str) -> hyper::Response<hyper::Body> {
-    error!("{}", msg);
+    error!("{msg}");
     hyper::Response::builder()
         .status(status)
         .body(hyper::Body::from(

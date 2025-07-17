@@ -471,10 +471,6 @@ pub fn execute(
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         storage_access,
         scan_filter_for_shrinking,
-        enable_experimental_accumulator_hash: !matches
-            .is_present("no_accounts_db_experimental_accumulator_hash"),
-        verify_experimental_accumulator_hash: matches
-            .is_present("accounts_db_verify_experimental_accumulator_hash"),
         snapshots_use_experimental_accumulator_hash: matches
             .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_clean_threads: Some(accounts_db_clean_threads),

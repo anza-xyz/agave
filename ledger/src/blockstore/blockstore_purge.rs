@@ -56,10 +56,7 @@ impl Blockstore {
             )
         );
         if let Err(e) = purge_result {
-            error!(
-                "Error: {:?}; Purge failed in range {:?} to {:?}",
-                e, from_slot, to_slot
-            );
+            error!("Error: {e:?}; Purge failed in range {from_slot:?} to {to_slot:?}");
         }
     }
 
@@ -104,8 +101,7 @@ impl Blockstore {
             count += 1;
             if last_print.elapsed().as_millis() > 2000 {
                 info!(
-                    "purged: {} slots rewritten: {} retain_time: {}us",
-                    count, rewritten, total_retain_us
+                    "purged: {count} slots rewritten: {rewritten} retain_time: {total_retain_us}us"
                 );
                 count = 0;
                 rewritten = 0;
@@ -178,10 +174,7 @@ impl Blockstore {
             .put_in_batch(&mut write_batch, slot, &slot_meta)?;
 
         self.write_batch(write_batch).inspect_err(|e| {
-            error!(
-                "Error: {:?} while submitting write batch for slot {:?}",
-                e, slot
-            )
+            error!("Error: {e:?} while submitting write batch for slot {slot:?}")
         })?;
         Ok(columns_purged)
     }
@@ -211,8 +204,8 @@ impl Blockstore {
         let mut write_timer = Measure::start("write_batch");
         self.write_batch(write_batch).inspect_err(|e| {
             error!(
-                "Error: {:?} while submitting write batch for purge from_slot {} to_slot {}",
-                e, from_slot, to_slot
+                "Error: {e:?} while submitting write batch for purge from_slot {from_slot} \
+                 to_slot {to_slot}"
             )
         })?;
         write_timer.stop();

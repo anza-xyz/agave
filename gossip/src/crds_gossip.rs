@@ -148,7 +148,7 @@ impl CrdsGossip {
         let now = timestamp();
         for entry in entries {
             if let Err(err) = crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_duplicate_shred failed: {:?}", err);
+                error!("push_duplicate_shred failed: {err:?}");
             }
         }
         Ok(())

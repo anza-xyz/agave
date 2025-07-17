@@ -53,14 +53,14 @@ pub fn verify_shred_cpu(
     let Some(slot) = shred::layout::get_slot(shred) else {
         return false;
     };
-    trace!("slot {}", slot);
+    trace!("slot {slot}");
     let Some(pubkey) = slot_leaders.get(&slot) else {
         return false;
     };
     let Some(signature) = shred::layout::get_signature(shred) else {
         return false;
     };
-    trace!("signature {}", signature);
+    trace!("signature {signature}");
     let Some(data) = shred::layout::get_signed_data(shred) else {
         return false;
     };
@@ -87,7 +87,7 @@ fn verify_shreds_cpu(
     cache: &RwLock<LruCache>,
 ) -> Vec<Vec<u8>> {
     let packet_count = count_packets_in_batches(batches);
-    debug!("CPU SHRED ECDSA for {}", packet_count);
+    debug!("CPU SHRED ECDSA for {packet_count}");
     let rv = thread_pool.install(|| {
         batches
             .into_par_iter()
@@ -156,8 +156,8 @@ fn slot_key_data_for_gpu(
         offsets.push(key_offsets[&slot] as u32);
     }
     trace!("keyvec.len: {}", keyvec.len());
-    trace!("keyvec: {:?}", keyvec);
-    trace!("offsets: {:?}", offsets);
+    trace!("keyvec: {keyvec:?}");
+    trace!("offsets: {offsets:?}");
     (keyvec, offsets)
 }
 
@@ -317,7 +317,7 @@ pub fn verify_shreds_gpu(
         num: batch.len() as u32,
     }));
     let num_packets = elems.iter().map(|elem| elem.num).sum();
-    trace!("Starting verify num packets: {}", num_packets);
+    trace!("Starting verify num packets: {num_packets}");
     trace!("elem len: {}", elems.len() as u32);
     trace!("packet sizeof: {}", size_of::<Packet>() as u32);
     const USE_NON_DEFAULT_STREAM: u8 = 1;
@@ -336,11 +336,11 @@ pub fn verify_shreds_gpu(
             USE_NON_DEFAULT_STREAM,
         );
         if res != 0 {
-            trace!("RETURN!!!: {}", res);
+            trace!("RETURN!!!: {res}");
         }
     }
     trace!("done verify");
-    trace!("out buf {:?}", out);
+    trace!("out buf {out:?}");
 
     // Each shred has exactly one signature.
     let v_sig_lens = batches
@@ -364,7 +364,7 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
         "packet is not large enough for a signature"
     );
     let signature = keypair.sign_message(msg.as_ref());
-    trace!("signature {:?}", signature);
+    trace!("signature {signature:?}");
     let mut buffer = packet
         .data(..)
         .expect("packet should not be discarded")
@@ -376,7 +376,7 @@ fn sign_shred_cpu(keypair: &Keypair, packet: &mut PacketRefMut) {
 #[cfg(test)]
 fn sign_shreds_cpu(thread_pool: &ThreadPool, keypair: &Keypair, batches: &mut [PacketBatch]) {
     let packet_count = count_packets_in_batches(batches);
-    debug!("CPU SHRED ECDSA for {}", packet_count);
+    debug!("CPU SHRED ECDSA for {packet_count}");
     thread_pool.install(|| {
         batches.par_iter_mut().for_each(|batch| {
             batch
@@ -441,7 +441,7 @@ fn sign_shreds_gpu(
             .map(move |offset| Some(offset? + shift))
     };
     let offset = pinned_keypair.len() + merkle_roots.len();
-    trace!("offset: {}", offset);
+    trace!("offset: {offset}");
     let (signature_offsets, msg_start_offsets, msg_sizes) =
         shred_gpu_offsets(offset, batches, merkle_roots_offsets, recycler_cache);
     let total_sigs = signature_offsets.len();
@@ -469,7 +469,7 @@ fn sign_shreds_gpu(
         num: batch.len() as u32,
     }));
     let num_packets = elems.iter().map(|elem| elem.num).sum();
-    trace!("Starting verify num packets: {}", num_packets);
+    trace!("Starting verify num packets: {num_packets}");
     trace!("elem len: {}", elems.len() as u32);
     trace!("packet sizeof: {}", size_of::<Packet>() as u32);
     const USE_NON_DEFAULT_STREAM: u8 = 1;
@@ -488,7 +488,7 @@ fn sign_shreds_gpu(
             USE_NON_DEFAULT_STREAM,
         );
         if res != 0 {
-            trace!("RETURN!!!: {}", res);
+            trace!("RETURN!!!: {res}");
         }
     }
     trace!("done sign");

@@ -76,7 +76,7 @@ impl PacketBatchSender {
             let destinations = destinations.read().expect("Expected to get destinations");
             match Self::receive_until(packet_batch_receiver.clone(), recv_timeout, batch_size) {
                 Ok((packet_count, packet_batches)) => {
-                    trace!("Received packet counts: {}", packet_count);
+                    trace!("Received packet counts: {packet_count}");
                     // Collect all packets once for all destinations
                     let mut packets: Vec<&[u8]> = Vec::new();
 

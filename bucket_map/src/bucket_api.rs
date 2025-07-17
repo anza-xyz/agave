@@ -1,11 +1,12 @@
+#[cfg(feature = "dev-context-only-utils")]
+use crate::bucket_item::BucketItem;
 use {
     crate::{
-        bucket::Bucket, bucket_item::BucketItem, bucket_map::BucketMapError,
-        bucket_stats::BucketMapStats, restart::RestartableBucket, MaxSearch, RefCount,
+        bucket::Bucket, bucket_map::BucketMapError, bucket_stats::BucketMapStats,
+        restart::RestartableBucket, MaxSearch, RefCount,
     },
     solana_pubkey::Pubkey,
     std::{
-        ops::RangeBounds,
         path::PathBuf,
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -47,15 +48,13 @@ impl<T: Clone + Copy + PartialEq + std::fmt::Debug> BucketApi<T> {
     }
 
     /// Get the items for bucket
-    pub fn items_in_range<R>(&self, range: &Option<&R>) -> Vec<BucketItem<T>>
-    where
-        R: RangeBounds<Pubkey>,
-    {
+    #[cfg(feature = "dev-context-only-utils")]
+    pub fn items(&self) -> Vec<BucketItem<T>> {
         self.bucket
             .read()
             .unwrap()
             .as_ref()
-            .map(|bucket| bucket.items_in_range(range))
+            .map(|bucket| bucket.items())
             .unwrap_or_default()
     }
 
