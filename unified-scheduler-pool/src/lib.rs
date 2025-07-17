@@ -997,6 +997,8 @@ where
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {
+        info!("SchedulerPool::uninstalled_from_bank_forks(): started...");
+
         // Forcibly, return back all taken schedulers back to this scheduler pool
         for (listener, _registered_at) in mem::take(&mut *self.timeout_listeners.lock().unwrap()) {
             listener.trigger(self.clone());
@@ -1007,20 +1009,28 @@ where
         mem::take(&mut *self.block_production_scheduler_inner.lock().unwrap());
         mem::take(&mut *self.trashed_scheduler_inners.lock().unwrap());
 
-        // At this point, all circular references of this pool will be cut eventually. And there
-        // should be only 1 strong rerefence, so, Drop impl will be called
-    }
-}
-
-impl<S, TH> Drop for SchedulerPool<S, TH>
-where
-    S: SpawnableScheduler<TH>,
-    TH: TaskHandler,
-{
-    fn drop(&mut self) {
-        info!("SchedulerPool::drop(): started...");
-        self.cleaner_thread.join().unwrap();
-        info!("SchedulerPool::drop(): ...finished");
+        // At this point, all circular references of this pool has been cut. And there should be
+        // only 1 strong rerefence unless the cleaner thread is active right now.  Wait a bit to
+        // unwrap the pool out of the signful Arc finally here. note that we can't resort to the
+        // Drop impl because of the need to take the ownership of the join handle of the cleaner
+        // thread...
+        //
+        let mut this = self;
+        let this: Self = loop {
+            match Arc::try_unwrap(this) {
+                Ok(pool) => {
+                    break pool;
+                }
+                Err(that) => {
+                    // seems solScCleaner is active... retry later
+                    this = that;
+                    sleep(Duration::from_millis(100));
+                    continue;
+                }
+            }
+        };
+        this.cleaner_thread.join().unwrap();
+        info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
     }
 }
 
