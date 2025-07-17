@@ -134,7 +134,7 @@ pub fn invoke_builtin_function(
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,
-        true, // copy_account_data // There is no VM so direct mapping can not be implemented here
+        false, // direct_mapping // There is no VM so direct mapping can not be implemented here
         mask_out_rent_epoch_in_vm_serialization,
     )?;
 
