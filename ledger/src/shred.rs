@@ -412,9 +412,9 @@ impl Shred {
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    #[deprecated(since = "2.3.0")]
+    #[deprecated(since = "2.3.2")]
     pub fn set_index(&mut self, _index: u32) {}
-    #[deprecated(since = "2.3.0")]
+    #[deprecated(since = "2.3.2")]
     pub fn set_slot(&mut self, _slot: Slot) {}
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
@@ -483,7 +483,7 @@ impl Shred {
         })
     }
 
-    #[deprecated(since = "2.3.0", note = "Legacy shreds are deprecated")]
+    #[deprecated(since = "2.3.2", note = "Legacy shreds are deprecated")]
     pub fn new_from_parity_shard(
         slot: Slot,
         index: u32,

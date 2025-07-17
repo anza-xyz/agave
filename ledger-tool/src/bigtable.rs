@@ -33,7 +33,7 @@ use {
         bigtable_upload::ConfirmedBlockUploadConfig,
         blockstore::Blockstore,
         blockstore_options::AccessType,
-        shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+        shred::{ProcessShredsStats, ReedSolomonCache, Shred, Shredder},
     },
     solana_pubkey::Pubkey,
     solana_shred_version::compute_shred_version,
@@ -389,17 +389,19 @@ async fn shreds(
         };
 
         let shredder = Shredder::new(*slot, block.parent_slot, 0, shred_config.shred_version)?;
-        let (data_shreds, _coding_shreds) = shredder.entries_to_shreds(
-            &keypair,
-            &entries,
-            true,  // last_in_slot
-            None,  // chained_merkle_root
-            0,     // next_shred_index
-            0,     // next_code_index
-            false, // merkle_variant
-            &ReedSolomonCache::default(),
-            &mut ProcessShredsStats::default(),
-        );
+        let data_shreds: Vec<_> = shredder
+            .make_merkle_shreds_from_entries(
+                &keypair,
+                &entries,
+                true, // last_in_slot
+                None, // chained_merkle_root
+                0,    // next_shred_index
+                0,    // next_code_index
+                &ReedSolomonCache::default(),
+                &mut ProcessShredsStats::default(),
+            )
+            .filter(Shred::is_data)
+            .collect();
         blockstore.insert_shreds(data_shreds, None, false)?;
     }
     Ok(())

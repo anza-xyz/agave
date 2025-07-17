@@ -2395,17 +2395,17 @@ impl Blockstore {
                         0
                     }
                 };
-                let (mut data_shreds, mut coding_shreds) = shredder.entries_to_shreds(
-                    keypair,
-                    &current_entries,
-                    true, // is_last_in_slot
-                    chained_merkle_root,
-                    start_index, // next_shred_index
-                    start_index, // next_code_index
-                    true,        // merkle_variant
-                    &reed_solomon_cache,
-                    &mut ProcessShredsStats::default(),
-                );
+                let (mut data_shreds, mut coding_shreds) = shredder
+                    .entries_to_merkle_shreds_for_tests(
+                        keypair,
+                        &current_entries,
+                        true, // is_last_in_slot
+                        chained_merkle_root,
+                        start_index, // next_shred_index
+                        start_index, // next_code_index
+                        &reed_solomon_cache,
+                        &mut ProcessShredsStats::default(),
+                    );
                 all_shreds.append(&mut data_shreds);
                 all_shreds.append(&mut coding_shreds);
                 chained_merkle_root = Some(coding_shreds.last().unwrap().merkle_root().unwrap());
@@ -2425,14 +2425,13 @@ impl Blockstore {
         }
 
         if !slot_entries.is_empty() {
-            let (mut data_shreds, mut coding_shreds) = shredder.entries_to_shreds(
+            let (mut data_shreds, mut coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
                 keypair,
                 &slot_entries,
                 is_full_slot,
                 chained_merkle_root,
-                0,    // next_shred_index
-                0,    // next_code_index
-                true, // merkle_variant
+                0, // next_shred_index
+                0, // next_code_index
                 &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
             );
@@ -4865,15 +4864,14 @@ pub fn create_new_ledger(
     let version = solana_shred_version::version_from_hash(&last_hash);
 
     let shredder = Shredder::new(0, 0, 0, version).unwrap();
-    let (shreds, _) = shredder.entries_to_shreds(
+    let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
         &Keypair::new(),
         &entries,
         true, // is_last_in_slot
         // chained_merkle_root
         Some(Hash::new_from_array(rand::thread_rng().gen())),
-        0,    // next_shred_index
-        0,    // next_code_index
-        true, // merkle_variant
+        0, // next_shred_index
+        0, // next_code_index
         &ReedSolomonCache::default(),
         &mut ProcessShredsStats::default(),
     );
@@ -5097,6 +5095,7 @@ pub fn entries_to_test_shreds(
     version: u16,
     merkle_variant: bool,
 ) -> Vec<Shred> {
+    #[allow(deprecated)]
     Shredder::new(slot, parent_slot, 0, version)
         .unwrap()
         .entries_to_shreds(
@@ -7115,14 +7114,13 @@ pub mod tests {
         let keypair = Keypair::new();
         let rsc = ReedSolomonCache::default();
         let shreds = shredder
-            .entries_to_shreds(
+            .entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &entries,
                 true,
                 None, //chained_merkle_root
                 0,
                 0,
-                true,
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -7144,14 +7142,13 @@ pub mod tests {
 
         // make a "blank" FEC set that would normally be used to terminate the block
         let terminator = shredder
-            .entries_to_shreds(
+            .entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &[],
                 true,
                 None, //chained_merkle_root
                 6,    // next_shred_index,
                 6,    // next_code_index
-                true,
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -7208,14 +7205,13 @@ pub mod tests {
         let slot_meta = blockstore.meta(0).unwrap().unwrap();
 
         let past_tail_shreds = shredder
-            .entries_to_shreds(
+            .entries_to_merkle_shreds_for_tests(
                 &Keypair::new(),
                 &entries,
                 true,
                 None,     //chained_merkle_root
                 last_idx, // next_shred_index,
                 last_idx, // next_code_index
-                true,
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )
@@ -10242,14 +10238,13 @@ pub mod tests {
         let entries = make_slot_entries_with_transactions(num_entries);
         let leader_keypair = Arc::new(Keypair::new());
         let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries,
             is_last_in_slot,
             chained_merkle_root,
             fec_set_index, // next_shred_index
             fec_set_index, // next_code_index
-            true,          // merkle_variant
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );
@@ -10309,25 +10304,23 @@ pub mod tests {
         let reed_solomon_cache = ReedSolomonCache::default();
         let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
         let chained_merkle_root = chained.then(|| Hash::new_from_array(rand::thread_rng().gen()));
-        let (shreds, _) = shredder.entries_to_shreds(
+        let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries1,
             true, // is_last_in_slot
             chained_merkle_root,
-            0,    // next_shred_index
-            0,    // next_code_index,
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index,
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
-        let (duplicate_shreds, _) = shredder.entries_to_shreds(
+        let (duplicate_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             &leader_keypair,
             &entries2,
             true, // is_last_in_slot
             chained_merkle_root,
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
@@ -10673,28 +10666,26 @@ pub mod tests {
         let merkle_root = Some(Hash::new_from_array(rand::thread_rng().gen()));
         let kp = Keypair::new();
         // produce normal shreds
-        let (data1, coding1) = shredder.entries_to_shreds(
+        let (data1, coding1) = shredder.entries_to_merkle_shreds_for_tests(
             &kp,
             &entries,
             true, // complete slot
             merkle_root,
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // make merkle shreds
+            0, // next_shred_index
+            0, // next_code_index
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
         // produce shreds with conflicting FEC set index based off different data.
         // it should not matter what data we use here though. Using the same merkle
         // root as above as if we are building off the same previous block.
-        let (_data2, coding2) = shredder.entries_to_shreds(
+        let (_data2, coding2) = shredder.entries_to_merkle_shreds_for_tests(
             &kp,
             &entries2,
             true, // complete slot
             merkle_root,
-            0,    // next_shred_index
-            1,    // next_code_index (overlaps with FEC set in data1 + coding1)
-            true, // make merkle shreds
+            0, // next_shred_index
+            1, // next_code_index (overlaps with FEC set in data1 + coding1)
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );
