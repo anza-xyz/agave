@@ -176,6 +176,8 @@ impl FixedIoBuffer {
         self.size
     }
 
+    /// Safety: while just returning without dereferencing a pointer is safe, this is marked unsafe
+    /// so that the callers are encouraged to reason about the lifetime of the buffer.
     pub unsafe fn as_mut_ptr(&self) -> *mut u8 {
         self.ptr
     }

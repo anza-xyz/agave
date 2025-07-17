@@ -213,28 +213,17 @@ fn unpack_entry<'a, R: Read>(
         GNUSparse | Regular => 0o644,
         _ => 0o755,
     };
-    match entry.header().entry_type() {
-        tar::EntryType::Directory
-        | tar::EntryType::Link
-        | tar::EntryType::Symlink
-        | tar::EntryType::XGlobalHeader
-        | tar::EntryType::XHeader
-        | tar::EntryType::GNULongName
-        | tar::EntryType::GNULongLink => {
-            entry.unpack(&dst)?;
-            // Sanitize permissions.
-            set_perms(&dst, mode)?;
+    if should_fallback_to_tar_unpack(&entry) {
+        entry.unpack(&dst)?;
+        // Sanitize permissions.
+        set_perms(&dst, mode)?;
 
-            if !entry.header().entry_type().is_dir() {
-                // Process file after setting permissions
-                files_creator.file_complete(dst);
-            }
-
-            return Ok(());
+        if !entry.header().entry_type().is_dir() {
+            // Process file after setting permissions
+            files_creator.file_complete(dst);
         }
-        _ => (),
+        return Ok(());
     }
-
     files_creator.schedule_create_at_dir(dst, mode, dst_open_dir, &mut entry)?;
 
     return Ok(());
@@ -251,6 +240,21 @@ fn unpack_entry<'a, R: Read>(
     fn set_perms(dst: &Path, _mode: u32) -> io::Result<()> {
         super::file_io::set_file_readonly(dst, false)
     }
+}
+
+fn should_fallback_to_tar_unpack<R: io::Read>(entry: &tar::Entry<'_, R>) -> bool {
+    // Follows cases that are handled as directory or in special way by tar-rs library,
+    // we want to handle just cases where the library would write plain files with entry's content.
+    matches!(
+        entry.header().entry_type(),
+        tar::EntryType::Directory
+            | tar::EntryType::Link
+            | tar::EntryType::Symlink
+            | tar::EntryType::XGlobalHeader
+            | tar::EntryType::XHeader
+            | tar::EntryType::GNULongName
+            | tar::EntryType::GNULongLink
+    ) || entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/")
 }
 
 // return Err on file system error
