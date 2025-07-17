@@ -1798,84 +1798,93 @@ impl Validator {
     }
 
     pub fn join(self) {
+        drop(self.bank_forks);
         drop(self.cluster_info);
 
-        macro_rules! join_then_log {
-            ($expr:expr) => {
-                let label = stringify!($expr);
-                let r = $expr.join().expect(label);
-                error!("joined {label} with {r:?} {:?}", std::thread::current());
-            };
-        }
-
-        join_then_log!(self.poh_service);
-
+        self.poh_service.join().expect("poh_service");
         drop(self.poh_recorder);
 
         if let Some(json_rpc_service) = self.json_rpc_service {
-            join_then_log!(json_rpc_service);
+            json_rpc_service.join().expect("rpc_service");
         }
 
         if let Some(pubsub_service) = self.pubsub_service {
-            join_then_log!(pubsub_service);
+            pubsub_service.join().expect("pubsub_service");
         }
 
         if let Some(rpc_completed_slots_service) = self.rpc_completed_slots_service {
-            join_then_log!(rpc_completed_slots_service);
+            rpc_completed_slots_service
+                .join()
+                .expect("rpc_completed_slots_service");
         }
 
         if let Some(optimistically_confirmed_bank_tracker) =
             self.optimistically_confirmed_bank_tracker
         {
-            join_then_log!(optimistically_confirmed_bank_tracker);
+            optimistically_confirmed_bank_tracker
+                .join()
+                .expect("optimistically_confirmed_bank_tracker");
         }
 
         if let Some(transaction_status_service) = self.transaction_status_service {
-            join_then_log!(transaction_status_service);
+            transaction_status_service
+                .join()
+                .expect("transaction_status_service");
         }
 
         if let Some(system_monitor_service) = self.system_monitor_service {
-            join_then_log!(system_monitor_service);
+            system_monitor_service
+                .join()
+                .expect("system_monitor_service");
         }
 
         if let Some(sample_performance_service) = self.sample_performance_service {
-            join_then_log!(sample_performance_service);
+            sample_performance_service
+                .join()
+                .expect("sample_performance_service");
         }
 
         if let Some(entry_notifier_service) = self.entry_notifier_service {
-            join_then_log!(entry_notifier_service);
+            entry_notifier_service
+                .join()
+                .expect("entry_notifier_service");
         }
 
-        if let Some(snapshot_packager_service) = self.snapshot_packager_service {
-            join_then_log!(snapshot_packager_service);
+        if let Some(s) = self.snapshot_packager_service {
+            s.join().expect("snapshot_packager_service");
         }
 
-        join_then_log!(self.gossip_service);
+        self.gossip_service.join().expect("gossip_service");
         self.repair_quic_endpoints
             .iter()
             .flatten()
             .for_each(repair::quic_endpoint::close_quic_endpoint);
-        join_then_log!(self.serve_repair_service);
+        self.serve_repair_service
+            .join()
+            .expect("serve_repair_service");
         if let Some(repair_quic_endpoints_join_handle) = self.repair_quic_endpoints_join_handle {
             self.repair_quic_endpoints_runtime
                 .map(|runtime| runtime.block_on(repair_quic_endpoints_join_handle))
                 .transpose()
                 .unwrap();
         }
-        join_then_log!(self.stats_reporter_service);
-        join_then_log!(self.blockstore_metric_report_service);
-        join_then_log!(self.accounts_background_service);
-        join_then_log!(self.accounts_hash_verifier);
+        self.stats_reporter_service
+            .join()
+            .expect("stats_reporter_service");
+        self.blockstore_metric_report_service
+            .join()
+            .expect("ledger_metric_report_service");
+        self.accounts_background_service
+            .join()
+            .expect("accounts_background_service");
+        self.accounts_hash_verifier
+            .join()
+            .expect("accounts_hash_verifier");
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
-        // Needs to signal unified scheduler about shutdown to join tpu...
-        self.bank_forks
-            .read()
-            .unwrap()
-            .unregister_banking_stage_from_unified_scheduler();
-        join_then_log!(self.tpu);
-        join_then_log!(self.tvu);
+        self.tpu.join().expect("tpu");
+        self.tvu.join().expect("tvu");
         if let Some(turbine_quic_endpoint_join_handle) = self.turbine_quic_endpoint_join_handle {
             self.turbine_quic_endpoint_runtime
                 .map(|runtime| runtime.block_on(turbine_quic_endpoint_join_handle))
@@ -1883,25 +1892,17 @@ impl Validator {
                 .unwrap();
         }
         if let Some(completed_data_sets_service) = self.completed_data_sets_service {
-            join_then_log!(completed_data_sets_service);
+            completed_data_sets_service
+                .join()
+                .expect("completed_data_sets_service");
         }
         if let Some(ip_echo_server) = self.ip_echo_server {
             ip_echo_server.shutdown_background();
         }
 
         if let Some(geyser_plugin_service) = self.geyser_plugin_service {
-            join_then_log!(geyser_plugin_service);
+            geyser_plugin_service.join().expect("geyser_plugin_service");
         }
-
-        trace!("dropping bank_forks...");
-        let sc = Arc::strong_count(&self.bank_forks);
-        if let Some(bank_forks) = Arc::into_inner(self.bank_forks) {
-            drop::<BankForks>(bank_forks.into_inner().unwrap());
-        } else {
-            error!("seems bankforks are leaking...{}:", sc);
-        }
-
-        trace!("completed joining all services");
     }
 }
 

@@ -511,6 +511,7 @@ where
     ) -> Arc<Self> {
         let (scheduler_pool_sender, scheduler_pool_receiver) = crossbeam_channel::bounded(1);
 
+        let mut exiting = false;
         let cleaner_main_loop = move || {
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
@@ -553,6 +554,10 @@ where
                 };
 
                 let banking_stage_status = scheduler_pool.banking_stage_status();
+                if !exiting && matches!(banking_stage_status, Some(BankingStageStatus::Exited)) {
+                    exiting = true;
+                    scheduler_pool.unregister_banking_stage();
+                }
 
                 if matches!(banking_stage_status, Some(BankingStageStatus::Inactive)) {
                     let Ok(mut inner) = scheduler_pool.block_production_scheduler_inner.lock()
@@ -829,6 +834,35 @@ where
         );
     }
 
+    fn unregister_banking_stage(&self) {
+        if !self.block_production_supported() {
+            return;
+        }
+
+        #[derive(Debug)]
+        struct DummyBankingMinitor;
+
+        impl BankingStageMonitor for DummyBankingMinitor {
+            fn status(&mut self) -> BankingStageStatus {
+                BankingStageStatus::Inactive
+            }
+        }
+
+        let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
+        let handler_context = handler_context.as_mut().unwrap();
+        // Replace with dummy ones to unblock validator shutdown.
+        // Note that replacing banking_stage_handler_context with None altogether will create a
+        // very short window of race condition due to untimely spawning of block production
+        // scheduler.
+        handler_context.banking_packet_receiver = never();
+        handler_context.banking_packet_handler = Box::new(|_, _| {
+            // This is safe because of the paired use of never() just above.
+            unreachable!()
+        });
+        handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
+    }
+
+
     fn banking_stage_status(&self) -> Option<BankingStageStatus> {
         self.banking_stage_handler_context
             .lock()
@@ -969,31 +1003,6 @@ where
             .lock()
             .unwrap()
             .push((timeout_listener, Instant::now()));
-    }
-
-    fn unregister_banking_stage(&self) {
-        if !self.block_production_supported() {
-            return;
-        }
-
-        #[derive(Debug)]
-        struct DummyBankingMinitor;
-
-        impl BankingStageMonitor for DummyBankingMinitor {
-            fn status(&mut self) -> BankingStageStatus {
-                BankingStageStatus::Active
-            }
-        }
-
-        let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
-        let handler_context = handler_context.as_mut().unwrap();
-        // Replace with dummy ones to unblock validator shutdown.
-        // Note that replacing banking_stage_handler_context with None altogether will create a
-        // very short window of race condition due to untimely spawning of block production
-        // scheduler.
-        handler_context.banking_packet_receiver = never();
-        handler_context.banking_packet_handler = Box::new(|_, _| unreachable!());
-        handler_context.banking_stage_monitor = Box::new(DummyBankingMinitor);
     }
 
     fn uninstalled_from_bank_forks(self: Arc<Self>) {

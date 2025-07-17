@@ -317,12 +317,6 @@ impl BankForks {
         self.banks.values().map(|bank| bank.slot()).max().unwrap()
     }
 
-    pub fn unregister_banking_stage_from_unified_scheduler(&self) {
-        if let Some(scheduler_pool) = &self.scheduler_pool {
-            scheduler_pool.unregister_banking_stage();
-        }
-    }
-
     pub fn working_bank(&self) -> Arc<Bank> {
         self[self.highest_slot()].clone()
     }
@@ -687,7 +681,7 @@ impl ForkGraph for BankForks {
 
 impl Drop for BankForks {
     fn drop(&mut self) {
-        error!("BankForks::drop(): started...");
+        info!("BankForks::drop(): started...");
         // it's okay to abruptly drop all banks here albeit BankForks provides panic-happy Index
         // impl on them. We're inside the very end of life of it (i.e. the Drop impl block!),
         // considering it's Arc-ed elsewhere.
@@ -696,7 +690,7 @@ impl Drop for BankForks {
         if let Some(scheduler_pool) = self.scheduler_pool.take() {
             scheduler_pool.uninstalled_from_bank_forks();
         }
-        error!("BankForks::drop(): finished...");
+        info!("BankForks::drop(): finished...");
     }
 }
 
