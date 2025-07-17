@@ -261,11 +261,11 @@ impl HandlerContext {
 
     fn clone_for_scheduler_thread(&self) -> Self {
         let mut context = self.clone();
-        context.disable_banking_packet_receiver();
+        context.disable_banking_packet_handler();
         context
     }
 
-    fn disable_banking_packet_receiver(&mut self) {
+    fn disable_banking_packet_handler(&mut self) {
         self.banking_packet_receiver = never();
         self.banking_packet_handler = Box::new(|_, _| {
             // This is safe because of the paired use of never() just above.
@@ -2334,7 +2334,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                                 // receiver then continue much like block verification handler
                                 // thread after that to be cleaned up properly.
                                 error!("disconnected banking_packet_receiver");
-                                handler_context.disable_banking_packet_receiver();
+                                handler_context.disable_banking_packet_handler();
                                 continue;
                             };
                             banking_packet_handler(banking_stage_helper, banking_packet);
