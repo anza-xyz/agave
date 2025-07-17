@@ -1,6 +1,5 @@
 use {
     super::Bank,
-    agave_feature_set as feature_set,
     rayon::prelude::*,
     solana_account::{accounts_equal, AccountSharedData},
     solana_accounts_db::accounts_db::AccountsDb,
@@ -17,17 +16,6 @@ use {
 };
 
 impl Bank {
-    /// Returns if snapshots use the accounts lt hash
-    pub fn is_snapshots_lt_hash_enabled(&self) -> bool {
-        self.rc
-            .accounts
-            .accounts_db
-            .snapshots_use_experimental_accumulator_hash()
-            || self
-                .feature_set
-                .is_active(&feature_set::snapshots_lt_hash::id())
-    }
-
     /// Updates the accounts lt hash
     ///
     /// When freezing a bank, we compute and update the accounts lt hash.
@@ -430,15 +418,6 @@ mod tests {
         None,
         /// Enable all features
         All,
-    }
-
-    /// Should the experimental accumulator hash cli arg be enabled?
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-    enum Cli {
-        /// Do not enable the cli arg
-        Off,
-        /// Enable the cli arg
-        On,
     }
 
     /// Creates a genesis config with `features` enabled
@@ -1055,23 +1034,12 @@ mod tests {
         assert_eq!(expected_cache, actual_cache.as_slice());
     }
 
-    /// Ensure that the snapshot hash is correct when snapshots_lt_hash is enabled
-    #[test_matrix(
-        [Features::None, Features::All],
-        [Cli::Off, Cli::On],
-        [Cli::Off, Cli::On]
-    )]
-    fn test_snapshots_lt_hash(features: Features, cli: Cli, verify_cli: Cli) {
+    /// Ensure that the snapshot hash is correct
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_snapshots(features: Features) {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        bank.rc
-            .accounts
-            .accounts_db
-            .set_snapshots_use_experimental_accumulator_hash(match cli {
-                Cli::Off => false,
-                Cli::On => true,
-            });
 
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
@@ -1105,13 +1073,6 @@ mod tests {
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
-        let accounts_db_config = AccountsDbConfig {
-            snapshots_use_experimental_accumulator_hash: match verify_cli {
-                Cli::Off => false,
-                Cli::On => true,
-            },
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        };
         let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
@@ -1125,7 +1086,7 @@ mod tests {
             false,
             false,
             false,
-            Some(accounts_db_config),
+            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
         )

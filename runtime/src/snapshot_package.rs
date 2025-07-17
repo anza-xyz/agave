@@ -83,11 +83,7 @@ impl AccountsPackage {
             }
         };
 
-        let accounts_hash_algorithm = if bank.is_snapshots_lt_hash_enabled() {
-            AccountsHashAlgorithm::Lattice
-        } else {
-            AccountsHashAlgorithm::Merkle
-        };
+        let accounts_hash_algorithm = AccountsHashAlgorithm::Lattice;
         Self::_new(
             package_kind,
             bank,
