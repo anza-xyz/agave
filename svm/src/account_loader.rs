@@ -1088,7 +1088,7 @@ mod tests {
                     TransactionError::ProgramAccountNotFound,
                 );
             }
-            result => panic!("unexpected result: {:?}", result),
+            result => panic!("unexpected result: {result:?}"),
         }
     }
 

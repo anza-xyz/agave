@@ -1,5 +1,5 @@
 use {
-    crate::{bank::Bank, prioritization_fee::*},
+    crate::{bank::Bank, prioritization_fee::PrioritizationFee},
     crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     log::*,
     solana_accounts_db::account_locks::validate_account_locks,
@@ -47,6 +47,9 @@ struct PrioritizationFeeCacheMetrics {
 
     // Accumulated time spent on finalizing block prioritization fees.
     total_block_finalize_elapsed_us: AtomicU64,
+
+    // Accumulated time spent on calculate transaction fees.
+    total_calculate_prioritization_fee_elapsed_us: AtomicU64,
 }
 
 impl PrioritizationFeeCacheMetrics {
@@ -77,6 +80,11 @@ impl PrioritizationFeeCacheMetrics {
 
     fn accumulate_total_block_finalize_elapsed_us(&self, val: u64) {
         self.total_block_finalize_elapsed_us
+            .fetch_add(val, Ordering::Relaxed);
+    }
+
+    fn accumulate_total_calculate_prioritization_fee_elapsed_us(&self, val: u64) {
+        self.total_calculate_prioritization_fee_elapsed_us
             .fetch_add(val, Ordering::Relaxed);
     }
 
@@ -117,6 +125,12 @@ impl PrioritizationFeeCacheMetrics {
                     .swap(0, Ordering::Relaxed) as i64,
                 i64
             ),
+            (
+                "total_calculate_prioritization_fee_elapsed_us",
+                self.total_calculate_prioritization_fee_elapsed_us
+                    .swap(0, Ordering::Relaxed) as i64,
+                i64
+            ),
         );
     }
 }
@@ -126,7 +140,8 @@ enum CacheServiceUpdate {
     TransactionUpdate {
         slot: Slot,
         bank_id: BankId,
-        transaction_fee: u64,
+        compute_unit_price: u64,
+        prioritization_fee: u64,
         writable_accounts: Vec<Pubkey>,
     },
     BankFinalized {
@@ -233,11 +248,21 @@ impl PrioritizationFeeCache {
                     .map(|(_, key)| *key)
                     .collect();
 
+                let (prioritization_fee, calculate_prioritization_fee_us) = measure_us!({
+                    solana_fee_structure::FeeBudgetLimits::from(compute_budget_limits)
+                        .prioritization_fee
+                });
+                self.metrics
+                    .accumulate_total_calculate_prioritization_fee_elapsed_us(
+                        calculate_prioritization_fee_us,
+                    );
+
                 self.sender
                     .send(CacheServiceUpdate::TransactionUpdate {
                         slot: bank.slot(),
                         bank_id: bank.bank_id(),
-                        transaction_fee: compute_budget_limits.compute_unit_price,
+                        compute_unit_price: compute_budget_limits.compute_unit_price,
+                        prioritization_fee,
                         writable_accounts,
                     })
                     .unwrap_or_else(|err| {
@@ -271,7 +296,8 @@ impl PrioritizationFeeCache {
         unfinalized: &mut UnfinalizedPrioritizationFees,
         slot: Slot,
         bank_id: BankId,
-        transaction_fee: u64,
+        compute_unit_price: u64,
+        prioritization_fee: u64,
         writable_accounts: Vec<Pubkey>,
         metrics: &PrioritizationFeeCacheMetrics,
     ) {
@@ -280,7 +306,7 @@ impl PrioritizationFeeCache {
             .or_default()
             .entry(bank_id)
             .or_default()
-            .update(transaction_fee, writable_accounts));
+            .update(compute_unit_price, prioritization_fee, writable_accounts));
         metrics.accumulate_total_entry_update_elapsed_us(entry_update_us);
         metrics.accumulate_successful_transaction_update_count(1);
     }
@@ -374,13 +400,15 @@ impl PrioritizationFeeCache {
                 CacheServiceUpdate::TransactionUpdate {
                     slot,
                     bank_id,
-                    transaction_fee,
+                    compute_unit_price,
+                    prioritization_fee,
                     writable_accounts,
                 } => Self::update_cache(
                     &mut unfinalized,
                     slot,
                     bank_id,
-                    transaction_fee,
+                    compute_unit_price,
+                    prioritization_fee,
                     writable_accounts,
                     &metrics,
                 ),
@@ -414,7 +442,7 @@ impl PrioritizationFeeCache {
             .iter()
             .map(|(slot, slot_prioritization_fee)| {
                 let mut fee = slot_prioritization_fee
-                    .get_min_transaction_fee()
+                    .get_min_compute_unit_price()
                     .unwrap_or_default();
                 for account_key in account_keys {
                     if let Some(account_fee) =
@@ -549,7 +577,7 @@ mod tests {
             sync_finalize_priority_fee_for_test(&prioritization_fee_cache, slot, bank.bank_id());
             let lock = prioritization_fee_cache.cache.read().unwrap();
             let fee = lock.get(&slot).unwrap();
-            assert_eq!(2, fee.get_min_transaction_fee().unwrap());
+            assert_eq!(2, fee.get_min_compute_unit_price().unwrap());
             assert!(fee.get_writable_account_fee(&write_account_a).is_none());
             assert_eq!(5, fee.get_writable_account_fee(&write_account_b).unwrap());
             assert!(fee.get_writable_account_fee(&write_account_c).is_none());

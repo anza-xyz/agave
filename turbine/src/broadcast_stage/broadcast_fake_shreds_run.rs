@@ -155,10 +155,16 @@ impl BroadcastRun for BroadcastFakeShredsRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         _bank_forks: &RwLock<BankForks>,
         _quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
+        let sock = match sock {
+            BroadcastSocket::Udp(sock) => sock,
+            BroadcastSocket::Xdp(_) => {
+                panic!("Xdp not supported for fake shreds");
+            }
+        };
         for (data_shreds, batch_info) in receiver {
             let fake = batch_info.is_some();
             let peers = cluster_info.tvu_peers(ContactInfo::clone);

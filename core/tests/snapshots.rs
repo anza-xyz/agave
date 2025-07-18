@@ -5,10 +5,7 @@ use {
     crossbeam_channel::unbounded,
     itertools::Itertools,
     log::{info, trace},
-    solana_accounts_db::{
-        accounts_db::{AccountsDbConfig, ACCOUNTS_DB_CONFIG_FOR_TESTING},
-        epoch_accounts_hash::EpochAccountsHash,
-    },
+    solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING,
     solana_clock::Slot,
     solana_core::{
         accounts_hash_verifier::AccountsHashVerifier,
@@ -16,7 +13,6 @@ use {
     },
     solana_genesis_config::GenesisConfig,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::ContactInfo},
-    solana_hash::Hash,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
     solana_runtime::{
@@ -50,7 +46,6 @@ use {
         time::{Duration, Instant},
     },
     tempfile::TempDir,
-    test_case::test_matrix,
 };
 
 struct SnapshotTestConfig {
@@ -127,7 +122,6 @@ fn restore_from_snapshot(
     let old_bank_forks = old_bank_forks.read().unwrap();
     let old_last_bank = old_bank_forks.get(old_last_slot).unwrap();
 
-    let check_hash_calculation = false;
     let full_snapshot_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         &snapshot_config.full_snapshot_archives_dir,
         old_last_bank.slot(),
@@ -147,7 +141,6 @@ fn restore_from_snapshot(
         None,
         None,
         None,
-        check_hash_calculation,
         false,
         false,
         false,
@@ -214,7 +207,7 @@ where
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
-            snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
+            snapshot_request_handler.handle_snapshot_requests(0, &AtomicBool::new(false));
         }
     }
 
@@ -313,24 +306,6 @@ fn test_slots_to_snapshot() {
                 .unwrap()
                 .set_root(current_bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
-
-            // Since the accounts background services are not running, EpochAccountsHash
-            // calculation requests will not be handled. To prevent banks from hanging during
-            // Bank::freeze() due to waiting for EAH to complete, just set the EAH to Valid.
-            let epoch_accounts_hash_manager = &current_bank
-                .rc
-                .accounts
-                .accounts_db
-                .epoch_accounts_hash_manager;
-            if epoch_accounts_hash_manager
-                .try_get_epoch_accounts_hash()
-                .is_none()
-            {
-                epoch_accounts_hash_manager.set_valid(
-                    EpochAccountsHash::new(Hash::new_unique()),
-                    current_bank.slot(),
-                )
-            }
         }
 
         let num_old_slots = num_set_roots * *add_root_interval - MAX_CACHE_ENTRIES + 1;
@@ -472,7 +447,7 @@ fn test_bank_forks_incremental_snapshot() {
                 .unwrap()
                 .set_root(bank.slot(), Some(&snapshot_controller), None)
                 .unwrap();
-            snapshot_request_handler.handle_snapshot_requests(false, 0, &AtomicBool::new(false));
+            snapshot_request_handler.handle_snapshot_requests(0, &AtomicBool::new(false));
         }
 
         // Since AccountsBackgroundService isn't running, manually make a full snapshot archive
@@ -574,7 +549,6 @@ fn restore_from_snapshots_and_check_banks_are_equal(
         false,
         false,
         false,
-        false,
         Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
         Arc::default(),
@@ -586,17 +560,9 @@ fn restore_from_snapshots_and_check_banks_are_equal(
     Ok(())
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum VerifySnapshotHashKind {
-    Merkle,
-    Lattice,
-}
-
 /// Spin up the background services fully then test taking & verifying snapshots
-#[test_matrix(
-    [VerifySnapshotHashKind::Merkle, VerifySnapshotHashKind::Lattice]
-)]
-fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnapshotHashKind) {
+#[test]
+fn test_snapshots_with_background_services() {
     solana_logger::setup();
 
     const SET_ROOT_INTERVAL_SLOTS: Slot = 2;
@@ -773,11 +739,6 @@ fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnap
 
     // Load the snapshot and ensure it matches what's in BankForks
     let (_tmp_dir, temporary_accounts_dir) = create_tmp_accounts_dir_for_tests();
-    let accounts_db_config = AccountsDbConfig {
-        snapshots_use_experimental_accumulator_hash: verify_snapshot_hash_kind
-            == VerifySnapshotHashKind::Lattice,
-        ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-    };
     let snapshot_config = snapshot_controller.snapshot_config();
     let (deserialized_bank, ..) = snapshot_bank_utils::bank_from_latest_snapshot_archives(
         &snapshot_config.bank_snapshots_dir,
@@ -792,8 +753,7 @@ fn test_snapshots_with_background_services(verify_snapshot_hash_kind: VerifySnap
         false,
         false,
         false,
-        false,
-        Some(accounts_db_config),
+        Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
         None,
         exit.clone(),
     )

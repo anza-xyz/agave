@@ -822,6 +822,7 @@ impl BankingSimulator {
             bank_forks.clone(),
             shred_version,
             sender,
+            None,
         );
 
         info!("Start banking stage!...");

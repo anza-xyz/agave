@@ -99,7 +99,7 @@ mod tests {
 
         match test_setup_reader_sender("::1:0").await {
             Ok(config) => test_one_iter(config).await,
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 
@@ -136,7 +136,7 @@ mod tests {
 
         match test_setup_reader_sender("::1:0").await {
             Ok(config) => test_multi_iter(config).await,
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 

@@ -1,6 +1,4 @@
-use {
-    solana_clock::Slot, solana_connection_cache::connection_cache::Protocol, std::net::SocketAddr,
-};
+use {solana_connection_cache::connection_cache::Protocol, std::net::SocketAddr};
 
 /// A trait to abstract out the leader estimation for the
 /// SendTransactionService.
@@ -23,14 +21,6 @@ pub trait TpuInfo {
     /// For example, if leader schedule was `[L1, L1, L1, L1, L2, L2, L2, L2,
     /// L1, ...]` it will return `[L1, L2, L1]`.
     fn get_not_unique_leader_tpus(&self, max_count: u64, protocol: Protocol) -> Vec<&SocketAddr>;
-
-    /// In addition to the tpu address, also return the leader slot
-    #[deprecated(since = "2.2.0", note = "This function is not used anywhere.")]
-    fn get_leader_tpus_with_slots(
-        &self,
-        max_count: u64,
-        protocol: Protocol,
-    ) -> Vec<(&SocketAddr, Slot)>;
 }
 
 #[derive(Clone)]
@@ -42,14 +32,6 @@ impl TpuInfo for NullTpuInfo {
         vec![]
     }
     fn get_not_unique_leader_tpus(&self, _max_count: u64, _protocol: Protocol) -> Vec<&SocketAddr> {
-        vec![]
-    }
-
-    fn get_leader_tpus_with_slots(
-        &self,
-        _max_count: u64,
-        _protocol: Protocol,
-    ) -> Vec<(&SocketAddr, Slot)> {
         vec![]
     }
 }

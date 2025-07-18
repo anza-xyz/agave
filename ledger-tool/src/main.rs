@@ -22,12 +22,8 @@ use {
     log::*,
     serde_derive::Serialize,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_accounts_db::{
-        accounts_db::CalcAccountsHashDataSource,
-        accounts_index::{ScanConfig, ScanOrder},
-    },
+    solana_accounts_db::accounts_index::{ScanConfig, ScanOrder},
     solana_clap_utils::{
-        hidden_unless_forced,
         input_parsers::{cluster_type_of, pubkey_of, pubkeys_of},
         input_validators::{
             is_parsable, is_pubkey, is_pubkey_or_keypair, is_slot, is_valid_percentage,
@@ -84,7 +80,7 @@ use {
     solana_vote::vote_state_view::VoteStateView,
     solana_vote_program::{
         self,
-        vote_state::{self, VoteState},
+        vote_state::{self, VoteStateV3},
     },
     std::{
         collections::{HashMap, HashSet},
@@ -839,13 +835,6 @@ fn main() {
     let os_memory_stats_reporting_arg = Arg::with_name("os_memory_stats_reporting")
         .long("os-memory-stats-reporting")
         .help("Enable reporting of OS memory statistics.");
-    let halt_at_slot_store_hash_raw_data = Arg::with_name("halt_at_slot_store_hash_raw_data")
-        .long("halt-at-slot-store-hash-raw-data")
-        .help(
-            "After halting at slot, run an accounts hash calculation and store the raw hash data \
-             for debugging.",
-        )
-        .hidden(hidden_unless_forced());
     let verify_index_arg = Arg::with_name("verify_accounts_index")
         .long("verify-accounts-index")
         .takes_value(false)
@@ -917,7 +906,7 @@ fn main() {
 
     let rent = Rent::default();
     let default_bootstrap_validator_lamports = &sol_to_lamports(500.0)
-        .max(VoteState::get_rent_exempt_reserve(&rent))
+        .max(VoteStateV3::get_rent_exempt_reserve(&rent))
         .to_string();
     let default_bootstrap_validator_stake_lamports = &sol_to_lamports(0.5)
         .max(rent.minimum_balance(StakeStateV2::size_of()))
@@ -1094,7 +1083,6 @@ fn main() {
                 .arg(&halt_at_slot_arg)
                 .arg(&limit_load_slot_count_from_snapshot_arg)
                 .arg(&verify_index_arg)
-                .arg(&halt_at_slot_store_hash_raw_data)
                 .arg(&hard_forks_arg)
                 .arg(&os_memory_stats_reporting_arg)
                 .arg(&allow_dead_slots_arg)
@@ -2303,7 +2291,7 @@ fn main() {
                                 identity_pubkey,
                                 identity_pubkey,
                                 100,
-                                VoteState::get_rent_exempt_reserve(&rent).max(1),
+                                VoteStateV3::get_rent_exempt_reserve(&rent).max(1),
                             );
 
                             bank.store_account(
@@ -2381,7 +2369,6 @@ fn main() {
                             bank.clone(),
                             bank.collector_id(),
                             warp_slot,
-                            CalcAccountsHashDataSource::Storages,
                         ))
                     } else {
                         bank

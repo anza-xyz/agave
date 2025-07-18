@@ -15,6 +15,11 @@ Release channels have their own copy of this changelog:
 <a name="edge-channel"></a>
 ## 3.0.0 - Unreleased
 
+### RPC
+
+#### Changes
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+
 ### Validator
 
 #### Breaking

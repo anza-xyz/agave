@@ -53,7 +53,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
     let instruction_context = transaction_context.get_current_instruction_context()?;
     let data = instruction_context.get_instruction_data();
 
-    trace!("process_instruction: {:?}", data);
+    trace!("process_instruction: {data:?}");
 
     let get_stake_account = || {
         let me = instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
@@ -4489,7 +4489,10 @@ mod tests {
                     );
                     assert!(destination_stake.delegation.stake >= minimum_delegation,);
                 } else {
-                    panic!("destination state must be StakeStake::Stake after successful split when source is also StakeStateV2::Stake!");
+                    panic!(
+                        "destination state must be StakeStake::Stake after successful split when \
+                         source is also StakeStateV2::Stake!"
+                    );
                 }
             }
         }

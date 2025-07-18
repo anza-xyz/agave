@@ -60,6 +60,7 @@ caps = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+bencher = { workspace = true }
 bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }
 solana-logger = { workspace = true }
@@ -69,6 +70,8 @@ test-case = { workspace = true }
 
 [[bench]]
 name = "cluster_info"
+harness = false
 
 [[bench]]
 name = "cluster_nodes"
+harness = false

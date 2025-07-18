@@ -22,10 +22,10 @@ impl ConnectionRateLimiter {
     pub fn is_allowed(&self, ip: &IpAddr) -> bool {
         // Acquire a permit from the rate limiter for the given IP address
         if self.limiter.check_key(ip).is_ok() {
-            debug!("Request from IP {:?} allowed", ip);
+            debug!("Request from IP {ip:?} allowed");
             true // Request allowed
         } else {
-            debug!("Request from IP {:?} blocked", ip);
+            debug!("Request from IP {ip:?} blocked");
             false // Request blocked
         }
     }

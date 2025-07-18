@@ -2,7 +2,6 @@
 
 use {
     super::Bank,
-    agave_feature_set as feature_set,
     base64::{prelude::BASE64_STANDARD, Engine},
     log::*,
     serde::{
@@ -114,8 +113,6 @@ pub struct SlotDetails {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Default)]
 pub struct BankHashComponents {
     pub parent_bank_hash: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub accounts_delta_hash: Option<String>,
     pub signature_count: u64,
     pub last_blockhash: String,
     pub accounts_lt_hash_checksum: String,
@@ -132,25 +129,10 @@ impl SlotDetails {
         }
 
         let bank_hash_components = if include_bank_hash_components {
-            let accounts_delta_hash = (!bank
-                .feature_set
-                .is_active(&feature_set::remove_accounts_delta_hash::id()))
-            .then(|| {
-                // This bank is frozen; as a result, we know that the state has been
-                // hashed which means the delta hash is Some(). So, .unwrap() is safe
-                bank.rc
-                    .accounts
-                    .accounts_db
-                    .get_accounts_delta_hash(slot)
-                    .unwrap()
-                    .0
-                    .to_string()
-            });
             let accounts = bank.get_accounts_for_bank_hash_details();
 
             Some(BankHashComponents {
                 parent_bank_hash: bank.parent_hash().to_string(),
-                accounts_delta_hash,
                 signature_count: bank.signature_count(),
                 last_blockhash: bank.last_blockhash().to_string(),
                 accounts_lt_hash_checksum: bank
@@ -335,11 +317,6 @@ pub mod tests {
                     bank_hash: format!("bank{slot}"),
                     bank_hash_components: Some(BankHashComponents {
                         parent_bank_hash: "parent_bank_hash".into(),
-                        accounts_delta_hash: if slot % 4 == 0 {
-                            None
-                        } else {
-                            Some("accounts_delta_hash".into())
-                        },
                         signature_count: slot + 10,
                         last_blockhash: "last_blockhash".into(),
                         accounts_lt_hash_checksum: "accounts_lt_hash_checksum".into(),

@@ -1,5 +1,5 @@
 use {
-    solana_clock::{Slot, NUM_CONSECUTIVE_LEADER_SLOTS},
+    solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
     solana_gossip::{cluster_info::ClusterInfo, contact_info::Protocol},
     solana_poh::poh_recorder::PohRecorder,
     solana_pubkey::Pubkey,
@@ -82,39 +82,6 @@ impl TpuInfo for ClusterTpuInfo {
                     })
             })
             .collect()
-    }
-
-    fn get_leader_tpus_with_slots(
-        &self,
-        max_count: u64,
-        protocol: Protocol,
-    ) -> Vec<(&SocketAddr, Slot)> {
-        let recorder = self.poh_recorder.read().unwrap();
-        let leaders: Vec<_> = (0..max_count)
-            .rev()
-            .filter_map(|future_slot| {
-                NUM_CONSECUTIVE_LEADER_SLOTS
-                    .checked_mul(future_slot)
-                    .and_then(|slots_in_the_future| {
-                        recorder.leader_and_slot_after_n_slots(slots_in_the_future)
-                    })
-            })
-            .collect();
-        drop(recorder);
-        let addrs_to_slots = leaders
-            .into_iter()
-            .filter_map(|(leader_id, leader_slot)| {
-                self.recent_peers
-                    .get(&leader_id)
-                    .map(|(udp_tpu, quic_tpu)| match protocol {
-                        Protocol::UDP => (udp_tpu, leader_slot),
-                        Protocol::QUIC => (quic_tpu, leader_slot),
-                    })
-            })
-            .collect::<HashMap<_, _>>();
-        let mut unique_leaders = Vec::from_iter(addrs_to_slots);
-        unique_leaders.sort_by_key(|(_addr, slot)| *slot);
-        unique_leaders
     }
 }
 

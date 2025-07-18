@@ -138,19 +138,19 @@ mod tests {
         {
             let mut bank_fields = bank2.get_fields_to_serialize();
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
-            let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
+            let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
             serde_snapshot::serialize_bank_snapshot_into(
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                accounts_db.get_accounts_delta_hash(bank2_slot).unwrap(),
+                AccountsDeltaHash(Hash::default()), // obsolete, will be removed next
                 expected_accounts_hash,
                 &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
                     incremental_snapshot_persistence: expected_incremental_snapshot_persistence
                         .as_ref(),
-                    epoch_accounts_hash: None,
+                    obsolete_epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
                 },
@@ -355,7 +355,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
@@ -371,14 +370,9 @@ mod tests {
     #[cfg(feature = "frozen-abi")]
     mod test_bank_serialize {
         use {
-            super::*,
-            crate::bank::BankHashStats,
-            solana_accounts_db::{
-                accounts_hash::AccountsLtHash, epoch_accounts_hash::EpochAccountsHash,
-            },
-            solana_clock::Slot,
-            solana_frozen_abi::abi_example::AbiExample,
-            solana_lattice_hash::lt_hash::LtHash,
+            super::*, crate::bank::BankHashStats,
+            solana_accounts_db::accounts_hash::AccountsLtHash, solana_clock::Slot,
+            solana_frozen_abi::abi_example::AbiExample, solana_lattice_hash::lt_hash::LtHash,
             std::marker::PhantomData,
         };
 
@@ -403,7 +397,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "CsLEuMN7aF93CutCEYfUQrWi3kBV4weLtmckWs8f6Kt1")
+            frozen_abi(digest = "7F6xtBno4tS6QaD3wP8kQxa9BiRtvmCu8TzFNprFjM7A")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
@@ -440,7 +434,7 @@ mod tests {
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
                     incremental_snapshot_persistence: Some(&incremental_snapshot_persistence),
-                    epoch_accounts_hash: Some(EpochAccountsHash::new(Hash::new_unique())),
+                    obsolete_epoch_accounts_hash: Some(Hash::new_unique()),
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
                 },

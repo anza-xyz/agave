@@ -1,13 +1,10 @@
-#![feature(test)]
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::Rng,
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::VoteAccount,
     solana_vote_interface::state::{VoteInit, VoteState, VoteStateVersions},
-    test::Bencher,
 };
 
 fn new_rand_vote_account<R: Rng>(
@@ -38,7 +35,6 @@ fn new_rand_vote_account<R: Rng>(
     (account, vote_state)
 }
 
-#[bench]
 fn bench_vote_account_try_from(b: &mut Bencher) {
     let mut rng = rand::thread_rng();
     let (account, vote_state) = new_rand_vote_account(&mut rng, None);
@@ -53,3 +49,6 @@ fn bench_vote_account_try_from(b: &mut Bencher) {
         assert_eq!(vote_state.root_slot, vote_state_view.root_slot());
     });
 }
+
+benchmark_group!(benches, bench_vote_account_try_from);
+benchmark_main!(benches);

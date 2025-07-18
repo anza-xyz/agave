@@ -59,7 +59,10 @@ use {
         quic::{spawn_server_multi, QuicServerParams, SpawnServerResult},
         streamer::StakedNodes,
     },
-    solana_turbine::broadcast_stage::{BroadcastStage, BroadcastStageType},
+    solana_turbine::{
+        broadcast_stage::{BroadcastStage, BroadcastStageType},
+        xdp::XdpSender,
+    },
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
@@ -128,6 +131,7 @@ impl Tpu {
         entry_notification_sender: Option<EntryNotifierSender>,
         blockstore: Arc<Blockstore>,
         broadcast_type: &BroadcastStageType,
+        xdp_sender: Option<XdpSender>,
         exit: Arc<AtomicBool>,
         shred_version: u16,
         vote_tracker: Arc<VoteTracker>,
@@ -372,6 +376,7 @@ impl Tpu {
             bank_forks,
             shred_version,
             turbine_quic_endpoint_sender,
+            xdp_sender,
         );
 
         let mut key_notifiers = key_notifiers.write().unwrap();

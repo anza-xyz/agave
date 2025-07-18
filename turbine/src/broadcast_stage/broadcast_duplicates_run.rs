@@ -298,7 +298,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         _quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
@@ -356,7 +356,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 {
                     if cluster_partition.contains(node.pubkey()) {
                         info!(
-                            "Not broadcasting original shred index {}, slot {} to partition node {}",
+                            "Not broadcasting original shred index {}, slot {} to partition node \
+                             {}",
                             shred.index(),
                             shred.slot(),
                             node.pubkey(),
@@ -378,13 +379,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                             .iter()
                             .filter_map(|pubkey| {
                                 info!(
-                                    "Broadcasting partition shred index {}, slot {} to partition node {}",
+                                    "Broadcasting partition shred index {}, slot {} to partition \
+                                     node {}",
                                     shred.index(),
                                     shred.slot(),
                                     pubkey,
                                 );
-                                let tvu = cluster_info
-                                    .lookup_contact_info(pubkey, |node| node.tvu(Protocol::UDP))??;
+                                let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
+                                    node.tvu(Protocol::UDP)
+                                })??;
                                 Some((shred.payload(), tvu))
                             })
                             .collect(),
@@ -396,6 +399,12 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .flatten()
             .collect();
 
+        let sock = match sock {
+            BroadcastSocket::Udp(sock) => sock,
+            BroadcastSocket::Xdp(_) => {
+                panic!("Xdp not supported for duplicate shreds run");
+            }
+        };
         batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
     }
 

@@ -104,7 +104,7 @@ impl Debug for RestartableBucket {
 impl Debug for Restart {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let header = self.get_header();
-        writeln!(f, "{:?}", header)?;
+        writeln!(f, "{header:?}")?;
         write!(
             f,
             "{:?}",
