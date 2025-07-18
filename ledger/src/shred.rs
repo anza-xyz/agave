@@ -56,7 +56,7 @@ pub(crate) use self::{
     payload::serde_bytes_payload,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
+use solana_perf::packet::Packet;
 pub use {
     self::{
         payload::Payload,
@@ -202,6 +202,8 @@ pub enum Error {
     InvalidShredType,
     #[error("Invalid shred variant")]
     InvalidShredVariant,
+    #[error("Invalid packet size, could not get the shred")]
+    InvalidPacketSize,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("Unknown proof size")]
@@ -423,16 +425,6 @@ impl Shred {
         let size = payload.len();
         packet.buffer_mut()[..size].copy_from_slice(&payload[..]);
         packet.meta_mut().size = size;
-    }
-
-    #[cfg(any(test, feature = "dev-context-only-utils"))]
-    pub fn to_packet(&self) -> BytesPacket {
-        let buffer: &[u8] = match self.payload() {
-            Payload::Shared(bytes) => bytes.as_ref(),
-            Payload::Unique(bytes) => bytes.as_ref(),
-        };
-        let buffer = Bytes::copy_from_slice(buffer);
-        BytesPacket::new(buffer, Meta::default())
     }
 
     // TODO: Should this sanitize output?

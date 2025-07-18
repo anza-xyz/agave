@@ -2,6 +2,15 @@ use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
 };
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+use {
+    crate::shred::Nonce,
+    solana_perf::packet::{
+        bytes::{BufMut, BytesMut},
+        BytesPacket, Meta, Packet,
+    },
+    std::mem,
+};
 
 #[derive(Clone, Debug, Eq)]
 pub enum Payload {
@@ -57,6 +66,40 @@ impl Payload {
             Self::Shared(bytes) => Arc::unwrap_or_clone(bytes),
             Self::Unique(bytes) => bytes,
         }
+    }
+}
+
+#[cfg(any(test, feature = "dev-context-only-utils"))]
+impl Payload {
+    pub fn copy_to_packet(&self, packet: &mut Packet) {
+        let size = self.len();
+        packet.buffer_mut()[..size].copy_from_slice(&self[..]);
+        packet.meta_mut().size = size;
+    }
+
+    pub fn to_packet(&self, nonce: Option<Nonce>) -> Packet {
+        let mut packet = Packet::default();
+        let size = self.len();
+        packet.buffer_mut()[..size].copy_from_slice(self);
+        let size = if let Some(nonce) = nonce {
+            let full_size = size + mem::size_of::<Nonce>();
+            packet.buffer_mut()[size..full_size].copy_from_slice(&nonce.to_le_bytes());
+            full_size
+        } else {
+            size
+        };
+        packet.meta_mut().size = size;
+        packet
+    }
+
+    pub fn to_bytes_packet(&self, nonce: Option<Nonce>) -> BytesPacket {
+        let cap = self.len() + nonce.map(|_| mem::size_of::<Nonce>()).unwrap_or(0);
+        let mut buffer = BytesMut::with_capacity(cap);
+        buffer.put_slice(&self[..]);
+        if let Some(nonce) = nonce {
+            buffer.put_u32(nonce);
+        }
+        BytesPacket::new(buffer.freeze(), Meta::default())
     }
 }
 

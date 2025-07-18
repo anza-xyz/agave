@@ -63,8 +63,10 @@ assert_matches = { workspace = true }
 bencher = { workspace = true }
 bs58 = { workspace = true }
 solana-genesis-config = { workspace = true }
+solana-ledger = { workspace = true, features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
+solana-signature = { workspace = true, features = ["rand"] }
 solana-transaction = { workspace = true }
 test-case = { workspace = true }
 
