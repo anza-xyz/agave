@@ -9,6 +9,11 @@ and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backw
 
 ## 2.3.0
 
+### RPC
+
+#### Changes
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+
 ### Validator
 
 #### Breaking
