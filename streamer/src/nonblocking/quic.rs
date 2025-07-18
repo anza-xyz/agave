@@ -301,6 +301,7 @@ async fn run_server(
     let stream_load_ema = Arc::new(StakedStreamLoadEMA::new(
         stats.clone(),
         max_unstaked_connections,
+        max_staked_connections,
         max_streams_per_ms,
     ));
     stats
