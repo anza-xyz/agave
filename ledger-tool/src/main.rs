@@ -480,13 +480,16 @@ fn compute_slot_cost(
                 num_programs += transaction.message().instructions().len();
 
                 let tx_cost = CostModel::calculate_cost(&transaction, &feature_set);
-                let result = cost_tracker.try_add(&tx_cost);
+                let result = cost_tracker.try_stage_next(&tx_cost);
                 if result.is_err() {
                     println!(
                         "Slot: {slot}, CostModel rejected transaction {transaction:?}, reason \
                          {result:?}",
                     );
                 }
+
+                cost_tracker.commit_staged();
+
                 for (program_id, _instruction) in transaction.message().program_instructions_iter()
                 {
                     *program_ids.entry(*program_id).or_insert(0) += 1;

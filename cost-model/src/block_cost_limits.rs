@@ -29,6 +29,8 @@ pub const MAX_BLOCK_UNITS: u64 = MAX_BLOCK_UNITS_SIMD_0207;
 pub const MAX_BLOCK_UNITS_SIMD_0207: u64 = 50_000_000;
 pub const MAX_BLOCK_UNITS_SIMD_0256: u64 = 60_000_000;
 
+pub const MAX_BLOCK_SERIAL_UNITS: u64 = 25_000_000;
+
 /// Number of compute units that a writable account in a block is allowed. The
 /// limit is to prevent too many transactions write to same account, therefore
 /// reduce block's parallelism.

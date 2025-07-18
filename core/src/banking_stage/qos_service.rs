@@ -112,7 +112,7 @@ impl QosService {
         let select_results = transactions
             .zip(transactions_costs)
             .map(|(tx, cost)| match cost {
-                Ok(cost) => match cost_tracker.try_add(&cost) {
+                Ok(cost) => match cost_tracker.try_stage_next(&cost) {
                     Ok(UpdatedCosts {
                         updated_block_cost,
                         updated_costliest_account_cost,
@@ -149,6 +149,7 @@ impl QosService {
             })
             .collect();
         cost_tracker.add_transactions_in_flight(num_included);
+        cost_tracker.reset_staged();
 
         cost_tracking_time.stop();
         self.metrics

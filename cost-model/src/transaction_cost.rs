@@ -108,6 +108,19 @@ impl<Tx: SVMMessage> TransactionCost<'_, Tx> {
             .enumerate()
             .filter_map(|(index, key)| transaction.is_writable(index).then_some(key))
     }
+
+    pub fn readonly_accounts(&self) -> impl Iterator<Item = &Pubkey> {
+        let transaction = match self {
+            Self::SimpleVote { transaction } => transaction,
+            Self::Transaction(usage_cost) => usage_cost.transaction,
+        };
+        transaction
+            .account_keys()
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !transaction.is_writable(*idx))
+            .map(|(_, key)| key)
+    }
 }
 
 impl<Tx: StaticMeta> TransactionCost<'_, Tx> {
