@@ -3,12 +3,14 @@ mod tests {
     use {
         crossbeam_channel::{unbounded, Receiver},
         log::*,
-        solana_connection_cache::connection_cache_stats::ConnectionCacheStats,
+        solana_connection_cache::{
+            client_connection::ClientStats, connection_cache_stats::ConnectionCacheStats,
+        },
         solana_keypair::Keypair,
         solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
         solana_packet::PACKET_DATA_SIZE,
         solana_perf::packet::PacketBatch,
-        solana_quic_client::nonblocking::quic_client::QuicLazyInitializedEndpoint,
+        solana_quic_client::nonblocking::quic_client::{QuicClient, QuicLazyInitializedEndpoint},
         solana_streamer::{
             quic::{QuicServerParams, SpawnServerResult},
             streamer::StakedNodes,
@@ -309,5 +311,52 @@ mod tests {
         response_recv_exit.store(true, Ordering::Relaxed);
         response_recv_thread.join().unwrap();
         info!("Response receiver exited!");
+    }
+
+    #[tokio::test]
+    async fn test_connection_close() {
+        solana_logger::setup();
+        let (sender, receiver) = unbounded();
+        let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
+        let (s, exit, keypair) = server_args();
+        let solana_streamer::nonblocking::quic::SpawnNonBlockingServerResult {
+            endpoints: _,
+            stats: _,
+            thread: t,
+            max_concurrent_connections: _,
+        } = solana_streamer::nonblocking::quic::spawn_server(
+            "quic_streamer_test",
+            s.try_clone().unwrap(),
+            &keypair,
+            sender,
+            exit.clone(),
+            staked_nodes,
+            QuicServerParams::default_for_tests(),
+        )
+        .unwrap();
+
+        let addr = s.local_addr().unwrap().ip();
+        let port = s.local_addr().unwrap().port();
+        let tpu_addr = SocketAddr::new(addr, port);
+        let connection_cache_stats = Arc::new(ConnectionCacheStats::default());
+        let client = QuicClient::new(Arc::new(QuicLazyInitializedEndpoint::default()), tpu_addr);
+
+        // Send a full size packet with single byte writes.
+        let num_bytes = PACKET_DATA_SIZE;
+        let num_expected_packets: usize = 3;
+        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let client_stats = ClientStats::default();
+        for packet in packets {
+            let _ = client
+                .send_buffer(&packet, &client_stats, connection_cache_stats.clone())
+                .await;
+        }
+
+        nonblocking_check_packets(receiver, num_bytes, num_expected_packets).await;
+        exit.store(true, Ordering::Relaxed);
+
+        t.await.unwrap();
+        // We close the connection after the server is down, this should not block
+        client.close().await;
     }
 }
