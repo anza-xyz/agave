@@ -531,17 +531,15 @@ impl HeaviestSubtreeForkChoice {
             // blocks, prioritize lower hash.
             match child_weight.cmp(&maybe_best_child_weight) {
                 Ordering::Greater => return false,
-                Ordering::Equal => {
-                    match child.0.cmp(&maybe_best_child.0) {
-                        Ordering::Greater => return false,
-                        Ordering::Equal => {
-                            if child.1 < maybe_best_child.1 {
-                                return false;
-                            }
+                Ordering::Equal => match child.0.cmp(&maybe_best_child.0) {
+                    Ordering::Greater => return false,
+                    Ordering::Equal => {
+                        if child.1 < maybe_best_child.1 {
+                            return false;
                         }
-                        Ordering::Less => continue,
                     }
-                }
+                    Ordering::Less => continue,
+                },
                 Ordering::Less => continue,
             }
         }
