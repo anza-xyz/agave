@@ -1120,16 +1120,15 @@ fn archive_snapshot(
                 .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
-            let mut mul = 399991;
-            if mul >= snapshot_storages.len() {
-                info!("los snapshot count {}", snapshot_storages.len());
-                mul = 3;
-                if mul >= snapshot_storages.len() {
-                    mul = 1;
-                }
-            }
-            for i in 0..snapshot_storages.len() {
-                let storage = &snapshot_storages[(i * mul + 24534) % snapshot_storages.len()];
+            let mut sorted_storage_indices = (0..snapshot_storages.len()).collect::<Vec<_>>();
+            sorted_storage_indices.sort_by_key(|&i| snapshot_storages[i].accounts.len());
+            for i in 0..sorted_storage_indices.len() {
+                let index = sorted_storage_indices[if i % 2 == 0 {
+                    i / 2
+                } else {
+                    sorted_storage_indices.len() - i / 2 - 1
+                }];
+                let storage = &snapshot_storages[index];
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
