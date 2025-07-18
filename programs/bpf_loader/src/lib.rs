@@ -1605,14 +1605,18 @@ fn execute<'a, 'b: 'a>(
     let mask_out_rent_epoch_in_vm_serialization = invoke_context
         .get_feature_set()
         .mask_out_rent_epoch_in_vm_serialization;
+    let provide_instruction_data_offset_in_vm_r2 = invoke_context
+        .get_feature_set()
+        .provide_instruction_data_offset_in_vm_r2;
 
     let mut serialize_time = Measure::start("serialize");
-    let (parameter_bytes, regions, accounts_metadata) = serialization::serialize_parameters(
-        invoke_context.transaction_context,
-        instruction_context,
-        !direct_mapping,
-        mask_out_rent_epoch_in_vm_serialization,
-    )?;
+    let (parameter_bytes, regions, accounts_metadata, instruction_data_offset) =
+        serialization::serialize_parameters(
+            invoke_context.transaction_context,
+            instruction_context,
+            !direct_mapping,
+            mask_out_rent_epoch_in_vm_serialization,
+        )?;
     serialize_time.stop();
 
     // save the account addresses so in case we hit an AccessViolation error we
@@ -1644,6 +1648,11 @@ fn execute<'a, 'b: 'a>(
             }
         };
         create_vm_time.stop();
+
+        // SIMD-0321: Provide offset to instruction data in VM register 2.
+        if provide_instruction_data_offset_in_vm_r2 {
+            vm.registers[2] = instruction_data_offset as u64;
+        }
 
         vm.context_object_pointer.execute_time = Some(Measure::start("execute"));
         let (compute_units_consumed, result) = vm.execute_program(executable, !use_jit);

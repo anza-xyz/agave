@@ -53,6 +53,7 @@ members = [
     "rust/param_passing",
     "rust/param_passing_dep",
     "rust/poseidon",
+    "rust/r2_instruction_data_pointer",
     "rust/rand",
     "rust/realloc",
     "rust/realloc_invoke",
@@ -122,6 +123,7 @@ solana-cli-output = { path = "../../cli-output", version = "=3.0.0" }
 solana-clock = { version = "=2.2.2", features = ["serde", "sysvar"] }
 solana-compute-budget = { path = "../../compute-budget", version = "=3.0.0" }
 solana-compute-budget-instruction = { path = "../../compute-budget-instruction", version = "=3.0.0" }
+solana-cpi = "=2.2.1"
 solana-curve25519 = { path = "../../curves/curve25519", version = "=3.0.0" }
 solana-define-syscall = "=2.3.0"
 solana-fee = { path = "../../fee", version = "=3.0.0" }
@@ -169,6 +171,7 @@ solana-type-overrides = { path = "../../type-overrides", version = "=3.0.0" }
 solana-vote = { path = "../../vote", version = "=3.0.0" }
 solana-vote-program = { path = "../../programs/vote", version = "=3.0.0" }
 solana-zk-sdk = { path = "../../zk-sdk", version = "=3.0.0" }
+test-case = "3.3.1"
 thiserror = "1.0"
 
 [features]
@@ -248,6 +251,7 @@ solana-transaction-status = { workspace = true }
 solana-type-overrides = { workspace = true }
 solana-vote = { workspace = true }
 solana-vote-program = { workspace = true }
+test-case = { workspace = true }
 
 [profile.release]
 # The test programs are build in release mode

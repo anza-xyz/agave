@@ -193,6 +193,7 @@ pub fn serialize_parameters(
         AlignedMemory<HOST_ALIGN>,
         Vec<MemoryRegion>,
         Vec<SerializedAccountMetadata>,
+        usize,
     ),
     InstructionError,
 > {
@@ -291,6 +292,7 @@ fn serialize_parameters_unaligned(
         AlignedMemory<HOST_ALIGN>,
         Vec<MemoryRegion>,
         Vec<SerializedAccountMetadata>,
+        usize,
     ),
     InstructionError,
 > {
@@ -357,11 +359,16 @@ fn serialize_parameters_unaligned(
         };
     }
     s.write::<u64>((instruction_data.len() as u64).to_le());
-    s.write_all(instruction_data);
+    let instruction_data_offset = s.write_all(instruction_data);
     s.write_all(program_id.as_ref());
 
     let (mem, regions) = s.finish();
-    Ok((mem, regions, accounts_metadata))
+    Ok((
+        mem,
+        regions,
+        accounts_metadata,
+        instruction_data_offset as usize,
+    ))
 }
 
 fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
@@ -429,6 +436,7 @@ fn serialize_parameters_aligned(
         AlignedMemory<HOST_ALIGN>,
         Vec<MemoryRegion>,
         Vec<SerializedAccountMetadata>,
+        usize,
     ),
     InstructionError,
 > {
@@ -504,11 +512,16 @@ fn serialize_parameters_aligned(
         };
     }
     s.write::<u64>((instruction_data.len() as u64).to_le());
-    s.write_all(instruction_data);
+    let instruction_data_offset = s.write_all(instruction_data);
     s.write_all(program_id.as_ref());
 
     let (mem, regions) = s.finish();
-    Ok((mem, regions, accounts_metadata))
+    Ok((
+        mem,
+        regions,
+        accounts_metadata,
+        instruction_data_offset as usize,
+    ))
 }
 
 fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
@@ -741,7 +754,8 @@ mod tests {
                     continue;
                 }
 
-                let (mut serialized, regions, _account_lengths) = serialization_result.unwrap();
+                let (mut serialized, regions, _account_lengths, _instruction_data_offset) =
+                    serialization_result.unwrap();
                 let mut serialized_regions = concat_regions(&regions);
                 let (de_program_id, de_accounts, de_instruction_data) = unsafe {
                     deserialize(
@@ -870,13 +884,14 @@ mod tests {
                 .unwrap();
 
             // check serialize_parameters_aligned
-            let (mut serialized, regions, accounts_metadata) = serialize_parameters(
-                invoke_context.transaction_context,
-                instruction_context,
-                copy_account_data,
-                true, // mask_out_rent_epoch_in_vm_serialization
-            )
-            .unwrap();
+            let (mut serialized, regions, accounts_metadata, _instruction_data_offset) =
+                serialize_parameters(
+                    invoke_context.transaction_context,
+                    instruction_context,
+                    copy_account_data,
+                    true, // mask_out_rent_epoch_in_vm_serialization
+                )
+                .unwrap();
 
             let mut serialized_regions = concat_regions(&regions);
             if copy_account_data {
@@ -963,13 +978,14 @@ mod tests {
                 .unwrap()
                 .set_owner(bpf_loader_deprecated::id());
 
-            let (mut serialized, regions, account_lengths) = serialize_parameters(
-                invoke_context.transaction_context,
-                instruction_context,
-                copy_account_data,
-                true, // mask_out_rent_epoch_in_vm_serialization
-            )
-            .unwrap();
+            let (mut serialized, regions, account_lengths, _instruction_data_offset) =
+                serialize_parameters(
+                    invoke_context.transaction_context,
+                    instruction_context,
+                    copy_account_data,
+                    true, // mask_out_rent_epoch_in_vm_serialization
+                )
+                .unwrap();
             let mut serialized_regions = concat_regions(&regions);
 
             let (de_program_id, de_accounts, de_instruction_data) = unsafe {
@@ -1116,13 +1132,14 @@ mod tests {
                 .unwrap();
 
             // check serialize_parameters_aligned
-            let (_serialized, regions, _accounts_metadata) = serialize_parameters(
-                invoke_context.transaction_context,
-                instruction_context,
-                true,
-                mask_out_rent_epoch_in_vm_serialization,
-            )
-            .unwrap();
+            let (_serialized, regions, _accounts_metadata, _instruction_data_offset) =
+                serialize_parameters(
+                    invoke_context.transaction_context,
+                    instruction_context,
+                    true,
+                    mask_out_rent_epoch_in_vm_serialization,
+                )
+                .unwrap();
 
             let mut serialized_regions = concat_regions(&regions);
             let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
@@ -1161,13 +1178,14 @@ mod tests {
                 .unwrap()
                 .set_owner(bpf_loader_deprecated::id());
 
-            let (_serialized, regions, _account_lengths) = serialize_parameters(
-                invoke_context.transaction_context,
-                instruction_context,
-                true,
-                mask_out_rent_epoch_in_vm_serialization,
-            )
-            .unwrap();
+            let (_serialized, regions, _account_lengths, _instruction_data_offset) =
+                serialize_parameters(
+                    invoke_context.transaction_context,
+                    instruction_context,
+                    true,
+                    mask_out_rent_epoch_in_vm_serialization,
+                )
+                .unwrap();
             let mut serialized_regions = concat_regions(&regions);
 
             let (_de_program_id, de_accounts, _de_instruction_data) = unsafe {
