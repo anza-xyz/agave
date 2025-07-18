@@ -4455,9 +4455,7 @@ impl Bank {
             .unwrap()
             .get_hash_data(slot, self.parent_slot());
         if let Some(buf) = buf {
-            let mut hash_data = hash.as_ref().to_vec();
-            hash_data.extend_from_slice(&buf);
-            let hard_forked_hash = hashv(&[&hash_data]);
+            let hard_forked_hash = hashv(&[hash.as_ref(), &buf]);
             warn!("hard fork at slot {slot} by hashing {buf:?}: {hash} => {hard_forked_hash}");
             hash = hard_forked_hash;
         }
