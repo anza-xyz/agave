@@ -9991,6 +9991,7 @@ dependencies = [
  "solana-signer",
  "solana-transaction-error",
  "solana-transaction-status-client-types",
+ "test-case",
  "thiserror 2.0.12",
 ]
 
