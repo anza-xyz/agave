@@ -7319,6 +7319,7 @@ dependencies = [
 name = "solana-bucket-map"
 version = "3.0.0"
 dependencies = [
+ "bencher",
  "bv",
  "bytemuck",
  "bytemuck_derive",
@@ -7326,6 +7327,7 @@ dependencies = [
  "memmap2 0.9.7",
  "modular-bitfield",
  "num_enum",
+ "paste",
  "rand 0.8.5",
  "rayon",
  "solana-bucket-map",
