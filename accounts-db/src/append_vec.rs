@@ -23,7 +23,7 @@ use {
             StoredAccountsInfo,
         },
         accounts_hash::AccountHash,
-        buffered_reader::{BufferedReader, Stack},
+        buffered_reader::{BufferedReader, ContiguousBufFileRead, Stack},
         file_io::read_into_buffer,
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
@@ -1049,19 +1049,17 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                let self_len = self.len();
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
-                    self_len,
-                    file,
-                    STORE_META_OVERHEAD,
-                );
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file);
+                let mut min_buf_len = STORE_META_OVERHEAD;
                 // Buffer for account data that doesn't fit within the stack allocated buffer.
                 // This will be re-used for each account that doesn't fit within the stack allocated buffer.
                 let mut data_overflow_buffer = vec![];
                 loop {
-                    let offset = reader.get_offset();
-                    let bytes = match reader.fill_buf() {
+                    let offset = reader.get_file_offset();
+                    let bytes = match reader
+                        .fill_buf_required_or_overflow(min_buf_len, &mut data_overflow_buffer)
+                    {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -1087,53 +1085,26 @@ impl AppendVec {
                         };
                         callback(account);
                         reader.consume(stored_size);
-                    } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
-                        reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
+                        // restore default required buffer size
+                        min_buf_len = STORE_META_OVERHEAD;
                     } else {
-                        const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
-                        // 128KiB covers a reasonably large distribution of typical account sizes.
-                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-                        const MIN_CAPACITY: usize = 1024 * 128;
-                        let capacity = data_overflow_buffer.capacity();
-                        if data_len > capacity {
-                            let next_cap = data_len
-                                .next_power_of_two()
-                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
-                            data_overflow_buffer.reserve_exact(next_cap - capacity);
-                            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
-                            // Later, we ensure we only read from the initialized portion of the buffer.
-                            unsafe {
-                                data_overflow_buffer.set_len(next_cap);
+                        // repeat loop with required buffer size holding whole account data
+                        min_buf_len = STORE_META_OVERHEAD + data_len;
+
+                        if min_buf_len > BUFFER_SIZE {
+                            const MAX_CAPACITY: usize =
+                                STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+                            // 128KiB covers a reasonably large distribution of typical account sizes.
+                            // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                            const MIN_CAPACITY: usize = 1024 * 128;
+                            if min_buf_len > data_overflow_buffer.capacity() {
+                                let next_cap = min_buf_len
+                                    .next_power_of_two()
+                                    .clamp(MIN_CAPACITY, MAX_CAPACITY);
+                                data_overflow_buffer
+                                    .reserve_exact(next_cap - data_overflow_buffer.len());
                             }
                         }
-
-                        // Copy already read data to overflow buffer.
-                        data_overflow_buffer[..leftover].copy_from_slice(&bytes.0[next..]);
-
-                        // Read remaining data into overflow buffer.
-                        let Ok(bytes_read) = read_into_buffer(
-                            file,
-                            self_len,
-                            offset + next + leftover,
-                            &mut data_overflow_buffer[leftover..data_len],
-                        ) else {
-                            break;
-                        };
-                        if bytes_read + leftover < data_len {
-                            break;
-                        }
-                        let data = &data_overflow_buffer[..data_len];
-                        let stored_size = aligned_stored_size(data_len);
-                        let account = StoredAccountMeta {
-                            meta,
-                            account_meta,
-                            data,
-                            offset,
-                            stored_size,
-                            hash,
-                        };
-                        callback(account);
-                        reader.consume(stored_size);
                     }
                 }
             }
@@ -1252,14 +1223,12 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
-                    self_len,
-                    file,
-                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
-                );
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
+                const REQUIRED_READ_LEN: usize =
+                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
-                    let offset = reader.get_offset();
-                    let bytes = match reader.fill_buf() {
+                    let offset = reader.get_file_offset();
+                    let bytes = match reader.fill_buf_required(REQUIRED_READ_LEN) {
                         Ok([]) => break,
                         Ok(bytes) => ValidSlice::new(bytes),
                         Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -1703,12 +1672,17 @@ pub mod tests {
 
         let mut test_accounts = Vec::with_capacity(num_accounts);
         let mut file_size = 0;
+        let special_file_interval = num_accounts / 8;
         for i in 0..num_accounts {
             let data_len = match i {
-                // ensure one max size account
-                0 => MAX_PERMITTED_DATA_LENGTH as usize,
-                // ensure one 64KiB account
-                x if x == num_accounts - 1 => 1 << 16,
+                // Create several spread out accounts with varying sizes:
+                // for (x / special_file_interval) in 0..7 range
+                x if x % special_file_interval == 0 => {
+                    // mult increases in 0 to 3 range twice
+                    let mult = (x / special_file_interval) % 4;
+                    // and data_len goes over 0..MAX_PERMITTED_DATA_LENGTH range also twice
+                    mult * (MAX_PERMITTED_DATA_LENGTH as usize) / 3
+                }
                 // Otherwise use a reasonably small account to avoid long test times
                 x => x % 256,
             };
