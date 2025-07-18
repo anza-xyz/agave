@@ -134,7 +134,7 @@ impl Tvu {
         sockets: TvuSockets,
         blockstore: Arc<Blockstore>,
         ledger_signal_receiver: Receiver<bool>,
-        rpc_subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<Arc<RpcSubscriptions>>,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         tower: Tower,
         tower_storage: Arc<dyn TowerStorage>,
@@ -224,7 +224,7 @@ impl Tvu {
             turbine_quic_endpoint_sender,
             retransmit_receiver,
             max_slots.clone(),
-            Some(rpc_subscriptions.clone()),
+            rpc_subscriptions.clone(),
             slot_status_notifier.clone(),
             tvu_config.xdp_sender,
         );
@@ -295,7 +295,7 @@ impl Tvu {
         let (voting_sender, voting_receiver) = unbounded();
 
         let replay_senders = ReplaySenders {
-            rpc_subscriptions: rpc_subscriptions.clone(),
+            rpc_subscriptions,
             slot_status_notifier,
             transaction_status_sender,
             entry_notification_sender,
@@ -557,13 +557,13 @@ pub mod tests {
             },
             blockstore,
             ledger_signal_receiver,
-            &Arc::new(RpcSubscriptions::new_for_tests(
+            Some(Arc::new(RpcSubscriptions::new_for_tests(
                 exit.clone(),
                 max_complete_transaction_status_slot,
                 bank_forks.clone(),
                 block_commitment_cache.clone(),
                 OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks),
-            )),
+            ))),
             &poh_recorder,
             Tower::default(),
             Arc::new(FileTowerStorage::default()),

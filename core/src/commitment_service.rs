@@ -67,7 +67,7 @@ impl AggregateCommitmentService {
     pub fn new(
         exit: Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
-        subscriptions: Arc<RpcSubscriptions>,
+        subscriptions: Option<Arc<RpcSubscriptions>>,
     ) -> (Sender<CommitmentAggregationData>, Self) {
         let (sender, receiver): (
             Sender<CommitmentAggregationData>,
@@ -83,9 +83,12 @@ impl AggregateCommitmentService {
                             break;
                         }
 
-                        if let Err(RecvTimeoutError::Disconnected) =
-                            Self::run(&receiver, &block_commitment_cache, &subscriptions, &exit)
-                        {
+                        if let Err(RecvTimeoutError::Disconnected) = Self::run(
+                            &receiver,
+                            &block_commitment_cache,
+                            subscriptions.as_deref(),
+                            &exit,
+                        ) {
                             break;
                         }
                     })
@@ -97,7 +100,7 @@ impl AggregateCommitmentService {
     fn run(
         receiver: &Receiver<CommitmentAggregationData>,
         block_commitment_cache: &RwLock<BlockCommitmentCache>,
-        subscriptions: &Arc<RpcSubscriptions>,
+        rpc_subscriptions: Option<&RpcSubscriptions>,
         exit: &AtomicBool,
     ) -> Result<(), RecvTimeoutError> {
         loop {
@@ -136,10 +139,12 @@ impl AggregateCommitmentService {
                 ),
             );
 
-            // Triggers rpc_subscription notifications as soon as new commitment data is available,
-            // sending just the commitment cache slot information that the notifications thread
-            // needs
-            subscriptions.notify_subscribers(update_commitment_slots);
+            if let Some(rpc_subscriptions) = rpc_subscriptions {
+                // Triggers rpc_subscription notifications as soon as new commitment data is
+                // available, sending just the commitment cache slot information that the
+                // notifications thread needs
+                rpc_subscriptions.notify_subscribers(update_commitment_slots);
+            }
         }
     }
 

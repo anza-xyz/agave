@@ -83,7 +83,7 @@ pub struct PubSubService {
 impl PubSubService {
     pub fn new(
         pubsub_config: PubSubConfig,
-        subscriptions: &Arc<RpcSubscriptions>,
+        subscriptions: &RpcSubscriptions,
         pubsub_addr: SocketAddr,
     ) -> (Trigger, Self) {
         let subscription_control = subscriptions.control().clone();
