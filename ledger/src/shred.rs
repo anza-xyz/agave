@@ -56,7 +56,7 @@ pub(crate) use self::{
     payload::serde_bytes_payload,
 };
 #[cfg(any(test, feature = "dev-context-only-utils"))]
-use solana_perf::packet::{bytes::Bytes, BytesPacket, Meta, Packet};
+use solana_perf::packet::{BytesPacket, Meta, Packet};
 pub use {
     self::{
         payload::Payload,
@@ -427,12 +427,7 @@ impl Shred {
 
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn to_packet(&self) -> BytesPacket {
-        let buffer: &[u8] = match self.payload() {
-            Payload::Shared(bytes) => bytes.as_ref(),
-            Payload::Unique(bytes) => bytes.as_ref(),
-        };
-        let buffer = Bytes::copy_from_slice(buffer);
-        BytesPacket::new(buffer, Meta::default())
+        BytesPacket::new(self.payload().bytes.clone(), Meta::default())
     }
 
     // TODO: Should this sanitize output?
@@ -1882,7 +1877,10 @@ mod tests {
             let mut shred = shred.into_payload();
             let mut signature = [0u8; SIGNATURE_BYTES];
             rng.fill(&mut signature[..]);
-            let out = layout::set_retransmitter_signature(&mut shred, &Signature::from(signature));
+            let out = layout::set_retransmitter_signature(
+                &mut shred.as_mut(),
+                &Signature::from(signature),
+            );
             if chained && is_last_in_slot {
                 assert_matches!(out, Ok(()));
             } else {
@@ -1931,7 +1929,7 @@ mod tests {
         // (ignoring retransmitter signature) are duplicate.
         for shred in &shreds {
             let mut other = shred.payload().clone();
-            other[90] = other[90].wrapping_add(1);
+            other.as_mut()[90] = other[90].wrapping_add(1);
             let other = Shred::new_from_serialized_shred(other).unwrap();
             assert_ne!(shred.payload(), other.payload());
             assert_eq!(
