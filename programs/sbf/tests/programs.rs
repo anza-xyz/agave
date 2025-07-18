@@ -34,6 +34,7 @@ use {
     solana_runtime::{
         bank::Bank,
         bank_client::BankClient,
+        bank_forks::BankForks,
         genesis_utils::{
             bootstrap_validator_stake_lamports, create_genesis_config,
             create_genesis_config_with_leader_ex, GenesisConfigInfo,
@@ -63,7 +64,13 @@ use {
     solana_transaction::Transaction,
     solana_transaction_error::TransactionError,
     solana_type_overrides::rand,
-    std::{assert_eq, cell::RefCell, str::FromStr, sync::Arc, time::Duration},
+    std::{
+        assert_eq,
+        cell::RefCell,
+        str::FromStr,
+        sync::{Arc, RwLock},
+        time::Duration,
+    },
 };
 
 #[cfg(feature = "sbf_rust")]
@@ -108,6 +115,38 @@ fn load_execute_and_commit_transaction(bank: &Bank, tx: Transaction) -> Transact
         )
         .0;
     commit_results.pop().unwrap()
+}
+
+#[cfg(feature = "sbf_rust")]
+fn bank_with_feature_activated(
+    bank_forks: &RwLock<BankForks>,
+    parent: Arc<Bank>,
+    feature_id: &Pubkey,
+) -> Arc<Bank> {
+    let slot = parent.slot().saturating_add(1);
+    let mut bank = Bank::new_from_parent(parent, &Pubkey::new_unique(), slot);
+    bank.activate_feature(feature_id);
+    bank_forks
+        .write()
+        .unwrap()
+        .insert(bank)
+        .clone_without_scheduler()
+}
+
+#[cfg(feature = "sbf_rust")]
+fn bank_with_feature_deactivated(
+    bank_forks: &RwLock<BankForks>,
+    parent: Arc<Bank>,
+    feature_id: &Pubkey,
+) -> Arc<Bank> {
+    let slot = parent.slot().saturating_add(1);
+    let mut bank = Bank::new_from_parent(parent, &Pubkey::new_unique(), slot);
+    bank.deactivate_feature(feature_id);
+    bank_forks
+        .write()
+        .unwrap()
+        .insert(bank)
+        .clone_without_scheduler()
 }
 
 #[cfg(feature = "sbf_rust")]
@@ -643,7 +682,7 @@ fn test_program_sbf_invoke_sanity() {
         bank.store_account(&argument_keypair.pubkey(), &account);
 
         let invoked_argument_keypair = Keypair::new();
-        let account = AccountSharedData::new(10, 10, &invoked_program_id);
+        let account = AccountSharedData::new(20, 10, &invoked_program_id);
         bank.store_account(&invoked_argument_keypair.pubkey(), &account);
 
         let from_keypair = Keypair::new();
@@ -679,91 +718,160 @@ fn test_program_sbf_invoke_sanity() {
             AccountMeta::new_readonly(unexecutable_program_keypair.pubkey(), false),
         ];
 
-        // success cases
-
-        let instruction = Instruction::new_with_bytes(
-            invoke_program_id,
-            &[TEST_SUCCESS, bump_seed1, bump_seed2, bump_seed3],
-            account_metas.clone(),
-        );
-        let noop_instruction = Instruction::new_with_bytes(noop_program_id, &[], vec![]);
-        let message = Message::new(&[instruction, noop_instruction], Some(&mint_pubkey));
-        let tx = Transaction::new(
-            &[
+        let do_invoke = |test: u8, additional_instructions: &[Instruction], bank: &Bank| {
+            let instruction_data = &[test, bump_seed1, bump_seed2, bump_seed3];
+            let signers = vec![
                 &mint_keypair,
                 &argument_keypair,
                 &invoked_argument_keypair,
                 &from_keypair,
-            ],
-            message.clone(),
-            bank.last_blockhash(),
-        );
-        let (result, inner_instructions, _log_messages, _executed_units) =
-            process_transaction_and_record_inner(&bank, tx);
-        assert_eq!(result, Ok(()));
+            ];
+            let mut instructions = vec![Instruction::new_with_bytes(
+                invoke_program_id,
+                instruction_data,
+                account_metas.clone(),
+            )];
+            instructions.extend_from_slice(additional_instructions);
+            let message = Message::new(&instructions, Some(&mint_pubkey));
+            let tx = Transaction::new(&signers, message.clone(), bank.last_blockhash());
+            let (result, inner_instructions, log_messages, executed_units) =
+                process_transaction_and_record_inner(bank, tx);
 
-        let invoked_programs: Vec<Pubkey> = inner_instructions[0]
-            .iter()
-            .map(|ix| &message.account_keys[ix.instruction.program_id_index as usize])
-            .cloned()
-            .collect();
-        let expected_invoked_programs = match program.0 {
-            Languages::C => vec![
-                system_program::id(),
-                system_program::id(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-            ],
-            Languages::Rust => vec![
-                system_program::id(),
-                system_program::id(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-                system_program::id(),
-                invoked_program_id.clone(),
-                invoked_program_id.clone(),
-            ],
+            let invoked_programs: Vec<Pubkey> = inner_instructions
+                .first()
+                .map(|instructions| {
+                    instructions
+                        .iter()
+                        .filter_map(|ix| {
+                            message
+                                .account_keys
+                                .get(ix.instruction.program_id_index as usize)
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let no_invoked_programs: Vec<Pubkey> = inner_instructions
+                .get(1)
+                .map(|instructions| {
+                    instructions
+                        .iter()
+                        .filter_map(|ix| {
+                            message
+                                .account_keys
+                                .get(ix.instruction.program_id_index as usize)
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            (
+                result,
+                log_messages,
+                executed_units,
+                invoked_programs,
+                no_invoked_programs,
+            )
         };
-        assert_eq!(invoked_programs.len(), expected_invoked_programs.len());
-        assert_eq!(invoked_programs, expected_invoked_programs);
-        let no_invoked_programs: Vec<Pubkey> = inner_instructions[1]
-            .iter()
-            .map(|ix| &message.account_keys[ix.instruction.program_id_index as usize])
-            .cloned()
-            .collect();
-        assert_eq!(no_invoked_programs.len(), 0);
+
+        // success cases
+
+        let do_invoke_success = |test: u8,
+                                 additional_instructions: &[Instruction],
+                                 expected_invoked_programs: &[Pubkey],
+                                 bank: &Bank| {
+            println!("Running success test #{:?}", test);
+
+            let (result, _log_messages, _executed_units, invoked_programs, no_invoked_programs) =
+                do_invoke(test, additional_instructions, bank);
+
+            assert_eq!(result, Ok(()));
+            assert_eq!(invoked_programs.len(), expected_invoked_programs.len());
+            assert_eq!(invoked_programs, expected_invoked_programs);
+            assert_eq!(no_invoked_programs.len(), 0);
+        };
+
+        do_invoke_success(
+            TEST_SUCCESS,
+            &[Instruction::new_with_bytes(noop_program_id, &[], vec![])],
+            match program.0 {
+                Languages::C => vec![
+                    system_program::id(),
+                    system_program::id(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                ],
+                Languages::Rust => vec![
+                    system_program::id(),
+                    system_program::id(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                    system_program::id(),
+                    invoked_program_id.clone(),
+                    invoked_program_id.clone(),
+                ],
+            }
+            .as_ref(),
+            &bank,
+        );
+
+        // With SIMD-0296 enabled, eight nested invokes should pass.
+        let bank = bank_with_feature_activated(
+            &bank_forks,
+            bank,
+            &feature_set::raise_cpi_nesting_limit_to_8::id(),
+        );
+        assert!(bank
+            .feature_set
+            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
+        {
+            // Reset the account balances for `ARGUMENT` and `INVOKED_ARGUMENT`
+            let account = AccountSharedData::new(42, 100, &invoke_program_id);
+            bank.store_account(&argument_keypair.pubkey(), &account);
+
+            let account = AccountSharedData::new(20, 10, &invoked_program_id);
+            bank.store_account(&invoked_argument_keypair.pubkey(), &account);
+        }
+        do_invoke_success(
+            TEST_NESTED_INVOKE_SIMD_0296_OK,
+            &[],
+            &[invoked_program_id.clone(); 16], // 16, 8 for each invoke
+            &bank,
+        );
 
         // failure cases
 
@@ -772,36 +880,19 @@ fn test_program_sbf_invoke_sanity() {
              expected_error: TransactionError,
              expected_invoked_programs: &[Pubkey],
              expected_log_messages: Option<Vec<String>>,
-             should_deplete_compute_meter: bool| {
+             should_deplete_compute_meter: bool,
+             bank: &Bank| {
                 println!("Running failure test #{:?}", test);
-                let instruction_data = &[test, bump_seed1, bump_seed2, bump_seed3];
-                let signers = vec![
-                    &mint_keypair,
-                    &argument_keypair,
-                    &invoked_argument_keypair,
-                    &from_keypair,
-                ];
+
                 let compute_unit_limit = 1_000_000;
-                let instruction = Instruction::new_with_bytes(
-                    invoke_program_id,
-                    instruction_data,
-                    account_metas.clone(),
+                let (result, log_messages, executed_units, invoked_programs, _) = do_invoke(
+                    test,
+                    &[ComputeBudgetInstruction::set_compute_unit_limit(
+                        compute_unit_limit,
+                    )],
+                    bank,
                 );
-                let message = Message::new(
-                    &[
-                        instruction,
-                        ComputeBudgetInstruction::set_compute_unit_limit(compute_unit_limit),
-                    ],
-                    Some(&mint_pubkey),
-                );
-                let tx = Transaction::new(&signers, message.clone(), bank.last_blockhash());
-                let (result, inner_instructions, log_messages, executed_units) =
-                    process_transaction_and_record_inner(&bank, tx);
-                let invoked_programs: Vec<Pubkey> = inner_instructions[0]
-                    .iter()
-                    .map(|ix| &message.account_keys[ix.instruction.program_id_index as usize])
-                    .cloned()
-                    .collect();
+
                 assert_eq!(result, Err(expected_error));
                 assert_eq!(invoked_programs, expected_invoked_programs);
                 if should_deplete_compute_meter {
@@ -826,13 +917,15 @@ fn test_program_sbf_invoke_sanity() {
             |test: u8,
              expected_error: TransactionError,
              expected_invoked_programs: &[Pubkey],
-             expected_log_messages: Option<Vec<String>>| {
+             expected_log_messages: Option<Vec<String>>,
+             bank: &Bank| {
                 do_invoke_failure_test_local_with_compute_check(
                     test,
                     expected_error,
                     expected_invoked_programs,
                     expected_log_messages,
                     false, // should_deplete_compute_meter
+                    bank,
                 )
             };
 
@@ -846,6 +939,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -853,6 +947,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -860,6 +955,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId),
             &[argument_keypair.pubkey()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -867,6 +963,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::UnsupportedProgramId),
             &[unexecutable_program_keypair.pubkey()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -874,6 +971,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::MissingAccount),
             &[],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -881,6 +979,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::MaxSeedLengthExceeded),
             &[],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -888,6 +987,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
             &[],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -901,6 +1001,7 @@ fn test_program_sbf_invoke_sanity() {
                 "skip".into(), // don't compare compute consumption logs
                 format!("Program {invoke_program_id} failed: Invoked an instruction with data that is too large (10241 > 10240)"),
             ]),
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -914,6 +1015,7 @@ fn test_program_sbf_invoke_sanity() {
                 "skip".into(), // don't compare compute consumption logs
                 format!("Program {invoke_program_id} failed: Invoked an instruction with too many accounts (256 > 255)"),
             ]),
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -927,6 +1029,7 @@ fn test_program_sbf_invoke_sanity() {
                 "skip".into(), // don't compare compute consumption logs
                 format!("Program {invoke_program_id} failed: Invoked an instruction with too many account info's (129 > 128)"),
             ]),
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -934,6 +1037,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::Custom(42)),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -941,6 +1045,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -948,6 +1053,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local_with_compute_check(
@@ -956,8 +1062,18 @@ fn test_program_sbf_invoke_sanity() {
             &[invoked_program_id.clone()],
             None,
             true, // should_deplete_compute_meter
+            &bank,
         );
 
+        // With SIMD-0296 disabled, five nested invokes is too deep.
+        let bank = bank_with_feature_deactivated(
+            &bank_forks,
+            bank,
+            &feature_set::raise_cpi_nesting_limit_to_8::id(),
+        );
+        assert!(!bank
+            .feature_set
+            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
         do_invoke_failure_test_local(
             TEST_NESTED_INVOKE_TOO_DEEP,
             TransactionError::InstructionError(0, InstructionError::CallDepth),
@@ -969,13 +1085,34 @@ fn test_program_sbf_invoke_sanity() {
                 invoked_program_id.clone(),
             ],
             None,
+            &bank,
         );
 
+        // With SIMD-0296 enabled, nine nested invokes is too deep.
+        let bank = bank_with_feature_activated(
+            &bank_forks,
+            bank,
+            &feature_set::raise_cpi_nesting_limit_to_8::id(),
+        );
+        assert!(bank
+            .feature_set
+            .is_active(&feature_set::raise_cpi_nesting_limit_to_8::id()));
         do_invoke_failure_test_local(
-            TEST_CALL_PRECOMPILE,
-            TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
-            &[],
+            TEST_NESTED_INVOKE_SIMD_0296_TOO_DEEP,
+            TransactionError::InstructionError(0, InstructionError::CallDepth),
+            &[
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+                invoked_program_id.clone(),
+            ],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -983,6 +1120,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete),
             &[],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -990,6 +1128,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         do_invoke_failure_test_local(
@@ -997,6 +1136,7 @@ fn test_program_sbf_invoke_sanity() {
             TransactionError::InstructionError(0, InstructionError::PrivilegeEscalation),
             &[invoked_program_id.clone()],
             None,
+            &bank,
         );
 
         // Check resulting state
@@ -1226,16 +1366,17 @@ fn test_program_sbf_call_depth() {
         "solana_sbf_rust_call_depth",
     );
 
-    let instruction = Instruction::new_with_bincode(
-        program_id,
-        &(ComputeBudget::default().max_call_depth - 1),
-        vec![],
+    let budget = ComputeBudget::new_with_defaults(
+        genesis_config
+            .accounts
+            .contains_key(&feature_set::raise_cpi_nesting_limit_to_8::id()),
     );
+    let instruction =
+        Instruction::new_with_bincode(program_id, &(budget.max_call_depth - 1), vec![]);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert!(result.is_ok());
 
-    let instruction =
-        Instruction::new_with_bincode(program_id, &ComputeBudget::default().max_call_depth, vec![]);
+    let instruction = Instruction::new_with_bincode(program_id, &budget.max_call_depth, vec![]);
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
     assert!(result.is_err());
 }
