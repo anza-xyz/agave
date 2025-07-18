@@ -2,9 +2,8 @@ use {
     crate::{
         bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
-            self, AccountsDbFields, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
-            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
-            SnapshotStreams,
+            self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountStorageEntry,
+            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -831,7 +830,6 @@ pub fn serialize_and_archive_snapshot_package(
         bank_hash_stats,
         accounts_delta_hash,
         accounts_hash,
-        bank_incremental_snapshot_persistence,
         write_version,
         enqueued: _,
     } = snapshot_package;
@@ -845,7 +843,6 @@ pub fn serialize_and_archive_snapshot_package(
         bank_hash_stats,
         accounts_delta_hash,
         accounts_hash,
-        bank_incremental_snapshot_persistence.as_ref(),
         write_version,
         should_flush_and_hard_link_storages,
     )?;
@@ -907,7 +904,6 @@ fn serialize_snapshot(
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
-    bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     write_version: u64,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
@@ -960,7 +956,7 @@ fn serialize_snapshot(
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let extra_fields = ExtraFieldsToSerialize {
                 lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
-                incremental_snapshot_persistence: bank_incremental_snapshot_persistence,
+                incremental_snapshot_persistence: None,
                 obsolete_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),

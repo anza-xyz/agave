@@ -1,7 +1,6 @@
 use {
     crate::{
         bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
-        serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
     },
     log::*,
@@ -171,7 +170,6 @@ pub struct SnapshotPackage {
     pub accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
     pub accounts_hash: AccountsHash,
     pub write_version: u64,
-    pub bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>, // obsolete, will be removed next
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
@@ -179,10 +177,7 @@ pub struct SnapshotPackage {
 }
 
 impl SnapshotPackage {
-    pub fn new(
-        accounts_package: AccountsPackage,
-        bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
-    ) -> Self {
+    pub fn new(accounts_package: AccountsPackage) -> Self {
         let AccountsPackageKind::Snapshot(snapshot_kind) = accounts_package.package_kind;
         let Some(snapshot_info) = accounts_package.snapshot_info else {
             panic!(
@@ -207,7 +202,6 @@ impl SnapshotPackage {
             accounts_delta_hash: snapshot_info.accounts_delta_hash,
             bank_hash_stats: snapshot_info.bank_hash_stats,
             accounts_hash: AccountsHash(Hash::default()), // obsolete, will be removed next
-            bank_incremental_snapshot_persistence,
             write_version: snapshot_info.write_version,
             enqueued: Instant::now(),
         }
@@ -230,7 +224,6 @@ impl SnapshotPackage {
             accounts_delta_hash: AccountsDeltaHash(Hash::default()),
             bank_hash_stats: BankHashStats::default(),
             accounts_hash: AccountsHash(Hash::default()),
-            bank_incremental_snapshot_persistence: None,
             write_version: u64::default(),
             enqueued: Instant::now(),
         }

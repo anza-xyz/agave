@@ -6,7 +6,6 @@ use {
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_measure::measure_us,
     solana_runtime::{
-        serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
         snapshot_package::{
@@ -177,7 +176,7 @@ impl AccountsHashVerifier {
     ) -> io::Result<()> {
         Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
 
-        Self::submit_for_packaging(accounts_package, pending_snapshot_packages, None);
+        Self::submit_for_packaging(accounts_package, pending_snapshot_packages);
 
         Ok(())
     }
@@ -216,7 +215,6 @@ impl AccountsHashVerifier {
     fn submit_for_packaging(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) {
         if !matches!(
             accounts_package.package_kind,
@@ -225,8 +223,7 @@ impl AccountsHashVerifier {
             return;
         }
 
-        let snapshot_package =
-            SnapshotPackage::new(accounts_package, bank_incremental_snapshot_persistence);
+        let snapshot_package = SnapshotPackage::new(accounts_package);
         pending_snapshot_packages
             .lock()
             .unwrap()

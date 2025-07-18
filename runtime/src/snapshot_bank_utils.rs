@@ -796,7 +796,7 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_storages,
         status_cache_slot_deltas,
     );
-    let snapshot_package = SnapshotPackage::new(accounts_package, None);
+    let snapshot_package = SnapshotPackage::new(accounts_package);
 
     let snapshot_config = SnapshotConfig {
         full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
@@ -854,7 +854,7 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_storages,
         status_cache_slot_deltas,
     );
-    let snapshot_package = SnapshotPackage::new(accounts_package, None);
+    let snapshot_package = SnapshotPackage::new(accounts_package);
 
     // Note: Since the snapshot_storages above are *only* the incremental storages,
     // this bank snapshot *cannot* be used by fastboot.
