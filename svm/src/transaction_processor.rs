@@ -1119,7 +1119,7 @@ mod tests {
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
-        solana_transaction_context::TransactionContext,
+        solana_transaction_context::{InstructionAccountViewVector, TransactionContext},
         solana_transaction_error::{TransactionError, TransactionError::DuplicateInstruction},
         test_case::test_case,
     };
@@ -1294,7 +1294,11 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[], &[], &[index_in_trace as u8]);
+                    .configure(
+                        &[],
+                        InstructionAccountViewVector::new(),
+                        &[index_in_trace as u8],
+                    );
                 transaction_context.push().unwrap();
             }
         }

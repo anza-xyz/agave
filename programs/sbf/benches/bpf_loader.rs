@@ -38,7 +38,7 @@ use {
     solana_sdk_ids::{bpf_loader, native_loader},
     solana_signer::Signer,
     solana_svm_feature_set::SVMFeatureSet,
-    solana_transaction_context::InstructionAccount,
+    solana_transaction_context::{InstructionAccountView, InstructionAccountViewVector},
     std::{mem, sync::Arc},
     test::Bencher,
 };
@@ -60,7 +60,14 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount::new(2, 2, 0, false, true)];
+        let instruction_accounts =
+            InstructionAccountViewVector::from_vector(vec![InstructionAccountView {
+                index_in_transaction: 2,
+                index_in_caller: 2,
+                index_in_callee: 0,
+                is_signer: false,
+                is_writable: true,
+            }]);
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
@@ -70,7 +77,7 @@ macro_rules! with_mock_invoke_context {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0, 1], &instruction_accounts, &[]);
+            .configure(&[0, 1], instruction_accounts, &[]);
         $invoke_context.push().unwrap();
     };
 }

@@ -320,7 +320,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                     .set_owner(account_info.owner.as_ref())
                     .unwrap();
             }
-            if instruction_account.is_writable() {
+            if instruction_account.is_writable {
                 account_indices.push((instruction_account.index_in_caller, account_info_index));
             }
         }
@@ -329,7 +329,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         invoke_context
             .process_instruction(
                 &instruction.data,
-                &instruction_accounts,
+                instruction_accounts,
                 &program_indices,
                 &mut compute_units_consumed,
                 &mut ExecuteTimings::default(),
