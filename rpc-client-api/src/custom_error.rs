@@ -29,6 +29,7 @@ pub const JSON_RPC_SERVER_ERROR_SLOT_NOT_EPOCH_BOUNDARY: i64 = -32018;
 pub const JSON_RPC_SERVER_ERROR_LONG_TERM_STORAGE_UNREACHABLE: i64 = -32019;
 
 #[derive(Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum RpcCustomError {
     #[error("BlockCleanedUp")]
     BlockCleanedUp {

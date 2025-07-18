@@ -3911,7 +3911,7 @@ pub mod rpc_full {
                     loaded_accounts_data_size,
                     return_data,
                     inner_instructions: _, // Always `None` due to `enable_cpi_recording = false`
-                    fee: _,
+                    fee,
                     pre_balances: _,
                     post_balances: _,
                     pre_token_balances: _,
@@ -3937,7 +3937,7 @@ pub mod rpc_full {
                             return_data: return_data.map(|return_data| return_data.into()),
                             inner_instructions: None,
                             replacement_blockhash: None,
-                            fee: None,
+                            fee,
                             pre_balances: None,
                             post_balances: None,
                             pre_token_balances: None,
