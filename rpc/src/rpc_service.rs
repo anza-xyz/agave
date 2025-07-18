@@ -962,6 +962,9 @@ mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
         },
+        solana_net_utils::{
+            find_available_port_in_range, sockets::localhost_port_range_for_tests, RangeExt,
+        },
         solana_rpc_client_api::config::RpcContextConfig,
         solana_runtime::bank::Bank,
         solana_signer::Signer,
@@ -983,11 +986,11 @@ mod tests {
         let validator_exit = create_validator_exit(exit.clone());
         let bank = Bank::new_for_tests(&genesis_config);
         let cluster_info = Arc::new(new_test_cluster_info());
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let rpc_addr = SocketAddr::new(
             ip_addr,
-            solana_net_utils::find_available_port_in_range(ip_addr, port_range).unwrap(),
+            find_available_port_in_range(ip_addr, localhost_port_range_for_tests().as_tuple())
+                .unwrap(),
         );
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();

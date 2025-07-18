@@ -1,22 +1,22 @@
+#[cfg(feature = "dev-context-only-utils")]
+use tokio::net::UdpSocket as TokioUdpSocket;
 use {
     crate::PortRange,
     log::warn,
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
         io,
-        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
+        ops::Range,
         sync::atomic::{AtomicU16, Ordering},
     },
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {std::net::Ipv4Addr, tokio::net::UdpSocket as TokioUdpSocket};
+
 // base port for deconflicted allocations
 const BASE_PORT: u16 = 5000;
 // how much to allocate per individual process.
 // we expect to have at most 64 concurrent tests in CI at any moment on a given host.
 const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
-/// Retrieve a free 20-port slice for unit tests
-///
 /// When running under nextest, this will try to provide
 /// a unique slice of port numbers (assuming no other nextest processes
 /// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
@@ -25,9 +25,9 @@ const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
 #[allow(clippy::arithmetic_side_effects)]
-pub fn localhost_port_range_for_tests() -> (u16, u16) {
+pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
     static SLICE: AtomicU16 = AtomicU16::new(0);
-    let offset = SLICE.fetch_add(20, Ordering::Relaxed);
+    let offset = SLICE.fetch_add(size, Ordering::Relaxed);
     let start = offset
         + match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
             Ok(slot) => {
@@ -40,8 +40,42 @@ pub fn localhost_port_range_for_tests() -> (u16, u16) {
             }
             Err(_) => BASE_PORT,
         };
-    assert!(start < u16::MAX - 20, "ran out of port numbers!");
-    (start, start + 20)
+    assert!(start < u16::MAX - size, "Ran out of port numbers!");
+    start..start + size
+}
+
+/// Retrieve a free 20-port slice for unit tests
+///
+/// When running under nextest, this will try to provide
+/// a unique slice of port numbers (assuming no other nextest processes
+/// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
+/// The port ranges will be reused following nextest logic.
+///
+/// When running without nextest, this will only bump an atomic and eventually
+/// panic when it runs out of port numbers to assign.
+pub fn localhost_port_range_for_tests() -> Range<u16> {
+    unique_port_range_for_tests(20)
+}
+
+/// Retrieve a free single port for unit tests
+///
+/// When running under nextest, this will try to provide
+/// a unique port number (assuming no other nextest processes
+/// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
+/// The port will be reused following nextest logic.
+///
+/// When running without nextest, this will only bump an atomic and eventually
+/// panic when it runs out of port numbers to assign.
+pub fn localhost_port_single_for_tests() -> u16 {
+    unique_port_range_for_tests(1).start
+}
+
+/// Bind a `UdpSocket` to a unique port.
+pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        localhost_port_single_for_tests(),
+    )
 }
 
 pub fn bind_gossip_port_in_range(
@@ -246,7 +280,11 @@ pub async fn bind_to_async(ip_addr: IpAddr, port: u16) -> io::Result<TokioUdpSoc
 
 #[cfg(feature = "dev-context-only-utils")]
 pub async fn bind_to_localhost_async() -> io::Result<TokioUdpSocket> {
-    bind_to_async(IpAddr::V4(Ipv4Addr::LOCALHOST), 0).await
+    bind_to_async(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        localhost_port_range_for_tests().start,
+    )
+    .await
 }
 
 #[cfg(feature = "dev-context-only-utils")]
@@ -342,29 +380,32 @@ pub fn bind_more_with_config(
 mod tests {
     use {
         super::*,
-        crate::{bind_in_range, sockets::localhost_port_range_for_tests},
+        crate::{bind_in_range, sockets::localhost_port_range_for_tests, RangeExt},
         std::net::Ipv4Addr,
     };
 
     #[test]
     fn test_bind() {
-        let (pr_s, pr_e) = localhost_port_range_for_tests();
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let pr = localhost_port_range_for_tests();
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = SocketConfiguration::default();
-        let s = bind_in_range(ip_addr, (pr_s, pr_e)).unwrap();
-        assert_eq!(s.0, pr_s, "bind_in_range should use first available port");
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-        let x = bind_to_with_config(ip_addr, pr_s + 1, config).unwrap();
+        let s = bind_in_range(ip_addr, pr.as_tuple()).unwrap();
+        assert_eq!(
+            s.0, pr.start,
+            "bind_in_range should use first available port"
+        );
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let x = bind_to_with_config(ip_addr, pr.start + 1, config).unwrap();
         let y = bind_more_with_config(x, 2, config).unwrap();
         assert_eq!(
             y[0].local_addr().unwrap().port(),
             y[1].local_addr().unwrap().port()
         );
-        bind_to_with_config(ip_addr, pr_s, SocketConfiguration::default()).unwrap_err();
-        bind_in_range(ip_addr, (pr_s, pr_s + 2)).unwrap_err();
+        bind_to_with_config(ip_addr, pr.start, SocketConfiguration::default()).unwrap_err();
+        bind_in_range(ip_addr, (pr.start, pr.start + 2)).unwrap_err();
 
         let (port, v) =
-            multi_bind_in_range_with_config(ip_addr, (pr_s + 5, pr_e), config, 10).unwrap();
+            multi_bind_in_range_with_config(ip_addr, (pr.start + 5, pr.end), config, 10).unwrap();
         for sock in &v {
             assert_eq!(port, sock.local_addr().unwrap().port());
         }
@@ -372,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_bind_with_any_port() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let config = SocketConfiguration::default();
         let x = bind_with_any_port_with_config(ip_addr, config).unwrap();
         let y = bind_with_any_port_with_config(ip_addr, config).unwrap();
@@ -384,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_bind_in_range_nil() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         bind_in_range(ip_addr, (2000, 2000)).unwrap_err();
         bind_in_range(ip_addr, (2000, 1999)).unwrap_err();
     }
@@ -393,21 +434,20 @@ mod tests {
     fn test_bind_on_top() {
         let config = SocketConfiguration::default();
         let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let port_range = localhost_port_range_for_tests();
-        let (_p, s) = bind_in_range_with_config(localhost, port_range, config).unwrap();
+        let pr = localhost_port_range_for_tests().as_tuple();
+        let (_p, s) = bind_in_range_with_config(localhost, pr, config).unwrap();
         let _socks = bind_more_with_config(s, 8, config).unwrap();
-
-        let _socks2 = multi_bind_in_range_with_config(localhost, port_range, config, 8).unwrap();
+        let _socks2 = multi_bind_in_range_with_config(localhost, pr, config, 8).unwrap();
     }
 
     #[test]
     fn test_bind_common_in_range() {
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let (pr_s, pr_e) = localhost_port_range_for_tests();
+        let pr = localhost_port_range_for_tests();
         let config = SocketConfiguration::default();
         let (port, _sockets) =
-            bind_common_in_range_with_config(ip_addr, (pr_s, pr_e), config).unwrap();
-        assert!((pr_s..pr_e).contains(&port));
+            bind_common_in_range_with_config(ip_addr, pr.as_tuple(), config).unwrap();
+        assert!(pr.contains(&port));
 
         bind_common_in_range_with_config(ip_addr, (port, port + 1), config).unwrap_err();
     }
@@ -416,7 +456,7 @@ mod tests {
     fn test_bind_two_in_range_with_offset() {
         solana_logger::setup();
         let config = SocketConfiguration::default();
-        let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let offset = 6;
         if let Ok(((port1, _), (port2, _))) =
             bind_two_in_range_with_offset_and_config(ip_addr, (1024, 65535), offset, config, config)

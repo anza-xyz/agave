@@ -842,7 +842,7 @@ mod tests {
         let keypairs: Vec<Keypair> = repeat_with(Keypair::new).take(NUM_ENDPOINTS).collect();
         let port_range = localhost_port_range_for_tests();
         let ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-        let sockets: Vec<UdpSocket> = (port_range.0..port_range.1)
+        let sockets: Vec<UdpSocket> = port_range
             .map(|port| bind_to(ip_addr, port).unwrap())
             .take(NUM_ENDPOINTS)
             .collect();
