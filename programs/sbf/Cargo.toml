@@ -92,6 +92,7 @@ check-cfg = [
 [workspace.dependencies]
 agave-feature-set = { path = "../../feature-set", version = "=3.0.0" }
 agave-reserved-account-keys = { path = "../../reserved-account-keys", version = "=3.0.0" }
+agave-syscalls = { path = "../../syscalls", version = "=3.0.0" }
 agave-validator = { path = "../../validator", version = "=3.0.0" }
 array-bytes = "=1.4.1"
 bincode = { version = "1.1.4", default-features = false }
@@ -182,6 +183,7 @@ frozen-abi = []
 [dev-dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-syscalls = { workspace = true }
 agave-validator = { workspace = true }
 bincode = { workspace = true }
 borsh = { workspace = true }

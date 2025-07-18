@@ -12,9 +12,10 @@ use {solana_keypair::Keypair, std::slice};
 extern crate test;
 
 use {
+    agave_syscalls::create_program_runtime_environment_v1,
     byteorder::{ByteOrder, LittleEndian, WriteBytesExt},
     solana_account::AccountSharedData,
-    solana_bpf_loader_program::{create_vm, syscalls::create_program_runtime_environment_v1},
+    solana_bpf_loader_program::create_vm,
     solana_client_traits::SyncClient,
     solana_instruction::{AccountMeta, Instruction},
     solana_measure::measure::Measure,

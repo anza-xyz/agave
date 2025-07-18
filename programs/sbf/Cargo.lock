@@ -137,6 +137,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "agave-syscalls"
+version = "3.0.0"
+dependencies = [
+ "bincode",
+ "libsecp256k1 0.6.0",
+ "num-traits",
+ "solana-account",
+ "solana-account-info",
+ "solana-big-mod-exp",
+ "solana-blake3-hasher",
+ "solana-bn254",
+ "solana-clock",
+ "solana-cpi",
+ "solana-curve25519 3.0.0",
+ "solana-hash",
+ "solana-instruction",
+ "solana-keccak-hasher",
+ "solana-loader-v3-interface 5.0.0",
+ "solana-log-collector",
+ "solana-measure",
+ "solana-poseidon",
+ "solana-program-entrypoint",
+ "solana-program-runtime",
+ "solana-pubkey",
+ "solana-sbpf",
+ "solana-sdk-ids",
+ "solana-secp256k1-recover",
+ "solana-sha256-hasher",
+ "solana-stable-layout",
+ "solana-svm-callback",
+ "solana-svm-feature-set",
+ "solana-sysvar",
+ "solana-sysvar-id",
+ "solana-timings",
+ "solana-transaction-context",
+ "solana-type-overrides",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "agave-transaction-view"
 version = "3.0.0"
 dependencies = [
@@ -5687,44 +5727,27 @@ dependencies = [
 name = "solana-bpf-loader-program"
 version = "3.0.0"
 dependencies = [
+ "agave-syscalls",
  "bincode",
- "libsecp256k1 0.6.0",
- "num-traits",
  "qualifier_attr",
  "solana-account",
- "solana-account-info",
- "solana-big-mod-exp",
  "solana-bincode",
- "solana-blake3-hasher",
- "solana-bn254",
  "solana-clock",
- "solana-cpi",
- "solana-curve25519 3.0.0",
- "solana-hash",
  "solana-instruction",
- "solana-keccak-hasher",
  "solana-loader-v3-interface 5.0.0",
  "solana-loader-v4-interface",
  "solana-log-collector",
  "solana-measure",
  "solana-packet",
- "solana-poseidon",
  "solana-program-entrypoint",
  "solana-program-runtime",
  "solana-pubkey",
  "solana-sbpf",
  "solana-sdk-ids",
- "solana-secp256k1-recover",
- "solana-sha256-hasher",
- "solana-stable-layout",
  "solana-svm-feature-set",
  "solana-system-interface",
- "solana-sysvar",
- "solana-sysvar-id",
- "solana-timings",
  "solana-transaction-context",
  "solana-type-overrides",
- "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -7793,6 +7816,7 @@ dependencies = [
  "agave-feature-set",
  "agave-precompiles",
  "agave-reserved-account-keys",
+ "agave-syscalls",
  "ahash 0.8.11",
  "aquamarine",
  "arrayref",
@@ -7950,6 +7974,7 @@ version = "3.0.0"
 dependencies = [
  "agave-feature-set",
  "agave-reserved-account-keys",
+ "agave-syscalls",
  "agave-validator",
  "bincode",
  "borsh 1.5.7",

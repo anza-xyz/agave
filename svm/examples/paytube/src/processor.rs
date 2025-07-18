@@ -1,7 +1,7 @@
 //! A helper to initialize Solana SVM API's `TransactionBatchProcessor`.
 
 use {
-    solana_bpf_loader_program::syscalls::create_program_runtime_environment_v1,
+    agave_syscalls::create_program_runtime_environment_v1,
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
     solana_fee_structure::FeeDetails,

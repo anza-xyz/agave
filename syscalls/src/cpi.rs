@@ -1274,9 +1274,9 @@ fn update_caller_account(
 mod tests {
     use {
         super::*,
-        crate::mock_create_vm,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
+        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{

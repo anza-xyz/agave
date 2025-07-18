@@ -12,7 +12,7 @@ pub use self::{
 };
 #[allow(deprecated)]
 use {
-    crate::syscalls::mem_ops::is_nonoverlapping,
+    crate::mem_ops::is_nonoverlapping,
     solana_account_info::AccountInfo,
     solana_big_mod_exp::{big_mod_exp, BigModExpParams},
     solana_blake3_hasher as blake3,
@@ -292,28 +292,6 @@ macro_rules! register_feature_gated_function {
             Ok(())
         }
     };
-}
-
-pub(crate) fn morph_into_deployment_environment_v1(
-    from: Arc<BuiltinProgram<InvokeContext>>,
-) -> Result<BuiltinProgram<InvokeContext>, Error> {
-    let mut config = from.get_config().clone();
-    config.reject_broken_elfs = true;
-    // Once the tests are being build using a toolchain which supports the newer SBPF versions,
-    // the deployment of older versions will be disabled:
-    // config.enabled_sbpf_versions =
-    //     *config.enabled_sbpf_versions.end()..=*config.enabled_sbpf_versions.end();
-
-    let mut result = BuiltinProgram::new_loader(config);
-
-    for (_key, (name, value)) in from.get_function_registry().iter() {
-        // Deployment of programs with sol_alloc_free is disabled. So do not register the syscall.
-        if name != *b"sol_alloc_free_" {
-            result.register_function(unsafe { std::str::from_utf8_unchecked(name) }, value)?;
-        }
-    }
-
-    Ok(result)
 }
 
 pub fn create_program_runtime_environment_v1<'a>(
@@ -2180,10 +2158,10 @@ mod tests {
     use solana_sysvar::fees::Fees;
     use {
         super::*,
-        crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,

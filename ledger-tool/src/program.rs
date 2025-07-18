@@ -1,5 +1,6 @@
 use {
     crate::{args::*, canonicalize_ledger_path, ledger_utils::*},
+    agave_syscalls::create_program_runtime_environment_v1,
     clap::{App, AppSettings, Arg, ArgMatches, SubCommand},
     log::*,
     serde_derive::{Deserialize, Serialize},
@@ -7,9 +8,7 @@ use {
     solana_account::{
         create_account_shared_data_for_test, state_traits::StateMut, AccountSharedData,
     },
-    solana_bpf_loader_program::{
-        create_vm, load_program_from_bytes, syscalls::create_program_runtime_environment_v1,
-    },
+    solana_bpf_loader_program::{create_vm, load_program_from_bytes},
     solana_cli_output::{OutputFormat, QuietDisplay, VerboseDisplay},
     solana_clock::Slot,
     solana_ledger::blockstore_options::AccessType,
