@@ -360,7 +360,7 @@ impl Tvu {
             &exit,
         );
 
-        let cost_update_service = CostUpdateService::new(blockstore.clone(), cost_update_receiver);
+        let cost_update_service = CostUpdateService::new(cost_update_receiver);
 
         let drop_bank_service = DropBankService::new(drop_bank_receiver);
 

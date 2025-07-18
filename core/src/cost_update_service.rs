@@ -2,7 +2,6 @@
 
 use {
     crossbeam_channel::Receiver,
-    solana_ledger::blockstore::Blockstore,
     solana_runtime::bank::Bank,
     std::{
         sync::Arc,
@@ -30,11 +29,11 @@ const MAX_LOOP_COUNT: usize = 25;
 const LOOP_LIMITER: Duration = Duration::from_millis(10);
 
 impl CostUpdateService {
-    pub fn new(blockstore: Arc<Blockstore>, cost_update_receiver: CostUpdateReceiver) -> Self {
+    pub fn new(cost_update_receiver: CostUpdateReceiver) -> Self {
         let thread_hdl = Builder::new()
             .name("solCostUpdtSvc".to_string())
             .spawn(move || {
-                Self::service_loop(blockstore, cost_update_receiver);
+                Self::service_loop(cost_update_receiver);
             })
             .unwrap();
 
@@ -45,7 +44,7 @@ impl CostUpdateService {
         self.thread_hdl.join()
     }
 
-    fn service_loop(_blockstore: Arc<Blockstore>, cost_update_receiver: CostUpdateReceiver) {
+    fn service_loop(cost_update_receiver: CostUpdateReceiver) {
         for cost_update in cost_update_receiver.iter() {
             match cost_update {
                 CostUpdate::FrozenBank {
