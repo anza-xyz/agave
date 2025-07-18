@@ -527,17 +527,22 @@ impl HeaviestSubtreeForkChoice {
             }
 
             // Higher stake child wins, but in the event of a tie, bias towards
-            // the higher slot. This is to reward faster block producers.
-            if child_weight > maybe_best_child_weight {
-                return false;
-            } else if maybe_best_child_weight == child_weight {
-                if maybe_best_child.0 < child.0 {
-                    // Higher slot wins
-                    return false;
-                } else if maybe_best_child.0 == child.0 && maybe_best_child.1 > child.1 {
-                    // Lower hash wins
-                    return false;
+            // the higher slot to reward faster block producers. For duplicate
+            // blocks, prioritize lower hash.
+            match child_weight.cmp(&maybe_best_child_weight) {
+                Ordering::Greater => return false,
+                Ordering::Equal => {
+                    match child.0.cmp(&maybe_best_child.0) {
+                        Ordering::Greater => return false,
+                        Ordering::Equal => {
+                            if child.1 < maybe_best_child.1 {
+                                return false;
+                            }
+                        }
+                        Ordering::Less => continue,
+                    }
                 }
+                Ordering::Less => continue,
             }
         }
         true
@@ -2962,7 +2967,12 @@ mod test {
 
     #[test]
     fn test_add_votes_duplicate_zero_stake() {
-        let (mut heaviest_subtree_fork_choice, _duplicate_leaves_descended_from_4, duplicate_leaves_descended_from_5, _duplicate_leaves_descended_from_6): (
+        let (
+            mut heaviest_subtree_fork_choice,
+            _duplicate_leaves_descended_from_4,
+            duplicate_leaves_descended_from_5,
+            _duplicate_leaves_descended_from_6,
+        ): (
             HeaviestSubtreeForkChoice,
             Vec<SlotHashKey>,
             Vec<SlotHashKey>,
