@@ -685,7 +685,7 @@ impl PinnedPacketBatch {
                     // TODO: This should never happen. Instead the caller should
                     // break the payload into smaller messages, and here any errors
                     // should be propagated.
-                    error!("Couldn't write to packet {:?}. Data skipped.", e);
+                    error!("Couldn't write to packet {e:?}. Data skipped.");
                     packet.meta_mut().set_discard(true);
                 }
             } else {
