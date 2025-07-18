@@ -1672,12 +1672,17 @@ pub mod tests {
 
         let mut test_accounts = Vec::with_capacity(num_accounts);
         let mut file_size = 0;
+        let special_file_interval = num_accounts / 8;
         for i in 0..num_accounts {
             let data_len = match i {
-                // ensure one max size account
-                0 => MAX_PERMITTED_DATA_LENGTH as usize,
-                // ensure one 64KiB account
-                x if x == num_accounts - 1 => 1 << 16,
+                // Create several spread out accounts with varying sizes:
+                // for (x / special_file_interval) in 0..7 range
+                x if x % special_file_interval == 0 => {
+                    // mult increases in 0 to 3 range twice
+                    let mult = (x / special_file_interval) % 4;
+                    // and data_len goes over 0..MAX_PERMITTED_DATA_LENGTH range also twice
+                    mult * (MAX_PERMITTED_DATA_LENGTH as usize) / 3
+                }
                 // Otherwise use a reasonably small account to avoid long test times
                 x => x % 256,
             };

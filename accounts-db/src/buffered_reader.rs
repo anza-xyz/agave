@@ -171,7 +171,7 @@ impl<'a, T: Backing> ContiguousBufFileRead<'a> for BufferedReader<'a, T> {
             return self.fill_buf_required(required_len);
         }
 
-        if required_len > overflow_buffer.len() {
+        if required_len > overflow_buffer.capacity() {
             overflow_buffer.reserve_exact(required_len - overflow_buffer.len());
         }
         // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
