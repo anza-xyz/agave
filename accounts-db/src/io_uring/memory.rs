@@ -135,6 +135,7 @@ impl DerefMut for PageAlignedMemory {
 /// registered in `io_uring` for access in scheduled IO operations.
 ///
 /// It is used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
+#[derive(Debug)]
 pub(super) struct FixedIoBuffer {
     ptr: *mut u8,
     size: usize,
@@ -214,14 +215,6 @@ impl FixedIoBuffer {
     }
 }
 
-impl std::fmt::Debug for FixedIoBuffer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IoFixedBuffer")
-            .field("io_buf_index", &self.io_buf_index)
-            .finish()
-    }
-}
-
 impl AsRef<[u8]> for FixedIoBuffer {
     fn as_ref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.size) }
@@ -251,16 +244,14 @@ pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
         memlock.rlim_max = DESIRED_MEMLOCK;
         if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
             log::error!(
-                "Unable to increase the maximum memory lock limit to {} from {}",
-                memlock.rlim_cur,
-                current,
+                "Unable to increase the maximum memory lock limit to {} from {current}",
+                memlock.rlim_cur
             );
 
             if cfg!(target_os = "macos") {
                 log::error!(
-                    "On mac OS you may need to run |sudo launchctl limit memlock {} {}| first",
-                    DESIRED_MEMLOCK,
-                    DESIRED_MEMLOCK,
+                    "On mac OS you may need to run \
+                    |sudo launchctl limit memlock {DESIRED_MEMLOCK} {DESIRED_MEMLOCK}| first"
                 );
             }
             return Err(io::Error::new(
