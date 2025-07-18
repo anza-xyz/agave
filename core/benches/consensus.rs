@@ -1,9 +1,7 @@
-#![feature(test)]
-
 extern crate solana_core;
-extern crate test;
 
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     solana_core::{
         consensus::{tower_storage::FileTowerStorage, Tower},
         vote_simulator::VoteSimulator,
@@ -17,12 +15,10 @@ use {
         sync::Arc,
     },
     tempfile::TempDir,
-    test::Bencher,
     trees::tr,
 };
 
-#[bench]
-fn bench_save_tower(bench: &mut Bencher) {
+fn bench_save_tower(b: &mut Bencher) {
     let dir = TempDir::new().unwrap();
 
     let vote_account_pubkey = &Pubkey::default();
@@ -39,14 +35,12 @@ fn bench_save_tower(bench: &mut Bencher) {
         &heaviest_bank,
     );
 
-    bench.iter(move || {
+    b.iter(|| {
         tower.save(&tower_storage, &node_keypair).unwrap();
     });
 }
 
-#[bench]
-#[ignore]
-fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
+fn bench_generate_ancestors_descendants(b: &mut Bencher) {
     let vote_account_pubkey = &Pubkey::default();
     let node_keypair = Arc::new(Keypair::new());
     let heaviest_bank = BankForks::new_rw_arc(Bank::default_for_tests())
@@ -73,10 +67,17 @@ fn bench_generate_ancestors_descendants(bench: &mut Bencher) {
         &mut tower,
     );
 
-    bench.iter(move || {
+    b.iter(|| {
         for _ in 0..num_banks {
             let _ancestors = vote_simulator.bank_forks.read().unwrap().ancestors();
             let _descendants = vote_simulator.bank_forks.read().unwrap().descendants();
         }
-    });
+    })
 }
+
+benchmark_group!(
+    benches,
+    bench_save_tower,
+    bench_generate_ancestors_descendants
+);
+benchmark_main!(benches);

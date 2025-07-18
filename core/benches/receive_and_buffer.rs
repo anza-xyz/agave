@@ -1,7 +1,7 @@
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
+    bencher::{benchmark_group, benchmark_main, Bencher},
     solana_core::banking_stage::transaction_scheduler::{
         receive_and_buffer::{
             ReceiveAndBuffer, SanitizedTransactionReceiveAndBuffer, TransactionViewReceiveAndBuffer,
@@ -13,7 +13,7 @@ use {
 };
 
 fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator>(
-    c: &mut Criterion,
+    b: &mut Bencher,
     bench_name: &str,
     num_instructions_per_tx: usize,
     probability_invalid_blockhash: f64,
@@ -34,7 +34,7 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
         true, // single fee payer for all transactions
     );
 
-    let mut group = c.benchmark_group("receive_and_buffer");
+    let mut group = b.benchmark_group("receive_and_buffer");
     group.throughput(Throughput::Elements(num_txs as u64));
     group.bench_function(bench_name, |bencher| {
         bencher.iter_custom(|iters| {
@@ -71,16 +71,16 @@ fn bench_receive_and_buffer<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator
     group.finish();
 }
 
-fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
+fn bench_sanitized_transaction_receive_and_buffer(b: &mut Bencher) {
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
+        b,
         "sanitized_transaction_max_instructions",
         utils::MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
         true,
     );
     bench_receive_and_buffer::<SanitizedTransactionReceiveAndBuffer>(
-        c,
+        b,
         "sanitized_transaction_min_instructions",
         1,
         0.0,
@@ -88,16 +88,16 @@ fn bench_sanitized_transaction_receive_and_buffer(c: &mut Criterion) {
     );
 }
 
-fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
+fn bench_transaction_view_receive_and_buffer(b: &mut Bencher) {
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
-        c,
+        b,
         "transaction_view_max_instructions",
         utils::MAX_INSTRUCTIONS_PER_TRANSACTION,
         0.0,
         true,
     );
     bench_receive_and_buffer::<TransactionViewReceiveAndBuffer>(
-        c,
+        b,
         "transaction_view_min_instructions",
         1,
         0.0,
@@ -105,9 +105,9 @@ fn bench_transaction_view_receive_and_buffer(c: &mut Criterion) {
     );
 }
 
-criterion_group!(
+benchmark_group!(
     benches,
     bench_sanitized_transaction_receive_and_buffer,
     bench_transaction_view_receive_and_buffer
 );
-criterion_main!(benches);
+benchmark_main!(benches);

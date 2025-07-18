@@ -1,9 +1,9 @@
+use bencher::{benchmark_group, benchmark_main, Bencher};
 #[cfg(not(any(target_env = "msvc", target_os = "freebsd")))]
 use jemallocator::Jemalloc;
 #[path = "receive_and_buffer_utils.rs"]
 mod utils;
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput},
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_core::banking_stage::{
         scheduler_messages::{ConsumeWork, FinishedConsumeWork},
@@ -111,12 +111,12 @@ impl<Tx: TransactionWithMeta + Send + Sync + 'static> BenchEnv<Tx> {
 }
 
 fn bench_scheduler_impl<T: ReceiveAndBuffer + utils::ReceiveAndBufferCreator>(
-    c: &mut Criterion,
+    b: &mut Bencher,
     bench_name: &str,
 ) where
     <T as ReceiveAndBuffer>::Transaction: 'static,
 {
-    let mut group = c.benchmark_group("bench_scheduler");
+    let mut group = b.benchmark_group("bench_scheduler");
     group.sample_size(10);
 
     let scheduler_types: Vec<(bool, &str)> =
@@ -237,10 +237,10 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
     execute_time
 }
 
-fn bench_scheduler(c: &mut Criterion) {
+fn bench_scheduler(b: &mut Bencher) {
     bench_scheduler_impl::<SanitizedTransactionReceiveAndBuffer>(c, "sdk_transaction");
     bench_scheduler_impl::<TransactionViewReceiveAndBuffer>(c, "transaction_view");
 }
 
-criterion_group!(benches, bench_scheduler,);
-criterion_main!(benches);
+benchmark_group!(benches, bench_scheduler,);
+benchmark_main!(benches);
