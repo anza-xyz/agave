@@ -1,8 +1,18 @@
-use std::{
-    ops::{Deref, DerefMut},
-    ptr::{self, NonNull},
-    slice,
+use {
+    agave_io_uring::{Ring, RingOp},
+    std::{
+        io,
+        ops::{Deref, DerefMut},
+        ptr::{self, NonNull},
+        slice,
+    },
 };
+
+// We use fixed buffers to save the cost of mapping/unmapping them at each operation.
+//
+// Instead of doing many large allocations and registering those, we do a single large one
+// and chunk it in slices of up to 1G each.
+const FIXED_BUFFER_LEN: usize = 1024 * 1024 * 1024;
 
 pub enum LargeBuffer {
     Vec(Vec<u8>),
@@ -43,6 +53,7 @@ impl LargeBuffer {
     /// using HugeTable when it is available on the host.
     pub fn new(size: usize) -> Self {
         if size > PageAlignedMemory::page_size() {
+            let size = size.next_power_of_two();
             if let Ok(alloc) = PageAlignedMemory::alloc_huge_table(size) {
                 log::info!("obtained hugetable io_uring buffer (len={size})");
                 return Self::HugeTable(alloc);
@@ -120,49 +131,137 @@ impl DerefMut for PageAlignedMemory {
     }
 }
 
-/// Fixed mutable view into externally allocated bytes buffer
+/// Fixed mutable view into externally allocated IO bytes buffer
+/// registered in `io_uring` for access in scheduled IO operations.
 ///
-/// It is an unsafe (no lifetime tracking) equivalent of `&mut [u8]`
-pub struct BorrowedBytesMut {
+/// It is used as an unsafe (no lifetime tracking) equivalent of `&mut [u8]`.
+#[derive(Debug)]
+pub(super) struct FixedIoBuffer {
     ptr: *mut u8,
     size: usize,
+    io_buf_index: Option<u16>,
 }
 
-impl BorrowedBytesMut {
+impl FixedIoBuffer {
     pub const fn empty() -> Self {
         Self {
             ptr: std::ptr::null_mut(),
             size: 0,
+            io_buf_index: None,
         }
     }
 
-    pub fn from_mut_slice(buf: &mut [u8]) -> Self {
-        Self {
-            ptr: buf.as_mut_ptr(),
-            size: buf.len(),
-        }
-    }
+    /// Split buffer into `chunk_size` sized `IoFixedBuffer` buffers for use as registered
+    /// buffer in io_uring operations.
+    pub unsafe fn split_buffer_chunks(
+        buffer: &mut [u8],
+        chunk_size: usize,
+    ) -> impl Iterator<Item = Self> + use<'_> {
+        assert!(
+            buffer.len() / FIXED_BUFFER_LEN <= u16::MAX as usize,
+            "buffer too large to register in io_uring"
+        );
+        let buf_start = buffer.as_ptr() as usize;
 
-    pub fn as_mut_ptr(&self) -> *mut u8 {
-        self.ptr
+        buffer.chunks_exact_mut(chunk_size).map(move |buf| {
+            let io_buf_index = (buf.as_ptr() as usize - buf_start) / FIXED_BUFFER_LEN;
+            Self {
+                ptr: buf.as_mut_ptr(),
+                size: buf.len(),
+                io_buf_index: Some(io_buf_index as u16),
+            }
+        })
     }
 
     pub fn len(&self) -> usize {
         self.size
     }
 
+    /// Safety: while just returning without dereferencing a pointer is safe, this is marked unsafe
+    /// so that the callers are encouraged to reason about the lifetime of the buffer.
+    pub unsafe fn as_mut_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
+
+    /// The index of the fixed buffer in the ring. See register_buffers().
+    pub fn io_buf_index(&self) -> Option<u16> {
+        self.io_buf_index
+    }
+
     /// Return a clone of `self` reduced to specified `size`
-    pub fn sub_buf_to(&self, size: usize) -> Self {
+    pub fn into_shrinked(self, size: usize) -> Self {
         assert!(size <= self.size);
         Self {
             ptr: self.ptr,
             size,
+            io_buf_index: self.io_buf_index,
         }
+    }
+
+    /// Registed provided buffer as fixed buffer in `io_uring`.
+    pub unsafe fn register<S, E: RingOp<S>>(
+        buffer: &mut [u8],
+        ring: &Ring<S, E>,
+    ) -> io::Result<()> {
+        adjust_ulimit_memlock(buffer.len())?;
+        let iovecs = buffer
+            .chunks(FIXED_BUFFER_LEN)
+            .map(|buf| libc::iovec {
+                iov_base: buf.as_ptr() as _,
+                iov_len: buf.len(),
+            })
+            .collect::<Vec<_>>();
+        unsafe { ring.register_buffers(&iovecs) }
     }
 }
 
-impl AsRef<[u8]> for BorrowedBytesMut {
+impl AsRef<[u8]> for FixedIoBuffer {
     fn as_ref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.size) }
     }
+}
+
+pub fn adjust_ulimit_memlock(min_required: usize) -> io::Result<()> {
+    // This value reflects recommended memory lock limit documented in the validator's
+    // setup instructions at docs/src/operations/guides/validator-start.md
+    const DESIRED_MEMLOCK: u64 = 2_000_000_000;
+
+    fn get_memlock() -> libc::rlimit {
+        let mut memlock = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut memlock) } != 0 {
+            log::warn!("getrlimit(RLIMIT_MEMLOCK) failed");
+        }
+        memlock
+    }
+
+    let mut memlock = get_memlock();
+    let current = memlock.rlim_cur as usize;
+    if current < min_required {
+        memlock.rlim_cur = DESIRED_MEMLOCK;
+        memlock.rlim_max = DESIRED_MEMLOCK;
+        if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &memlock) } != 0 {
+            log::error!(
+                "Unable to increase the maximum memory lock limit to {} from {current}",
+                memlock.rlim_cur
+            );
+
+            if cfg!(target_os = "macos") {
+                log::error!(
+                    "On mac OS you may need to run \
+                    |sudo launchctl limit memlock {DESIRED_MEMLOCK} {DESIRED_MEMLOCK}| first"
+                );
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "unable to set memory lock limit",
+            ));
+        }
+
+        memlock = get_memlock();
+        log::info!("Bumped maximum memory lock limit: {}", memlock.rlim_cur);
+    }
+    Ok(())
 }
