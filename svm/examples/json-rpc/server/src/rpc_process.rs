@@ -40,6 +40,7 @@ use {
     solana_svm::{
         account_loader::{CheckedTransactionDetails, TransactionCheckResult},
         account_overrides::AccountOverrides,
+        transaction_balances::SvmTokenInfo,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::{
             ProcessedTransaction, TransactionProcessingResultExtensions,
@@ -129,6 +130,11 @@ struct TransactionSimulationResult {
     pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
+    pub fee: Option<u64>,
+    pub pre_balances: Option<Vec<u64>>,
+    pub post_balances: Option<Vec<u64>>,
+    pub pre_token_balances: Option<Vec<SvmTokenInfo>>,
+    pub post_token_balances: Option<Vec<SvmTokenInfo>>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -322,6 +328,7 @@ impl JsonRpcRequestProcessor {
         let batch = self.prepare_unlocked_batch_from_single_tx(transaction);
         let LoadAndExecuteTransactionsOutput {
             mut processing_results,
+            balance_collector,
             ..
         } = self.load_and_execute_transactions(
             &mock_bank,
@@ -347,10 +354,21 @@ impl JsonRpcRequestProcessor {
         let processing_result = processing_results
             .pop()
             .unwrap_or(Err(TransactionError::InvalidProgramForExecution));
-        let flattened_result = processing_result.flattened_result();
-        let (post_simulation_accounts, logs, return_data, inner_instructions) =
-            match processing_result {
-                Ok(processed_tx) => match processed_tx {
+        let (
+            post_simulation_accounts,
+            result,
+            fee,
+            logs,
+            return_data,
+            inner_instructions,
+            units_consumed,
+            loaded_accounts_data_size,
+        ) = match processing_result {
+            Ok(processed_tx) => {
+                let executed_units = processed_tx.executed_units();
+                let loaded_accounts_data_size = processed_tx.loaded_accounts_data_size();
+
+                match processed_tx {
                     ProcessedTransaction::Executed(executed_tx) => {
                         let details = executed_tx.execution_details;
                         let post_simulation_accounts = executed_tx
@@ -361,27 +379,60 @@ impl JsonRpcRequestProcessor {
                             .collect::<Vec<_>>();
                         (
                             post_simulation_accounts,
+                            details.status,
+                            Some(executed_tx.loaded_transaction.fee_details.total_fee()),
                             details.log_messages,
                             details.return_data,
                             details.inner_instructions,
+                            executed_units,
+                            loaded_accounts_data_size,
                         )
                     }
-                    ProcessedTransaction::FeesOnly(_) => (vec![], None, None, None),
-                },
-                Err(_) => (vec![], None, None, None),
-            };
+                    ProcessedTransaction::FeesOnly(fees_only_tx) => (
+                        vec![],
+                        Err(fees_only_tx.load_error),
+                        Some(fees_only_tx.fee_details.total_fee()),
+                        None,
+                        None,
+                        None,
+                        executed_units,
+                        loaded_accounts_data_size,
+                    ),
+                }
+            }
+            Err(error) => (vec![], Err(error), None, None, None, None, 0, 0),
+        };
         let logs = logs.unwrap_or_default();
-        let units_consumed: u64 = 0;
-        let loaded_accounts_data_size: u32 = 0;
+
+        let (pre_balances, post_balances, pre_token_balances, post_token_balances) =
+            match balance_collector {
+                Some(balance_collector) => {
+                    let (mut native_pre, mut native_post, mut token_pre, mut token_post) =
+                        balance_collector.into_vecs();
+
+                    (
+                        native_pre.pop(),
+                        native_post.pop(),
+                        token_pre.pop(),
+                        token_post.pop(),
+                    )
+                }
+                None => (None, None, None, None),
+            };
 
         TransactionSimulationResult {
-            result: flattened_result,
+            result,
             logs,
             post_simulation_accounts,
             units_consumed,
             loaded_accounts_data_size,
             return_data,
             inner_instructions,
+            fee,
+            pre_balances,
+            post_balances,
+            pre_token_balances,
+            post_token_balances,
         }
     }
 
@@ -606,12 +657,15 @@ impl JsonRpcRequestProcessor {
 
         LoadAndExecuteTransactionsOutput {
             processing_results: sanitized_output.processing_results,
+            balance_collector: sanitized_output.balance_collector,
         }
     }
 }
 
 /// RPC interface that an API node is expected to provide
 pub mod rpc {
+    use solana_transaction_status::UiLoadedAddresses;
+
     use super::*;
     #[rpc]
     pub trait Rpc {
@@ -698,6 +752,11 @@ pub mod rpc {
                 loaded_accounts_data_size,
                 return_data,
                 inner_instructions,
+                fee,
+                pre_balances,
+                post_balances,
+                pre_token_balances,
+                post_token_balances,
             } = meta.simulate_transaction_unchecked(&transaction, enable_cpi_recording);
 
             let account_keys = transaction.message().account_keys();
@@ -765,6 +824,16 @@ pub mod rpc {
                     return_data: return_data.map(|return_data| return_data.into()),
                     inner_instructions,
                     replacement_blockhash: None,
+                    fee,
+                    pre_balances,
+                    post_balances,
+                    pre_token_balances: pre_token_balances.map(|balances| {
+                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                    }),
+                    post_token_balances: post_token_balances.map(|balances| {
+                        balances.into_iter().map(|balance| solana_ledger::transaction_balances::svm_token_info_to_token_balance(balance).into()).collect()
+                    }),
+                    loaded_addresses: Some(UiLoadedAddresses::from(&transaction.get_loaded_addresses())),
                 },
             ))
         }

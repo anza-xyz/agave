@@ -169,6 +169,7 @@ impl RpcRequest {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum RpcResponseErrorData {
     Empty,
     SendTransactionPreflightFailure(RpcSimulateTransactionResult),

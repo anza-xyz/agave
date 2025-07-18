@@ -33,6 +33,7 @@ solana-commitment-config = { workspace = true }
 solana-compute-budget = { workspace = true }
 solana-compute-budget-interface = { workspace = true }
 solana-hash = { workspace = true }
+solana-ledger = { workspace = true }
 solana-message = { workspace = true }
 solana-nonce = { workspace = true }
 solana-perf = { workspace = true }

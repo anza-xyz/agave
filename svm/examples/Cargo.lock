@@ -2936,6 +2936,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-interface",
  "solana-hash",
+ "solana-ledger",
  "solana-message",
  "solana-nonce",
  "solana-perf",
