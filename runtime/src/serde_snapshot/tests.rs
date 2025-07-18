@@ -77,7 +77,7 @@ mod serde_snapshot_tests {
             Arc::default(),
             (u64::default(), None),
             None,
-            false,
+            true,
         )
         .map(|(accounts_db, _)| accounts_db)
     }
