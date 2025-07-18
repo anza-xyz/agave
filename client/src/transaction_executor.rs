@@ -76,7 +76,7 @@ impl TransactionExecutor {
                     return Some((sig, timestamp(), id));
                 }
                 Err(e) => {
-                    info!("error: {:#?}", e);
+                    info!("error: {e:#?}");
                 }
             }
             None
@@ -136,7 +136,7 @@ impl TransactionExecutor {
                             let mut retain = true;
                             let sent_ts = sigs_w[i].1;
                             if let Some(e) = &statuses[j] {
-                                debug!("error: {:?}", e);
+                                debug!("error: {e:?}");
                                 if e.status.is_ok() {
                                     success += 1;
                                 } else {
@@ -169,8 +169,7 @@ impl TransactionExecutor {
                         );
                         if last_log.elapsed().as_millis() > 5000 {
                             info!(
-                                "success: {} error: {} timed_out: {}",
-                                success, error_count, timed_out,
+                                "success: {success} error: {error_count} timed_out: {timed_out}",
                             );
                             last_log = Instant::now();
                         }

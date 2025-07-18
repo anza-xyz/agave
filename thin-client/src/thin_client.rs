@@ -89,10 +89,7 @@ impl ClientOptimizer {
                 let times = self.times.read().unwrap();
                 let (min_time, min_index) = min_index(&times);
                 trace!(
-                    "done experimenting min: {} time: {} times: {:?}",
-                    min_index,
-                    min_time,
-                    times
+                    "done experimenting min: {min_index} time: {min_time} times: {times:?}"
                 );
 
                 // Only 1 thread should grab the num_clients-1 index, so this should be ok.

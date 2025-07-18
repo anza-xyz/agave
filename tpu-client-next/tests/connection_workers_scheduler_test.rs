@@ -222,10 +222,7 @@ async fn test_basic_transactions_sending() {
             let elapsed = now.elapsed();
             assert!(
                 elapsed < TEST_MAX_TIME,
-                "Failed to send {} transaction in {:?}.  Only sent {}",
-                expected_num_txs,
-                elapsed,
-                actual_num_packets,
+                "Failed to send {expected_num_txs} transaction in {elapsed:?}.  Only sent {actual_num_packets}",
             );
         }
 

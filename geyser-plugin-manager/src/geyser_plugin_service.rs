@@ -79,8 +79,7 @@ impl GeyserPluginService {
         )>,
     ) -> Result<Self, GeyserPluginServiceError> {
         info!(
-            "Starting GeyserPluginService from config files: {:?}",
-            geyser_plugin_config_files
+            "Starting GeyserPluginService from config files: {geyser_plugin_config_files:?}"
         );
         let mut plugin_manager = GeyserPluginManager::new();
 

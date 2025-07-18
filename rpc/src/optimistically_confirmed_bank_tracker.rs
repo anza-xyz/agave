@@ -166,8 +166,7 @@ impl OptimisticallyConfirmedBankTracker {
                     Ok(_) => {}
                     Err(err) => {
                         info!(
-                            "Failed to send notification {:?}, error: {:?}",
-                            notification, err
+                            "Failed to send notification {notification:?}, error: {err:?}"
                         );
                     }
                 }
@@ -251,8 +250,7 @@ impl OptimisticallyConfirmedBankTracker {
             if root > *newest_root_slot {
                 let parent = roots[i - 1];
                 debug!(
-                    "Doing SlotNotification::Root for root {}, parent: {}",
-                    root, parent
+                    "Doing SlotNotification::Root for root {root}, parent: {parent}"
                 );
                 Self::notify_slot_status(
                     slot_notification_subscribers,
@@ -276,7 +274,7 @@ impl OptimisticallyConfirmedBankTracker {
         slot_notification_subscribers: &Option<Arc<RwLock<Vec<SlotNotificationSender>>>>,
         prioritization_fee_cache: &PrioritizationFeeCache,
     ) {
-        debug!("received bank notification: {:?}", notification);
+        debug!("received bank notification: {notification:?}");
         match notification {
             BankNotification::OptimisticallyConfirmed(slot) => {
                 let bank = bank_forks.read().unwrap().get(slot);
@@ -344,8 +342,7 @@ impl OptimisticallyConfirmedBankTracker {
 
                 if pending_optimistically_confirmed_banks.remove(&bank.slot()) {
                     debug!(
-                        "Calling notify_gossip_subscribers to send deferred notification {:?}",
-                        frozen_slot
+                        "Calling notify_gossip_subscribers to send deferred notification {frozen_slot:?}"
                     );
 
                     Self::notify_or_defer_confirmed_banks(
