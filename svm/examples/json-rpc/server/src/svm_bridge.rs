@@ -2,7 +2,7 @@ use {
     agave_feature_set::FeatureSet,
     log::*,
     solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_bpf_loader_program::syscalls::{
+    agave_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallInvokeSignedRust, SyscallLog,
         SyscallLogBpfComputeUnits, SyscallLogPubkey, SyscallLogU64, SyscallMemcpy, SyscallMemset,
         SyscallSetReturnData,

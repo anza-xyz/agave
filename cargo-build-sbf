@@ -11,6 +11,6 @@ done
 
 set -ex
 if [[ ! -f "$here"/platform-tools-sdk/sbf/syscalls.txt ]]; then
-  cargo build --manifest-path "$here"/programs/bpf_loader/gen-syscall-list/Cargo.toml
+  cargo build --manifest-path "$here"/syscalls/gen-syscall-list/Cargo.toml
 fi
 exec cargo run --manifest-path "$here"/platform-tools-sdk/cargo-build-sbf/Cargo.toml -- $maybe_sbf_sdk "$@"

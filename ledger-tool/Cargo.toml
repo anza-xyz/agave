@@ -18,6 +18,7 @@ dev-context-only-utils = []
 [dependencies]
 agave-feature-set = { workspace = true }
 agave-reserved-account-keys = { workspace = true }
+agave-syscalls = { workspace = true }
 bs58 = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 clap = { workspace = true }

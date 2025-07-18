@@ -14,8 +14,8 @@ use {
  * to verify undefined symbols in a .so module that cargo-build-sbf has built.
  */
 fn main() {
-    let syscalls_rs_path = PathBuf::from("../src/syscalls/mod.rs");
-    let syscalls_txt_path = PathBuf::from("../../../platform-tools-sdk/sbf/syscalls.txt");
+    let syscalls_rs_path = PathBuf::from("../src/lib.rs");
+    let syscalls_txt_path = PathBuf::from("../../platform-tools-sdk/sbf/syscalls.txt");
     println!(
         "cargo:warning=(not a warning) Generating {1} from {0}",
         syscalls_rs_path.display(),
