@@ -53,7 +53,7 @@ use {
     solana_dos::cli::*,
     solana_gossip::{
         contact_info::{ContactInfo, Protocol},
-        gossip_service::{discover, get_client},
+        gossip_service::{discover_peers, get_client},
     },
     solana_hash::Hash,
     solana_keypair::Keypair,
@@ -777,13 +777,13 @@ fn main() {
     let (nodes, client) = if !cmd_params.skip_gossip {
         info!("Finding cluster entry: {:?}", cmd_params.entrypoint_addr);
         let socket_addr_space = SocketAddrSpace::new(cmd_params.allow_private_addr);
-        let (gossip_nodes, validators) = discover(
+        let (gossip_nodes, validators) = discover_peers(
             None, // keypair
-            Some(&cmd_params.entrypoint_addr),
+            &vec![cmd_params.entrypoint_addr],
             None,                              // num_nodes
             Duration::from_secs(60),           // timeout
             None,                              // find_nodes_by_pubkey
-            Some(&cmd_params.entrypoint_addr), // find_node_by_gossip_addr
+            &vec![cmd_params.entrypoint_addr], // find_node_by_gossip_addr
             None,                              // my_gossip_addr
             cmd_params.shred_version.unwrap(), // my_shred_version
             socket_addr_space,
