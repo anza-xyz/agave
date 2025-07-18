@@ -3,12 +3,12 @@
 #[allow(deprecated)]
 use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockhashes};
 use {
-    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
-    solana_bpf_loader_program::syscalls::{
+    agave_syscalls::{
         SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
         SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
         SyscallSetReturnData,
     },
+    solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::{Clock, Slot, UnixTimestamp},
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_loader_v3_interface::{self as bpf_loader_upgradeable, state::UpgradeableLoaderState},

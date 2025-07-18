@@ -295,7 +295,7 @@ macro_rules! register_feature_gated_function {
 }
 
 #[allow(dead_code)]
-pub(crate) fn morph_into_deployment_environment_v1(
+pub fn morph_into_deployment_environment_v1(
     from: Arc<BuiltinProgram<InvokeContext>>,
 ) -> Result<BuiltinProgram<InvokeContext>, Error> {
     let mut config = from.get_config().clone();
@@ -2181,10 +2181,10 @@ mod tests {
     use solana_sysvar::fees::Fees;
     use {
         super::*,
-        crate::mock_create_vm,
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
+        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,

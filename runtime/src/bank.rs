@@ -61,6 +61,9 @@ use {
     agave_feature_set::{self as feature_set, FeatureSet},
     agave_precompiles::{get_precompile, get_precompiles, is_precompile},
     agave_reserved_account_keys::ReservedAccountKeys,
+    agave_syscalls::{
+        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
+    },
     ahash::{AHashSet, RandomState},
     dashmap::DashMap,
     log::*,
@@ -88,9 +91,6 @@ use {
         blockhash_queue::BlockhashQueue,
         sorted_storages::SortedStorages,
         storable_accounts::StorableAccounts,
-    },
-    solana_bpf_loader_program::syscalls::{
-        create_program_runtime_environment_v1, create_program_runtime_environment_v2,
     },
     solana_builtins::{prototype::BuiltinPrototype, BUILTINS, STATELESS_BUILTINS},
     solana_clock::{

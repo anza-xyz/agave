@@ -11,6 +11,7 @@ frozen-abi = []
 
 [dependencies]
 agave-feature-set = { workspace = true }
+agave-syscalls = { workspace = true }
 solana-account = { workspace = true }
 solana-bpf-loader-program = { workspace = true }
 solana-client = { workspace = true }
