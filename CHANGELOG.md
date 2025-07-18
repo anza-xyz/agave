@@ -19,7 +19,7 @@ Release channels have their own copy of this changelog:
 
 #### Breaking
 * Added a `slot` property to `EpochRewardsPeriodActiveErrorData`
-* Created `SlotNotEpochBoundaryErrorData` which newly materializes as error data on `RpcCustomError::SlotNotEpochBoundary` where there was none before
+* Added error data containing a `slot` property to `RpcCustomError::SlotNotEpochBoundary`
 
 ### Validator
 
