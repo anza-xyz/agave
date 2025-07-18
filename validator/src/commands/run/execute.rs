@@ -13,10 +13,7 @@ use {
     solana_accounts_db::{
         accounts_db::{AccountShrinkThreshold, AccountsDb, AccountsDbConfig},
         accounts_file::StorageAccess,
-        accounts_index::{
-            AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
-            AccountsIndexConfig, IndexLimitMb, ScanFilter,
-        },
+        accounts_index::{AccountSecondaryIndexes, AccountsIndexConfig, IndexLimitMb, ScanFilter},
         utils::{
             create_all_accounts_run_and_snapshot_dirs, create_and_canonicalize_directories,
             create_and_canonicalize_directory,
@@ -45,20 +42,13 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
-        blockstore_options::{
-            AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
-            LedgerColumnOptions,
-        },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_logger::redirect_stderr_to_file,
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_pubkey::Pubkey,
-    solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
-        rpc_pubsub_service::PubSubConfig,
-    },
+    solana_rpc::rpc_pubsub_service::PubSubConfig,
     solana_runtime::{
         runtime_config::RuntimeConfig,
         snapshot_config::{SnapshotConfig, SnapshotUsage},
@@ -111,8 +101,6 @@ pub fn execute(
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
-        rocksdb_compaction_threads,
-        rocksdb_flush_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
         tpu_vote_transaction_receive_threads,
@@ -183,10 +171,6 @@ pub fn execute(
         )
     })?;
 
-    let recovery_mode = matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
-
     let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
         let limit_ledger_size = match matches.value_of("limit_ledger_size") {
             Some(_) => value_t_or_exit!(matches, "limit_ledger_size", u64),
@@ -203,35 +187,7 @@ pub fn execute(
         None
     };
 
-    let column_options = LedgerColumnOptions {
-        compression_type: match matches.value_of("rocksdb_ledger_compression") {
-            None => BlockstoreCompressionType::default(),
-            Some(ledger_compression_string) => match ledger_compression_string {
-                "none" => BlockstoreCompressionType::None,
-                "snappy" => BlockstoreCompressionType::Snappy,
-                "lz4" => BlockstoreCompressionType::Lz4,
-                "zlib" => BlockstoreCompressionType::Zlib,
-                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
-            },
-        },
-        rocks_perf_sample_interval: value_t_or_exit!(
-            matches,
-            "rocksdb_perf_sample_interval",
-            usize
-        ),
-    };
-
-    let blockstore_options = BlockstoreOptions {
-        recovery_mode,
-        column_options,
-        // The validator needs to open many files, check that the process has
-        // permission to do so in order to fail quickly and give a direct error
-        enforce_ulimit_nofile: true,
-        // The validator needs primary (read/write)
-        access_type: AccessType::Primary,
-        num_rocksdb_compaction_threads: rocksdb_compaction_threads,
-        num_rocksdb_flush_threads: rocksdb_flush_threads,
-    };
+    let blockstore_options = run_args.blockstore_options;
 
     let accounts_hash_cache_path = matches
         .value_of("accounts_hash_cache_path")
@@ -295,7 +251,7 @@ pub fn execute(
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 
-    let account_indexes = process_account_indexes(matches);
+    let account_indexes = AccountSecondaryIndexes::from_clap_arg_match(matches)?;
 
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
@@ -492,26 +448,6 @@ pub fn execute(
     let starting_with_geyser_plugins: bool = on_start_geyser_plugin_config_files.is_some()
         || matches.is_present("geyser_plugin_always_enabled");
 
-    let rpc_bigtable_config = if matches.is_present("enable_rpc_bigtable_ledger_storage")
-        || matches.is_present("enable_bigtable_ledger_upload")
-    {
-        Some(RpcBigtableConfig {
-            enable_bigtable_ledger_upload: matches.is_present("enable_bigtable_ledger_upload"),
-            bigtable_instance_name: value_t_or_exit!(matches, "rpc_bigtable_instance_name", String),
-            bigtable_app_profile_id: value_t_or_exit!(
-                matches,
-                "rpc_bigtable_app_profile_id",
-                String
-            ),
-            timeout: value_t!(matches, "rpc_bigtable_timeout", u64)
-                .ok()
-                .map(Duration::from_secs),
-            max_message_size: value_t_or_exit!(matches, "rpc_bigtable_max_message_size", usize),
-        })
-    } else {
-        None
-    };
-
     let rpc_send_retry_rate_ms = value_t_or_exit!(matches, "rpc_send_transaction_retry_ms", u64);
     let rpc_send_batch_size = value_t_or_exit!(matches, "rpc_send_transaction_batch_size", usize);
     let rpc_send_batch_send_rate_ms =
@@ -554,8 +490,6 @@ pub fn execute(
             value_t_or_exit!(matches, "rpc_send_transaction_leader_forward_count", u64)
         };
 
-    let full_api = matches.is_present("full_rpc_api");
-
     let xdp_interface = matches.value_of("retransmit_xdp_interface");
     let xdp_zero_copy = matches.is_present("retransmit_xdp_zero_copy");
     let retransmit_xdp = matches.value_of("retransmit_xdp_cpu_cores").map(|cpus| {
@@ -578,38 +512,7 @@ pub fn execute(
             .map(|s| Hash::from_str(s).unwrap()),
         expected_shred_version,
         new_hard_forks: hardforks_of(matches, "hard_forks"),
-        rpc_config: JsonRpcConfig {
-            enable_rpc_transaction_history: matches.is_present("enable_rpc_transaction_history"),
-            enable_extended_tx_metadata_storage: matches
-                .is_present("enable_extended_tx_metadata_storage"),
-            rpc_bigtable_config,
-            faucet_addr: matches.value_of("rpc_faucet_addr").map(|address| {
-                solana_net_utils::parse_host_port(address).expect("failed to parse faucet address")
-            }),
-            full_api,
-            max_multiple_accounts: Some(value_t_or_exit!(
-                matches,
-                "rpc_max_multiple_accounts",
-                usize
-            )),
-            health_check_slot_distance: value_t_or_exit!(
-                matches,
-                "health_check_slot_distance",
-                u64
-            ),
-            disable_health_check: false,
-            rpc_threads: value_t_or_exit!(matches, "rpc_threads", usize),
-            rpc_blocking_threads: value_t_or_exit!(matches, "rpc_blocking_threads", usize),
-            rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
-            account_indexes: account_indexes.clone(),
-            rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
-            max_request_body_size: Some(value_t_or_exit!(
-                matches,
-                "rpc_max_request_body_size",
-                usize
-            )),
-            skip_preflight_health_check: matches.is_present("skip_preflight_health_check"),
-        },
+        rpc_config: run_args.json_rpc_config,
         on_start_geyser_plugin_config_files,
         geyser_plugin_always_enabled: matches.is_present("geyser_plugin_always_enabled"),
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
@@ -1387,53 +1290,4 @@ fn configure_banking_trace_dir_byte_limit(
         // explicit user-supplied override value
         value_t_or_exit!(matches, "banking_trace_dir_byte_limit", u64)
     };
-}
-
-fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
-    let account_indexes: HashSet<AccountIndex> = matches
-        .values_of("account_indexes")
-        .unwrap_or_default()
-        .map(|value| match value {
-            "program-id" => AccountIndex::ProgramId,
-            "spl-token-mint" => AccountIndex::SplTokenMint,
-            "spl-token-owner" => AccountIndex::SplTokenOwner,
-            _ => unreachable!(),
-        })
-        .collect();
-
-    let account_indexes_include_keys: HashSet<Pubkey> =
-        values_t!(matches, "account_index_include_key", Pubkey)
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect();
-
-    let account_indexes_exclude_keys: HashSet<Pubkey> =
-        values_t!(matches, "account_index_exclude_key", Pubkey)
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .collect();
-
-    let exclude_keys = !account_indexes_exclude_keys.is_empty();
-    let include_keys = !account_indexes_include_keys.is_empty();
-
-    let keys = if !account_indexes.is_empty() && (exclude_keys || include_keys) {
-        let account_indexes_keys = AccountSecondaryIndexesIncludeExclude {
-            exclude: exclude_keys,
-            keys: if exclude_keys {
-                account_indexes_exclude_keys
-            } else {
-                account_indexes_include_keys
-            },
-        };
-        Some(account_indexes_keys)
-    } else {
-        None
-    };
-
-    AccountSecondaryIndexes {
-        keys,
-        indexes: account_indexes,
-    }
 }
