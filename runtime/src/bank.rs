@@ -127,7 +127,7 @@ use {
         runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader},
-    solana_sha256_hasher::{extend_and_hash, hashv},
+    solana_sha256_hasher::hashv,
     solana_signature::Signature,
     solana_slot_hashes::SlotHashes,
     solana_slot_history::{Check, SlotHistory},
@@ -4455,7 +4455,7 @@ impl Bank {
             .unwrap()
             .get_hash_data(slot, self.parent_slot());
         if let Some(buf) = buf {
-            let hard_forked_hash = extend_and_hash(&hash, &buf);
+            let hard_forked_hash = hashv(&[hash.as_ref(), &buf]);
             warn!("hard fork at slot {slot} by hashing {buf:?}: {hash} => {hard_forked_hash}");
             hash = hard_forked_hash;
         }
