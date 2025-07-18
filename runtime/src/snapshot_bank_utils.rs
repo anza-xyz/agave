@@ -39,7 +39,6 @@ use {
     log::*,
     solana_accounts_db::{
         accounts_db::{AccountStorageEntry, AccountsDbConfig, AtomicAccountsFileId},
-        accounts_hash::MerkleOrLatticeAccountsHash,
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         utils::remove_dir_contents,
     },
@@ -789,7 +788,6 @@ fn bank_to_full_snapshot_archive_with(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
-    let merkle_or_lattice_accounts_hash = MerkleOrLatticeAccountsHash::Lattice;
     let snapshot_storages = bank.get_snapshot_storages(None);
     let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
     let accounts_package = AccountsPackage::new_for_snapshot(
@@ -798,8 +796,7 @@ fn bank_to_full_snapshot_archive_with(
         snapshot_storages,
         status_cache_slot_deltas,
     );
-    let snapshot_package =
-        SnapshotPackage::new(accounts_package, merkle_or_lattice_accounts_hash, None);
+    let snapshot_package = SnapshotPackage::new(accounts_package, None);
 
     let snapshot_config = SnapshotConfig {
         full_snapshot_archives_dir: full_snapshot_archives_dir.as_ref().to_path_buf(),
@@ -849,8 +846,6 @@ pub fn bank_to_incremental_snapshot_archive(
     bank.force_flush_accounts_cache();
     bank.clean_accounts();
 
-    let (merkle_or_lattice_accounts_hash, bank_incremental_snapshot_persistence) =
-        (MerkleOrLatticeAccountsHash::Lattice, None);
     let snapshot_storages = bank.get_snapshot_storages(Some(full_snapshot_slot));
     let status_cache_slot_deltas = bank.status_cache.read().unwrap().root_slot_deltas();
     let accounts_package = AccountsPackage::new_for_snapshot(
@@ -859,11 +854,7 @@ pub fn bank_to_incremental_snapshot_archive(
         snapshot_storages,
         status_cache_slot_deltas,
     );
-    let snapshot_package = SnapshotPackage::new(
-        accounts_package,
-        merkle_or_lattice_accounts_hash,
-        bank_incremental_snapshot_persistence,
-    );
+    let snapshot_package = SnapshotPackage::new(accounts_package, None);
 
     // Note: Since the snapshot_storages above are *only* the incremental storages,
     // this bank snapshot *cannot* be used by fastboot.
