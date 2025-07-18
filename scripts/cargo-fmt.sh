@@ -25,3 +25,5 @@ for fmt_dir in "${fmt_dirs[@]}"; do
     "$cargo" nightly fmt --all --manifest-path "$manifest_path"
   )
 done
+
+"$cargo" sort --workspace
