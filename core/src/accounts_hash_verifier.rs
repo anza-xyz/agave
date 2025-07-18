@@ -3,7 +3,6 @@
 use {
     crate::snapshot_packager_service::PendingSnapshotPackages,
     crossbeam_channel::{Receiver, Sender},
-    solana_accounts_db::accounts_hash::MerkleOrLatticeAccountsHash,
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_measure::measure_us,
     solana_runtime::{
@@ -178,12 +177,7 @@ impl AccountsHashVerifier {
     ) -> io::Result<()> {
         Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
 
-        Self::submit_for_packaging(
-            accounts_package,
-            pending_snapshot_packages,
-            MerkleOrLatticeAccountsHash::Lattice,
-            None,
-        );
+        Self::submit_for_packaging(accounts_package, pending_snapshot_packages, None);
 
         Ok(())
     }
@@ -222,7 +216,6 @@ impl AccountsHashVerifier {
     fn submit_for_packaging(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) {
         if !matches!(
@@ -232,11 +225,8 @@ impl AccountsHashVerifier {
             return;
         }
 
-        let snapshot_package = SnapshotPackage::new(
-            accounts_package,
-            merkle_or_lattice_accounts_hash,
-            bank_incremental_snapshot_persistence,
-        );
+        let snapshot_package =
+            SnapshotPackage::new(accounts_package, bank_incremental_snapshot_persistence);
         pending_snapshot_packages
             .lock()
             .unwrap()
