@@ -2,19 +2,20 @@
 
 use {
     clap::{
-        crate_description, crate_name, value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches,
-        SubCommand,
+        crate_description, crate_name, value_t, value_t_or_exit, values_t, App, AppSettings, Arg,
+        ArgMatches, SubCommand,
     },
-    log::{error, info, warn},
+    log::{info, warn},
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::{keypair_of, pubkeys_of},
         input_validators::{is_keypair_or_ask_keyword, is_port, is_pubkey},
     },
-    solana_gossip::{contact_info::ContactInfo, gossip_service::discover},
+    solana_gossip::{contact_info::ContactInfo, gossip_service::discover_peers},
     solana_pubkey::Pubkey,
     solana_streamer::socket::SocketAddrSpace,
     std::{
+        collections::HashSet,
         error,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         process::exit,
@@ -22,7 +23,7 @@ use {
     },
 };
 
-fn parse_matches() -> ArgMatches<'static> {
+fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> App<'ab, 'v> {
     let shred_version_arg = Arg::with_name("shred_version")
         .long("shred-version")
         .value_name("VERSION")
@@ -51,9 +52,9 @@ fn parse_matches() -> ArgMatches<'static> {
         .validator(solana_net_utils::is_host)
         .help("IP address to bind the node to for gossip (replaces --gossip-host)");
 
-    App::new(crate_name!())
-        .about(crate_description!())
-        .version(solana_version::version!())
+    App::new(name)
+        .about(about)
+        .version(version)
         .setting(AppSettings::SubcommandRequiredElseHelp)
         .arg(
             Arg::with_name("allow_private_addr")
@@ -72,6 +73,7 @@ fn parse_matches() -> ArgMatches<'static> {
                         .value_name("HOST:PORT")
                         .takes_value(true)
                         .required(true)
+                        .multiple(true)
                         .validator(solana_net_utils::is_host_port)
                         .help("Rendezvous with the cluster at this entry point"),
                 )
@@ -112,6 +114,7 @@ fn parse_matches() -> ArgMatches<'static> {
                         .long("entrypoint")
                         .value_name("HOST:PORT")
                         .takes_value(true)
+                        .multiple(true)
                         .validator(solana_net_utils::is_host_port)
                         .help("Rendezvous with the cluster at this entrypoint"),
                 )
@@ -163,10 +166,24 @@ fn parse_matches() -> ArgMatches<'static> {
                         .help("Maximum time to wait in seconds [default: wait forever]"),
                 ),
         )
-        .get_matches()
 }
 
-fn parse_bind_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>) -> IpAddr {
+fn parse_matches() -> ArgMatches<'static> {
+    get_clap_app(
+        crate_name!(),
+        crate_description!(),
+        solana_version::version!(),
+    )
+    .get_matches()
+}
+
+/// Determine bind address by checking these sources in order:
+/// 1. cli args:
+///     1. bind-address
+///     1. gossip-host
+/// 1. connect to entrypoints to determine my public IP address
+/// 1. default to localhost
+fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &Vec<SocketAddr>) -> IpAddr {
     if let Some(bind_address) = matches.value_of("bind_address") {
         solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
             eprintln!("failed to parse bind-address: {e}");
@@ -178,18 +195,22 @@ fn parse_bind_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>)
             eprintln!("failed to parse gossip-host: {e}");
             exit(1);
         })
-    } else if let Some(entrypoint_addr) = entrypoint_addr {
-        solana_net_utils::get_public_ip_addr_with_binding(
-            &entrypoint_addr,
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-        )
-        .unwrap_or_else(|err| {
-            eprintln!("Failed to contact cluster entrypoint {entrypoint_addr}: {err}");
-            exit(1);
-        })
+    } else if let Some(bind_addr) = get_bind_address_from_entrypoints(entrypoint_addrs) {
+        bind_addr
     } else {
         IpAddr::V4(Ipv4Addr::LOCALHOST)
     }
+}
+
+/// Find my public IP address by attempting connections to entrypoints until one succeeds.
+fn get_bind_address_from_entrypoints(entrypoint_addrs: &Vec<SocketAddr>) -> Option<IpAddr> {
+    entrypoint_addrs.iter().find_map(|entrypoint_addr| {
+        solana_net_utils::get_public_ip_addr_with_binding(
+            entrypoint_addr,
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        )
+        .ok()
+    })
 }
 
 fn process_spy_results(
@@ -228,25 +249,24 @@ fn process_spy_results(
     }
 }
 
-fn get_entrypoint_shred_version(entrypoint: &Option<SocketAddr>) -> Option<u16> {
-    let Some(entrypoint) = entrypoint else {
-        error!("cannot obtain shred-version without an entrypoint");
-        return None;
-    };
-    match solana_net_utils::get_cluster_shred_version(entrypoint) {
-        Err(err) => {
-            error!("get_cluster_shred_version failed: {entrypoint}, {err}");
-            None
+/// Check entrypoints until one returns a valid non-zero shred version
+fn get_entrypoint_shred_version(entrypoint_addrs: &Vec<SocketAddr>) -> Option<u16> {
+    entrypoint_addrs.iter().find_map(|entrypoint_addr| {
+        match solana_net_utils::get_cluster_shred_version(entrypoint_addr) {
+            Err(err) => {
+                warn!("get_cluster_shred_version failed: {entrypoint_addr}, {err}");
+                None
+            }
+            Ok(0) => {
+                warn!("entrypoint {entrypoint_addr} returned shred-version zero");
+                None
+            }
+            Ok(shred_version) => {
+                info!("obtained shred-version {shred_version} from entrypoint: {entrypoint_addr}");
+                Some(shred_version)
+            }
         }
-        Ok(0) => {
-            error!("entrypoint {entrypoint} returned shred-version zero");
-            None
-        }
-        Ok(shred_version) => {
-            info!("obtained shred-version {shred_version} from entrypoint: {entrypoint}");
-            Some(shred_version)
-        }
-    }
+    })
 }
 
 fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std::io::Result<()> {
@@ -262,23 +282,23 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         .map(|secs| secs.to_string().parse().unwrap());
     let pubkeys = pubkeys_of(matches, "node_pubkey");
     let identity_keypair = keypair_of(matches, "identity");
-    let entrypoint_addr = parse_entrypoint(matches);
-    let gossip_addr = get_gossip_address(matches, entrypoint_addr);
+    let entrypoint_addrs = parse_entrypoints(matches);
+    let gossip_addr = get_gossip_address(matches, &entrypoint_addrs);
 
     let mut shred_version = value_t_or_exit!(matches, "shred_version", u16);
     if shred_version == 0 {
-        shred_version = get_entrypoint_shred_version(&entrypoint_addr)
+        shred_version = get_entrypoint_shred_version(&entrypoint_addrs)
             .expect("need non-zero shred-version to join the cluster");
     }
 
     let discover_timeout = Duration::from_secs(timeout.unwrap_or(u64::MAX));
-    let (_all_peers, validators) = discover(
+    let (_all_peers, validators) = discover_peers(
         identity_keypair,
-        entrypoint_addr.as_ref(),
+        &entrypoint_addrs,
         num_nodes,
         discover_timeout,
         pubkeys.as_deref(), // find_nodes_by_pubkey
-        None,               // find_node_by_gossip_addr
+        &vec![],            // find_node_by_gossip_addr
         Some(&gossip_addr), // my_gossip_addr
         shred_version,
         socket_addr_space,
@@ -295,13 +315,15 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     Ok(())
 }
 
-fn parse_entrypoint(matches: &ArgMatches) -> Option<SocketAddr> {
-    matches.value_of("entrypoint").map(|entrypoint| {
-        solana_net_utils::parse_host_port(entrypoint).unwrap_or_else(|e| {
-            eprintln!("failed to parse entrypoint address: {e}");
-            exit(1);
-        })
-    })
+fn parse_entrypoints(matches: &ArgMatches) -> Vec<SocketAddr> {
+    values_t!(matches, "entrypoint", String)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entrypoint| solana_net_utils::parse_host_port(&entrypoint))
+        .filter_map(Result::ok)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
 }
 
 fn process_rpc_url(
@@ -311,23 +333,23 @@ fn process_rpc_url(
     let any = matches.is_present("any");
     let all = matches.is_present("all");
     let timeout = value_t_or_exit!(matches, "timeout", u64);
-    let entrypoint_addr = parse_entrypoint(matches);
-    let gossip_addr = get_gossip_address(matches, entrypoint_addr);
+    let entrypoint_addrs = parse_entrypoints(matches);
+    let gossip_addr = get_gossip_address(matches, &entrypoint_addrs);
 
     let mut shred_version = value_t_or_exit!(matches, "shred_version", u16);
     if shred_version == 0 {
-        shred_version = get_entrypoint_shred_version(&entrypoint_addr)
+        shred_version = get_entrypoint_shred_version(&entrypoint_addrs)
             .expect("need non-zero shred-version to join the cluster");
     }
 
-    let (_all_peers, validators) = discover(
+    let (_all_peers, validators) = discover_peers(
         None, // keypair
-        entrypoint_addr.as_ref(),
+        &entrypoint_addrs,
         Some(1), // num_nodes
         Duration::from_secs(timeout),
-        None,                     // find_nodes_by_pubkey
-        entrypoint_addr.as_ref(), // find_node_by_gossip_addr
-        Some(&gossip_addr),       // my_gossip_addr
+        None,               // find_nodes_by_pubkey
+        &entrypoint_addrs,  // find_node_by_gossip_addr
+        Some(&gossip_addr), // my_gossip_addr
         shred_version,
         socket_addr_space,
     )?;
@@ -338,7 +360,7 @@ fn process_rpc_url(
             any || all
                 || node
                     .gossip()
-                    .map(|addr| Some(addr) == entrypoint_addr)
+                    .map(|addr| entrypoint_addrs.contains(&addr))
                     .unwrap_or_default()
         })
         .filter_map(ContactInfo::rpc)
@@ -360,8 +382,8 @@ fn process_rpc_url(
     Ok(())
 }
 
-fn get_gossip_address(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>) -> SocketAddr {
-    let bind_address = parse_bind_address(matches, entrypoint_addr);
+fn get_gossip_address(matches: &ArgMatches, entrypoint_addrs: &Vec<SocketAddr>) -> SocketAddr {
+    let bind_address = parse_bind_address(matches, &entrypoint_addrs);
     SocketAddr::new(
         bind_address,
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {

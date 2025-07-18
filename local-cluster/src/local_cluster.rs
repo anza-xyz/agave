@@ -21,7 +21,7 @@ use {
     solana_gossip::{
         cluster_info::Node,
         contact_info::{ContactInfo, Protocol},
-        gossip_service::{discover, discover_validators},
+        gossip_service::{discover_peers, discover_validators},
     },
     solana_keypair::Keypair,
     solana_ledger::{create_new_tmp_ledger_with_size, shred::Shred},
@@ -417,13 +417,13 @@ impl LocalCluster {
             );
         });
 
-        discover(
+        discover_peers(
             None,
-            Some(&cluster.entry_point_info.gossip().unwrap()),
+            &vec![cluster.entry_point_info.gossip().unwrap()],
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,
-            None,
+            &vec![],
             None,
             leader_contact_info.shred_version(),
             socket_addr_space,

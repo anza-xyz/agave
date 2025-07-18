@@ -536,11 +536,11 @@ pub fn start_gossip_voter(
     shred_version: u16,
 ) -> GossipVoter {
     let exit = Arc::new(AtomicBool::new(false));
-    let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_gossip_node(
+    let (gossip_service, tcp_listener, cluster_info) = gossip_service::make_node(
         // Need to use our validator's keypair to gossip EpochSlots and votes for our
         // node later.
         node_keypair.insecure_clone(),
-        Some(gossip_addr),
+        &vec![*gossip_addr],
         exit.clone(),
         None,
         shred_version,
