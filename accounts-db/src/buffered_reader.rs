@@ -315,13 +315,19 @@ impl<'a, R: ContiguousBufFileRead<'a>> ContiguousBufFileRead<'a> for BufReaderWi
             available_len <= required_len,
             "fill_buf_required should not decrease the required_len"
         );
-        if self.overflow_buf.capacity() < required_len {
-            let target_capacity = required_len.clamp(
+        if required_len > self.overflow_buf.capacity() {
+            let target_capacity = required_len.next_power_of_two().clamp(
                 self.overflow_capacity_range.start,
                 self.overflow_capacity_range.end - 1,
             );
+            if required_len > target_capacity {
+                return Err(io::Error::new(
+                    io::ErrorKind::QuotaExceeded,
+                    "requested more bytes than allowed capacity range",
+                ));
+            }
             self.overflow_buf
-                .reserve(target_capacity - self.overflow_buf.len());
+                .reserve_exact(target_capacity - available_len);
         }
         // Safety: we have reserved capacity and all of it will be filled by read
         unsafe { self.overflow_buf.set_len(required_len) };
