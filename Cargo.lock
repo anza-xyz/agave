@@ -9321,6 +9321,7 @@ version = "3.0.0"
 dependencies = [
  "ahash 0.8.11",
  "assert_matches",
+ "bencher",
  "bincode",
  "bv",
  "bytes",
