@@ -814,7 +814,11 @@ impl Validator {
         .map_err(ValidatorError::Other)?;
 
         if !config.no_poh_speed_test {
-            check_poh_speed(&bank_forks.read().unwrap().root_bank(), None)?;
+            check_poh_speed(
+                &bank_forks.read().unwrap().root_bank(),
+                None,
+                config.poh_pinned_cpu_core,
+            )?;
         }
 
         let (root_slot, hard_forks) = {
@@ -1895,7 +1899,11 @@ fn active_vote_account_exists_in_bank(bank: &Bank, vote_account: &Pubkey) -> boo
     false
 }
 
-fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), ValidatorError> {
+fn check_poh_speed(
+    bank: &Bank,
+    maybe_hash_samples: Option<u64>,
+    pinned_cpu_core: usize,
+) -> Result<(), ValidatorError> {
     let Some(hashes_per_tick) = bank.hashes_per_tick() else {
         warn!("Unable to read hashes per tick from Bank, skipping PoH speed check");
         return Ok(());
@@ -1905,7 +1913,20 @@ fn check_poh_speed(bank: &Bank, maybe_hash_samples: Option<u64>) -> Result<(), V
     let hashes_per_slot = hashes_per_tick * ticks_per_slot;
     let hash_samples = maybe_hash_samples.unwrap_or(hashes_per_slot);
 
-    let hash_time = compute_hash_time(hash_samples);
+    // PohService runs on a pinnged core, so perform the speed check in a
+    // similar manner to yield comparable results
+    let hash_time = Builder::new()
+        .name("solPohSpeedTest".to_string())
+        .spawn(move || {
+            if let Some(cores) = core_affinity::get_core_ids() {
+                core_affinity::set_for_current(cores[pinned_cpu_core]);
+            }
+
+            compute_hash_time(hash_samples)
+        })
+        .unwrap()
+        .join()
+        .unwrap();
     let my_hashes_per_second = (hash_samples as f64 / hash_time.as_secs_f64()) as u64;
 
     let target_slot_duration = Duration::from_nanos(bank.ns_per_slot as u64);
@@ -3265,7 +3286,7 @@ mod tests {
             ..GenesisConfig::default()
         };
         let bank = Bank::new_for_tests(&genesis_config);
-        assert!(check_poh_speed(&bank, Some(10_000)).is_err());
+        assert!(check_poh_speed(&bank, Some(10_000), /*pinned_cpu_core:*/ 0).is_err());
     }
 
     #[test]
@@ -3281,6 +3302,6 @@ mod tests {
             ..GenesisConfig::default()
         };
         let bank = Bank::new_for_tests(&genesis_config);
-        check_poh_speed(&bank, Some(10_000)).unwrap();
+        check_poh_speed(&bank, Some(10_000), /*pinned_cpu_core:*/ 0).unwrap();
     }
 }
