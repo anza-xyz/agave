@@ -44,7 +44,7 @@ pub async fn delete_confirmed_blocks(
     }
 
     measure.stop();
-    info!("{}", measure);
+    info!("{measure}");
     if failures > 0 {
         Err(format!("Incomplete deletion, {failures} operations failed").into())
     } else {

@@ -943,10 +943,8 @@ fn test_bank_update_rewards_determinism() {
 impl VerifyAccountsHashConfig {
     fn default_for_test() -> Self {
         Self {
-            ignore_mismatch: false,
             require_rooted_bank: false,
             run_in_background: false,
-            store_hash_raw_data_for_debug: false,
         }
     }
 }
@@ -1020,11 +1018,7 @@ fn test_purge_empty_accounts() {
 
         if pass == 0 {
             add_root_and_flush_write_cache(&bank0);
-            assert!(bank0.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank0.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -1033,11 +1027,7 @@ fn test_purge_empty_accounts() {
         bank0.squash();
         add_root_and_flush_write_cache(&bank0);
         if pass == 1 {
-            assert!(bank0.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank0.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -1045,11 +1035,7 @@ fn test_purge_empty_accounts() {
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
         bank1.update_accounts_hash_for_tests();
-        assert!(bank1.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 
         // keypair should have 0 tokens on both forks
         assert_eq!(bank0.get_account(&keypair.pubkey()), None);
@@ -1057,11 +1043,7 @@ fn test_purge_empty_accounts() {
 
         bank1.clean_accounts_for_tests();
 
-        assert!(bank1.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
 
@@ -2198,7 +2180,7 @@ fn test_bank_hash_internal_state() {
     bank2.squash();
     bank2.force_flush_accounts_cache();
     bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
-    assert!(bank2.verify_accounts_hash(None, VerifyAccountsHashConfig::default_for_test(), None,));
+    assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
 #[test]
@@ -2233,11 +2215,7 @@ fn test_bank_hash_internal_state_verify() {
             bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
             bank2.update_accounts_hash_for_tests();
-            assert!(bank2.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
         }
         let bank3 = new_bank_from_parent_with_bank_forks(
             &bank_forks,
@@ -2248,11 +2226,7 @@ fn test_bank_hash_internal_state_verify() {
         assert_eq!(bank0_state, bank0.hash_internal_state());
         if pass == 0 {
             // this relies on us having set bank2's accounts hash in the pass==0 if above
-            assert!(bank2.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
         if pass == 1 {
@@ -2262,11 +2236,7 @@ fn test_bank_hash_internal_state_verify() {
             bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
             bank3.update_accounts_hash_for_tests();
-            assert!(bank3.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
 
@@ -2276,11 +2246,7 @@ fn test_bank_hash_internal_state_verify() {
         if pass == 2 {
             add_root_and_flush_write_cache(&bank2);
             bank2.update_accounts_hash_for_tests();
-            assert!(bank2.verify_accounts_hash(
-                None,
-                VerifyAccountsHashConfig::default_for_test(),
-                None,
-            ));
+            assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 
             // Verifying the accounts lt hash is only intended to be called at startup, and
             // normally in the background.  Since here we're *not* at startup, and doing it
@@ -2296,11 +2262,7 @@ fn test_bank_hash_internal_state_verify() {
         bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
         bank3.update_accounts_hash_for_tests();
-        assert!(bank3.verify_accounts_hash(
-            None,
-            VerifyAccountsHashConfig::default_for_test(),
-            None,
-        ));
+        assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
 
@@ -2326,41 +2288,49 @@ fn test_verify_snapshot_bank() {
     bank.freeze();
     add_root_and_flush_write_cache(&bank);
     bank.update_accounts_hash_for_tests();
-    assert!(bank.verify_snapshot_bank(true, false, false, bank.slot(), None, None,));
+    assert!(bank.verify_snapshot_bank(false, false, bank.slot(), None));
 
     // tamper the bank after freeze!
     bank.increment_signature_count(1);
-    assert!(!bank.verify_snapshot_bank(true, false, false, bank.slot(), None, None,));
+    assert!(!bank.verify_snapshot_bank(false, false, bank.slot(), None));
 }
 
-// Test that two bank forks with the same accounts should not hash to the same value.
+// Test that two bank forks with the same transactions should not hash to the same value.
 #[test]
-fn test_bank_hash_internal_state_same_account_different_fork() {
+fn test_bank_hash_same_transactions_different_fork() {
     solana_logger::setup();
     let (genesis_config, mint_keypair) = create_genesis_config(sol_to_lamports(1.));
-    let amount = genesis_config.rent.minimum_balance(0);
     let (bank0, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let initial_state = bank0.hash_internal_state();
+    bank0.freeze();
+
+    // send the same transfer to both forks
+    let pubkey = solana_pubkey::new_rand();
+    let amount = genesis_config.rent.minimum_balance(0);
+
     let bank1 = new_bank_from_parent_with_bank_forks(
         bank_forks.as_ref(),
         bank0.clone(),
         &Pubkey::default(),
         1,
     );
-    assert_ne!(bank1.hash_internal_state(), initial_state);
-
-    info!("transfer bank1");
-    let pubkey = solana_pubkey::new_rand();
     bank1.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_ne!(bank1.hash_internal_state(), initial_state);
+    bank1.freeze();
 
-    info!("transfer bank2");
-    // bank2 should not hash the same as bank1
-    let bank2 =
-        new_bank_from_parent_with_bank_forks(bank_forks.as_ref(), bank0, &Pubkey::default(), 2);
+    let bank2 = new_bank_from_parent_with_bank_forks(
+        bank_forks.as_ref(),
+        bank0.clone(),
+        &Pubkey::default(),
+        2,
+    );
     bank2.transfer(amount, &mint_keypair, &pubkey).unwrap();
-    assert_ne!(bank2.hash_internal_state(), initial_state);
-    assert_ne!(bank1.hash_internal_state(), bank2.hash_internal_state());
+    bank2.freeze();
+
+    let bank0_hash = bank0.hash();
+    let bank1_hash = bank1.hash();
+    let bank2_hash = bank2.hash();
+    assert_ne!(bank0_hash, bank1_hash);
+    assert_ne!(bank0_hash, bank2_hash);
+    assert_ne!(bank1_hash, bank2_hash);
 }
 
 #[test]
@@ -10877,7 +10847,6 @@ fn test_bank_verify_accounts_hash_with_base() {
     bank.force_flush_accounts_cache();
     bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
     let base_slot = bank.slot();
-    let base_capitalization = bank.capitalization();
 
     // make more banks, do more transactions, ensure there's more zero-lamport accounts
     for _ in 0..2 {
@@ -10897,11 +10866,7 @@ fn test_bank_verify_accounts_hash_with_base() {
     bank.update_incremental_accounts_hash(base_slot);
 
     // ensure the accounts hash verifies
-    assert!(bank.verify_accounts_hash(
-        Some((base_slot, base_capitalization)),
-        VerifyAccountsHashConfig::default_for_test(),
-        None,
-    ));
+    assert!(bank.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
 #[test]
@@ -12072,20 +12037,10 @@ fn test_bank_epoch_stakes() {
 }
 
 /// Ensure rehash() does *not* change the bank hash if accounts are unmodified
-#[test_case(true; "with accounts delta hash")]
-#[test_case(false; "without accounts delta hash")]
-fn test_rehash_accounts_unmodified(has_accounts_delta_hash: bool) {
+#[test]
+fn test_rehash_accounts_unmodified() {
     let ten_sol = 10 * LAMPORTS_PER_SOL;
-    let mut genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
-    if has_accounts_delta_hash {
-        // Keep the accounts delta hash by removing the 'remove_accounts_delta_hash'
-        // feature account from genesis.
-        genesis_config_info
-            .genesis_config
-            .accounts
-            .remove(&feature_set::remove_accounts_delta_hash::id())
-            .unwrap();
-    }
+    let genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
     let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
 
     let lamports = 123_456_789;
@@ -12101,38 +12056,6 @@ fn test_rehash_accounts_unmodified(has_accounts_delta_hash: bool) {
     bank.rehash();
     let post_bank_hash = bank.hash();
     assert_eq!(post_bank_hash, prev_bank_hash);
-}
-
-/// Ensure rehash() *does* change the bank hash if accounts are modified
-#[test]
-#[should_panic(expected = "rehashing is not allowed to change the account state")]
-fn test_rehash_accounts_modified() {
-    let ten_sol = 10 * LAMPORTS_PER_SOL;
-    let mut genesis_config_info = genesis_utils::create_genesis_config(ten_sol);
-    // Keep the accounts delta hash by removing the 'remove_accounts_delta_hash'
-    // feature account from genesis.
-    genesis_config_info
-        .genesis_config
-        .accounts
-        .remove(&feature_set::remove_accounts_delta_hash::id())
-        .unwrap();
-    let bank = Bank::new_for_tests(&genesis_config_info.genesis_config);
-
-    let mut account = AccountSharedData::new(ten_sol, 0, &Pubkey::default());
-    let pubkey = Pubkey::new_unique();
-    bank.store_account_and_update_capitalization(&pubkey, &account);
-
-    // freeze the bank to trigger hash calculation
-    bank.freeze();
-
-    // change an account, which will cause rehashing to panic
-    account.checked_add_lamports(ten_sol).unwrap();
-    bank.rc
-        .accounts
-        .store_accounts_cached((bank.slot(), [(&pubkey, &account)].as_slice()));
-
-    // let the show begin
-    bank.rehash();
 }
 
 #[test]

@@ -336,11 +336,11 @@ impl Tower {
 
     #[cfg(test)]
     pub fn new_random(node_pubkey: Pubkey) -> Self {
-        use {rand::Rng, solana_vote_program::vote_state::VoteState};
+        use {rand::Rng, solana_vote_program::vote_state::VoteStateV3};
 
         let mut rng = rand::thread_rng();
         let root_slot = rng.gen();
-        let vote_state = VoteState::new_rand_for_tests(node_pubkey, root_slot);
+        let vote_state = VoteStateV3::new_rand_for_tests(node_pubkey, root_slot);
         let last_vote = TowerSync::from(
             vote_state
                 .votes

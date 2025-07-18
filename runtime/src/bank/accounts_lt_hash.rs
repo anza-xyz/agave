@@ -1,6 +1,5 @@
 use {
     super::Bank,
-    agave_feature_set as feature_set,
     rayon::prelude::*,
     solana_account::{accounts_equal, AccountSharedData},
     solana_accounts_db::accounts_db::AccountsDb,
@@ -17,24 +16,6 @@ use {
 };
 
 impl Bank {
-    /// Returns if the accounts lt hash is enabled
-    pub fn is_accounts_lt_hash_enabled(&self) -> bool {
-        true
-    }
-
-    /// Returns if snapshots use the accounts lt hash
-    pub fn is_snapshots_lt_hash_enabled(&self) -> bool {
-        self.is_accounts_lt_hash_enabled()
-            && (self
-                .rc
-                .accounts
-                .accounts_db
-                .snapshots_use_experimental_accumulator_hash()
-                || self
-                    .feature_set
-                    .is_active(&feature_set::snapshots_lt_hash::id()))
-    }
-
     /// Updates the accounts lt hash
     ///
     /// When freezing a bank, we compute and update the accounts lt hash.
@@ -44,7 +25,6 @@ impl Bank {
     ///
     /// Since this function is non-idempotent, it should only be called once per bank.
     pub fn update_accounts_lt_hash(&self) {
-        debug_assert!(self.is_accounts_lt_hash_enabled());
         let delta_lt_hash = self.calculate_delta_lt_hash();
         let mut accounts_lt_hash = self.accounts_lt_hash.lock().unwrap();
         accounts_lt_hash.0.mix_in(&delta_lt_hash);
@@ -60,7 +40,6 @@ impl Bank {
     ///
     /// This function is idempotent, and may be called more than once.
     fn calculate_delta_lt_hash(&self) -> LtHash {
-        debug_assert!(self.is_accounts_lt_hash_enabled());
         let measure_total = Measure::start("");
         let slot = self.slot();
 
@@ -308,7 +287,6 @@ impl Bank {
         account_state: &AccountState,
         is_writable: bool,
     ) {
-        debug_assert!(self.is_accounts_lt_hash_enabled());
         if !is_writable {
             // if the account is not writable, then it cannot be modified; nothing to do here
             return;
@@ -442,15 +420,6 @@ mod tests {
         All,
     }
 
-    /// Should the experimental accumulator hash cli arg be enabled?
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-    enum Cli {
-        /// Do not enable the cli arg
-        Off,
-        /// Enable the cli arg
-        On,
-    }
-
     /// Creates a genesis config with `features` enabled
     fn genesis_config_with(features: Features) -> (GenesisConfig, Keypair) {
         let mint_lamports = 123_456_789 * LAMPORTS_PER_SOL;
@@ -485,9 +454,6 @@ mod tests {
             solana_genesis_config::create_genesis_config(123_456_789 * LAMPORTS_PER_SOL);
         genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
 
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
@@ -648,9 +614,6 @@ mod tests {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
-
         // ensure this bank is for slot 0, otherwise this test doesn't actually do anything...
         assert_eq!(bank.slot(), 0);
 
@@ -676,9 +639,6 @@ mod tests {
     fn test_inspect_account_for_accounts_lt_hash(features: Features) {
         let (genesis_config, _mint_keypair) = genesis_config_with(features);
         let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
 
         // the cache should start off empty
         assert_eq!(bank.cache_for_accounts_lt_hash.len(), 0);
@@ -788,9 +748,6 @@ mod tests {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
-
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
             LAMPORTS_PER_SOL,
@@ -832,9 +789,6 @@ mod tests {
     fn test_calculate_accounts_lt_hash_at_startup_from_storages(features: Features) {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
 
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
@@ -932,9 +886,6 @@ mod tests {
         // This test requires zero fees so that we can easily transfer an account's entire balance.
         genesis_config.fee_rate_governor = FeeRateGovernor::new(0, 0);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
 
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
@@ -1035,7 +986,6 @@ mod tests {
             false,
             false,
             false,
-            false,
             Some(accounts_db_config),
             None,
             Arc::default(),
@@ -1058,9 +1008,6 @@ mod tests {
     fn test_accounts_lt_hash_cache_values_from_bank_new(features: Features) {
         let (genesis_config, _mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise this test doesn't actually do anything...
-        assert!(bank.is_accounts_lt_hash_enabled());
 
         let slot = bank.slot() + 1;
         bank = new_bank_from_parent_with_bank_forks(&bank_forks, bank, &Pubkey::default(), slot);
@@ -1087,26 +1034,12 @@ mod tests {
         assert_eq!(expected_cache, actual_cache.as_slice());
     }
 
-    /// Ensure that the snapshot hash is correct when snapshots_lt_hash is enabled
-    #[test_matrix(
-        [Features::None, Features::All],
-        [Cli::Off, Cli::On],
-        [Cli::Off, Cli::On]
-    )]
-    fn test_snapshots_lt_hash(features: Features, cli: Cli, verify_cli: Cli) {
+    /// Ensure that the snapshot hash is correct
+    #[test_case(Features::None; "no features")]
+    #[test_case(Features::All; "all features")]
+    fn test_snapshots(features: Features) {
         let (genesis_config, mint_keypair) = genesis_config_with(features);
         let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-
-        // ensure the accounts lt hash is enabled, otherwise the snapshot lt hash is disabled
-        assert!(bank.is_accounts_lt_hash_enabled());
-
-        bank.rc
-            .accounts
-            .accounts_db
-            .set_snapshots_use_experimental_accumulator_hash(match cli {
-                Cli::Off => false,
-                Cli::On => true,
-            });
 
         let amount = cmp::max(
             bank.get_minimum_balance_for_rent_exemption(0),
@@ -1140,13 +1073,6 @@ mod tests {
         )
         .unwrap();
         let (_accounts_tempdir, accounts_dir) = snapshot_utils::create_tmp_accounts_dir_for_tests();
-        let accounts_db_config = AccountsDbConfig {
-            snapshots_use_experimental_accumulator_hash: match verify_cli {
-                Cli::Off => false,
-                Cli::On => true,
-            },
-            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
-        };
         let (roundtrip_bank, _) = snapshot_bank_utils::bank_from_snapshot_archives(
             &[accounts_dir],
             &bank_snapshots_dir,
@@ -1160,8 +1086,7 @@ mod tests {
             false,
             false,
             false,
-            false,
-            Some(accounts_db_config),
+            Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
         )

@@ -14,6 +14,9 @@ edition = { workspace = true }
 crate-type = ["lib"]
 name = "solana_bucket_map"
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
@@ -30,6 +33,7 @@ tempfile = { workspace = true }
 [dev-dependencies]
 fs_extra = { workspace = true }
 rayon = { workspace = true }
+solana-bucket-map = { path = ".", features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-pubkey = { workspace = true, features = ["rand"] }
 

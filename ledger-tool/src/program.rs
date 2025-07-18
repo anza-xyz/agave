@@ -537,8 +537,8 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        true, // copy_account_data
-        true, // for mask_out_rent_epoch_in_vm_serialization
+        false, // direct_mapping
+        true,  // for mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 

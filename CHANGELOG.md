@@ -21,6 +21,9 @@ Release channels have their own copy of this changelog:
 * Added a `slot` property to `EpochRewardsPeriodActiveErrorData`
 * Added error data containing a `slot` property to `RpcCustomError::SlotNotEpochBoundary`
 
+#### Changes
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+
 ### Validator
 
 #### Breaking

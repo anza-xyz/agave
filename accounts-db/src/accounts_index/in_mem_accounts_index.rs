@@ -9,7 +9,6 @@ use {
         bucket_map_holder::{Age, AtomicAge, BucketMapHolder},
         bucket_map_holder_stats::BucketMapHolderStats,
         pubkey_bins::PubkeyBinCalculator24,
-        waitable_condvar::WaitableCondvar,
     },
     rand::{thread_rng, Rng},
     solana_bucket_map::bucket_api::BucketApi,
@@ -19,7 +18,6 @@ use {
     std::{
         collections::{hash_map::Entry, HashMap, HashSet},
         fmt::Debug,
-        ops::{Bound, RangeBounds, RangeInclusive},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
             Arc, Mutex, RwLock,
@@ -106,12 +104,6 @@ pub struct InMemAccountsIndex<T: IndexValue, U: DiskIndexValue + From<T> + Into<
 
     bucket: Option<Arc<BucketApi<(Slot, U)>>>,
 
-    // pubkey ranges that this bin must hold in the cache while the range is present in this vec
-    pub cache_ranges_held: RwLock<Vec<RangeInclusive<Pubkey>>>,
-    // incremented each time stop_evictions is changed
-    stop_evictions_changes: AtomicU64,
-    // true while ranges are being manipulated. Used to keep an async flush from removing things while a range is being held.
-    stop_evictions: AtomicU64,
     // set to true while this bin is being actively flushed
     flushing_active: AtomicBool,
 
@@ -205,9 +197,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                 .as_ref()
                 .map(|disk| disk.get_bucket_from_index(bin))
                 .cloned(),
-            cache_ranges_held: RwLock::new(Vec::default()),
-            stop_evictions_changes: AtomicU64::default(),
-            stop_evictions: AtomicU64::default(),
             flushing_active: AtomicBool::default(),
             // initialize this to max, to make it clear we have not flushed at age 0, the starting age
             last_age_flushed: AtomicAge::new(Age::MAX),
@@ -253,11 +242,19 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
     /// return all keys in this bin
     pub fn keys(&self) -> Vec<Pubkey> {
         Self::update_stat(&self.stats().keys, 1);
-        // easiest implementation is to load everything from disk into cache and return the keys
-        let evictions_guard = EvictionsGuard::lock(self);
-        self.put_range_in_cache(&None::<&RangeInclusive<Pubkey>>, &evictions_guard);
-        let keys = self.map_internal.read().unwrap().keys().cloned().collect();
-        keys
+
+        // Collect keys from the in-memory map first.
+        let mut keys: HashSet<_> = self.map_internal.read().unwrap().keys().cloned().collect();
+
+        // Next, collect keys from the disk.
+        if let Some(disk) = self.bucket.as_ref() {
+            let disk_keys = disk.keys();
+            keys.reserve(disk_keys.len());
+            for key in disk_keys {
+                keys.insert(key);
+            }
+        }
+        keys.into_iter().collect()
     }
 
     fn load_from_disk(&self, pubkey: &Pubkey) -> Option<(SlotList<U>, RefCount)> {
@@ -886,171 +883,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// Look at the currently held ranges. If 'range' is already included in what is
-    ///  being held, then add 'range' to the currently held list AND return true
-    /// If 'range' is NOT already included in what is being held, then return false
-    ///  withOUT adding 'range' to the list of what is currently held
-    fn add_hold_range_in_memory_if_already_held<R>(
-        &self,
-        range: &R,
-        evictions_guard: &EvictionsGuard,
-    ) -> bool
-    where
-        R: RangeBounds<Pubkey>,
-    {
-        let start_holding = true;
-        let only_add_if_already_held = true;
-        self.just_set_hold_range_in_memory_internal(
-            range,
-            start_holding,
-            only_add_if_already_held,
-            evictions_guard,
-        )
-    }
-
-    fn just_set_hold_range_in_memory<R>(
-        &self,
-        range: &R,
-        start_holding: bool,
-        evictions_guard: &EvictionsGuard,
-    ) where
-        R: RangeBounds<Pubkey>,
-    {
-        let only_add_if_already_held = false;
-        let _ = self.just_set_hold_range_in_memory_internal(
-            range,
-            start_holding,
-            only_add_if_already_held,
-            evictions_guard,
-        );
-    }
-
-    /// if 'start_holding', then caller wants to add 'range' to the list of ranges being held
-    /// if !'start_holding', then caller wants to remove 'range' to the list
-    /// if 'only_add_if_already_held', caller intends to only add 'range' to the list if the range is already held
-    /// returns true iff start_holding=true and the range we're asked to hold was already being held
-    fn just_set_hold_range_in_memory_internal<R>(
-        &self,
-        range: &R,
-        start_holding: bool,
-        only_add_if_already_held: bool,
-        _evictions_guard: &EvictionsGuard,
-    ) -> bool
-    where
-        R: RangeBounds<Pubkey>,
-    {
-        assert!(!only_add_if_already_held || start_holding);
-        let start = match range.start_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => *bound,
-            Bound::Unbounded => Pubkey::from([0; 32]),
-        };
-
-        let end = match range.end_bound() {
-            Bound::Included(bound) | Bound::Excluded(bound) => *bound,
-            Bound::Unbounded => Pubkey::from([0xff; 32]),
-        };
-
-        // this becomes inclusive - that is ok - we are just roughly holding a range of items.
-        // inclusive is bigger than exclusive so we may hold 1 extra item worst case
-        let inclusive_range = start..=end;
-        let mut ranges = self.cache_ranges_held.write().unwrap();
-        let mut already_held = false;
-        if start_holding {
-            if only_add_if_already_held {
-                for r in ranges.iter() {
-                    if r.contains(&start) && r.contains(&end) {
-                        already_held = true;
-                        break;
-                    }
-                }
-            }
-            if already_held || !only_add_if_already_held {
-                ranges.push(inclusive_range);
-            }
-        } else {
-            // find the matching range and delete it since we don't want to hold it anymore
-            // search backwards, assuming LIFO ordering
-            for (i, r) in ranges.iter().enumerate().rev() {
-                if let (Bound::Included(start_found), Bound::Included(end_found)) =
-                    (r.start_bound(), r.end_bound())
-                {
-                    if start_found == &start && end_found == &end {
-                        // found a match. There may be dups, that's ok, we expect another call to remove the dup.
-                        ranges.remove(i);
-                        break;
-                    }
-                }
-            }
-        }
-        already_held
-    }
-
-    /// if 'start_holding'=true, then:
-    ///  at the end of this function, cache_ranges_held will be updated to contain 'range'
-    ///  and all pubkeys in that range will be in the in-mem cache
-    /// if 'start_holding'=false, then:
-    ///  'range' will be removed from cache_ranges_held
-    ///  and all pubkeys will be eligible for being removed from in-mem cache in the bg if no other range is holding them
-    /// Any in-process flush will be aborted when it gets to evicting items from in-mem.
-    pub fn hold_range_in_memory<R>(&self, range: &R, start_holding: bool)
-    where
-        R: RangeBounds<Pubkey> + Debug,
-    {
-        let evictions_guard = EvictionsGuard::lock(self);
-
-        if !start_holding || !self.add_hold_range_in_memory_if_already_held(range, &evictions_guard)
-        {
-            if start_holding {
-                // put everything in the cache and it will be held there
-                self.put_range_in_cache(&Some(range), &evictions_guard);
-            }
-            // do this AFTER items have been put in cache - that way anyone who finds this range can know that the items are already in the cache
-            self.just_set_hold_range_in_memory(range, start_holding, &evictions_guard);
-        }
-    }
-
-    fn put_range_in_cache<R>(&self, range: &Option<&R>, _evictions_guard: &EvictionsGuard)
-    where
-        R: RangeBounds<Pubkey>,
-    {
-        assert!(self.get_stop_evictions()); // caller should be controlling the lifetime of how long this needs to be present
-        let m = Measure::start("range");
-
-        let mut added_to_mem = 0;
-        // load from disk
-        if let Some(disk) = self.bucket.as_ref() {
-            let mut map = self.map_internal.write().unwrap();
-            let items = disk.items_in_range(range); // map's lock has to be held while we are getting items from disk
-            let future_age = self.storage.future_age_to_flush(false);
-            for item in items {
-                let entry = map.entry(item.pubkey);
-                match entry {
-                    Entry::Occupied(occupied) => {
-                        // item already in cache, bump age to future. This helps the current age flush to succeed.
-                        occupied.get().set_age(future_age);
-                    }
-                    Entry::Vacant(vacant) => {
-                        vacant.insert(self.disk_to_cache_entry(item.slot_list, item.ref_count));
-                        added_to_mem += 1;
-                    }
-                }
-            }
-        }
-        self.stats().add_mem_count(added_to_mem);
-
-        Self::update_time_stat(&self.stats().get_range_us, m);
-    }
-
-    /// returns true if there are active requests to stop evictions
-    fn get_stop_evictions(&self) -> bool {
-        self.stop_evictions.load(Ordering::Acquire) > 0
-    }
-
-    /// return count of calls to 'start_stop_evictions', indicating changes could have been made to eviction strategy
-    fn get_stop_evictions_changes(&self) -> u64 {
-        self.stop_evictions_changes.load(Ordering::Acquire)
-    }
-
     pub fn flush(&self, can_advance_age: bool) {
         if let Some(flush_guard) = FlushGuard::lock(&self.flushing_active) {
             self.flush_internal(&flush_guard, can_advance_age)
@@ -1459,20 +1291,10 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
         }
     }
 
-    /// for each key in 'keys', look up in map, set age to the future
-    fn move_ages_to_future(&self, next_age: Age, current_age: Age, keys: &[Pubkey]) {
-        let map = self.map_internal.read().unwrap();
-        keys.iter().for_each(|key| {
-            if let Some(entry) = map.get(key) {
-                entry.try_exchange_age(next_age, current_age);
-            }
-        });
-    }
-
     // evict keys in 'evictions' from in-mem cache, likely due to age
     fn evict_from_cache(
         &self,
-        mut evictions: Vec<Pubkey>,
+        evictions: Vec<Pubkey>,
         current_age: Age,
         startup: bool,
         randomly_evicted: bool,
@@ -1482,35 +1304,8 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
             return;
         }
 
-        let stop_evictions_changes_at_start = self.get_stop_evictions_changes();
         let next_age_on_failure = self.storage.future_age_to_flush(false);
-        if self.get_stop_evictions() {
-            // ranges were changed
-            self.move_ages_to_future(next_age_on_failure, current_age, &evictions);
-            return;
-        }
-
         let mut failed = 0;
-
-        // skip any keys that are held in memory because of ranges being held
-        let ranges = self.cache_ranges_held.read().unwrap().clone();
-        if !ranges.is_empty() {
-            let mut move_age = Vec::default();
-            evictions.retain(|k| {
-                if ranges.iter().any(|range| range.contains(k)) {
-                    // this item is held in mem by range, so don't evict
-                    move_age.push(*k);
-                    false
-                } else {
-                    true
-                }
-            });
-            if !move_age.is_empty() {
-                failed += move_age.len();
-                self.move_ages_to_future(next_age_on_failure, current_age, &move_age);
-            }
-        }
-
         let mut evicted = 0;
         // chunk these so we don't hold the write lock too long
         for evictions in evictions.chunks(50) {
@@ -1538,13 +1333,6 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> InMemAccountsIndex<T,
                         // these evictions will be handled in later passes (at later ages)
                         // but, at startup, everything is ready to age out if it isn't dirty
                         failed += 1;
-                        continue;
-                    }
-
-                    if stop_evictions_changes_at_start != self.get_stop_evictions_changes() {
-                        // ranges were changed
-                        failed += 1;
-                        v.try_exchange_age(next_age_on_failure, current_age);
                         continue;
                     }
 
@@ -1605,71 +1393,6 @@ impl<'a> FlushGuard<'a> {
 impl Drop for FlushGuard<'_> {
     fn drop(&mut self) {
         self.flushing.store(false, Ordering::Release);
-    }
-}
-
-/// Disable (and safely enable) the background flusher from evicting entries from the in-mem
-/// accounts index.  When disabled, no entries may be evicted.  When enabled, only eligible entries
-/// may be evicted (i.e. those not in a held range).
-///
-/// An RAII implementation of a scoped lock for the `stop_evictions` atomic flag/counter in
-/// `InMemAccountsIndex`.  When this structure is dropped (falls out of scope), the counter will
-/// decrement and conditionally notify its storage.
-///
-/// After successfully locking (calling `EvictionsGuard::lock()`), pass a reference to the
-/// `EvictionsGuard` instance to any function/code that requires `stop_evictions` to be
-/// incremented/decremented correctly.
-#[derive(Debug)]
-struct EvictionsGuard<'a> {
-    /// The number of active callers disabling evictions
-    stop_evictions: &'a AtomicU64,
-    /// The number of times that evictions have been disabled or enabled
-    num_state_changes: &'a AtomicU64,
-    /// Who will be notified after the evictions are re-enabled
-    storage_notifier: &'a WaitableCondvar,
-}
-
-impl<'a> EvictionsGuard<'a> {
-    #[must_use = "if unused, this evictions lock will be immediately unlocked"]
-    fn lock<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>(
-        in_mem_accounts_index: &'a InMemAccountsIndex<T, U>,
-    ) -> Self {
-        Self::lock_with(
-            &in_mem_accounts_index.stop_evictions,
-            &in_mem_accounts_index.stop_evictions_changes,
-            &in_mem_accounts_index.storage.wait_dirty_or_aged,
-        )
-    }
-
-    #[must_use = "if unused, this evictions lock will be immediately unlocked"]
-    fn lock_with(
-        stop_evictions: &'a AtomicU64,
-        num_state_changes: &'a AtomicU64,
-        storage_notifier: &'a WaitableCondvar,
-    ) -> Self {
-        num_state_changes.fetch_add(1, Ordering::Release);
-        stop_evictions.fetch_add(1, Ordering::Release);
-
-        Self {
-            stop_evictions,
-            num_state_changes,
-            storage_notifier,
-        }
-    }
-}
-
-impl Drop for EvictionsGuard<'_> {
-    fn drop(&mut self) {
-        let previous_value = self.stop_evictions.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(previous_value > 0);
-
-        let should_notify = previous_value == 1;
-        if should_notify {
-            // stop_evictions went to 0, so this bucket could now be ready to be aged
-            self.storage_notifier.notify_one();
-        }
-
-        self.num_state_changes.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -2016,68 +1739,6 @@ mod tests {
                 )
                 .0
         );
-    }
-
-    #[test]
-    fn test_hold_range_in_memory() {
-        let bucket = new_disk_buckets_for_test::<u64>();
-        // 0x81 is just some other range
-        let all = Pubkey::from([0; 32])..=Pubkey::from([0xff; 32]);
-        let ranges = [
-            all.clone(),
-            Pubkey::from([0x81; 32])..=Pubkey::from([0xff; 32]),
-        ];
-        for range in ranges.clone() {
-            assert!(bucket.cache_ranges_held.read().unwrap().is_empty());
-            bucket.hold_range_in_memory(&range, true);
-            assert_eq!(
-                bucket.cache_ranges_held.read().unwrap().to_vec(),
-                vec![range.clone()]
-            );
-            {
-                let evictions_guard = EvictionsGuard::lock(&bucket);
-                assert!(bucket.add_hold_range_in_memory_if_already_held(&range, &evictions_guard));
-                bucket.hold_range_in_memory(&range, false);
-            }
-            bucket.hold_range_in_memory(&range, false);
-            assert!(bucket.cache_ranges_held.read().unwrap().is_empty());
-            bucket.hold_range_in_memory(&range, true);
-            assert_eq!(
-                bucket.cache_ranges_held.read().unwrap().to_vec(),
-                vec![range.clone()]
-            );
-            bucket.hold_range_in_memory(&range, true);
-            assert_eq!(
-                bucket.cache_ranges_held.read().unwrap().to_vec(),
-                vec![range.clone(), range.clone()]
-            );
-            bucket.hold_range_in_memory(&ranges[0], true);
-            assert_eq!(
-                bucket.cache_ranges_held.read().unwrap().to_vec(),
-                vec![range.clone(), range.clone(), ranges[0].clone()]
-            );
-            bucket.hold_range_in_memory(&range, false);
-            assert_eq!(
-                bucket.cache_ranges_held.read().unwrap().to_vec(),
-                vec![range.clone(), ranges[0].clone()]
-            );
-            bucket.hold_range_in_memory(&range, false);
-            assert_eq!(
-                bucket.cache_ranges_held.read().unwrap().to_vec(),
-                vec![ranges[0].clone()]
-            );
-            bucket.hold_range_in_memory(&ranges[0].clone(), false);
-            assert!(bucket.cache_ranges_held.read().unwrap().is_empty());
-
-            // hold all in mem first
-            assert!(bucket.cache_ranges_held.read().unwrap().is_empty());
-            bucket.hold_range_in_memory(&all, true);
-
-            let evictions_guard = EvictionsGuard::lock(&bucket);
-            assert!(bucket.add_hold_range_in_memory_if_already_held(&range, &evictions_guard));
-            bucket.hold_range_in_memory(&range, false);
-            bucket.hold_range_in_memory(&all, false);
-        }
     }
 
     #[test]

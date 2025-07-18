@@ -372,7 +372,7 @@ impl ClusterInfo {
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         for node in nodes {
             if let Err(err) = gossip_crds.insert(node, now, GossipRoute::LocalMessage) {
-                warn!("crds insert failed {:?}", err);
+                warn!("crds insert failed {err:?}");
             }
         }
     }
@@ -544,7 +544,8 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
+                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| \
+                         {:5}| {}\n",
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
@@ -552,7 +553,11 @@ impl ClusterInfo {
                             .as_ref()
                             .map(IpAddr::to_string)
                             .unwrap_or_else(|| String::from("none")),
-                        if node.pubkey() == &my_pubkey { "me" } else { "" },
+                        if node.pubkey() == &my_pubkey {
+                            "me"
+                        } else {
+                            ""
+                        },
                         now.saturating_sub(last_updated),
                         node.pubkey().to_string(),
                         if let Some(node_version) = node_version {
@@ -563,10 +568,16 @@ impl ClusterInfo {
                         self.addr_to_string(&ip_addr, &node.gossip()),
                         self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP)),
-                        self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::UDP)),
+                        self.addr_to_string(
+                            &ip_addr,
+                            &node.tpu_forwards(contact_info::Protocol::UDP)
+                        ),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC)),
-                        self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
+                        self.addr_to_string(
+                            &ip_addr,
+                            &node.serve_repair(contact_info::Protocol::UDP)
+                        ),
                         node.shred_version(),
                     ))
                 }
@@ -679,7 +690,7 @@ impl ClusterInfo {
         let now = timestamp();
         for entry in entries {
             if let Err(err) = gossip_crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_epoch_slots failed: {:?}", err);
+                error!("push_epoch_slots failed: {err:?}");
             }
         }
     }
@@ -768,7 +779,7 @@ impl ClusterInfo {
         let vote = CrdsValue::new(vote, &self.keypair());
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
-            error!("push_vote failed: {:?}", err);
+            error!("push_vote failed: {err:?}");
         }
     }
 
@@ -869,8 +880,8 @@ impl ClusterInfo {
             // restarted, and need to repush and evict the oldest vote
             let Some(vote_index) = self.find_vote_index_to_evict(refresh_vote_slot) else {
                 warn!(
-                    "trying to refresh slot {} but all votes in gossip table are for newer slots",
-                    refresh_vote_slot,
+                    "trying to refresh slot {refresh_vote_slot} but all votes in gossip table are \
+                     for newer slots",
                 );
                 return;
             };
@@ -1400,7 +1411,7 @@ impl ClusterInfo {
                 self.stats.trim_crds_table_failed.add_relaxed(1);
                 // TODO: Stakes are coming from the root-bank. Debug why/when
                 // they are empty/zero.
-                debug!("crds table trim failed: {:?}", err);
+                debug!("crds table trim failed: {err:?}");
             }
             Ok(num_purged) => {
                 self.stats
@@ -2213,7 +2224,7 @@ impl ClusterInfo {
                     // A send operation can only fail if the receiving end of a
                     // channel is disconnected.
                     Err(GossipError::SendError) => break,
-                    Err(err) => error!("gossip consume: {}", err),
+                    Err(err) => error!("gossip consume: {err}"),
                     Ok(()) => (),
                 }
             }
@@ -2264,7 +2275,7 @@ impl ClusterInfo {
                                 // that this will exit cleanly.
                                 std::process::exit(1);
                             }
-                            _ => error!("gossip run_listen failed: {}", err),
+                            _ => error!("gossip run_listen failed: {err}"),
                         }
                     }
                 }
@@ -2386,8 +2397,8 @@ impl BindIpAddrs {
             for ip in &addrs {
                 if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
                     return Err(format!(
-                        "Invalid configuration: {:?} is not allowed with multiple --bind-address values (loopback, unspecified, or multicast)",
-                        ip
+                        "Invalid configuration: {ip:?} is not allowed with multiple \
+                         --bind-address values (loopback, unspecified, or multicast)"
                     ));
                 }
             }
@@ -2645,7 +2656,7 @@ impl Node {
         });
 
         info!("vortexor_receivers is {vortexor_receivers:?}");
-        trace!("new ContactInfo: {:?}", info);
+        trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             gossip: AtomicUdpSocket::new(gossip),
             tvu: tvu_sockets,
@@ -4055,7 +4066,7 @@ mod tests {
 
         let cluster_info44 = Arc::new({
             let node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            info!("{:?}", node);
+            info!("{node:?}");
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });
         let cluster_info43 = Arc::new({
@@ -4067,19 +4078,19 @@ mod tests {
         assert_eq!(keypair44.pubkey().to_string().len(), 44);
 
         let trace = cluster_info44.contact_info_trace();
-        info!("cluster:\n{}", trace);
+        info!("cluster:\n{trace}");
         assert_eq!(trace.len(), 431);
 
         let trace = cluster_info44.rpc_info_trace();
-        info!("rpc:\n{}", trace);
+        info!("rpc:\n{trace}");
         assert_eq!(trace.len(), 335);
 
         let trace = cluster_info43.contact_info_trace();
-        info!("cluster:\n{}", trace);
+        info!("cluster:\n{trace}");
         assert_eq!(trace.len(), 431);
 
         let trace = cluster_info43.rpc_info_trace();
-        info!("rpc:\n{}", trace);
+        info!("rpc:\n{trace}");
         assert_eq!(trace.len(), 335);
     }
 }

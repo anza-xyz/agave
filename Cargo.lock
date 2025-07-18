@@ -364,7 +364,7 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "cfg-if 1.0.1",
- "env_logger",
+ "env_logger 0.11.8",
  "hyper 0.14.32",
  "log",
  "num_cpus",
@@ -1186,6 +1186,12 @@ name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "bencher"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dfdb4953a096c551ce9ace855a604d702e6e62d77fac690575ae347571717f5"
 
 [[package]]
 name = "bincode"
@@ -2618,6 +2624,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_filter"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "186e05a59d4c50738528153b83b0b0194d3a29507dfec16eccd4b342903397d0"
+dependencies = [
+ "log",
+ "regex",
+]
+
+[[package]]
 name = "env_logger"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2628,6 +2644,19 @@ dependencies = [
  "log",
  "regex",
  "termcolor",
+]
+
+[[package]]
+name = "env_logger"
+version = "0.11.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c863f0904021b108aa8b2f55046443e6b1ebde8fd4a15c399893aae4fa069f"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "env_filter",
+ "jiff",
+ "log",
 ]
 
 [[package]]
@@ -3919,6 +3948,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af150ab688ff2122fcef229be89cb50dd66af9e01a4ff320cc137eecc9bacc38"
 
 [[package]]
+name = "jiff"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1f93b8b1eb69c77f24bbb0afdf66f54b632ee39af40ca21c4365a1d7347e49"
+dependencies = [
+ "jiff-static",
+ "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde",
+]
+
+[[package]]
+name = "jiff-static"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03343451ff899767262ec32146f6d559dd759fdadf42ff0e227c7c48f72594b4"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5115,9 +5168,18 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.7.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da544ee218f0d287a911e9c99a39a8c9bc8fcad3cb8db5959940044ecfc67265"
+checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "ppv-lite86"
@@ -7134,6 +7196,7 @@ dependencies = [
 name = "solana-bloom"
 version = "3.0.0"
 dependencies = [
+ "bencher",
  "bv",
  "fnv",
  "rand 0.8.5",
@@ -7265,6 +7328,7 @@ dependencies = [
  "num_enum",
  "rand 0.8.5",
  "rayon",
+ "solana-bucket-map",
  "solana-clock",
  "solana-logger",
  "solana-measure",
@@ -7398,7 +7462,7 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "solana-system-interface",
- "solana-zk-token-sdk",
+ "solana-zk-sdk 3.0.0",
  "tempfile",
  "thiserror 2.0.12",
  "tiny-bip39",
@@ -8564,11 +8628,11 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "assert_matches",
+ "bencher",
  "bincode",
  "bs58",
  "bv",
  "clap 2.33.3",
- "criterion",
  "crossbeam-channel",
  "flate2",
  "indexmap 2.10.0",
@@ -9063,7 +9127,7 @@ version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db8e777ec1afd733939b532a42492d888ec7c88d8b4127a5d867eb45c6eb5cd5"
 dependencies = [
- "env_logger",
+ "env_logger 0.9.3",
  "lazy_static",
  "libc",
  "log",
@@ -9116,7 +9180,7 @@ name = "solana-metrics"
 version = "3.0.0"
 dependencies = [
  "crossbeam-channel",
- "env_logger",
+ "env_logger 0.11.8",
  "gethostname",
  "log",
  "rand 0.8.5",
@@ -11389,6 +11453,7 @@ dependencies = [
  "Inflector",
  "agave-reserved-account-keys",
  "base64 0.22.1",
+ "bencher",
  "bincode",
  "borsh 1.5.7",
  "bs58",
@@ -11457,6 +11522,7 @@ dependencies = [
  "agave-feature-set",
  "agave-xdp",
  "assert_matches",
+ "bencher",
  "bincode",
  "bs58",
  "bytes",
@@ -11672,6 +11738,7 @@ name = "solana-vote"
 version = "3.0.0"
 dependencies = [
  "arbitrary",
+ "bencher",
  "bincode",
  "itertools 0.12.1",
  "log",
@@ -11703,9 +11770,9 @@ dependencies = [
 
 [[package]]
 name = "solana-vote-interface"
-version = "2.2.5"
+version = "2.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef4f08746f154458f28b98330c0d55cb431e2de64ee4b8efc98dcbe292e0672b"
+checksum = "b80d57478d6599d30acc31cc5ae7f93ec2361a06aefe8ea79bc81739a08af4c3"
 dependencies = [
  "arbitrary",
  "bincode",
@@ -12571,9 +12638,9 @@ dependencies = [
 
 [[package]]
 name = "systemstat"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "668a4db78b439df482c238f559e4ea869017f9e62ef0a059c8bfcd841a4df544"
+checksum = "5021f5184d44b26fb184acd689671bbe1e4bbd24bbdaa6bc7ec383fad32d2033"
 dependencies = [
  "bytesize",
  "lazy_static",
