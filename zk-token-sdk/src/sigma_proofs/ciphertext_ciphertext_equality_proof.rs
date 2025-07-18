@@ -197,7 +197,7 @@ impl CiphertextCiphertextEqualityProof {
                 &(&ww * &self.z_r),   // ww * z_r
                 &(&ww_negated * &c),  // -ww * c
                 &ww_negated,          // -ww
-                &(&www * &self.z_r),  // z_r
+                &(&www * &self.z_r),  // www * z_r
                 &(&www_negated * &c), // -www * c
                 &www_negated,
             ],

@@ -217,15 +217,15 @@ impl GroupedCiphertext3HandlesValidityProof {
                 &G,            // G
                 C,             // C
                 &Y_0,          // Y_0
-                P_source,      // P_destination
-                D_source,      // D_destination
+                P_source,      // P_source
+                D_source,      // D_source
                 &Y_1,          // Y_1
                 P_destination, // P_destination
                 D_destination, // D_destination
-                &Y_2,          // Y_1
+                &Y_2,          // Y_2
                 P_auditor,     // P_auditor
                 D_auditor,     // D_auditor
-                &Y_3,          // Y_2
+                &Y_3,          // Y_3
             ],
         );
 
