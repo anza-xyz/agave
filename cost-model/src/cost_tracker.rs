@@ -216,7 +216,12 @@ impl CostTracker {
         self.transaction_count.0
     }
 
-    pub fn report_stats(&self, bank_slot: solana_clock::Slot, is_leader: bool) {
+    pub fn report_stats(
+        &self,
+        bank_slot: solana_clock::Slot,
+        is_leader: bool,
+        total_transaction_fee: u64,
+    ) {
         // skip reporting if block is empty
         if self.transaction_count.0 == 0 {
             return;
@@ -263,7 +268,8 @@ impl CostTracker {
                 "secp256r1_instruction_signature_count",
                 self.secp256r1_instruction_signature_count.0,
                 i64
-            )
+            ),
+            ("total_transaction_fee", total_transaction_fee as i64, i64),
         );
     }
 

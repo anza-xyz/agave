@@ -5689,6 +5689,11 @@ impl Bank {
     pub fn set_accounts_lt_hash_for_snapshot_minimizer(&self, accounts_lt_hash: AccountsLtHash) {
         *self.accounts_lt_hash.lock().unwrap() = accounts_lt_hash;
     }
+
+    /// Return total transaction fee collected
+    pub fn get_collected_transaction_fee(&self) -> u64 {
+        self.collector_fee_details.read().unwrap().total()
+    }
 }
 
 impl InvokeContextCallback for Bank {
