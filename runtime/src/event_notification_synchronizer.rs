@@ -1,4 +1,9 @@
 //! Utility to synchronize event notifications among asynchronous notifiers
+//! This is optimized for the case notification dependency between the
+//! slot status notification via Optimistically Confirmed Bank Tracker (OCBT)
+//! and the transaction status persistence via Transaction Status Service (TSS)
+//! so that introduce minimal performance impact to the hot path (TSS).
+//! Use care when adopting this synchronizer for other use cases.
 
 use std::sync::{atomic::AtomicU64, Condvar, Mutex};
 
@@ -25,19 +30,10 @@ impl EventNotificationSynchronizer {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Wait for the event to be notified with the expected sequence number.
-    /// This function will block until the event sequence is greater than or equal to
-    /// the expected sequence number.
-    pub fn wait_for_event_processed(&self, expected_sequence: u64) {
-        let mut sequence = self.processed_event_sequence.lock().unwrap();
-        while less_than(&sequence, expected_sequence) {
-            sequence = self.condvar.wait(sequence).unwrap();
-        }
-    }
-
     /// Notify all waiting threads that an event has occurred with the given sequence number.
-    /// This function will update the event sequence and notify all waiting threads only the event
-    /// sequence is greater than the current sequence.
+    /// This function will update the event sequence and notify all waiting threads only if the event
+    /// sequence is greater than the current sequence. Notify an event of sequence number 's' will
+    /// implicitly impled that all events with sequence number less than 's' have been processed.
     pub fn notify_event_processed(&self, sequence: u64) {
         let mut event_sequence = self.processed_event_sequence.lock().unwrap();
         if less_than(&event_sequence, sequence) {
@@ -46,11 +42,11 @@ impl EventNotificationSynchronizer {
         }
     }
 
-    /// A convient function to wait for the predecessor event sequence to be notified
+    /// A convient function to wait for the dependency predecessor event sequence to be notified
     /// and notify all waiting threads awaiting this sequence the input event sequence.
     /// The predecessor event sequence number is the sequence number minus 1.
     /// If the sequence number is 0, it will wait for None as it is the first event.
-    pub fn wait_and_notify_event_processed(&self, sequence: u64) {
+    pub fn wait_for_dependency_and_mark_processed(&self, sequence: u64) {
         let mut processed_sequence = self.processed_event_sequence.lock().unwrap();
         if sequence > 0 {
             let expected_sequence = sequence - 1;
@@ -61,7 +57,6 @@ impl EventNotificationSynchronizer {
 
         if less_than(&processed_sequence, sequence) {
             *processed_sequence = Some(sequence);
-            self.condvar.notify_all();
         }
     }
 }
@@ -86,20 +81,6 @@ mod tests {
         let synchronizer = EventNotificationSynchronizer::default();
         assert_eq!(synchronizer.get_new_event_sequence(), 0);
         assert_eq!(synchronizer.get_new_event_sequence(), 1);
-    }
-
-    #[test]
-    fn test_wait_for_event_processed() {
-        let synchronizer = Arc::new(EventNotificationSynchronizer::default());
-        let synchronizer_clone = Arc::clone(&synchronizer);
-
-        let handle = thread::spawn(move || {
-            synchronizer_clone.wait_for_event_processed(1);
-        });
-
-        thread::sleep(std::time::Duration::from_millis(100));
-        synchronizer.notify_event_processed(1);
-        handle.join().unwrap();
     }
 
     #[test]
@@ -130,7 +111,7 @@ mod tests {
         let synchronizer_clone = Arc::clone(&synchronizer);
 
         let handle = thread::spawn(move || {
-            synchronizer_clone.wait_and_notify_event_processed(2);
+            synchronizer_clone.wait_for_dependency_and_mark_processed(2);
         });
 
         thread::sleep(std::time::Duration::from_millis(100));
@@ -151,7 +132,7 @@ mod tests {
         for i in 0..5 {
             let synchronizer_clone = Arc::clone(&synchronizer);
             handles.push(thread::spawn(move || {
-                synchronizer_clone.wait_and_notify_event_processed(i + 1);
+                synchronizer_clone.wait_for_dependency_and_mark_processed(i + 1);
             }));
         }
 

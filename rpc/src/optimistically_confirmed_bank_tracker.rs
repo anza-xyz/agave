@@ -293,7 +293,7 @@ impl OptimisticallyConfirmedBankTracker {
 
         if let Some(synchronizer) = event_notification_synchronizer.as_ref() {
             if let Some(event_sequence) = event_sequence {
-                synchronizer.wait_and_notify_event_processed(event_sequence);
+                synchronizer.wait_for_dependency_and_mark_processed(event_sequence);
             }
         }
         match notification {
@@ -740,7 +740,6 @@ mod tests {
 
             let mut pending_optimistically_confirmed_banks: HashSet<u64> = HashSet::new();
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
-            let max_complete_rewards_slot = Arc::new(AtomicU64::default());
 
             let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
 
@@ -755,7 +754,6 @@ mod tests {
             let subscriptions = Arc::new(RpcSubscriptions::new_for_tests(
                 exit,
                 max_complete_transaction_status_slot,
-                max_complete_rewards_slot,
                 bank_forks.clone(),
                 block_commitment_cache,
                 optimistically_confirmed_bank.clone(),

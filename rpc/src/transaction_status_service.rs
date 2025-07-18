@@ -12,8 +12,10 @@ use {
         blockstore::{Blockstore, BlockstoreError},
         blockstore_processor::{TransactionStatusBatch, TransactionStatusMessage},
     },
-    solana_runtime::bank::{Bank, KeyedRewardsAndNumPartitions},
-    solana_runtime::event_notification_synchronizer::EventNotificationSynchronizer,
+    solana_runtime::{
+        bank::{Bank, KeyedRewardsAndNumPartitions},
+        event_notification_synchronizer::EventNotificationSynchronizer,
+    },
     solana_svm::transaction_commit_result::CommittedTransaction,
     solana_transaction_status::{
         extract_and_fmt_memos, map_inner_instructions, Reward, RewardsAndNumPartitions,
@@ -676,6 +678,5 @@ pub(crate) mod tests {
             expected_transaction2.message_hash(),
             &result2.transaction.message.hash(),
         );
-        event_notification_synchronizer.wait_for_event_processed(345);
     }
 }
