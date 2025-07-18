@@ -14,6 +14,7 @@ pub enum CostUpdate {
     FrozenBank {
         bank: Arc<Bank>,
         is_leader_block: bool,
+        total_transaction_fee: u64,
     },
 }
 
@@ -51,6 +52,7 @@ impl CostUpdateService {
                 CostUpdate::FrozenBank {
                     bank,
                     is_leader_block,
+                    total_transaction_fee,
                 } => {
                     for loop_count in 1..=MAX_LOOP_COUNT {
                         {
@@ -68,7 +70,11 @@ impl CostUpdateService {
                                     "inflight transaction count is {in_flight_transaction_count} \
                                      for slot {slot} after {loop_count} iteration(s)"
                                 );
-                                cost_tracker.report_stats(slot, is_leader_block);
+                                cost_tracker.report_stats(
+                                    slot,
+                                    is_leader_block,
+                                    total_transaction_fee,
+                                );
                                 break;
                             }
                         }
