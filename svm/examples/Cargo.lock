@@ -6583,6 +6583,7 @@ dependencies = [
  "assert_matches",
  "bincode",
  "bitflags 2.9.1",
+ "bytes",
  "bzip2",
  "chrono",
  "chrono-humanize",
