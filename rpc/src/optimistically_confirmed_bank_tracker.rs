@@ -165,9 +165,7 @@ impl OptimisticallyConfirmedBankTracker {
                 match sender.send(notification.clone()) {
                     Ok(_) => {}
                     Err(err) => {
-                        info!(
-                            "Failed to send notification {notification:?}, error: {err:?}"
-                        );
+                        info!("Failed to send notification {notification:?}, error: {err:?}");
                     }
                 }
             }
@@ -249,9 +247,7 @@ impl OptimisticallyConfirmedBankTracker {
             let root = roots[i];
             if root > *newest_root_slot {
                 let parent = roots[i - 1];
-                debug!(
-                    "Doing SlotNotification::Root for root {root}, parent: {parent}"
-                );
+                debug!("Doing SlotNotification::Root for root {root}, parent: {parent}");
                 Self::notify_slot_status(
                     slot_notification_subscribers,
                     SlotNotification::Root((root, parent)),
@@ -342,7 +338,8 @@ impl OptimisticallyConfirmedBankTracker {
 
                 if pending_optimistically_confirmed_banks.remove(&bank.slot()) {
                     debug!(
-                        "Calling notify_gossip_subscribers to send deferred notification {frozen_slot:?}"
+                        "Calling notify_gossip_subscribers to send deferred notification \
+                         {frozen_slot:?}"
                     );
 
                     Self::notify_or_defer_confirmed_banks(

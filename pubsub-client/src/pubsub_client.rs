@@ -324,7 +324,8 @@ fn connect_with_retry(
 
                 connection_retries -= 1;
                 debug!(
-                    "Too many requests: server responded with {response:?}, {connection_retries} retries left, pausing for {duration:?}"
+                    "Too many requests: server responded with {response:?}, {connection_retries} \
+                     retries left, pausing for {duration:?}"
                 );
 
                 sleep(duration);

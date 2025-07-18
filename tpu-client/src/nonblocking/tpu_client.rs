@@ -247,7 +247,8 @@ impl LeaderTpuCache {
                 }
                 Err(err) => {
                     warn!(
-                        "Failed to fetch slot leaders (current estimated slot: {estimated_current_slot}): {err}"
+                        "Failed to fetch slot leaders (current estimated slot: \
+                         {estimated_current_slot}): {err}"
                     );
                     has_error = true;
                 }
@@ -777,7 +778,8 @@ impl LeaderTpuService {
         .await
         .map_err(|_| {
             TpuSenderError::Custom(format!(
-                "Failed to get slot leaders connecting to: {websocket_url}, timeout: {tpu_leader_service_creation_timeout:?}. Invalid slot range"
+                "Failed to get slot leaders connecting to: {websocket_url}, timeout: \
+                 {tpu_leader_service_creation_timeout:?}. Invalid slot range"
             ))
         })??;
 
@@ -798,7 +800,8 @@ impl LeaderTpuService {
         .await
         .map_err(|_| {
             TpuSenderError::Custom(format!(
-                "Failed find any cluster node info for upcoming leaders, timeout: {tpu_leader_service_creation_timeout:?}."
+                "Failed find any cluster node info for upcoming leaders, timeout: \
+                 {tpu_leader_service_creation_timeout:?}."
             ))
         })??;
         let leader_tpu_cache = Arc::new(RwLock::new(LeaderTpuCache::new(
