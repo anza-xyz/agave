@@ -659,7 +659,7 @@ fn process_loader_upgradeable_instruction(
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(seeds, caller_program_id))
                 .collect::<Result<Vec<Pubkey>, solana_pubkey::PubkeyError>>()?;
-            invoke_context.native_invoke(instruction.into(), signers.as_slice())?;
+            invoke_context.native_invoke(instruction, signers.as_slice())?;
 
             // Load and verify the program bits
             let transaction_context = &invoke_context.transaction_context;
@@ -1291,8 +1291,7 @@ fn process_loader_upgradeable_instruction(
                         &provided_authority_address,
                         program_len as u32,
                         &program_address,
-                    )
-                    .into(),
+                    ),
                     &[],
                 )?;
 
@@ -1304,8 +1303,7 @@ fn process_loader_upgradeable_instruction(
                         0,
                         0,
                         program_len as u32,
-                    )
-                    .into(),
+                    ),
                     &[],
                 )?;
 
@@ -1313,8 +1311,7 @@ fn process_loader_upgradeable_instruction(
                     solana_loader_v4_interface::instruction::deploy(
                         &program_address,
                         &provided_authority_address,
-                    )
-                    .into(),
+                    ),
                     &[],
                 )?;
 
@@ -1324,8 +1321,7 @@ fn process_loader_upgradeable_instruction(
                             &program_address,
                             &provided_authority_address,
                             &program_address,
-                        )
-                        .into(),
+                        ),
                         &[],
                     )?;
                 } else if migration_authority::check_id(&provided_authority_address) {
@@ -1334,8 +1330,7 @@ fn process_loader_upgradeable_instruction(
                             &program_address,
                             &provided_authority_address,
                             &upgrade_authority_address.unwrap(),
-                        )
-                        .into(),
+                        ),
                         &[],
                     )?;
                 }
@@ -1496,7 +1491,7 @@ fn common_extend_program(
         )?;
 
         invoke_context.native_invoke(
-            system_instruction::transfer(&payer_key, &programdata_key, required_payment).into(),
+            system_instruction::transfer(&payer_key, &programdata_key, required_payment),
             &[],
         )?;
     }

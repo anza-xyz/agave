@@ -12,7 +12,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
@@ -26,7 +26,6 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
     },
-    solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
@@ -304,7 +303,7 @@ impl<'a> InvokeContext<'a> {
     /// Entrypoint for a cross-program invocation from a builtin program
     pub fn native_invoke(
         &mut self,
-        instruction: StableInstruction,
+        instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
         let (instruction_accounts, program_indices) =
@@ -324,7 +323,7 @@ impl<'a> InvokeContext<'a> {
     #[allow(clippy::type_complexity)]
     pub fn prepare_instruction(
         &mut self,
-        instruction: &StableInstruction,
+        instruction: &Instruction,
         signers: &[Pubkey],
     ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
         // Finds the index of each account in the instruction by its pubkey.
@@ -333,7 +332,7 @@ impl<'a> InvokeContext<'a> {
         // but performed on a very small slice and requires no heap allocations.
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-        let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len() as usize);
+        let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len());
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
                 .transaction_context
@@ -1028,7 +1027,7 @@ mod tests {
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
                         invoke_context
-                            .native_invoke(inner_instruction.into(), &[])
+                            .native_invoke(inner_instruction, &[])
                             .and(invoke_context.pop())?;
                     }
                     MockInstruction::UnbalancedPop => instruction_context
@@ -1186,7 +1185,7 @@ mod tests {
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
         let result = invoke_context
-            .native_invoke(inner_instruction.into(), &[])
+            .native_invoke(inner_instruction, &[])
             .and(invoke_context.pop());
         assert_eq!(result, expected_result);
     }
@@ -1250,7 +1249,6 @@ mod tests {
             },
             metas.clone(),
         );
-        let inner_instruction = StableInstruction::from(inner_instruction);
         let (inner_instruction_accounts, program_indices) = invoke_context
             .prepare_instruction(&inner_instruction, &[])
             .unwrap();

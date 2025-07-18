@@ -108,7 +108,7 @@ mod tests_core_bpf_migration {
 
             let instruction = Instruction::new_with_bytes(*target_program_id, &[], Vec::new());
 
-            invoke_context.native_invoke(instruction.into(), &[])
+            invoke_context.native_invoke(instruction, &[])
         });
     }
 

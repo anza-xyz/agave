@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::{translate_inner, translate_slice_inner, translate_type_inner},
+    solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
     solana_program_runtime::{
@@ -326,7 +327,7 @@ trait SyscallInvokeSigned {
         addr: u64,
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
-    ) -> Result<StableInstruction, Error>;
+    ) -> Result<Instruction, Error>;
     fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         account_infos_addr: u64,
@@ -373,7 +374,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         addr: u64,
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
-    ) -> Result<StableInstruction, Error> {
+    ) -> Result<Instruction, Error> {
         let ix = translate_type::<StableInstruction>(
             memory_mapping,
             addr,
@@ -419,9 +420,9 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             accounts.push(account_meta.clone());
         }
 
-        Ok(StableInstruction {
-            accounts: accounts.into(),
-            data: data.into(),
+        Ok(Instruction {
+            accounts,
+            data,
             program_id: ix.program_id,
         })
     }
@@ -580,7 +581,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         addr: u64,
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
-    ) -> Result<StableInstruction, Error> {
+    ) -> Result<Instruction, Error> {
         let ix_c = translate_type::<SolInstruction>(
             memory_mapping,
             addr,
@@ -641,9 +642,9 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             });
         }
 
-        Ok(StableInstruction {
-            accounts: accounts.into(),
-            data: data.into(),
+        Ok(Instruction {
+            accounts,
+            data,
             program_id: *program_id,
         })
     }
