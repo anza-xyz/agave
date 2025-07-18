@@ -637,7 +637,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .and_then(
                 |current_nonce_versions| match current_nonce_versions.state() {
-                    NonceState::Initialized(ref current_nonce_data) => {
+                    NonceState::Initialized(current_nonce_data) => {
                         let nonce_can_be_advanced =
                             &current_nonce_data.durable_nonce != next_durable_nonce;
 
@@ -770,32 +770,33 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 (program_to_store, task_waiter.cookie(), task_waiter)
                 // Unlock the global cache again.
             };
-
-            if let Some((key, program)) = program_to_store {
-                loaded_programs_for_txs.as_mut().unwrap().loaded_missing = true;
-                let mut program_cache = self.program_cache.write().unwrap();
-                // Submit our last completed loading task.
-                if program_cache.finish_cooperative_loading_task(self.slot, key, program)
-                    && limit_to_load_programs
-                {
-                    // This branch is taken when there is an error in assigning a program to a
-                    // cache slot. It is not possible to mock this error for SVM unit
-                    // tests purposes.
-                    let mut ret = ProgramCacheForTxBatch::new_from_cache(
-                        self.slot,
-                        self.epoch,
-                        &program_cache,
-                    );
-                    ret.hit_max_limit = true;
-                    return ret;
+            match program_to_store {
+                Some((key, program)) => {
+                    loaded_programs_for_txs.as_mut().unwrap().loaded_missing = true;
+                    let mut program_cache = self.program_cache.write().unwrap();
+                    // Submit our last completed loading task.
+                    if program_cache.finish_cooperative_loading_task(self.slot, key, program)
+                        && limit_to_load_programs
+                    {
+                        // This branch is taken when there is an error in assigning a program to a
+                        // cache slot. It is not possible to mock this error for SVM unit
+                        // tests purposes.
+                        let mut ret = ProgramCacheForTxBatch::new_from_cache(
+                            self.slot,
+                            self.epoch,
+                            &program_cache,
+                        );
+                        ret.hit_max_limit = true;
+                        return ret;
+                    }
                 }
-            } else if missing_programs.is_empty() {
-                break;
-            } else {
-                // Sleep until the next finish_cooperative_loading_task() call.
-                // Once a task completes we'll wake up and try to load the
-                // missing programs inside the tx batch again.
-                let _new_cookie = task_waiter.wait(task_cookie);
+                None if missing_programs.is_empty() => break,
+                None => {
+                    // Sleep until the next finish_cooperative_loading_task() call.
+                    // Once a task completes we'll wake up and try to load the
+                    // missing programs inside the tx batch again.
+                    let _new_cookie = task_waiter.wait(task_cookie);
+                }
             }
         }
 
@@ -1162,14 +1163,15 @@ mod tests {
 
     impl TransactionProcessingCallback for MockBankCallback {
         fn account_matches_owners(&self, account: &Pubkey, owners: &[Pubkey]) -> Option<usize> {
-            if let Some(data) = self.account_shared_data.read().unwrap().get(account) {
-                if data.lamports() == 0 {
-                    None
-                } else {
-                    owners.iter().position(|entry| data.owner() == entry)
+            match self.account_shared_data.read().unwrap().get(account) {
+                Some(data) => {
+                    if data.lamports() == 0 {
+                        None
+                    } else {
+                        owners.iter().position(|entry| data.owner() == entry)
+                    }
                 }
-            } else {
-                None
+                _ => None,
             }
         }
 
