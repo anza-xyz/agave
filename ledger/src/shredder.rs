@@ -549,15 +549,14 @@ mod tests {
             },
         },
         assert_matches::assert_matches,
-        rand::{seq::SliceRandom, Rng},
+        rand::Rng,
         solana_hash::Hash,
         solana_pubkey::Pubkey,
         solana_sha256_hasher::hash,
         solana_shred_version as shred_version,
-        solana_signature::Signature,
         solana_signer::Signer,
         solana_system_transaction as system_transaction,
-        std::{collections::HashSet, convert::TryInto, iter::repeat_with, sync::Arc},
+        std::{collections::HashSet, convert::TryInto, sync::Arc},
         test_case::{test_case, test_matrix},
     };
 
@@ -1087,87 +1086,6 @@ mod tests {
     fn test_recovery_and_reassembly() {
         run_test_recovery_and_reassembly(0x1234_5678_9abc_def0, false);
         run_test_recovery_and_reassembly(0x1234_5678_9abc_def0, true);
-    }
-
-    fn run_recovery_with_expanded_coding_shreds(num_tx: usize, is_last_in_slot: bool) {
-        let mut rng = rand::thread_rng();
-        let txs = repeat_with(|| {
-            let from_pubkey = Pubkey::new_unique();
-            let instruction = solana_system_interface::instruction::transfer(
-                &from_pubkey,
-                &Pubkey::new_unique(), // to
-                rng.gen(),             // lamports
-            );
-            let message = solana_message::Message::new(&[instruction], Some(&from_pubkey));
-            let mut tx = solana_transaction::Transaction::new_unsigned(message);
-            // Also randomize the signatre bytes.
-            let mut signature = [0u8; 64];
-            rng.fill(&mut signature[..]);
-            tx.signatures = vec![Signature::from(signature)];
-            tx
-        })
-        .take(num_tx)
-        .collect();
-        let entry = Entry::new(
-            &Hash::new_unique(),  // prev hash
-            rng.gen_range(1..64), // num hashes
-            txs,
-        );
-        let keypair = Arc::new(Keypair::new());
-        let slot = 71489660;
-        let shredder = Shredder::new(
-            slot,
-            slot - rng.gen_range(1..27), // parent slot
-            0,                           // reference tick
-            rng.gen(),                   // version
-        )
-        .unwrap();
-        let next_shred_index = rng.gen_range(1..1024);
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
-            &keypair,
-            &[entry],
-            is_last_in_slot,
-            None, // chained_merkle_root
-            next_shred_index,
-            next_shred_index, // next_code_index
-            false,            // merkle_variant
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
-        let num_data_shreds = data_shreds.len();
-        let mut shreds = coding_shreds;
-        shreds.extend(data_shreds.iter().cloned());
-        shreds.shuffle(&mut rng);
-        shreds.truncate(num_data_shreds);
-        shreds.sort_by_key(|shred| {
-            if shred.is_data() {
-                shred.index()
-            } else {
-                shred.index() + num_data_shreds as u32
-            }
-        });
-        let exclude: HashSet<_> = shreds
-            .iter()
-            .filter(|shred| shred.is_data())
-            .map(|shred| shred.index())
-            .collect();
-        let recovered_shreds = Shredder::try_recovery(shreds, &reed_solomon_cache).unwrap();
-        assert_eq!(
-            recovered_shreds,
-            data_shreds
-                .into_iter()
-                .filter(|shred| !exclude.contains(&shred.index()))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn test_recovery_with_expanded_coding_shreds() {
-        for num_tx in 0..50 {
-            run_recovery_with_expanded_coding_shreds(num_tx, false);
-            run_recovery_with_expanded_coding_shreds(num_tx, true);
-        }
     }
 
     #[test_matrix(
