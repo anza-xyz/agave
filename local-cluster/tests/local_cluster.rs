@@ -2700,6 +2700,7 @@ fn run_test_load_program_accounts_partition(scan_commitment: CommitmentConfig) {
 #[test]
 #[serial]
 fn test_rpc_block_subscribe() {
+    solana_logger::setup();
     let leader_stake = 100 * DEFAULT_NODE_STAKE;
     let rpc_stake = DEFAULT_NODE_STAKE;
     let total_stake = leader_stake + rpc_stake;

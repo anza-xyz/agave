@@ -3281,9 +3281,16 @@ impl ReplayStage {
                     );
                 }
                 if let Some(sender) = bank_notification_sender {
+                    let event_sequence = sender
+                        .event_notification_synchronizer
+                        .as_ref()
+                        .map(|s| s.get_new_event_sequence());
                     sender
                         .sender
-                        .send(BankNotification::Frozen(bank.clone_without_scheduler()))
+                        .send((
+                            BankNotification::Frozen(bank.clone_without_scheduler()),
+                            event_sequence,
+                        ))
                         .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
                 }
 
@@ -4044,15 +4051,19 @@ impl ReplayStage {
         blockstore.slots_stats.mark_rooted(new_root);
         rpc_subscriptions.notify_roots(rooted_slots);
         if let Some(sender) = bank_notification_sender {
+            let event_sequence = sender
+                .event_notification_synchronizer
+                .as_ref()
+                .map(|s| s.get_new_event_sequence());
             sender
                 .sender
-                .send(BankNotification::NewRootBank(root_bank))
+                .send((BankNotification::NewRootBank(root_bank), event_sequence))
                 .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
 
             if let Some(new_chain) = rooted_slots_with_parents {
                 sender
                     .sender
-                    .send(BankNotification::NewRootedChain(new_chain))
+                    .send((BankNotification::NewRootedChain(new_chain), event_sequence))
                     .unwrap_or_else(|err| warn!("bank_notification_sender failed: {err:?}"));
             }
         }

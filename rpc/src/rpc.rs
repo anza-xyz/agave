@@ -4475,6 +4475,7 @@ pub fn populate_blockstore_for_tests(
             None,
             blockstore,
             false,
+            None,
             tss_exit.clone(),
         );
 
@@ -4487,6 +4488,7 @@ pub fn populate_blockstore_for_tests(
             Some(
                 &solana_ledger::blockstore_processor::TransactionStatusSender {
                     sender: transaction_status_sender,
+                    event_notification_synchronizer: None,
                 },
             ),
             Some(&replay_vote_sender),
@@ -8837,7 +8839,10 @@ pub mod tests {
         let mut last_notified_confirmed_slot: Slot = 0;
 
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(2),
+            (
+                BankNotification::OptimisticallyConfirmed(2),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -8847,6 +8852,7 @@ pub mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
         let req =
             r#"{"jsonrpc":"2.0","id":1,"method":"getSlot","params":[{"commitment": "confirmed"}]}"#;
@@ -8857,7 +8863,10 @@ pub mod tests {
 
         // Test rollback does not appear to happen, even if slots are notified out of order
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(1),
+            (
+                BankNotification::OptimisticallyConfirmed(1),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -8867,6 +8876,7 @@ pub mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // No event synchronization
         );
         let req =
             r#"{"jsonrpc":"2.0","id":1,"method":"getSlot","params":[{"commitment": "confirmed"}]}"#;
@@ -8877,7 +8887,10 @@ pub mod tests {
 
         // Test bank will only be cached when frozen
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -8887,6 +8900,7 @@ pub mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // No event synchronization
         );
         let req =
             r#"{"jsonrpc":"2.0","id":1,"method":"getSlot","params":[{"commitment": "confirmed"}]}"#;
@@ -8898,7 +8912,10 @@ pub mod tests {
         // Test freezing an optimistically confirmed bank will update cache
         let bank3 = bank_forks.read().unwrap().get(3).unwrap();
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank3),
+            (
+                BankNotification::Frozen(bank3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -8908,6 +8925,7 @@ pub mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // No event synchronization
         );
         let req =
             r#"{"jsonrpc":"2.0","id":1,"method":"getSlot","params":[{"commitment": "confirmed"}]}"#;

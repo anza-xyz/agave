@@ -1626,6 +1626,7 @@ mod tests {
             None,
             blockstore.clone(),
             false,
+            None, // no event notification synchronizer
             tss_exit.clone(),
         );
 
@@ -1633,6 +1634,7 @@ mod tests {
         let committer = Committer::new(
             Some(TransactionStatusSender {
                 sender: transaction_status_sender,
+                event_notification_synchronizer: None,
             }),
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),
@@ -1771,6 +1773,7 @@ mod tests {
             None,
             blockstore.clone(),
             false,
+            None, // no event notification synchronizer
             tss_exit.clone(),
         );
 
@@ -1778,6 +1781,7 @@ mod tests {
         let committer = Committer::new(
             Some(TransactionStatusSender {
                 sender: transaction_status_sender,
+                event_notification_synchronizer: None,
             }),
             replay_vote_sender,
             Arc::new(PrioritizationFeeCache::new(0u64)),

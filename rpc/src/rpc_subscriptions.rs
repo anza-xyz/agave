@@ -1992,7 +1992,10 @@ pub(crate) mod tests {
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is unfrozen, we expect
         // to see transaction for alice and bob to be notified in order.
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2002,6 +2005,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         // a closure to reduce code duplications in building expected responses:
@@ -2045,7 +2049,10 @@ pub(crate) mod tests {
 
         bank3.freeze();
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank3),
+            (
+                BankNotification::Frozen(bank3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2055,6 +2062,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         let response = receiver.recv();
@@ -2164,7 +2172,10 @@ pub(crate) mod tests {
         // Optimistically notifying slot 3 without notifying slot 1 and 2, bank3 is not in the bankforks, we do not
         // expect to see any RPC notifications.
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2174,6 +2185,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         // The following should panic
@@ -2279,7 +2291,10 @@ pub(crate) mod tests {
         // to see transaction for alice and bob to be notified only when bank3 is added to the fork and
         // frozen. The notifications should be in the increasing order of the slot.
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(3),
+            (
+                BankNotification::OptimisticallyConfirmed(3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2289,6 +2304,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         // a closure to reduce code duplications in building expected responses:
@@ -2334,7 +2350,10 @@ pub(crate) mod tests {
         bank3.process_transaction(&tx).unwrap();
         bank3.freeze();
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank3),
+            (
+                BankNotification::Frozen(bank3),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2344,6 +2363,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         let response = receiver.recv();
@@ -2764,7 +2784,7 @@ pub(crate) mod tests {
         let mut highest_root_slot: Slot = 0;
         let mut last_notified_confirmed_slot: Slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(2),
+            (BankNotification::OptimisticallyConfirmed(2), None),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2774,12 +2794,16 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         // Now, notify the frozen bank and ensure its notifications are processed
         highest_confirmed_slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::OptimisticallyConfirmed(1),
+            (
+                BankNotification::OptimisticallyConfirmed(1),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2789,6 +2813,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
 
         let response = receiver0.recv();
@@ -2834,7 +2859,10 @@ pub(crate) mod tests {
         bank2.freeze();
         highest_confirmed_slot = 0;
         OptimisticallyConfirmedBankTracker::process_notification(
-            BankNotification::Frozen(bank2),
+            (
+                BankNotification::Frozen(bank2),
+                None, /* no event sequence */
+            ),
             &bank_forks,
             &optimistically_confirmed_bank,
             &subscriptions,
@@ -2844,6 +2872,7 @@ pub(crate) mod tests {
             &mut highest_root_slot,
             &None,
             &PrioritizationFeeCache::default(),
+            &None, // no event synchronization
         );
         let response = receiver1.recv();
         let expected = json!({
