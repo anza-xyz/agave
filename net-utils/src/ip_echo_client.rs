@@ -98,12 +98,20 @@ fn parse_response(
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {
-                Ok(r) => bail!("Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port replying with {r}"),
-                Err(_) => bail!("Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."),
+                Ok(r) => bail!(
+                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port \
+                     replying with {r}"
+                ),
+                Err(_) => bail!(
+                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."
+                ),
             }
         }
         _ => {
-            bail!("Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header bytes {response_header:?} ");
+            bail!(
+                "Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header \
+                 bytes {response_header:?} "
+            );
         }
     };
     Ok(payload)
@@ -163,7 +171,7 @@ pub(crate) async fn verify_all_reachable_tcp(
             bind_address,
         )
         .await
-        .map_err(|err| warn!("ip_echo_server request failed: {}", err));
+        .map_err(|err| warn!("ip_echo_server request failed: {err}"));
 
         // spawn checker to wait for reply
         // since we do not know if tcp_listeners are nonblocking, we have to run them in native threads.
@@ -173,7 +181,7 @@ pub(crate) async fn verify_all_reachable_tcp(
 
             // Use blocking API since we have no idea if sockets given to us are nonblocking or not
             let thread_handle = tokio::task::spawn_blocking(move || {
-                debug!("Waiting for incoming connection on tcp/{}", port);
+                debug!("Waiting for incoming connection on tcp/{port}");
                 match tcp_listener.incoming().next() {
                     Some(_) => {
                         // ignore errors here since this can only happen if a timeout was detected.
@@ -250,10 +258,7 @@ pub(crate) async fn verify_all_reachable_udp(
     for (bind_ip, ports_to_socks_map) in ip_to_ports {
         let ports: Vec<u16> = ports_to_socks_map.keys().copied().collect();
 
-        info!(
-            "Checking that udp ports {:?} are reachable from bind IP {:?}",
-            ports, bind_ip
-        );
+        info!("Checking that udp ports {ports:?} are reachable from bind IP {bind_ip:?}");
 
         'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
             let ports_to_check = chunk_to_check.to_vec();
@@ -275,7 +280,7 @@ pub(crate) async fn verify_all_reachable_udp(
                     bind_ip,
                 )
                 .await
-                .map_err(|err| warn!("ip_echo_server request failed: {}", err));
+                .map_err(|err| warn!("ip_echo_server request failed: {err}"));
 
                 let reachable_ports = Arc::new(RwLock::new(HashSet::new()));
                 // Spawn threads for each socket to check
@@ -300,10 +305,7 @@ pub(crate) async fn verify_all_reachable_udp(
                             }
 
                             let recv_result = socket.recv(&mut [0; 1]);
-                            debug!(
-                                "Waited for incoming datagram on udp/{}: {:?}",
-                                port, recv_result
-                            );
+                            debug!("Waited for incoming datagram on udp/{port}: {recv_result:?}");
 
                             if recv_result.is_ok() {
                                 reachable_ports.write().unwrap().insert(port);
@@ -327,18 +329,15 @@ pub(crate) async fn verify_all_reachable_udp(
                     .into_inner()
                     .expect("No threads should hold the lock");
                 info!(
-                    "checked udp ports: {:?}, reachable udp ports: {:?}",
-                    ports_to_check, reachable_ports
+                    "checked udp ports: {ports_to_check:?}, reachable udp ports: \
+                     {reachable_ports:?}"
                 );
                 if reachable_ports.len() == ports_to_check.len() {
                     continue 'outer; // starts checking next chunk of ports, if any
                 }
             }
 
-            error!(
-                "Maximum retry count reached. Some ports for IP {} unreachable.",
-                bind_ip
-            );
+            error!("Maximum retry count reached. Some ports for IP {bind_ip} unreachable.");
             return false;
         }
     }
