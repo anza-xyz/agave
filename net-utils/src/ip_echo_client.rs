@@ -98,12 +98,20 @@ fn parse_response(
         [b'H', b'T', b'T', b'P'] => {
             let http_response = std::str::from_utf8(body);
             match http_response {
-                Ok(r) => bail!("Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port replying with {r}"),
-                Err(_) => bail!("Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."),
+                Ok(r) => bail!(
+                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port \
+                     replying with {r}"
+                ),
+                Err(_) => bail!(
+                    "Invalid gossip entrypoint. {ip_echo_server_addr} looks to be an HTTP port."
+                ),
             }
         }
         _ => {
-            bail!("Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header bytes {response_header:?} ");
+            bail!(
+                "Invalid gossip entrypoint. {ip_echo_server_addr} provided unexpected header \
+                 bytes {response_header:?} "
+            );
         }
     };
     Ok(payload)
@@ -250,9 +258,7 @@ pub(crate) async fn verify_all_reachable_udp(
     for (bind_ip, ports_to_socks_map) in ip_to_ports {
         let ports: Vec<u16> = ports_to_socks_map.keys().copied().collect();
 
-        info!(
-            "Checking that udp ports {ports:?} are reachable from bind IP {bind_ip:?}"
-        );
+        info!("Checking that udp ports {ports:?} are reachable from bind IP {bind_ip:?}");
 
         'outer: for chunk_to_check in ports.chunks(MAX_PORT_COUNT_PER_MESSAGE) {
             let ports_to_check = chunk_to_check.to_vec();
@@ -299,9 +305,7 @@ pub(crate) async fn verify_all_reachable_udp(
                             }
 
                             let recv_result = socket.recv(&mut [0; 1]);
-                            debug!(
-                                "Waited for incoming datagram on udp/{port}: {recv_result:?}"
-                            );
+                            debug!("Waited for incoming datagram on udp/{port}: {recv_result:?}");
 
                             if recv_result.is_ok() {
                                 reachable_ports.write().unwrap().insert(port);
@@ -325,16 +329,15 @@ pub(crate) async fn verify_all_reachable_udp(
                     .into_inner()
                     .expect("No threads should hold the lock");
                 info!(
-                    "checked udp ports: {ports_to_check:?}, reachable udp ports: {reachable_ports:?}"
+                    "checked udp ports: {ports_to_check:?}, reachable udp ports: \
+                     {reachable_ports:?}"
                 );
                 if reachable_ports.len() == ports_to_check.len() {
                     continue 'outer; // starts checking next chunk of ports, if any
                 }
             }
 
-            error!(
-                "Maximum retry count reached. Some ports for IP {bind_ip} unreachable."
-            );
+            error!("Maximum retry count reached. Some ports for IP {bind_ip} unreachable.");
             return false;
         }
     }

@@ -366,7 +366,8 @@ pub fn multi_bind_in_range_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({num} requested)"
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({num} \
+             requested)"
         );
         num = 1;
     }
@@ -463,7 +464,8 @@ pub fn bind_common_with_config(
 
 #[deprecated(
     since = "2.3.2",
-    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+    note = "Please avoid this function, in favor of \
+            sockets::bind_two_in_range_with_offset_and_config"
 )]
 #[allow(deprecated)]
 pub fn bind_two_in_range_with_offset(
@@ -483,7 +485,8 @@ pub fn bind_two_in_range_with_offset(
 
 #[deprecated(
     since = "2.3.2",
-    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+    note = "Please avoid this function, in favor of \
+            sockets::bind_two_in_range_with_offset_and_config"
 )]
 #[allow(deprecated)]
 pub fn bind_two_in_range_with_offset_and_config(
