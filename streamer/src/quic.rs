@@ -71,6 +71,8 @@ pub struct SpawnServerResult {
 /// Controls the the channel size for the PacketBatch coalesce
 pub(crate) const DEFAULT_MAX_COALESCE_CHANNEL_SIZE: usize = 250_000;
 
+const MAX_INCOMING_CONNECTIONS: usize = 1 << 17; // 128K
+
 /// Returns default server configuration along with its PEM certificate chain.
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 pub(crate) fn configure_server(
@@ -90,6 +92,7 @@ pub(crate) fn configure_server(
     let quic_server_config = QuicServerConfig::try_from(server_tls_config)?;
 
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+    server_config.max_incoming(MAX_INCOMING_CONNECTIONS);
     let config = Arc::get_mut(&mut server_config.transport).unwrap();
 
     // QUIC_MAX_CONCURRENT_STREAMS doubled, which was found to improve reliability
