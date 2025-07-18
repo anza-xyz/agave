@@ -1,16 +1,13 @@
-#![feature(test)]
 #![allow(clippy::arithmetic_side_effects)]
 
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     solana_account::{AccountSharedData, ReadableAccount},
     solana_genesis_config::create_genesis_config,
     solana_instruction::error::LamportsError,
     solana_pubkey::Pubkey,
     solana_runtime::bank::*,
     std::{path::PathBuf, sync::Arc},
-    test::Bencher,
 };
 
 fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<(), LamportsError> {
@@ -26,18 +23,16 @@ fn deposit_many(bank: &Bank, pubkeys: &mut Vec<Pubkey>, num: usize) -> Result<()
     Ok(())
 }
 
-#[bench]
-fn bench_accounts_create(bencher: &mut Bencher) {
+fn bench_accounts_create(b: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(10_000);
     let bank0 = Bank::new_with_paths_for_benches(&genesis_config, vec![PathBuf::from("bench_a0")]);
-    bencher.iter(|| {
+    b.iter(|| {
         let mut pubkeys: Vec<Pubkey> = vec![];
         deposit_many(&bank0, &mut pubkeys, 1000).unwrap();
     });
 }
 
-#[bench]
-fn bench_accounts_squash(bencher: &mut Bencher) {
+fn bench_accounts_squash(b: &mut Bencher) {
     let (genesis_config, _) = create_genesis_config(100_000);
     let mut prev_bank = Arc::new(Bank::new_with_paths_for_benches(
         &genesis_config,
@@ -51,7 +46,7 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
     // This mainly consists of the freeze operation which calculates the
     // merkle hash of the account state and distribution of fees and rent
     let mut slot = 1u64;
-    bencher.iter(|| {
+    b.iter(|| {
         let next_bank = Arc::new(Bank::new_from_parent(
             prev_bank.clone(),
             &Pubkey::default(),
@@ -63,3 +58,6 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
         prev_bank = next_bank;
     });
 }
+
+benchmark_group!(benches, bench_accounts_create, bench_accounts_squash);
+benchmark_main!(benches);
