@@ -8,9 +8,7 @@ use {
     solana_accounts_db::{
         accounts::Accounts,
         accounts_db::AccountStorageEntry,
-        accounts_hash::{
-            AccountsDeltaHash, AccountsHash, AccountsHashKind, MerkleOrLatticeAccountsHash,
-        },
+        accounts_hash::{AccountsDeltaHash, AccountsHash},
     },
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -173,7 +171,7 @@ pub struct SnapshotPackage {
     pub accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
     pub accounts_hash: AccountsHash,
     pub write_version: u64,
-    pub bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
+    pub bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>, // obsolete, will be removed next
 
     /// The instant this snapshot package was sent to the queue.
     /// Used to track how long snapshot packages wait before handling.
@@ -183,7 +181,6 @@ pub struct SnapshotPackage {
 impl SnapshotPackage {
     pub fn new(
         accounts_package: AccountsPackage,
-        merkle_or_lattice_accounts_hash: MerkleOrLatticeAccountsHash,
         bank_incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     ) -> Self {
         let AccountsPackageKind::Snapshot(snapshot_kind) = accounts_package.package_kind;
@@ -193,48 +190,23 @@ impl SnapshotPackage {
             );
         };
 
-        let accounts_hash = match merkle_or_lattice_accounts_hash {
-            MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind) => {
-                match accounts_hash_kind {
-                    AccountsHashKind::Full(accounts_hash) => accounts_hash,
-                    AccountsHashKind::Incremental(_) => {
-                        // The accounts hash is only needed when serializing a full snapshot.
-                        // When serializing an incremental snapshot, there will not be a full accounts hash
-                        // at `slot`.  In that case, use the default, because it doesn't actually get used.
-                        // The incremental snapshot will use the BankIncrementalSnapshotPersistence
-                        // field, so ensure it is Some.
-                        assert!(bank_incremental_snapshot_persistence.is_some());
-                        AccountsHash(Hash::default())
-                    }
-                }
-            }
-            MerkleOrLatticeAccountsHash::Lattice => {
-                // This is the merkle-based accounts hash, which isn't used in the Lattice case,
-                // so any value is fine here.
-                AccountsHash(Hash::default())
-            }
-        };
-
         Self {
             snapshot_kind,
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
-            hash: SnapshotHash::new(
-                &merkle_or_lattice_accounts_hash,
-                Some(
-                    snapshot_info
-                        .bank_fields_to_serialize
-                        .accounts_lt_hash
-                        .0
-                        .checksum(),
-                ),
-            ),
+            hash: SnapshotHash::new(Some(
+                snapshot_info
+                    .bank_fields_to_serialize
+                    .accounts_lt_hash
+                    .0
+                    .checksum(),
+            )),
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
             bank_fields_to_serialize: snapshot_info.bank_fields_to_serialize,
             accounts_delta_hash: snapshot_info.accounts_delta_hash,
             bank_hash_stats: snapshot_info.bank_hash_stats,
-            accounts_hash,
+            accounts_hash: AccountsHash(Hash::default()), // obsolete, will be removed next
             bank_incremental_snapshot_persistence,
             write_version: snapshot_info.write_version,
             enqueued: Instant::now(),

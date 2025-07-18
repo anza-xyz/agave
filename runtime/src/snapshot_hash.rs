@@ -1,7 +1,7 @@
 //! Helper types and functions for handling and dealing with snapshot hashes.
 use {
-    solana_accounts_db::accounts_hash::MerkleOrLatticeAccountsHash, solana_clock::Slot,
-    solana_hash::Hash, solana_lattice_hash::lt_hash::Checksum as AccountsLtHashChecksum,
+    solana_clock::Slot, solana_hash::Hash,
+    solana_lattice_hash::lt_hash::Checksum as AccountsLtHashChecksum,
 };
 
 /// At startup, when loading from snapshots, the starting snapshot hashes need to be passed to
@@ -32,19 +32,13 @@ impl SnapshotHash {
     /// Make a snapshot hash from accounts hashes
     #[must_use]
     pub fn new(
-        merkle_or_lattice_accounts_hash: &MerkleOrLatticeAccountsHash,
         accounts_lt_hash_checksum: Option<AccountsLtHashChecksum>, // option wrapper will be removed next
     ) -> Self {
-        let accounts_hash = match merkle_or_lattice_accounts_hash {
-            MerkleOrLatticeAccountsHash::Merkle(accounts_hash_kind) => {
-                *accounts_hash_kind.as_hash()
-            }
-            MerkleOrLatticeAccountsHash::Lattice => Hash::new_from_array(
-                accounts_lt_hash_checksum
-                    .expect("lattice kind must have lt hash checksum")
-                    .0,
-            ),
-        };
+        let accounts_hash = Hash::new_from_array(
+            accounts_lt_hash_checksum
+                .expect("lattice kind must have lt hash checksum")
+                .0,
+        );
         Self(accounts_hash)
     }
 }

@@ -80,7 +80,7 @@ use {
         },
         accounts_hash::{
             AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
-            IncrementalAccountsHash, MerkleOrLatticeAccountsHash,
+            IncrementalAccountsHash,
         },
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -4809,10 +4809,7 @@ impl Bank {
     ///
     /// This fn is used at startup to verify the bank was rebuilt correctly.
     pub fn get_snapshot_hash(&self) -> SnapshotHash {
-        SnapshotHash::new(
-            &MerkleOrLatticeAccountsHash::Lattice,
-            Some(self.accounts_lt_hash.lock().unwrap().0.checksum()),
-        )
+        SnapshotHash::new(Some(self.accounts_lt_hash.lock().unwrap().0.checksum()))
     }
 
     pub fn load_account_into_read_cache(&self, key: &Pubkey) {
