@@ -7480,3 +7480,94 @@ fn test_calculate_capitalization_overflow_inter_slot() {
     accounts_db.store_for_tests(1, &[(&Pubkey::new_unique(), &account)]);
     accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1);
 }
+#[test]
+fn test_mark_obsolete_accounts_on_boot_none() {
+    let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
+    let accounts_db = AccountsDb::new_for_tests(paths);
+    let slots = 0;
+    let pubkeys_with_duplicates_by_bin: Vec<Vec<Pubkey>> = vec![];
+
+    let num_accounts_reclaimed =
+        accounts_db.mark_obsolete_accounts_on_boot(slots, pubkeys_with_duplicates_by_bin);
+
+    assert_eq!(
+        num_accounts_reclaimed, 0,
+        "No accounts should be reclaimed for empty bin"
+    );
+}
+
+#[test]
+fn test_mark_obsolete_accounts_on_boot_kill_slot() {
+    let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
+    let accounts_db = AccountsDb::new_for_tests(paths);
+    let slots = 2;
+    let pubkey1 = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+
+    // Store the same pubkey in multiple slots
+    // Store other pubkey in slot0 to ensure slot is not freed
+    accounts_db.store_for_tests(0, &[(&pubkey1, &account), (&pubkey2, &account)]);
+    accounts_db.flush_accounts_cache_slot_for_tests(0);
+    accounts_db.store_for_tests(1, &[(&pubkey1, &account)]);
+    accounts_db.flush_accounts_cache_slot_for_tests(1);
+    accounts_db.store_for_tests(2, &[(&pubkey1, &account)]);
+    accounts_db.flush_accounts_cache_slot_for_tests(2);
+
+    let pubkeys_with_duplicates_by_bin: Vec<Vec<Pubkey>> = vec![vec![pubkey1]];
+
+    let accounts_marked_obsolete =
+        accounts_db.mark_obsolete_accounts_on_boot(slots, pubkeys_with_duplicates_by_bin);
+
+    // Verify that slot 0 has not been freed
+    assert!(accounts_db.storage.get_slot_storage_entry(0).is_some());
+
+    // Verify that slot 1 has been freed
+    assert!(accounts_db.storage.get_slot_storage_entry(1).is_none());
+
+    //Verify that the pubkey ref count is 1
+    assert_eq!(
+        accounts_db.accounts_index.ref_count_from_storage(&pubkey1),
+        1
+    );
+
+    assert_eq!(accounts_marked_obsolete, 2);
+}
+
+#[test]
+fn test_mark_obsolete_accounts_on_boot_multiple_bins() {
+    let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
+    let accounts_db = AccountsDb::new_for_tests(paths);
+    let pubkey1 = Pubkey::from([0; 32]); // Ensure pubkey1 is in bin 0
+    let pubkey2 = Pubkey::from([255; 32]); // Ensure pubkey2 is in a different bin
+    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+
+    for slot in 0..2 {
+        accounts_db.store_for_tests(slot, &[(&pubkey1, &account), (&pubkey2, &account)]);
+        accounts_db.flush_accounts_cache_slot_for_tests(slot);
+    }
+
+    let pubkeys_with_duplicates_by_bin: Vec<Vec<Pubkey>> = vec![vec![pubkey1], vec![pubkey2]];
+
+    let accounts_marked_obsolete =
+        accounts_db.mark_obsolete_accounts_on_boot(2, pubkeys_with_duplicates_by_bin);
+
+    // Verify that slot 0 has been freed
+    assert!(accounts_db.storage.get_slot_storage_entry(0).is_none());
+
+    // Verify that slot 1 has been freed
+    assert!(accounts_db.storage.get_slot_storage_entry(1).is_some());
+
+    // Verify that both pubkeys are ref_count 1
+    assert_eq!(
+        accounts_db.accounts_index.ref_count_from_storage(&pubkey1),
+        1
+    );
+    assert_eq!(
+        accounts_db.accounts_index.ref_count_from_storage(&pubkey2),
+        1
+    );
+
+    // Ensure that stats were accumulated correctly
+    assert_eq!(accounts_marked_obsolete, 2);
+}

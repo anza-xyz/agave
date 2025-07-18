@@ -402,8 +402,16 @@ mod serde_snapshot_tests {
             // Don't check the first 35 accounts which have not been modified on slot 0
             daccounts.check_accounts(&pubkeys[35..], 0, 65, 37);
             daccounts.check_accounts(&pubkeys1, 1, 10, 1);
-            daccounts.check_storage(0, 100, 100);
-            daccounts.check_storage(1, 21, 21);
+
+            // With accounts marked obsolete enabled, entries are marked obsolete when saved/restored
+            if daccounts.mark_obsolete_accounts {
+                daccounts.check_storage(0, 78, 100);
+                daccounts.check_storage(1, 11, 21);
+            } else {
+                daccounts.check_storage(0, 100, 100);
+                daccounts.check_storage(1, 21, 21);
+            }
+
             daccounts.check_storage(2, 31, 31);
 
             assert_eq!(
@@ -465,7 +473,7 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, pubkey, zero_lamport);
     }
 
-    fn with_chained_zero_lamport_accounts<F>(f: F)
+    fn with_chained_zero_lamport_accounts<F>(f: F, restore: bool)
     where
         F: Fn(AccountsDb, Slot) -> AccountsDb,
     {
@@ -516,8 +524,15 @@ mod serde_snapshot_tests {
         accounts.print_accounts_stats("post_f");
 
         accounts.assert_load_account(current_slot, pubkey, some_lamport);
-        accounts.assert_load_account(current_slot, purged_pubkey1, 0);
-        accounts.assert_load_account(current_slot, purged_pubkey2, 0);
+        // With accounts marked obsolete, accounts will be marked obsolete when deserializing which
+        // will make them not loadable
+        if accounts.mark_obsolete_accounts && restore {
+            accounts.assert_not_load_account(current_slot, purged_pubkey1);
+            accounts.assert_not_load_account(current_slot, purged_pubkey2);
+        } else {
+            accounts.assert_load_account(current_slot, purged_pubkey1, 0);
+            accounts.assert_load_account(current_slot, purged_pubkey2, 0);
+        }
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
         let ancestors = Ancestors::default();
@@ -535,23 +550,32 @@ mod serde_snapshot_tests {
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_before_snapshot_restore(storage_access: StorageAccess) {
         solana_logger::setup();
-        with_chained_zero_lamport_accounts(|accounts, current_slot| {
-            accounts.clean_accounts_for_tests();
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
-        });
+        with_chained_zero_lamport_accounts(
+            |accounts, current_slot| {
+                accounts.clean_accounts_for_tests();
+                reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
+            },
+            false,
+        );
     }
 
     #[test_case(StorageAccess::Mmap)]
     #[test_case(StorageAccess::File)]
     fn test_accounts_purge_chained_purge_after_snapshot_restore(storage_access: StorageAccess) {
         solana_logger::setup();
-        with_chained_zero_lamport_accounts(|accounts, current_slot| {
-            let accounts =
-                reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
-            accounts.print_accounts_stats("after_reconstruct");
-            accounts.clean_accounts_for_tests();
-            reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
-        });
+        with_chained_zero_lamport_accounts(
+            |accounts, current_slot| {
+                let accounts = reconstruct_accounts_db_via_serialization(
+                    &accounts,
+                    current_slot,
+                    storage_access,
+                );
+                accounts.print_accounts_stats("after_reconstruct");
+                accounts.clean_accounts_for_tests();
+                reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access)
+            },
+            true,
+        );
     }
 
     #[test_case(StorageAccess::Mmap)]
@@ -620,8 +644,15 @@ mod serde_snapshot_tests {
         accounts.print_count_and_status("after purge zero");
 
         accounts.assert_load_account(current_slot, pubkey, old_lamport);
-        accounts.assert_load_account(current_slot, purged_pubkey1, 0);
-        accounts.assert_load_account(current_slot, purged_pubkey2, 0);
+        // With accounts marked obsolete in the storages, accounts will be marked
+        // obsolete when deserializing
+        if accounts.mark_obsolete_accounts {
+            accounts.assert_not_load_account(current_slot, purged_pubkey1);
+            accounts.assert_not_load_account(current_slot, purged_pubkey2);
+        } else {
+            accounts.assert_load_account(current_slot, purged_pubkey1, 0);
+            accounts.assert_load_account(current_slot, purged_pubkey2, 0);
+        }
     }
 
     #[test_case(StorageAccess::Mmap)]
@@ -642,6 +673,7 @@ mod serde_snapshot_tests {
 
         let pubkey1 = solana_pubkey::new_rand();
         let pubkey2 = solana_pubkey::new_rand();
+        let pubkey3 = solana_pubkey::new_rand();
         let dummy_pubkey = solana_pubkey::new_rand();
 
         let mut current_slot = 0;
@@ -681,6 +713,7 @@ mod serde_snapshot_tests {
         current_slot += 1;
         assert_eq!(3, accounts.ref_count_for_pubkey(&pubkey1));
         accounts.store_for_tests(current_slot, &[(&pubkey1, &zero_lamport_account)]);
+        accounts.store_for_tests(current_slot, &[(&pubkey3, &account2)]);
         accounts.add_root_and_flush_write_cache(current_slot);
         // had to be a root to flush, but clean won't work as this test expects if it is a root
         // so, remove the root from alive_roots, then restore it after clean
@@ -753,6 +786,9 @@ mod serde_snapshot_tests {
 
         // 2nd clean needed to clean-up pubkey1
         accounts.clean_accounts_for_tests();
+
+        // Shrink all slots to remove the unused pubkey
+        accounts.shrink_all_slots(false, &EpochSchedule::default(), None);
 
         // Ensure pubkey2 is cleaned from the index finally
         accounts.assert_not_load_account(current_slot, pubkey1);
