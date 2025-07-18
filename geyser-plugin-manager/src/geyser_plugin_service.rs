@@ -78,10 +78,7 @@ impl GeyserPluginService {
             Arc<AtomicBool>,
         )>,
     ) -> Result<Self, GeyserPluginServiceError> {
-        info!(
-            "Starting GeyserPluginService from config files: {:?}",
-            geyser_plugin_config_files
-        );
+        info!("Starting GeyserPluginService from config files: {geyser_plugin_config_files:?}");
         let mut plugin_manager = GeyserPluginManager::new();
 
         for geyser_plugin_config_file in geyser_plugin_config_files {

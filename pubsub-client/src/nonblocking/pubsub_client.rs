@@ -627,7 +627,7 @@ impl PubsubClient {
                                 }
                             }
                         } else {
-                            error!("Unknown request id: {}", id);
+                            error!("Unknown request id: {id}");
                             break;
                         }
                         continue;

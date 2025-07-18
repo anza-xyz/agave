@@ -83,7 +83,7 @@ fn test_rpc_send_tx() {
         .parse()
         .unwrap();
 
-    info!("blockhash: {:?}", blockhash);
+    info!("blockhash: {blockhash:?}");
     let tx = system_transaction::transfer(
         &alice,
         &bob_pubkey,
@@ -442,7 +442,7 @@ fn test_rpc_subscriptions() {
         sleep(Duration::from_millis(100));
     }
     if mint_balance != expected_mint_balance {
-        error!("mint-check timeout. mint_balance {:?}", mint_balance);
+        error!("mint-check timeout. mint_balance {mint_balance:?}");
     }
 
     // Wait for all signature subscriptions
