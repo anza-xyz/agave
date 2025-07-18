@@ -2629,7 +2629,9 @@ impl Bank {
 
         self.blockhash_queue.write().unwrap().genesis_hash(
             &genesis_hash,
-            genesis_config.fee_rate_governor.lamports_per_signature,
+            genesis_config
+                .fee_rate_governor
+                .target_lamports_per_signature,
         );
 
         self.hashes_per_tick = genesis_config.hashes_per_tick();
@@ -2724,6 +2726,12 @@ impl Bank {
         (last_hash, last_lamports_per_signature)
     }
 
+    pub fn is_zero_fees_for_test(&self) -> bool {
+        let (_last_hash, last_lamports_per_signature) =
+            self.last_blockhash_and_lamports_per_signature();
+        last_lamports_per_signature == 0
+    }
+
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
         blockhash_queue.is_hash_valid_for_age(hash, MAX_PROCESSING_AGE)
@@ -2731,10 +2739,6 @@ impl Bank {
 
     pub fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> u64 {
         self.rent_collector.rent.minimum_balance(data_len).max(1)
-    }
-
-    pub fn get_lamports_per_signature(&self) -> u64 {
-        self.fee_rate_governor.lamports_per_signature
     }
 
     pub fn get_lamports_per_signature_for_blockhash(&self, hash: &Hash) -> Option<u64> {
@@ -2856,6 +2860,20 @@ impl Bank {
         // consistent tx check_age handling.
         BankWithScheduler::wait_for_paused_scheduler(self, scheduler);
 
+        let recent_lamports_per_signature = if self
+            .feature_set
+            .is_active(&agave_feature_set::remove_fee_rate_governor_from_fee_calculation::id())
+        {
+            // lamports_per_signature stored in blockhash_queue is not used for fee calculation
+            // but only for determining zero_fees_for_test mode (lamports_per_signature == 0).
+            // Storing last_lamports_per_signature serves the same purpose.
+            let (_last_hash, last_lamports_per_signature) =
+                self.last_blockhash_and_lamports_per_signature();
+            last_lamports_per_signature
+        } else {
+            self.fee_rate_governor.lamports_per_signature
+        };
+
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
@@ -2881,7 +2899,7 @@ impl Bank {
         #[cfg(feature = "dev-context-only-utils")]
         let blockhash = blockhash_override.as_ref().unwrap_or(blockhash);
 
-        w_blockhash_queue.register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
+        w_blockhash_queue.register_hash(blockhash, recent_lamports_per_signature);
         self.update_recent_blockhashes_locked(&w_blockhash_queue);
     }
 
@@ -2900,6 +2918,20 @@ impl Bank {
         blockhash: &Hash,
         lamports_per_signature: Option<u64>,
     ) {
+        let recent_lamports_per_signature = if self
+            .feature_set
+            .is_active(&agave_feature_set::remove_fee_rate_governor_from_fee_calculation::id())
+        {
+            // lamports_per_signature stored in blockhash_queue is not used for fee calculation
+            // but only for determining zero_fees_for_test mode (lamports_per_signature == 0).
+            // Storing last_lamports_per_signature serves the same purpose.
+            let (_last_hash, last_lamports_per_signature) =
+                self.last_blockhash_and_lamports_per_signature();
+            last_lamports_per_signature
+        } else {
+            self.fee_rate_governor.lamports_per_signature
+        };
+
         // Only acquire the write lock for the blockhash queue on block boundaries because
         // readers can starve this write lock acquisition and ticks would be slowed down too
         // much if the write lock is acquired for each tick.
@@ -2907,8 +2939,7 @@ impl Bank {
         if let Some(lamports_per_signature) = lamports_per_signature {
             w_blockhash_queue.register_hash(blockhash, lamports_per_signature);
         } else {
-            w_blockhash_queue
-                .register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
+            w_blockhash_queue.register_hash(blockhash, recent_lamports_per_signature);
         }
     }
 
