@@ -1,6 +1,7 @@
 use {
     bytes::{Bytes, BytesMut},
     std::{
+        mem,
         ops::{Bound, Deref, DerefMut, RangeBounds, RangeFull},
         slice::SliceIndex,
     },
@@ -12,17 +13,32 @@ pub struct Payload {
 }
 
 impl Payload {
+    /// Convert the payload's inner [`Bytes`] into a [`BytesMut`], consuming the [`Payload`].
+    ///
+    /// If the payload is unique (single reference), this will return a [`BytesMut`] with the
+    /// contents of the payload without copying. If the payload is not unique, this will make a copy
+    /// of the payload in a new [`BytesMut`]. As such, take care to avoid performing this conversion
+    /// if the payload is not unique.
     #[inline]
     pub fn into_bytes_mut(self) -> BytesMut {
         self.bytes.into()
     }
 
+    /// Get a mutable reference via [`PayloadMutGuard`] to the payload's _full_ inner bytes.
+    /// See [`Payload::get_mut`] for selecting a subset of the payload's inner bytes.
+    ///
+    /// If the payload is unique (single reference), this will not perform any copying. Otherwise it
+    /// will. As such, take care to avoid performing this conversion if the payload is not unique.
     #[inline]
     pub fn as_mut(&mut self) -> PayloadMutGuard<'_, RangeFull> {
         PayloadMutGuard::new(self, ..)
     }
 
     #[inline]
+    /// Get a mutable reference via [`PayloadMutGuard`] to a subset of the payload's inner bytes.
+    ///
+    /// If the payload is unique (single reference), this will not perform any copying. Otherwise it
+    /// will. As such, take care to avoid performing this conversion if the payload is not unique.
     pub fn get_mut<I>(&mut self, index: I) -> Option<PayloadMutGuard<'_, I>>
     where
         I: RangeBounds<usize>,
@@ -34,6 +50,9 @@ impl Payload {
         }
     }
 
+    /// Shortens the buffer, keeping the first `len` bytes and dropping the rest.
+    ///
+    /// See [`Bytes::truncate`].
     #[inline]
     pub fn truncate(&mut self, len: usize) {
         self.bytes.truncate(len);
@@ -112,6 +131,25 @@ impl Deref for Payload {
     }
 }
 
+/// Convenience wrapper around [`Payload`] and a [`BytesMut`] into that payload's bytes.
+///
+/// [`Bytes`] is immutable, yet it's desirable to be able to "simulate" mutability for quick
+/// inline updates when buildilng shreds, especially to minimize code changes at the time of this
+/// refactor. Given that references to shreds are not propagated until a shred is fully constructed,
+/// we should not incur any copying overhead when using this guard to facilitate mutability during
+/// shred construction.
+///
+/// # How it works
+///
+/// Upon construction, the guard converts the payload's [`Bytes`] into a [`BytesMut`], temporarily
+/// replacing the payload's internal bytes reference with an empty [`Bytes`] (which does not
+/// allocate). This will not perform any copying if the payload is unique (single reference).
+///
+/// The guard will then provide a mutable reference to the bytes via [`DerefMut`] and [`AsMut`]
+/// implementations, which forward indexing to the underlying [`BytesMut`].
+///
+/// The guard has a specialized [`Drop`] implementation that will write back the mutated bytes to the
+/// payload, effectively "simulating" typical mutability semantics.
 pub struct PayloadMutGuard<'a, I> {
     payload: &'a mut Payload,
     bytes_mut: BytesMut,
@@ -121,7 +159,7 @@ pub struct PayloadMutGuard<'a, I> {
 impl<'a, I> PayloadMutGuard<'a, I> {
     #[inline]
     pub fn new(payload: &'a mut Payload, slice_index: I) -> Self {
-        let bytes_mut: BytesMut = std::mem::take(&mut payload.bytes).into();
+        let bytes_mut: BytesMut = mem::take(&mut payload.bytes).into();
         Self {
             payload,
             bytes_mut,
@@ -133,7 +171,7 @@ impl<'a, I> PayloadMutGuard<'a, I> {
 impl<I> Drop for PayloadMutGuard<'_, I> {
     #[inline]
     fn drop(&mut self) {
-        self.payload.bytes = std::mem::take(&mut self.bytes_mut).freeze();
+        self.payload.bytes = mem::take(&mut self.bytes_mut).freeze();
     }
 }
 
