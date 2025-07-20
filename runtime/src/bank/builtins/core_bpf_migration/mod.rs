@@ -20,7 +20,7 @@ use {
         sysvar_cache::SysvarCache,
     },
     solana_pubkey::Pubkey,
-    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable},
+    solana_sdk_ids::bpf_loader_upgradeable,
     solana_svm_callback::InvokeContextCallback,
     solana_transaction_context::TransactionContext,
     source_buffer::SourceBuffer,
@@ -212,90 +212,6 @@ impl Bank {
                 &self.transaction_processor.environments,
                 &program_cache_for_tx_batch.drain_modified_entries(),
             );
-
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn directly_invoke_loader_v2_deploy(
-        &self,
-        program_id: &Pubkey,
-        program_data: &[u8],
-    ) -> Result<(), InstructionError> {
-        // Set up the two `LoadedProgramsForTxBatch` instances, as if
-        // processing a new transaction batch.
-        let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::new_from_cache(
-            self.slot,
-            self.epoch,
-            &self.transaction_processor.program_cache.read().unwrap(),
-        );
-
-        // Configure a dummy `InvokeContext` from the runtime's current
-        // environment, as well as the two `ProgramCacheForTxBatch`
-        // instances configured above, then invoke the loader.
-        {
-            let compute_budget = self.compute_budget().unwrap_or_default();
-            let mut sysvar_cache = SysvarCache::default();
-            sysvar_cache.fill_missing_entries(|pubkey, set_sysvar| {
-                if let Some(account) = self.get_account(pubkey) {
-                    set_sysvar(account.data());
-                }
-            });
-
-            let mut dummy_transaction_context = TransactionContext::new(
-                vec![],
-                self.rent_collector.rent.clone(),
-                compute_budget.max_instruction_stack_depth,
-                compute_budget.max_instruction_trace_length,
-            );
-
-            struct MockCallback {}
-            impl InvokeContextCallback for MockCallback {}
-            let feature_set = self.feature_set.runtime_features();
-            let mut dummy_invoke_context = InvokeContext::new(
-                &mut dummy_transaction_context,
-                &mut program_cache_for_tx_batch,
-                EnvironmentConfig::new(
-                    Hash::default(),
-                    0,
-                    &MockCallback {},
-                    &feature_set,
-                    &sysvar_cache,
-                ),
-                None,
-                compute_budget.to_budget(),
-                compute_budget.to_cost(),
-            );
-
-            let environments = dummy_invoke_context
-                .get_environments_for_slot(self.slot.saturating_add(
-                    solana_program_runtime::loaded_programs::DELAY_VISIBILITY_SLOT_OFFSET,
-                ))
-                .map_err(|_err| {
-                    // This will never fail since the epoch schedule is already configured.
-                    InstructionError::ProgramEnvironmentSetupFailure
-                })?;
-
-            let load_program_metrics = solana_bpf_loader_program::deploy_program(
-                dummy_invoke_context.get_log_collector(),
-                dummy_invoke_context.program_cache_for_tx_batch,
-                environments.program_runtime_v1.clone(),
-                program_id,
-                &bpf_loader::id(),
-                program_data.len(),
-                program_data,
-                self.slot,
-            )?;
-            load_program_metrics.submit_datapoint(&mut dummy_invoke_context.timings);
-        }
-
-        // Update the program cache by merging with `programs_modified`, which
-        // should have been updated by the deploy function.
-        self.transaction_processor
-            .program_cache
-            .write()
-            .unwrap()
-            .merge(&program_cache_for_tx_batch.drain_modified_entries());
 
         Ok(())
     }
