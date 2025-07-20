@@ -187,7 +187,7 @@ impl WorkersCache {
         }
 
         let current_worker = workers.get(peer).expect(
-            "Failed to fetch worker for peer {peer}.\nPeer existence must be checked before this \
+            "Failed to fetch worker for peer {peer}. Peer existence must be checked before this \
              call using `contains` method.",
         );
         let send_res = current_worker.try_send_transactions(txs_batch);
@@ -228,7 +228,7 @@ impl WorkersCache {
 
         let body = async move {
             let current_worker = workers.get(peer).expect(
-                "Failed to fetch worker for peer {peer}.\nPeer existence must be checked before \
+                "Failed to fetch worker for peer {peer}. Peer existence must be checked before \
                  this call using `contains` method.",
             );
             let send_res = current_worker.send_transactions(txs_batch).await;

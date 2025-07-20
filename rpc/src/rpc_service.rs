@@ -867,9 +867,8 @@ impl JsonRpcService {
 
                 if let Err(e) = server {
                     warn!(
-                        "JSON RPC service unavailable error: {:?}. \nAlso, check that port {} is \
+                        "JSON RPC service unavailable error: {e:?}. Also, check that port {} is \
                          not already in use by another application",
-                        e,
                         rpc_addr.port()
                     );
                     close_handle_sender.send(Err(e.to_string())).unwrap();

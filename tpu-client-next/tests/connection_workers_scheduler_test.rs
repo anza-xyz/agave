@@ -222,7 +222,7 @@ async fn test_basic_transactions_sending() {
             let elapsed = now.elapsed();
             assert!(
                 elapsed < TEST_MAX_TIME,
-                "Failed to send {expected_num_txs} transaction in {elapsed:?}.  Only sent \
+                "Failed to send {expected_num_txs} transaction in {elapsed:?}. Only sent \
                  {actual_num_packets}",
             );
         }
@@ -312,7 +312,7 @@ async fn test_connection_denied_until_allowed() {
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
     assert!(
         actual_num_packets < expected_num_txs,
-        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?}\nGot packets: \
+        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?} Got packets: \
          {actual_num_packets}"
     );
 
@@ -639,8 +639,8 @@ async fn test_rate_limiting_establish_connection() {
         count_received_packets_for(receiver, tx_size, Duration::from_secs(70)).await;
     assert!(
         actual_num_packets > 0,
-        "As we wait longer than 1 minute, at least one transaction should be delivered.  After 1 \
-         minute the server is expected to accept our connection.\nActual packets delivered: \
+        "As we wait longer than 1 minute, at least one transaction should be delivered. After 1 \
+         minute the server is expected to accept our connection. Actual packets delivered: \
          {actual_num_packets}"
     );
 
@@ -653,7 +653,7 @@ async fn test_rate_limiting_establish_connection() {
     assert!(
         stats.connection_error_timed_out > 0,
         "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
-         the 1 minute delay.\nActual connection_error_timed_out: {}",
+         the 1 minute delay. Actual connection_error_timed_out: {}",
         stats.connection_error_timed_out
     );
     assert!(
