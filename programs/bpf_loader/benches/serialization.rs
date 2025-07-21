@@ -125,6 +125,7 @@ fn bench_serialize_unaligned(c: &mut Criterion) {
                 &transaction_context,
                 instruction_context,
                 true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -143,6 +144,7 @@ fn bench_serialize_unaligned_copy_account_data(c: &mut Criterion) {
                 &transaction_context,
                 instruction_context,
                 false, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
                 true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -162,6 +164,7 @@ fn bench_serialize_aligned(c: &mut Criterion) {
                 &transaction_context,
                 instruction_context,
                 true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -181,6 +184,7 @@ fn bench_serialize_aligned_copy_account_data(c: &mut Criterion) {
                 &transaction_context,
                 instruction_context,
                 false, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
                 true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -200,6 +204,7 @@ fn bench_serialize_unaligned_max_accounts(c: &mut Criterion) {
                 &transaction_context,
                 instruction_context,
                 true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -219,6 +224,7 @@ fn bench_serialize_aligned_max_accounts(c: &mut Criterion) {
                 &transaction_context,
                 instruction_context,
                 true, // stricter_abi_and_runtime_constraints
+                true, // account_data_direct_mapping
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
