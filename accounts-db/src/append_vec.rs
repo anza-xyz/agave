@@ -14,7 +14,6 @@ pub(crate) use meta::StoredAccountMeta;
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
 use meta::{AccountMeta, StoredMeta};
-
 use {
     crate::{
         account_info::Offset,
@@ -1058,10 +1057,11 @@ impl AppendVec {
                 const MAX_CAPACITY: usize =
                     STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
+                let self_len = self.len();
                 let mut reader = BufReaderWithOverflow::new(
                     BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file),
-                    MIN_CAPACITY,
-                    MAX_CAPACITY,
+                    MIN_CAPACITY.min(self_len),
+                    MAX_CAPACITY.min(self_len),
                 );
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
