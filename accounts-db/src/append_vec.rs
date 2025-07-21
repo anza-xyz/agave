@@ -10,7 +10,7 @@ pub mod test_utils;
 // Used all over the accounts-db crate.  Probably should be minimized.
 pub(crate) use meta::StoredAccountMeta;
 // Some tests/benches use AccountMeta/StoredMeta
-use crate::buffered_reader::BufReaderWithOverflow;
+use crate::buffered_reader::{BufReaderWithOverflow, FileBufRead as _};
 #[cfg(feature = "dev-context-only-utils")]
 pub use meta::{AccountMeta, StoredMeta};
 #[cfg(not(feature = "dev-context-only-utils"))]
@@ -25,7 +25,7 @@ use {
             StoredAccountsInfo,
         },
         accounts_hash::AccountHash,
-        buffered_reader::{BufferedReader, ContiguousBufFileRead, Stack},
+        buffered_reader::{BufferedReader, RequiredLenBufRead, Stack},
         file_io::read_into_buffer,
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
@@ -1059,7 +1059,8 @@ impl AppendVec {
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
                 let mut reader = BufReaderWithOverflow::new(
                     BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file),
-                    MIN_CAPACITY..(MAX_CAPACITY + 1),
+                    MIN_CAPACITY,
+                    MAX_CAPACITY,
                 );
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
@@ -1213,7 +1214,11 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
+                let mut reader = BufReaderWithOverflow::new(
+                    BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file),
+                    0,
+                    REQUIRED_READ_LEN,
+                );
                 const REQUIRED_READ_LEN: usize =
                     mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
                 loop {
