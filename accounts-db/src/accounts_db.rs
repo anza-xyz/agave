@@ -3815,8 +3815,11 @@ impl AccountsDb {
         // mutating rooted slots; There should be no writers to them.
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
-        stats_sub.store_accounts_timing =
-            self.store_accounts_frozen(storable_accounts, shrink_in_progress.new_storage());
+        stats_sub.store_accounts_timing = self.store_accounts_frozen(
+            storable_accounts,
+            shrink_in_progress.new_storage(),
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        );
 
         rewrite_elapsed.stop();
         stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
@@ -5865,8 +5868,12 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) =
-                measure_us!(self.store_accounts_frozen((slot, &accounts[..]), &flushed_store,));
+            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
+                .store_accounts_frozen(
+                    (slot, &accounts[..]),
+                    &flushed_store,
+                    UpdateIndexThreadSelection::PoolWithThreshold,
+                ));
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
             flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
 
@@ -7716,6 +7723,7 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         storage: &Arc<AccountStorageEntry>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
         let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
@@ -7752,7 +7760,7 @@ impl AccountsDb {
             infos,
             &accounts,
             UpsertReclaim::IgnoreReclaims,
-            UpdateIndexThreadSelection::PoolWithThreshold,
+            update_index_thread_selection,
             &self.thread_pool_clean,
         );
 
@@ -8619,7 +8627,7 @@ impl CalcAccountsHashKind {
     }
 }
 
-pub(crate) enum UpdateIndexThreadSelection {
+pub enum UpdateIndexThreadSelection {
     /// Use current thread only
     Inline,
     /// Use a thread-pool if the number of updates exceeds a threshold

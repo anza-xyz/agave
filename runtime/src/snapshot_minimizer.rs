@@ -14,6 +14,7 @@ use {
     solana_accounts_db::{
         accounts_db::{
             stats::PurgeStats, AccountStorageEntry, AccountsDb, GetUniqueAccountsResult,
+            UpdateIndexThreadSelection,
         },
         storable_accounts::StorableAccountsBySlot,
     },
@@ -329,8 +330,11 @@ impl<'a> SnapshotMinimizer<'a> {
             let storable_accounts =
                 StorableAccountsBySlot::new(slot, &accounts, self.accounts_db());
 
-            self.accounts_db()
-                .store_accounts_frozen(storable_accounts, new_storage);
+            self.accounts_db().store_accounts_frozen(
+                storable_accounts,
+                new_storage,
+                UpdateIndexThreadSelection::Inline,
+            );
 
             new_storage.flush().unwrap();
         }
