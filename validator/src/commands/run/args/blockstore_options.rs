@@ -67,77 +67,36 @@ mod tests {
             },
             RunArgs,
         },
+        test_case::test_case,
     };
 
-    #[test]
-    fn verify_args_struct_by_command_run_with_wal_recovery_mode() {
-        // tolerate_corrupted_tail_records
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    recovery_mode: Some(BlockstoreRecoveryMode::TolerateCorruptedTailRecords),
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--wal-recovery-mode", "tolerate_corrupted_tail_records"],
-                expected_args,
-            );
-        }
-
-        // absolute_consistency
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    recovery_mode: Some(BlockstoreRecoveryMode::AbsoluteConsistency),
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--wal-recovery-mode", "absolute_consistency"],
-                expected_args,
-            );
-        }
-
-        // point_in_time
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    recovery_mode: Some(BlockstoreRecoveryMode::PointInTime),
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--wal-recovery-mode", "point_in_time"],
-                expected_args,
-            );
-        }
-
-        // skip_any_corrupted_record
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    recovery_mode: Some(BlockstoreRecoveryMode::SkipAnyCorruptedRecord),
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--wal-recovery-mode", "skip_any_corrupted_record"],
-                expected_args,
-            );
-        }
+    #[test_case(
+        "tolerate_corrupted_tail_records",
+        BlockstoreRecoveryMode::TolerateCorruptedTailRecords
+    )]
+    #[test_case("absolute_consistency", BlockstoreRecoveryMode::AbsoluteConsistency)]
+    #[test_case("point_in_time", BlockstoreRecoveryMode::PointInTime)]
+    #[test_case(
+        "skip_any_corrupted_record",
+        BlockstoreRecoveryMode::SkipAnyCorruptedRecord
+    )]
+    fn verify_args_struct_by_command_run_with_wal_recovery_mode_valid(
+        arg_value: &str,
+        expected_mode: BlockstoreRecoveryMode,
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            blockstore_options: BlockstoreOptions {
+                recovery_mode: Some(expected_mode),
+                ..default_run_args.blockstore_options.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--wal-recovery-mode", arg_value],
+            expected_args,
+        );
     }
 
     #[test]
