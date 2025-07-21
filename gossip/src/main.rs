@@ -298,7 +298,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         num_nodes,
         discover_timeout,
         pubkeys.as_deref(), // find_nodes_by_pubkey
-        &[],            // find_node_by_gossip_addr
+        &[],                // find_node_by_gossip_addr
         Some(&gossip_addr), // my_gossip_addr
         shred_version,
         socket_addr_space,
