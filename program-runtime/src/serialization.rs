@@ -52,6 +52,7 @@ struct Serializer {
     region_start: usize,
     is_loader_v1: bool,
     stricter_abi_and_runtime_constraints: bool,
+    _account_data_direct_mapping: bool,
 }
 
 impl Serializer {
@@ -60,6 +61,7 @@ impl Serializer {
         start_addr: u64,
         is_loader_v1: bool,
         stricter_abi_and_runtime_constraints: bool,
+        _account_data_direct_mapping: bool,
     ) -> Serializer {
         Serializer {
             buffer: AlignedMemory::with_capacity(size),
@@ -68,6 +70,7 @@ impl Serializer {
             vaddr: start_addr,
             is_loader_v1,
             stricter_abi_and_runtime_constraints,
+            _account_data_direct_mapping,
         }
     }
 
@@ -192,6 +195,7 @@ pub fn serialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
     mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
@@ -241,6 +245,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
             mask_out_rent_epoch_in_vm_serialization,
         )
     } else {
@@ -249,6 +254,7 @@ pub fn serialize_parameters(
             instruction_context.get_instruction_data(),
             &program_id,
             stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
             mask_out_rent_epoch_in_vm_serialization,
         )
     }
@@ -258,6 +264,7 @@ pub fn deserialize_parameters(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
     buffer: &[u8],
     accounts_metadata: &[SerializedAccountMetadata],
 ) -> Result<(), InstructionError> {
@@ -271,6 +278,7 @@ pub fn deserialize_parameters(
             transaction_context,
             instruction_context,
             stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
             buffer,
             account_lengths,
         )
@@ -279,6 +287,7 @@ pub fn deserialize_parameters(
             transaction_context,
             instruction_context,
             stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
             buffer,
             account_lengths,
         )
@@ -290,6 +299,7 @@ fn serialize_parameters_unaligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
     mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
@@ -329,6 +339,7 @@ fn serialize_parameters_unaligned(
         MM_INPUT_START,
         true,
         stricter_abi_and_runtime_constraints,
+        account_data_direct_mapping,
     );
 
     let mut accounts_metadata: Vec<SerializedAccountMetadata> = Vec::with_capacity(accounts.len());
@@ -378,6 +389,7 @@ fn deserialize_parameters_unaligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
+    _account_data_direct_mapping: bool,
     buffer: &[u8],
     account_lengths: I,
 ) -> Result<(), InstructionError> {
@@ -433,6 +445,7 @@ fn serialize_parameters_aligned(
     instruction_data: &[u8],
     program_id: &Pubkey,
     stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
     mask_out_rent_epoch_in_vm_serialization: bool,
 ) -> Result<
     (
@@ -479,6 +492,7 @@ fn serialize_parameters_aligned(
         MM_INPUT_START,
         false,
         stricter_abi_and_runtime_constraints,
+        account_data_direct_mapping,
     );
 
     // Serialize into the buffer
@@ -530,6 +544,7 @@ fn deserialize_parameters_aligned<I: IntoIterator<Item = usize>>(
     transaction_context: &TransactionContext,
     instruction_context: &InstructionContext,
     stricter_abi_and_runtime_constraints: bool,
+    _account_data_direct_mapping: bool,
     buffer: &[u8],
     account_lengths: I,
 ) -> Result<(), InstructionError> {
@@ -744,7 +759,8 @@ mod tests {
                     invoke_context.transaction_context,
                     instruction_context,
                     stricter_abi_and_runtime_constraints,
-                    true, // mask_out_rent_epoch_in_vm_serialization
+                    false, // account_data_direct_mapping
+                    true,  // mask_out_rent_epoch_in_vm_serialization
                 );
                 assert_eq!(
                     serialization_result.as_ref().err(),
@@ -888,7 +904,8 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 stricter_abi_and_runtime_constraints,
-                true, // mask_out_rent_epoch_in_vm_serialization
+                false, // account_data_direct_mapping
+                true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
 
@@ -948,6 +965,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 stricter_abi_and_runtime_constraints,
+                false, // account_data_direct_mapping
                 serialized.as_slice(),
                 &accounts_metadata,
             )
@@ -981,7 +999,8 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 stricter_abi_and_runtime_constraints,
-                true, // mask_out_rent_epoch_in_vm_serialization
+                false, // account_data_direct_mapping
+                true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
             let mut serialized_regions = concat_regions(&regions);
@@ -1020,6 +1039,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 stricter_abi_and_runtime_constraints,
+                false, // account_data_direct_mapping
                 serialized.as_slice(),
                 &account_lengths,
             )
@@ -1134,6 +1154,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 true,
+                false, // account_data_direct_mapping
                 mask_out_rent_epoch_in_vm_serialization,
             )
             .unwrap();
@@ -1179,6 +1200,7 @@ mod tests {
                 invoke_context.transaction_context,
                 instruction_context,
                 true,
+                false, // account_data_direct_mapping
                 mask_out_rent_epoch_in_vm_serialization,
             )
             .unwrap();
@@ -1426,7 +1448,7 @@ mod tests {
             regions,
             &config,
             SBPFVersion::V3,
-            transaction_context.access_violation_handler(),
+            transaction_context.access_violation_handler(false, false),
         )
         .unwrap();
 

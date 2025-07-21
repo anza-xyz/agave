@@ -526,7 +526,11 @@ impl TransactionContext {
     }
 
     /// Returns a new account data write access handler
-    pub fn access_violation_handler(&self) -> AccessViolationHandler {
+    pub fn access_violation_handler(
+        &self,
+        _stricter_abi_and_runtime_constraints: bool,
+        _account_data_direct_mapping: bool,
+    ) -> AccessViolationHandler {
         let accounts = Rc::clone(&self.accounts);
         Box::new(
             move |region: &mut MemoryRegion,

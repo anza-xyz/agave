@@ -853,10 +853,11 @@ where
             // BorrowedAccount (callee_account) so the callee can see the
             // changes.
             let update_caller = update_callee_account(
+                check_aligned,
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                check_aligned,
+                invoke_context.account_data_direct_mapping,
             )?;
 
             accounts.push(TranslatedAccount {
@@ -1074,6 +1075,7 @@ fn cpi_common<S: SyscallInvokeSigned>(
                     check_aligned,
                     &translate_account.caller_account,
                     &mut callee_account,
+                    invoke_context.account_data_direct_mapping,
                 )?;
             }
         }
@@ -1095,10 +1097,11 @@ fn cpi_common<S: SyscallInvokeSigned>(
 // When true is returned, the caller account must be updated after CPI. This
 // is only set for stricter_abi_and_runtime_constraints when the pointer may have changed.
 fn update_callee_account(
+    check_aligned: bool,
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
     stricter_abi_and_runtime_constraints: bool,
-    check_aligned: bool,
+    _account_data_direct_mapping: bool,
 ) -> Result<bool, Error> {
     let mut must_update_caller = false;
 
@@ -1151,6 +1154,7 @@ fn update_caller_account_region(
     check_aligned: bool,
     caller_account: &CallerAccount,
     callee_account: &mut BorrowedAccount<'_>,
+    _account_data_direct_mapping: bool,
 ) -> Result<(), Error> {
     let is_caller_loader_deprecated = !check_aligned;
     let address_space_reserved_for_account = if is_caller_loader_deprecated {
@@ -1679,10 +1683,11 @@ mod tests {
         *caller_account.owner = Pubkey::new_unique();
 
         update_callee_account(
+            true, // check_aligned
             &caller_account,
             callee_account,
             stricter_abi_and_runtime_constraints,
-            true,
+            true, // account_data_direct_mapping
         )
         .unwrap();
 
@@ -1714,7 +1719,14 @@ mod tests {
 
         // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
-        update_callee_account(&caller_account, callee_account, false, true).unwrap();
+        update_callee_account(
+            true, // check_aligned
+            &caller_account,
+            callee_account,
+            false, // stricter_abi_and_runtime_constraints
+            false, // account_data_direct_mapping
+        )
+        .unwrap();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"boobar");
 
@@ -1724,10 +1736,11 @@ mod tests {
         caller_account.serialized_data = &mut data;
         assert_eq!(
             update_callee_account(
+                true, // check_aligned
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true
+                true, // account_data_direct_mapping
             )
             .unwrap(),
             stricter_abi_and_runtime_constraints,
@@ -1740,10 +1753,11 @@ mod tests {
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(
             update_callee_account(
+                true, // check_aligned
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true
+                true, // account_data_direct_mapping
             )
             .unwrap(),
             stricter_abi_and_runtime_constraints,
@@ -1757,10 +1771,11 @@ mod tests {
         caller_account.owner = &mut owner;
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         update_callee_account(
+            true, // check_aligned
             &caller_account,
             callee_account,
             stricter_abi_and_runtime_constraints,
-            true,
+            true, // account_data_direct_mapping
         )
         .unwrap();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -1769,10 +1784,11 @@ mod tests {
         // growing beyond address_space_reserved_for_account
         *caller_account.ref_to_len_in_vm = (7 + MAX_PERMITTED_DATA_INCREASE) as u64;
         let result = update_callee_account(
+            true, // check_aligned
             &caller_account,
             callee_account,
             stricter_abi_and_runtime_constraints,
-            true,
+            true, // account_data_direct_mapping
         );
         if stricter_abi_and_runtime_constraints {
             assert_matches!(
@@ -1808,10 +1824,11 @@ mod tests {
         caller_account.serialized_data[0] = b'b';
         assert_matches!(
             update_callee_account(
+                true, // check_aligned
                 &caller_account,
                 callee_account,
-                false,
-                true,
+                false, // stricter_abi_and_runtime_constraints
+                false, // account_data_direct_mapping
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::ExternalAccountDataModified
         );
@@ -1823,10 +1840,11 @@ mod tests {
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_matches!(
             update_callee_account(
+                true, // check_aligned
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true,
+                true, // account_data_direct_mapping
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
         );
@@ -1838,10 +1856,11 @@ mod tests {
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_matches!(
             update_callee_account(
+                true, // check_aligned
                 &caller_account,
                 callee_account,
                 stricter_abi_and_runtime_constraints,
-                true,
+                true, // account_data_direct_mapping
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
         );

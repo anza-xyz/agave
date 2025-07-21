@@ -250,7 +250,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .get_current_instruction_context()
             .unwrap(),
         stricter_abi_and_runtime_constraints,
-        true, // mask_out_rent_epoch_in_vm_serialization
+        false, // account_data_direct_mapping
+        true,  // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -285,7 +286,8 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .get_current_instruction_context()
             .unwrap(),
         stricter_abi_and_runtime_constraints,
-        true, // mask_out_rent_epoch_in_vm_serialization
+        false, // account_data_direct_mapping
+        true,  // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 

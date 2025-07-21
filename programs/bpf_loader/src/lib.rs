@@ -269,6 +269,10 @@ fn create_vm<'a, 'b>(
         heap,
         regions,
         invoke_context.transaction_context,
+        invoke_context
+            .get_feature_set()
+            .stricter_abi_and_runtime_constraints,
+        invoke_context.account_data_direct_mapping,
     )?;
     invoke_context.set_syscall_context(SyscallContext {
         allocator: BpfAllocator::new(heap_size as u64),
@@ -322,6 +326,8 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
     heap: &'b mut [u8],
     additional_regions: Vec<MemoryRegion>,
     transaction_context: &TransactionContext,
+    stricter_abi_and_runtime_constraints: bool,
+    account_data_direct_mapping: bool,
 ) -> Result<MemoryMapping<'a>, Box<dyn std::error::Error>> {
     let config = executable.get_config();
     let sbpf_version = executable.get_sbpf_version();
@@ -346,7 +352,10 @@ fn create_memory_mapping<'a, 'b, C: ContextObject>(
         regions,
         config,
         sbpf_version,
-        transaction_context.access_violation_handler(),
+        transaction_context.access_violation_handler(
+            stricter_abi_and_runtime_constraints,
+            account_data_direct_mapping,
+        ),
     )?)
 }
 
@@ -1599,6 +1608,7 @@ fn execute<'a, 'b: 'a>(
         invoke_context.transaction_context,
         instruction_context,
         stricter_abi_and_runtime_constraints,
+        invoke_context.account_data_direct_mapping,
         mask_out_rent_epoch_in_vm_serialization,
     )?;
     serialize_time.stop();
@@ -1765,6 +1775,7 @@ fn execute<'a, 'b: 'a>(
                 .transaction_context
                 .get_current_instruction_context()?,
             stricter_abi_and_runtime_constraints,
+            invoke_context.account_data_direct_mapping,
             parameter_bytes,
             &invoke_context.get_syscall_context()?.accounts_metadata,
         )
