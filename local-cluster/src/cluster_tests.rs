@@ -540,7 +540,7 @@ pub fn start_gossip_voter(
         // Need to use our validator's keypair to gossip EpochSlots and votes for our
         // node later.
         node_keypair.insecure_clone(),
-        &vec![*gossip_addr],
+        &[*gossip_addr],
         exit.clone(),
         None,
         shred_version,

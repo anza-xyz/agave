@@ -166,7 +166,7 @@ pub fn discover_validators(
         Some(num_nodes),
         DISCOVER_CLUSTER_TIMEOUT,
         None,
-        &vec![],
+        &[],
         None,
         my_shred_version,
         socket_addr_space,
@@ -191,13 +191,14 @@ pub fn discover(
 )> {
     let entrypoints = &entrypoint
         .into_iter()
-        .map(|e| *e)
+        .copied()
         .collect::<Vec<SocketAddr>>();
 
-    let find_nodes_by_gossip_addr = match find_node_by_gossip_addr {
-        Some(e) => &vec![*e],
-        None => &vec![],
-    };
+    let find_nodes_by_gossip_addr = &find_node_by_gossip_addr
+        .into_iter()
+        .copied()
+        .collect::<Vec<SocketAddr>>();
+
     discover_peers(
         keypair,
         entrypoints,
@@ -217,7 +218,7 @@ pub fn discover_peers(
     num_nodes: Option<usize>, // num_nodes only counts validators, excludes spy nodes
     timeout: Duration,
     find_nodes_by_pubkey: Option<&[Pubkey]>,
-    find_nodes_by_gossip_addr: &Vec<SocketAddr>,
+    find_nodes_by_gossip_addr: &[SocketAddr],
     my_gossip_addr: Option<&SocketAddr>,
     my_shred_version: u16,
     socket_addr_space: SocketAddrSpace,
@@ -324,7 +325,7 @@ fn spy(
     num_nodes: Option<usize>,
     timeout: Duration,
     find_nodes_by_pubkey: Option<&[Pubkey]>,
-    find_nodes_by_gossip_addr: &Vec<SocketAddr>,
+    find_nodes_by_gossip_addr: &[SocketAddr],
 ) -> (
     bool,             // if found the specified nodes
     Duration,         // elapsed time until found the nodes or timed-out
@@ -404,7 +405,7 @@ pub fn make_gossip_node(
 ) -> (GossipService, Option<TcpListener>, Arc<ClusterInfo>) {
     let entrypoints = &entrypoint
         .into_iter()
-        .map(|e| *e)
+        .copied()
         .collect::<Vec<SocketAddr>>();
 
     make_node(
@@ -422,7 +423,7 @@ pub fn make_gossip_node(
 /// Pass in a gossip addr to fully participate in gossip instead of relying on just pulls
 pub fn make_node(
     keypair: Keypair,
-    entrypoints: &Vec<SocketAddr>,
+    entrypoints: &[SocketAddr],
     exit: Arc<AtomicBool>,
     gossip_addr: Option<&SocketAddr>,
     shred_version: u16,
@@ -439,7 +440,7 @@ pub fn make_node(
     cluster_info.set_entrypoints(
         entrypoints
             .iter()
-            .map(|entrypoint| ContactInfo::new_gossip_entry_point(entrypoint))
+            .map(ContactInfo::new_gossip_entry_point)
             .collect::<Vec<_>>(),
     );
     let gossip_socket = AtomicUdpSocket::new(gossip_socket);
@@ -512,42 +513,42 @@ mod tests {
         let spy_ref = Arc::new(cluster_info);
 
         let (met_criteria, elapsed, _, tvu_peers) =
-            spy(spy_ref.clone(), None, TIMEOUT, None, &vec![]);
+            spy(spy_ref.clone(), None, TIMEOUT, None, &[]);
         assert!(!met_criteria);
         assert!((TIMEOUT..TIMEOUT + Duration::from_secs(1)).contains(&elapsed));
         assert_eq!(tvu_peers, spy_ref.tvu_peers(ContactInfo::clone));
 
         // Find num_nodes
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, None, &vec![]);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, None, &[]);
         assert!(met_criteria);
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(2), TIMEOUT, None, &vec![]);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(2), TIMEOUT, None, &[]);
         assert!(met_criteria);
 
         // Find specific node by pubkey
-        let (met_criteria, _, _, _) = spy(spy_ref.clone(), None, TIMEOUT, Some(&[peer0]), &vec![]);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), None, TIMEOUT, Some(&[peer0]), &[]);
         assert!(met_criteria);
         let (met_criteria, _, _, _) = spy(
             spy_ref.clone(),
             None,
             TIMEOUT,
             Some(&[solana_pubkey::new_rand()]),
-            &vec![],
+            &[],
         );
         assert!(!met_criteria);
 
         // Find num_nodes *and* specific node by pubkey
         let (met_criteria, _, _, _) =
-            spy(spy_ref.clone(), Some(1), TIMEOUT, Some(&[peer0]), &vec![]);
+            spy(spy_ref.clone(), Some(1), TIMEOUT, Some(&[peer0]), &[]);
         assert!(met_criteria);
         let (met_criteria, _, _, _) =
-            spy(spy_ref.clone(), Some(3), TIMEOUT, Some(&[peer0]), &vec![]);
+            spy(spy_ref.clone(), Some(3), TIMEOUT, Some(&[peer0]), &[]);
         assert!(!met_criteria);
         let (met_criteria, _, _, _) = spy(
             spy_ref.clone(),
             Some(1),
             TIMEOUT,
             Some(&[solana_pubkey::new_rand()]),
-            &vec![],
+            &[],
         );
         assert!(!met_criteria);
 
@@ -557,7 +558,7 @@ mod tests {
             None,
             TIMEOUT,
             None,
-            &vec![peer0_info.gossip().unwrap()],
+            &[peer0_info.gossip().unwrap()],
         );
         assert!(met_criteria);
 
@@ -566,7 +567,7 @@ mod tests {
             None,
             TIMEOUT,
             None,
-            &vec!["1.1.1.1:1234".parse().unwrap()],
+            &["1.1.1.1:1234".parse().unwrap()],
         );
         assert!(!met_criteria);
     }
