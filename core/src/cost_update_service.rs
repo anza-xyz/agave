@@ -14,7 +14,6 @@ pub enum CostUpdate {
     FrozenBank {
         bank: Arc<Bank>,
         is_leader_block: bool,
-        total_transaction_fee: u64,
     },
 }
 
@@ -52,8 +51,14 @@ impl CostUpdateService {
                 CostUpdate::FrozenBank {
                     bank,
                     is_leader_block,
-                    total_transaction_fee,
                 } => {
+                    let (total_transaction_fee, total_priority_fee) = {
+                        let read_collector_fee_details = bank.read_collector_fee_details().unwrap();
+                        (
+                            read_collector_fee_details.total_transaction_fee(),
+                            read_collector_fee_details.total_priority_fee(),
+                        )
+                    };
                     for loop_count in 1..=MAX_LOOP_COUNT {
                         {
                             // Release the lock so that the thread that will
@@ -74,6 +79,7 @@ impl CostUpdateService {
                                     slot,
                                     is_leader_block,
                                     total_transaction_fee,
+                                    total_priority_fee,
                                 );
                                 break;
                             }

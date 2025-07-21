@@ -221,6 +221,7 @@ impl CostTracker {
         bank_slot: solana_clock::Slot,
         is_leader: bool,
         total_transaction_fee: u64,
+        total_priority_fee: u64,
     ) {
         // skip reporting if block is empty
         if self.transaction_count.0 == 0 {
@@ -270,6 +271,7 @@ impl CostTracker {
                 i64
             ),
             ("total_transaction_fee", total_transaction_fee as i64, i64),
+            ("total_priority_fee", total_priority_fee as i64, i64),
         );
     }
 

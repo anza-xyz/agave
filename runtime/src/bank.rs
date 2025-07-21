@@ -263,8 +263,12 @@ impl CollectorFeeDetails {
             .saturating_add(fee_details.prioritization_fee());
     }
 
-    pub(crate) fn total(&self) -> u64 {
+    pub fn total_transaction_fee(&self) -> u64 {
         self.transaction_fee.saturating_add(self.priority_fee)
+    }
+
+    pub fn total_priority_fee(&self) -> u64 {
+        self.priority_fee
     }
 }
 
@@ -5691,8 +5695,8 @@ impl Bank {
     }
 
     /// Return total transaction fee collected
-    pub fn get_collected_transaction_fee(&self) -> u64 {
-        self.collector_fee_details.read().unwrap().total()
+    pub fn read_collector_fee_details(&self) -> LockResult<RwLockReadGuard<CollectorFeeDetails>> {
+        self.collector_fee_details.read()
     }
 }
 
