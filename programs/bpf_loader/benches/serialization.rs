@@ -123,7 +123,7 @@ fn bench_serialize_unaligned(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -141,7 +141,7 @@ fn bench_serialize_unaligned_copy_account_data(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                false, // direct_mapping
+                false, // stricter_abi_and_runtime_constraints
                 true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -160,7 +160,7 @@ fn bench_serialize_aligned(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -179,7 +179,7 @@ fn bench_serialize_aligned_copy_account_data(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                false, // direct_mapping
+                false, // stricter_abi_and_runtime_constraints
                 true,  // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -198,7 +198,7 @@ fn bench_serialize_unaligned_max_accounts(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();
@@ -217,7 +217,7 @@ fn bench_serialize_aligned_max_accounts(c: &mut Criterion) {
             let _ = serialize_parameters(
                 &transaction_context,
                 instruction_context,
-                true, // direct_mapping
+                true, // stricter_abi_and_runtime_constraints
                 true, // mask_out_rent_epoch_in_vm_serialization
             )
             .unwrap();

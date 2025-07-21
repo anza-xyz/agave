@@ -77,7 +77,7 @@ struct CallerAccount<'a> {
     // mapped inside the vm (see serialize_parameters() in
     // BpfExecutor::execute).
     //
-    // This is only set when direct mapping is off (see the relevant comment in
+    // This is only set when stricter_abi_and_runtime_constraints is off (see the relevant comment in
     // CallerAccount::from_account_info).
     serialized_data: &'a mut [u8],
     // Given the corresponding input AccountInfo::data, vm_data_addr points to
@@ -96,11 +96,11 @@ impl<'a> CallerAccount<'a> {
         account_info: &AccountInfo,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
-        let direct_mapping = invoke_context
+        let stricter_abi_and_runtime_constraints = invoke_context
             .get_feature_set()
-            .bpf_account_data_direct_mapping;
+            .stricter_abi_and_runtime_constraints;
 
-        if direct_mapping {
+        if stricter_abi_and_runtime_constraints {
             check_account_info_pointer(
                 invoke_context,
                 account_info.key as *const _ as u64,
@@ -124,7 +124,7 @@ impl<'a> CallerAccount<'a> {
                 account_info.lamports.as_ptr() as u64,
                 check_aligned,
             )?;
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 if account_info.lamports.as_ptr() as u64 >= ebpf::MM_INPUT_START {
                     return Err(SyscallError::InvalidPointer.into());
                 }
@@ -146,7 +146,9 @@ impl<'a> CallerAccount<'a> {
         )?;
 
         let (serialized_data, vm_data_addr, ref_to_len_in_vm) = {
-            if direct_mapping && account_info.data.as_ptr() as u64 >= ebpf::MM_INPUT_START {
+            if stricter_abi_and_runtime_constraints
+                && account_info.data.as_ptr() as u64 >= ebpf::MM_INPUT_START
+            {
                 return Err(SyscallError::InvalidPointer.into());
             }
 
@@ -156,7 +158,7 @@ impl<'a> CallerAccount<'a> {
                 account_info.data.as_ptr() as *const _ as u64,
                 check_aligned,
             )?;
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 check_account_info_pointer(
                     invoke_context,
                     data.as_ptr() as u64,
@@ -174,7 +176,7 @@ impl<'a> CallerAccount<'a> {
 
             let vm_len_addr = (account_info.data.as_ptr() as *const u64 as u64)
                 .saturating_add(size_of::<u64>() as u64);
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 // In the same vein as the other check_account_info_pointer() checks, we don't lock
                 // this pointer to a specific address but we don't want it to be inside accounts, or
                 // callees might be able to write to the pointed memory.
@@ -185,8 +187,8 @@ impl<'a> CallerAccount<'a> {
             let ref_to_len_in_vm = translate_type_mut::<u64>(memory_mapping, vm_len_addr, false)?;
             let vm_data_addr = data.as_ptr() as u64;
 
-            let serialized_data = if direct_mapping {
-                // when direct mapping is enabled, the permissions on the
+            let serialized_data = if stricter_abi_and_runtime_constraints {
+                // when stricter_abi_and_runtime_constraints is enabled, the permissions on the
                 // realloc region can change during CPI so we must delay
                 // translating until when we know whether we're going to mutate
                 // the realloc region or not. Consider this case:
@@ -229,11 +231,11 @@ impl<'a> CallerAccount<'a> {
         account_info: &SolAccountInfo,
         account_metadata: &SerializedAccountMetadata,
     ) -> Result<CallerAccount<'a>, Error> {
-        let direct_mapping = invoke_context
+        let stricter_abi_and_runtime_constraints = invoke_context
             .get_feature_set()
-            .bpf_account_data_direct_mapping;
+            .stricter_abi_and_runtime_constraints;
 
-        if direct_mapping {
+        if stricter_abi_and_runtime_constraints {
             check_account_info_pointer(
                 invoke_context,
                 account_info.key_addr,
@@ -278,7 +280,7 @@ impl<'a> CallerAccount<'a> {
                 .unwrap_or(u64::MAX),
         )?;
 
-        let serialized_data = if direct_mapping {
+        let serialized_data = if stricter_abi_and_runtime_constraints {
             // See comment in CallerAccount::from_account_info()
             &mut []
         } else {
@@ -715,14 +717,14 @@ fn translate_account_infos<'a, T, F>(
 where
     F: Fn(&T) -> u64,
 {
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
 
     // In the same vein as the other check_account_info_pointer() checks, we don't lock
     // this pointer to a specific address but we don't want it to be inside accounts, or
     // callees might be able to write to the pointed memory.
-    if direct_mapping
+    if stricter_abi_and_runtime_constraints
         && account_infos_addr
             .saturating_add(account_infos_len.saturating_mul(std::mem::size_of::<T>() as u64))
             >= ebpf::MM_INPUT_START
@@ -786,9 +788,9 @@ where
         .unwrap()
         .accounts_metadata;
 
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
 
     for (instruction_account_index, instruction_account) in
         next_instruction_accounts.iter().enumerate()
@@ -853,7 +855,7 @@ where
             let update_caller = update_callee_account(
                 &caller_account,
                 callee_account,
-                direct_mapping,
+                stricter_abi_and_runtime_constraints,
                 check_aligned,
             )?;
 
@@ -1039,9 +1041,9 @@ fn cpi_common<S: SyscallInvokeSigned>(
     // CPI exit.
     //
     // Synchronize the callee's account changes so the caller can see them.
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
 
     for translate_account in accounts.iter_mut() {
         let mut callee_account = instruction_context.try_borrow_instruction_account(
@@ -1055,12 +1057,12 @@ fn cpi_common<S: SyscallInvokeSigned>(
                 check_aligned,
                 &mut translate_account.caller_account,
                 &mut callee_account,
-                direct_mapping,
+                stricter_abi_and_runtime_constraints,
             )?;
         }
     }
 
-    if direct_mapping {
+    if stricter_abi_and_runtime_constraints {
         for translate_account in accounts.iter() {
             let mut callee_account = instruction_context.try_borrow_instruction_account(
                 transaction_context,
@@ -1091,11 +1093,11 @@ fn cpi_common<S: SyscallInvokeSigned>(
 // changes.
 //
 // When true is returned, the caller account must be updated after CPI. This
-// is only set for direct mapping when the pointer may have changed.
+// is only set for stricter_abi_and_runtime_constraints when the pointer may have changed.
 fn update_callee_account(
     caller_account: &CallerAccount,
     mut callee_account: BorrowedAccount<'_>,
-    direct_mapping: bool,
+    stricter_abi_and_runtime_constraints: bool,
     check_aligned: bool,
 ) -> Result<bool, Error> {
     let mut must_update_caller = false;
@@ -1104,7 +1106,7 @@ fn update_callee_account(
         callee_account.set_lamports(*caller_account.lamports)?;
     }
 
-    if direct_mapping {
+    if stricter_abi_and_runtime_constraints {
         let prev_len = callee_account.get_data().len();
         let post_len = *caller_account.ref_to_len_in_vm as usize;
         if prev_len != post_len {
@@ -1183,7 +1185,7 @@ fn update_caller_account_region(
 // This method updates caller_account so the CPI caller can see the callee's
 // changes.
 //
-// Safety: Once `direct_mapping` is enabled all fields of [CallerAccount] used
+// Safety: Once `stricter_abi_and_runtime_constraints` is enabled all fields of [CallerAccount] used
 // in this function should never point inside the address space reserved for
 // accounts (regardless of the current size of an account).
 fn update_caller_account(
@@ -1192,7 +1194,7 @@ fn update_caller_account(
     check_aligned: bool,
     caller_account: &mut CallerAccount<'_>,
     callee_account: &mut BorrowedAccount<'_>,
-    direct_mapping: bool,
+    stricter_abi_and_runtime_constraints: bool,
 ) -> Result<(), Error> {
     *caller_account.lamports = callee_account.get_lamports();
     *caller_account.owner = *callee_account.get_owner();
@@ -1200,15 +1202,18 @@ fn update_caller_account(
     let prev_len = *caller_account.ref_to_len_in_vm as usize;
     let post_len = callee_account.get_data().len();
     let is_caller_loader_deprecated = !check_aligned;
-    let address_space_reserved_for_account = if direct_mapping && is_caller_loader_deprecated {
-        caller_account.original_data_len
-    } else {
-        caller_account
-            .original_data_len
-            .saturating_add(MAX_PERMITTED_DATA_INCREASE)
-    };
+    let address_space_reserved_for_account =
+        if stricter_abi_and_runtime_constraints && is_caller_loader_deprecated {
+            caller_account.original_data_len
+        } else {
+            caller_account
+                .original_data_len
+                .saturating_add(MAX_PERMITTED_DATA_INCREASE)
+        };
 
-    if post_len > address_space_reserved_for_account && (direct_mapping || prev_len != post_len) {
+    if post_len > address_space_reserved_for_account
+        && (stricter_abi_and_runtime_constraints || prev_len != post_len)
+    {
         let max_increase =
             address_space_reserved_for_account.saturating_sub(caller_account.original_data_len);
         ic_msg!(
@@ -1219,9 +1224,9 @@ fn update_caller_account(
     }
 
     if prev_len != post_len {
-        // when direct mapping is enabled we don't cache the serialized data in
+        // when stricter_abi_and_runtime_constraints is enabled we don't cache the serialized data in
         // caller_account.serialized_data. See CallerAccount::from_account_info.
-        if !direct_mapping {
+        if !stricter_abi_and_runtime_constraints {
             // If the account has been shrunk, we're going to zero the unused memory
             // *that was previously used*.
             if post_len < prev_len {
@@ -1253,7 +1258,7 @@ fn update_caller_account(
         *serialized_len_ptr = post_len as u64;
     }
 
-    if !direct_mapping {
+    if !stricter_abi_and_runtime_constraints {
         // Propagate changes in the callee up to the caller.
         let to_slice = &mut caller_account.serialized_data;
         let from_slice = callee_account
@@ -1322,7 +1327,7 @@ mod tests {
                 .map(|a| (a.0, a.1))
                 .collect::<Vec<TransactionAccount>>();
             let mut feature_set = SVMFeatureSet::all_enabled();
-            feature_set.bpf_account_data_direct_mapping = false;
+            feature_set.stricter_abi_and_runtime_constraints = false;
             let feature_set = &feature_set;
             with_mock_invoke_context_with_feature_set!(
                 $invoke_context,
@@ -1480,7 +1485,7 @@ mod tests {
     }
 
     #[test_matrix([false, true])]
-    fn test_update_caller_account_lamports_owner(direct_mapping: bool) {
+    fn test_update_caller_account_lamports_owner(stricter_abi_and_runtime_constraints: bool) {
         let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
         let account = transaction_accounts[1].1.clone();
         mock_invoke_context!(
@@ -1521,7 +1526,7 @@ mod tests {
             true, // check_aligned
             &mut caller_account,
             &mut callee_account,
-            direct_mapping,
+            stricter_abi_and_runtime_constraints,
         )
         .unwrap();
 
@@ -1650,7 +1655,7 @@ mod tests {
     }
 
     #[test_matrix([false, true])]
-    fn test_update_callee_account_lamports_owner(direct_mapping: bool) {
+    fn test_update_callee_account_lamports_owner(stricter_abi_and_runtime_constraints: bool) {
         let transaction_accounts = transaction_with_one_writable_instruction_account(vec![]);
         let account = transaction_accounts[1].1.clone();
 
@@ -1673,7 +1678,13 @@ mod tests {
         *caller_account.lamports = 42;
         *caller_account.owner = Pubkey::new_unique();
 
-        update_callee_account(&caller_account, callee_account, direct_mapping, true).unwrap();
+        update_callee_account(
+            &caller_account,
+            callee_account,
+            stricter_abi_and_runtime_constraints,
+            true,
+        )
+        .unwrap();
 
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_lamports(), 42);
@@ -1681,7 +1692,7 @@ mod tests {
     }
 
     #[test_matrix([false, true])]
-    fn test_update_callee_account_data_writable(direct_mapping: bool) {
+    fn test_update_callee_account_data_writable(stricter_abi_and_runtime_constraints: bool) {
         let transaction_accounts =
             transaction_with_one_writable_instruction_account(b"foobar".to_vec());
         let account = transaction_accounts[1].1.clone();
@@ -1701,7 +1712,7 @@ mod tests {
         let mut caller_account = mock_caller_account.caller_account();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
 
-        // direct mapping does not copy data in update_callee_account()
+        // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
         update_callee_account(&caller_account, callee_account, false, true).unwrap();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -1712,8 +1723,14 @@ mod tests {
         *caller_account.ref_to_len_in_vm = data.len() as u64;
         caller_account.serialized_data = &mut data;
         assert_eq!(
-            update_callee_account(&caller_account, callee_account, direct_mapping, true).unwrap(),
-            direct_mapping,
+            update_callee_account(
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                true
+            )
+            .unwrap(),
+            stricter_abi_and_runtime_constraints,
         );
 
         // truncating resize
@@ -1722,8 +1739,14 @@ mod tests {
         caller_account.serialized_data = &mut data;
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(
-            update_callee_account(&caller_account, callee_account, direct_mapping, true).unwrap(),
-            direct_mapping,
+            update_callee_account(
+                &caller_account,
+                callee_account,
+                stricter_abi_and_runtime_constraints,
+                true
+            )
+            .unwrap(),
+            stricter_abi_and_runtime_constraints,
         );
 
         // close the account
@@ -1733,14 +1756,25 @@ mod tests {
         let mut owner = system_program::id();
         caller_account.owner = &mut owner;
         let callee_account = borrow_instruction_account!(invoke_context, 0);
-        update_callee_account(&caller_account, callee_account, direct_mapping, true).unwrap();
+        update_callee_account(
+            &caller_account,
+            callee_account,
+            stricter_abi_and_runtime_constraints,
+            true,
+        )
+        .unwrap();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
         assert_eq!(callee_account.get_data(), b"");
 
         // growing beyond address_space_reserved_for_account
         *caller_account.ref_to_len_in_vm = (7 + MAX_PERMITTED_DATA_INCREASE) as u64;
-        let result = update_callee_account(&caller_account, callee_account, direct_mapping, true);
-        if direct_mapping {
+        let result = update_callee_account(
+            &caller_account,
+            callee_account,
+            stricter_abi_and_runtime_constraints,
+            true,
+        );
+        if stricter_abi_and_runtime_constraints {
             assert_matches!(
                 result,
                 Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::InvalidRealloc
@@ -1751,7 +1785,7 @@ mod tests {
     }
 
     #[test_matrix([false, true])]
-    fn test_update_callee_account_data_readonly(direct_mapping: bool) {
+    fn test_update_callee_account_data_readonly(stricter_abi_and_runtime_constraints: bool) {
         let transaction_accounts =
             transaction_with_one_readonly_instruction_account(b"foobar".to_vec());
         let account = transaction_accounts[1].1.clone();
@@ -1770,7 +1804,7 @@ mod tests {
         let mut caller_account = mock_caller_account.caller_account();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
 
-        // direct mapping does not copy data in update_callee_account()
+        // stricter_abi_and_runtime_constraints does not copy data in update_callee_account()
         caller_account.serialized_data[0] = b'b';
         assert_matches!(
             update_callee_account(
@@ -1791,7 +1825,7 @@ mod tests {
             update_callee_account(
                 &caller_account,
                 callee_account,
-                direct_mapping,
+                stricter_abi_and_runtime_constraints,
                 true,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
@@ -1806,7 +1840,7 @@ mod tests {
             update_callee_account(
                 &caller_account,
                 callee_account,
-                direct_mapping,
+                stricter_abi_and_runtime_constraints,
                 true,
             ),
             Err(error) if error.downcast_ref::<InstructionError>().unwrap() == &InstructionError::AccountDataSizeChanged
@@ -1882,7 +1916,7 @@ mod tests {
         data: Vec<u8>,
         len: u64,
         regions: Vec<MemoryRegion>,
-        direct_mapping: bool,
+        stricter_abi_and_runtime_constraints: bool,
     }
 
     impl MockCallerAccount {
@@ -1890,12 +1924,12 @@ mod tests {
             lamports: u64,
             owner: Pubkey,
             data: &[u8],
-            direct_mapping: bool,
+            stricter_abi_and_runtime_constraints: bool,
         ) -> MockCallerAccount {
             let vm_addr = MM_INPUT_START;
             let mut region_addr = vm_addr;
             let region_len = mem::size_of::<u64>()
-                + if direct_mapping {
+                + if stricter_abi_and_runtime_constraints {
                     0
                 } else {
                     data.len() + MAX_PERMITTED_DATA_INCREASE
@@ -1903,19 +1937,19 @@ mod tests {
             let mut d = vec![0; region_len];
             let mut regions = vec![];
 
-            // always write the [len] part even when direct mapping
+            // always write the [len] part even when stricter_abi_and_runtime_constraints
             unsafe { ptr::write_unaligned::<u64>(d.as_mut_ptr().cast(), data.len() as u64) };
 
-            // write the account data when not direct mapping
-            if !direct_mapping {
+            // write the account data when not stricter_abi_and_runtime_constraints
+            if !stricter_abi_and_runtime_constraints {
                 d[mem::size_of::<u64>()..][..data.len()].copy_from_slice(data);
             }
 
-            // create a region for [len][data+realloc if !direct_mapping]
+            // create a region for [len][data+realloc if !stricter_abi_and_runtime_constraints]
             regions.push(MemoryRegion::new_writable(&mut d[..region_len], vm_addr));
             region_addr += region_len as u64;
 
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 // create a region for the directly mapped data
                 regions.push(MemoryRegion::new_readonly(data, region_addr));
                 region_addr += data.len() as u64;
@@ -1937,7 +1971,7 @@ mod tests {
                 data: d,
                 len: data.len() as u64,
                 regions,
-                direct_mapping,
+                stricter_abi_and_runtime_constraints,
             }
         }
 
@@ -1952,7 +1986,7 @@ mod tests {
         }
 
         fn caller_account(&mut self) -> CallerAccount {
-            let data = if self.direct_mapping {
+            let data = if self.stricter_abi_and_runtime_constraints {
                 &mut []
             } else {
                 &mut self.data[mem::size_of::<u64>()..]

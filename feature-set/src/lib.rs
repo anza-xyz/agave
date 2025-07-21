@@ -106,7 +106,8 @@ impl FeatureSet {
                 .is_active(&move_precompile_verification_to_svm::id()),
             remove_accounts_executable_flag_checks: self
                 .is_active(&remove_accounts_executable_flag_checks::id()),
-            bpf_account_data_direct_mapping: self.is_active(&bpf_account_data_direct_mapping::id()),
+            stricter_abi_and_runtime_constraints: self
+                .is_active(&stricter_abi_and_runtime_constraints::id()),
             enable_bpf_loader_set_authority_checked_ix: self
                 .is_active(&enable_bpf_loader_set_authority_checked_ix::id()),
             enable_loader_v4: self.is_active(&enable_loader_v4::id()),
@@ -752,7 +753,7 @@ pub mod apply_cost_tracker_during_replay {
     solana_pubkey::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 
-pub mod bpf_account_data_direct_mapping {
+pub mod stricter_abi_and_runtime_constraints {
     solana_pubkey::declare_id!("1ncomp1ete111111111111111111111111111111111");
 }
 
@@ -1279,7 +1280,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (clean_up_delegation_errors::id(), "Return InsufficientDelegation instead of InsufficientFunds or InsufficientStake where applicable #31206"),
         (vote_state_add_vote_latency::id(), "replace Lockout with LandedVote (including vote latency) in vote state #31264"),
         (checked_arithmetic_in_fee_validation::id(), "checked arithmetic in fee validation #31273"),
-        (bpf_account_data_direct_mapping::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
+        (stricter_abi_and_runtime_constraints::id(), "use memory regions to map account data into the rbpf vm instead of copying the data"),
         (last_restart_slot_sysvar::id(), "enable new sysvar last_restart_slot"),
         (reduce_stake_warmup_cooldown::id(), "reduce stake warmup cooldown from 25% to 9%"),
         (revise_turbine_epoch_stakes::id(), "revise turbine epoch stakes"),

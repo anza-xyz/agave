@@ -2445,13 +2445,13 @@ fn test_program_sbf_realloc() {
 
     let mint_pubkey = mint_keypair.pubkey();
     let signer = &[&mint_keypair];
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
@@ -3738,7 +3738,7 @@ fn test_program_sbf_inner_instruction_alignment_checks() {
 fn test_cpi_account_ownership_writability() {
     solana_logger::setup();
 
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -3747,8 +3747,8 @@ fn test_cpi_account_ownership_writability() {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
 
         bank.feature_set = Arc::new(feature_set);
@@ -3815,7 +3815,7 @@ fn test_cpi_account_ownership_writability() {
 
                 let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
 
-                if (byte_index as usize) < account_size || direct_mapping {
+                if (byte_index as usize) < account_size || stricter_abi_and_runtime_constraints {
                     assert_eq!(
                         result.unwrap_err().unwrap(),
                         TransactionError::InstructionError(
@@ -3824,7 +3824,7 @@ fn test_cpi_account_ownership_writability() {
                         )
                     );
                 } else {
-                    // without direct mapping, changes to the realloc padding
+                    // without stricter_abi_and_runtime_constraints, changes to the realloc padding
                     // outside the account length are ignored
                     assert!(result.is_ok(), "{result:?}");
                 }
@@ -3832,11 +3832,11 @@ fn test_cpi_account_ownership_writability() {
         }
         // Test that the CPI code that updates `ref_to_len_in_vm` fails if we
         // make it write to an invalid location. This is the first variant which
-        // correctly triggers ExternalAccountDataModified when direct mapping is
-        // disabled. When direct mapping is enabled this tests fails early
+        // correctly triggers ExternalAccountDataModified when stricter_abi_and_runtime_constraints is
+        // disabled. When stricter_abi_and_runtime_constraints is enabled this tests fails early
         // because we move the account data pointer.
         // TEST_FORBID_LEN_UPDATE_AFTER_OWNERSHIP_CHANGE is able to make more
-        // progress when direct mapping is on.
+        // progress when stricter_abi_and_runtime_constraints is on.
         let account = AccountSharedData::new(42, 0, &invoke_program_id);
         bank.store_account(&account_keypair.pubkey(), &account);
         let instruction_data = vec![
@@ -3853,8 +3853,8 @@ fn test_cpi_account_ownership_writability() {
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
         assert_eq!(
             result.unwrap_err().unwrap(),
-            if direct_mapping {
-                // We move the data pointer, direct mapping doesn't allow it
+            if stricter_abi_and_runtime_constraints {
+                // We move the data pointer, stricter_abi_and_runtime_constraints doesn't allow it
                 // anymore so it errors out earlier. See
                 // test_cpi_invalid_account_info_pointers.
                 TransactionError::InstructionError(0, InstructionError::ProgramFailedToComplete)
@@ -3873,7 +3873,7 @@ fn test_cpi_account_ownership_writability() {
 
         for target_account in [1, account_metas.len() as u8 - 1] {
             // Similar to the test above where we try to make CPI write into account
-            // data. This variant is for when direct mapping is enabled.
+            // data. This variant is for when stricter_abi_and_runtime_constraints is enabled.
             let account = AccountSharedData::new(42, 0, &invoke_program_id);
             bank.store_account(&account_keypair.pubkey(), &account);
             let account = AccountSharedData::new(42, 0, &invoke_program_id);
@@ -3892,7 +3892,7 @@ fn test_cpi_account_ownership_writability() {
             let message = Message::new(&[instruction], Some(&mint_pubkey));
             let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
             let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 assert_eq!(
                     result.unwrap_err(),
                     TransactionError::InstructionError(
@@ -3934,7 +3934,7 @@ fn test_cpi_account_ownership_writability() {
 fn test_cpi_account_data_updates() {
     solana_logger::setup();
 
-    for (deprecated_callee, deprecated_caller, direct_mapping) in
+    for (deprecated_callee, deprecated_caller, stricter_abi_and_runtime_constraints) in
         [false, true].into_iter().flat_map(move |z| {
             [false, true]
                 .into_iter()
@@ -3948,8 +3948,8 @@ fn test_cpi_account_data_updates() {
         } = create_genesis_config(100_123_456_789);
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
 
         bank.feature_set = Arc::new(feature_set);
@@ -4019,7 +4019,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping {
+                    if stricter_abi_and_runtime_constraints {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4058,7 +4058,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping {
+                    if stricter_abi_and_runtime_constraints {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -4082,7 +4082,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
-            direct_mapping as u8,
+            stricter_abi_and_runtime_constraints as u8,
         ];
         instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
         let instruction = Instruction::new_with_bytes(
@@ -4101,7 +4101,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping && deprecated_callee {
+                    if stricter_abi_and_runtime_constraints && deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -4124,7 +4124,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            direct_mapping as u8,
+            stricter_abi_and_runtime_constraints as u8,
         ];
         // realloc to "foobazbad" then shrink to "foobazb"
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
@@ -4140,7 +4140,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping {
+                    if stricter_abi_and_runtime_constraints {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4161,7 +4161,7 @@ fn test_cpi_account_data_updates() {
         bank.store_account(&account_keypair.pubkey(), &account);
         let mut instruction_data = vec![
             TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
-            direct_mapping as u8,
+            stricter_abi_and_runtime_constraints as u8,
         ];
         // realloc to "foobazbad" then shrink to "f"
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
@@ -4177,7 +4177,7 @@ fn test_cpi_account_data_updates() {
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping {
+                    if stricter_abi_and_runtime_constraints {
                         InstructionError::ProgramFailedToComplete
                     } else {
                         InstructionError::ModifiedProgramId
@@ -4394,13 +4394,13 @@ fn test_deny_access_beyond_current_length() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank);
@@ -4439,7 +4439,7 @@ fn test_deny_access_beyond_current_length() {
                 account_metas.clone(),
             );
             let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 assert_eq!(
                     result.unwrap_err().unwrap(),
                     TransactionError::InstructionError(0, expected_error)
@@ -4462,13 +4462,13 @@ fn test_deny_executable_write() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank);
@@ -4517,13 +4517,13 @@ fn test_update_callee_account() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
         let mut bank_client = BankClient::new_shared(bank.clone());
@@ -4547,7 +4547,7 @@ fn test_update_callee_account() {
             AccountMeta::new_readonly(invoke_program_id, false),
         ];
 
-        // I. do CPI with account in read only (separate code path with direct mapping)
+        // I. do CPI with account in read only (separate code path with stricter_abi_and_runtime_constraints)
         let mut account = AccountSharedData::new(42, 10240, &invoke_program_id);
         let data: Vec<u8> = (0..10240).map(|n| n as u8).collect();
         account.set_data(data);
@@ -4753,7 +4753,7 @@ fn test_update_callee_account() {
         );
         let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
 
-        if direct_mapping {
+        if stricter_abi_and_runtime_constraints {
             // changing the data pointer is not permitted
             assert!(result.is_err());
         } else {
@@ -4801,13 +4801,13 @@ fn test_account_info_in_account() {
     }
 
     for program in programs {
-        for direct_mapping in [false, true] {
+        for stricter_abi_and_runtime_constraints in [false, true] {
             let mut bank = Bank::new_for_tests(&genesis_config);
             let feature_set = Arc::make_mut(&mut bank.feature_set);
             // by default test banks have all features enabled, so we only need to
             // disable when needed
-            if !direct_mapping {
-                feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+            if !stricter_abi_and_runtime_constraints {
+                feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
             }
 
             let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4843,7 +4843,7 @@ fn test_account_info_in_account() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-            if direct_mapping {
+            if stricter_abi_and_runtime_constraints {
                 assert!(result.is_err());
             } else {
                 assert!(result.is_ok());
@@ -4862,13 +4862,13 @@ fn test_account_info_rc_in_account() {
         ..
     } = create_genesis_config(100_123_456_789);
 
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let mut bank = Bank::new_for_tests(&genesis_config);
         let feature_set = Arc::make_mut(&mut bank.feature_set);
         // by default test banks have all features enabled, so we only need to
         // disable when needed
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
 
         let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
@@ -4909,7 +4909,7 @@ fn test_account_info_rc_in_account() {
         let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
         let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
-        if direct_mapping {
+        if stricter_abi_and_runtime_constraints {
             assert!(
                 logs.last().unwrap().ends_with(" failed: Invalid pointer"),
                 "{logs:?}"
@@ -4932,7 +4932,7 @@ fn test_account_info_rc_in_account() {
         let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
         let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
 
-        if direct_mapping {
+        if stricter_abi_and_runtime_constraints {
             assert!(
                 logs.last().unwrap().ends_with(" failed: Invalid pointer"),
                 "{logs:?}"
@@ -4958,7 +4958,7 @@ fn test_clone_account_data() {
     let mut bank = Bank::new_for_tests(&genesis_config);
     let feature_set = Arc::make_mut(&mut bank.feature_set);
 
-    feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+    feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
 
     let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
     let mut bank_client = BankClient::new_shared(bank.clone());
@@ -5291,7 +5291,7 @@ fn test_function_call_args() {
 fn test_mem_syscalls_overlap_account_begin_or_end() {
     solana_logger::setup();
 
-    for direct_mapping in [false, true] {
+    for stricter_abi_and_runtime_constraints in [false, true] {
         let GenesisConfigInfo {
             genesis_config,
             mint_keypair,
@@ -5300,8 +5300,8 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
 
         let mut bank = Bank::new_for_tests(&genesis_config);
         let mut feature_set = FeatureSet::all_enabled();
-        if !direct_mapping {
-            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        if !stricter_abi_and_runtime_constraints {
+            feature_set.deactivate(&feature_set::stricter_abi_and_runtime_constraints::id());
         }
 
         let account_keypair = Keypair::new();
@@ -5344,7 +5344,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
-                println!("Testing deprecated:{deprecated} direct_mapping:{direct_mapping} instruction:{instr}");
+                println!("Testing deprecated:{deprecated} stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} instruction:{instr}");
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr], account_metas.clone());
 
@@ -5353,7 +5353,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
                 let last_line = logs.last().unwrap();
 
-                if direct_mapping {
+                if stricter_abi_and_runtime_constraints {
                     assert!(last_line.contains(" failed: Access violation"), "{logs:?}");
                 } else {
                     assert!(result.is_ok(), "{logs:?}");
@@ -5364,7 +5364,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
             bank.store_account(&account_keypair.pubkey(), &account);
 
             for instr in 0..=15 {
-                println!("Testing deprecated:{deprecated} direct_mapping:{direct_mapping} instruction:{instr} zero-length account");
+                println!("Testing deprecated:{deprecated} stricter_abi_and_runtime_constraints:{stricter_abi_and_runtime_constraints} instruction:{instr} zero-length account");
                 let instruction =
                     Instruction::new_with_bytes(program_id, &[instr, 0], account_metas.clone());
 
@@ -5373,7 +5373,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
                 let last_line = logs.last().unwrap();
 
-                if direct_mapping && (!deprecated || instr < 8) {
+                if stricter_abi_and_runtime_constraints && (!deprecated || instr < 8) {
                     assert!(
                         last_line.contains(" failed: account data too small")
                             || last_line.contains(" failed: Failed to reallocate account data")
@@ -5381,7 +5381,7 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                         "{logs:?}",
                     );
                 } else {
-                    // direct_mapping && deprecated && instr >= 8 succeeds with zero-length accounts
+                    // stricter_abi_and_runtime_constraints && deprecated && instr >= 8 succeeds with zero-length accounts
                     // because there is no MemoryRegion for the account,
                     // so there can be no error when leaving that non-existent region.
                     assert!(result.is_ok(), "{logs:?}");

@@ -224,9 +224,9 @@ fn bench_create_vm(bencher: &mut Bencher) {
     const BUDGET: u64 = 200_000;
     invoke_context.mock_set_remaining(BUDGET);
 
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
     let raise_cpi_nesting_limit_to_8 = invoke_context
         .get_feature_set()
         .raise_cpi_nesting_limit_to_8;
@@ -249,7 +249,7 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        direct_mapping,
+        stricter_abi_and_runtime_constraints,
         true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
@@ -273,9 +273,9 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
     const BUDGET: u64 = 200_000;
     invoke_context.mock_set_remaining(BUDGET);
 
-    let direct_mapping = invoke_context
+    let stricter_abi_and_runtime_constraints = invoke_context
         .get_feature_set()
-        .bpf_account_data_direct_mapping;
+        .stricter_abi_and_runtime_constraints;
 
     // Serialize account data
     let (_serialized, regions, account_lengths) = serialize_parameters(
@@ -284,7 +284,7 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        direct_mapping,
+        stricter_abi_and_runtime_constraints,
         true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();

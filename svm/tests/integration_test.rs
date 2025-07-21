@@ -497,7 +497,7 @@ impl SvmTestEntry {
     }
 }
 
-// NOTE `1ncomp1ete111111111111111111111111111111111` corresponds to `bpf_account_data_direct_mapping::id()`
+// NOTE `1ncomp1ete111111111111111111111111111111111` corresponds to `stricter_abi_and_runtime_constraints::id()`
 // by hardcoding the string, we ensure when the feature is finished, it will automatically be tested
 impl Default for SvmTestEntry {
     fn default() -> Self {

@@ -535,7 +535,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        false, // direct_mapping
+        false, // stricter_abi_and_runtime_constraints
         true,  // for mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();

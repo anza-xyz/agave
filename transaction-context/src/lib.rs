@@ -31,7 +31,7 @@ static_assertions::const_assert_eq!(
 #[cfg(not(target_os = "solana"))]
 const MAX_PERMITTED_ACCOUNTS_DATA_ALLOCATIONS_PER_TRANSACTION: i64 =
     MAX_PERMITTED_DATA_LENGTH as i64 * 2;
-// Note: With direct mapping programs can grow accounts faster than they intend to,
+// Note: With stricter_abi_and_runtime_constraints programs can grow accounts faster than they intend to,
 // because the AccessViolationHandler might grow an account up to
 // MAX_PERMITTED_DATA_LENGTH at once.
 #[cfg(test)]
