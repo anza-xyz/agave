@@ -108,96 +108,39 @@ mod tests {
         );
     }
 
+    #[test_case("none", BlockstoreCompressionType::None)]
+    #[test_case("snappy", BlockstoreCompressionType::Snappy)]
+    #[test_case("lz4", BlockstoreCompressionType::Lz4)]
+    #[test_case("zlib", BlockstoreCompressionType::Zlib)]
+    fn verify_args_struct_by_command_run_with_rocksdb_ledger_compression(
+        arg_value: &str,
+        expected_compression: BlockstoreCompressionType,
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            blockstore_options: BlockstoreOptions {
+                column_options: LedgerColumnOptions {
+                    compression_type: expected_compression,
+                    ..default_run_args.blockstore_options.column_options.clone()
+                },
+                ..default_run_args.blockstore_options.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--rocksdb-ledger-compression", arg_value],
+            expected_args,
+        );
+    }
+
     #[test]
-    fn verify_args_struct_by_command_run_with_rocksdb_ledger_compression() {
-        // none
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    column_options: LedgerColumnOptions {
-                        compression_type: BlockstoreCompressionType::None,
-                        ..default_run_args.blockstore_options.column_options.clone()
-                    },
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-ledger-compression", "none"],
-                expected_args,
-            );
-        }
-
-        // snappy
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    column_options: LedgerColumnOptions {
-                        compression_type: BlockstoreCompressionType::Snappy,
-                        ..default_run_args.blockstore_options.column_options.clone()
-                    },
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-ledger-compression", "snappy"],
-                expected_args,
-            );
-        }
-
-        // lz4
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    column_options: LedgerColumnOptions {
-                        compression_type: BlockstoreCompressionType::Lz4,
-                        ..default_run_args.blockstore_options.column_options.clone()
-                    },
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-ledger-compression", "lz4"],
-                expected_args,
-            );
-        }
-
-        // zlib
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                blockstore_options: BlockstoreOptions {
-                    column_options: LedgerColumnOptions {
-                        compression_type: BlockstoreCompressionType::Zlib,
-                        ..default_run_args.blockstore_options.column_options.clone()
-                    },
-                    ..default_run_args.blockstore_options.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-ledger-compression", "zlib"],
-                expected_args,
-            );
-        }
-
-        // invalid
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            verify_args_struct_by_command_run_is_error_with_identity_setup(
-                default_run_args,
-                vec!["--rocksdb-ledger-compression", "invalid"],
-            );
-        }
+    fn verify_args_struct_by_command_run_with_rocksdb_ledger_compression_invalid() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            default_run_args,
+            vec!["--rocksdb-ledger-compression", "invalid"],
+        );
     }
 
     #[test]
