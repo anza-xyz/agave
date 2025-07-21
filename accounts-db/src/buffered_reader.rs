@@ -7,7 +7,7 @@
 //!   data size,
 //!  * optionally extend the obtained buffer to full account data using
 //!    `fill_buf_required(account_all_bytes_len)`
-//!  * `consume(account_all_bytes_len)` to move to the next account,
+//!  * `consume(account_all_bytes_len)` to move to the next account
 //!
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
 //! can be used, which supports dynamically allocated buffer for preparing contiguous data slices.
@@ -323,7 +323,7 @@ impl<R: FileBufRead> FileBufRead for BufReaderWithOverflow<R> {
     }
 }
 
-/// Support large `required_len` (without configured limits) by using overflow buffer
+/// Support large `required_len` (within configured limits) by using overflow buffer
 /// retained during lifetime of the reader.
 impl<R: BufRead> RequiredLenBufRead for BufReaderWithOverflow<R> {
     fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]> {
@@ -338,7 +338,7 @@ impl<R: BufRead> RequiredLenBufRead for BufReaderWithOverflow<R> {
         }
         assert!(
             available_len <= required_len,
-            "fill_buf_required should not decrease the required_len"
+            "fill_buf_required should keep or grow required_len until consume"
         );
         if required_len > self.overflow_buf.capacity() {
             let target_capacity = required_len
