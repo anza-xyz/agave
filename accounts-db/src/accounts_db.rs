@@ -975,13 +975,6 @@ impl ReadableAccount for LoadedAccount<'_> {
     }
 }
 
-#[derive(Debug)]
-pub enum AccountsHashVerificationError {
-    MissingAccountsHash,
-    MismatchedAccountsHash,
-    MismatchedTotalLamports(u64, u64),
-}
-
 #[derive(Default)]
 struct CleanKeyTimings {
     collect_delta_keys_us: u64,
