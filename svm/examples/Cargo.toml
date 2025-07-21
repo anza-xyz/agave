@@ -56,7 +56,7 @@ solana-signer = "2.2.1"
 solana-svm = { path = "../" }
 solana-svm-callback = { path = "../../svm-callback" }
 solana-svm-feature-set = { path = "../../svm-feature-set" }
-solana-system-interface = "1.0"
+solana-system-interface = { version = "1.0", git = "https://github.com/rustopian/system.git", branch = "create-account-prefunded", features = ["bincode"] }
 solana-system-program = { path = "../../programs/system" }
 solana-sysvar = "2.2.1"
 solana-sysvar-id = "2.2.1"
@@ -80,3 +80,4 @@ yaml-rust = "0.4"
 crossbeam-epoch = { git = "https://github.com/anza-xyz/crossbeam", rev = "fd279d707025f0e60951e429bf778b4813d1b6bf" }
 solana-curve25519 = { path = "../../curves/curve25519" }
 solana-zk-sdk = { path = "../../zk-sdk" }
+solana-system-interface = { version = "1.0", git = "https://github.com/rustopian/system.git", branch = "create-account-prefunded", features = ["bincode"] }
