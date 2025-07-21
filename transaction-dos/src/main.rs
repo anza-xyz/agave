@@ -622,7 +622,7 @@ fn main() {
             None,                    // num_nodes
             Duration::from_secs(60), // timeout
             None,                    // find_node_by_pubkey
-            &[entrypoint_addr],  // find_node_by_gossip_addr
+            &[entrypoint_addr],      // find_node_by_gossip_addr
             None,                    // my_gossip_addr
             shred_version.unwrap(),  // my_shred_version
             SocketAddrSpace::Unspecified,

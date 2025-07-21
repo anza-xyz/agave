@@ -189,10 +189,7 @@ pub fn discover(
     Vec<ContactInfo>, // all gossip peers
     Vec<ContactInfo>, // tvu peers (validators)
 )> {
-    let entrypoints = &entrypoint
-        .into_iter()
-        .copied()
-        .collect::<Vec<SocketAddr>>();
+    let entrypoints = &entrypoint.into_iter().copied().collect::<Vec<SocketAddr>>();
 
     let find_nodes_by_gossip_addr = &find_node_by_gossip_addr
         .into_iter()
@@ -403,10 +400,7 @@ pub fn make_gossip_node(
     should_check_duplicate_instance: bool,
     socket_addr_space: SocketAddrSpace,
 ) -> (GossipService, Option<TcpListener>, Arc<ClusterInfo>) {
-    let entrypoints = &entrypoint
-        .into_iter()
-        .copied()
-        .collect::<Vec<SocketAddr>>();
+    let entrypoints = &entrypoint.into_iter().copied().collect::<Vec<SocketAddr>>();
 
     make_node(
         keypair,
@@ -509,8 +503,7 @@ mod tests {
 
         let spy_ref = Arc::new(cluster_info);
 
-        let (met_criteria, elapsed, _, tvu_peers) =
-            spy(spy_ref.clone(), None, TIMEOUT, None, &[]);
+        let (met_criteria, elapsed, _, tvu_peers) = spy(spy_ref.clone(), None, TIMEOUT, None, &[]);
         assert!(!met_criteria);
         assert!((TIMEOUT..TIMEOUT + Duration::from_secs(1)).contains(&elapsed));
         assert_eq!(tvu_peers, spy_ref.tvu_peers(ContactInfo::clone));
@@ -534,11 +527,9 @@ mod tests {
         assert!(!met_criteria);
 
         // Find num_nodes *and* specific node by pubkey
-        let (met_criteria, _, _, _) =
-            spy(spy_ref.clone(), Some(1), TIMEOUT, Some(&[peer0]), &[]);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(1), TIMEOUT, Some(&[peer0]), &[]);
         assert!(met_criteria);
-        let (met_criteria, _, _, _) =
-            spy(spy_ref.clone(), Some(3), TIMEOUT, Some(&[peer0]), &[]);
+        let (met_criteria, _, _, _) = spy(spy_ref.clone(), Some(3), TIMEOUT, Some(&[peer0]), &[]);
         assert!(!met_criteria);
         let (met_criteria, _, _, _) = spy(
             spy_ref.clone(),
