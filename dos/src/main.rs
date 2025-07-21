@@ -783,7 +783,7 @@ fn main() {
             None,                              // num_nodes
             Duration::from_secs(60),           // timeout
             None,                              // find_nodes_by_pubkey
-            &vec![cmd_params.entrypoint_addr], // find_node_by_gossip_addr
+            &[cmd_params.entrypoint_addr], // find_node_by_gossip_addr
             None,                              // my_gossip_addr
             cmd_params.shred_version.unwrap(), // my_shred_version
             socket_addr_space,

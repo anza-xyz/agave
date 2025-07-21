@@ -183,7 +183,7 @@ fn parse_matches() -> ArgMatches<'static> {
 ///     1. gossip-host
 /// 1. connect to entrypoints to determine my public IP address
 /// 1. default to localhost
-fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &Vec<SocketAddr>) -> IpAddr {
+fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> IpAddr {
     if let Some(bind_address) = matches.value_of("bind_address") {
         solana_net_utils::parse_host(bind_address).unwrap_or_else(|e| {
             eprintln!("failed to parse bind-address: {e}");
@@ -203,7 +203,7 @@ fn parse_bind_address(matches: &ArgMatches, entrypoint_addrs: &Vec<SocketAddr>) 
 }
 
 /// Find my public IP address by attempting connections to entrypoints until one succeeds.
-fn get_bind_address_from_entrypoints(entrypoint_addrs: &Vec<SocketAddr>) -> Option<IpAddr> {
+fn get_bind_address_from_entrypoints(entrypoint_addrs: &[SocketAddr]) -> Option<IpAddr> {
     entrypoint_addrs.iter().find_map(|entrypoint_addr| {
         solana_net_utils::get_public_ip_addr_with_binding(
             entrypoint_addr,
@@ -250,7 +250,7 @@ fn process_spy_results(
 }
 
 /// Check entrypoints until one returns a valid non-zero shred version
-fn get_entrypoint_shred_version(entrypoint_addrs: &Vec<SocketAddr>) -> Option<u16> {
+fn get_entrypoint_shred_version(entrypoint_addrs: &[SocketAddr]) -> Option<u16> {
     entrypoint_addrs.iter().find_map(|entrypoint_addr| {
         match solana_net_utils::get_cluster_shred_version(entrypoint_addr) {
             Err(err) => {
@@ -298,7 +298,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
         num_nodes,
         discover_timeout,
         pubkeys.as_deref(), // find_nodes_by_pubkey
-        &vec![],            // find_node_by_gossip_addr
+        &[],            // find_node_by_gossip_addr
         Some(&gossip_addr), // my_gossip_addr
         shred_version,
         socket_addr_space,
@@ -382,8 +382,8 @@ fn process_rpc_url(
     Ok(())
 }
 
-fn get_gossip_address(matches: &ArgMatches, entrypoint_addrs: &Vec<SocketAddr>) -> SocketAddr {
-    let bind_address = parse_bind_address(matches, &entrypoint_addrs);
+fn get_gossip_address(matches: &ArgMatches, entrypoint_addrs: &[SocketAddr]) -> SocketAddr {
+    let bind_address = parse_bind_address(matches, entrypoint_addrs);
     SocketAddr::new(
         bind_address,
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {

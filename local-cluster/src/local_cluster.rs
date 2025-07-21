@@ -423,7 +423,7 @@ impl LocalCluster {
             Some(config.node_stakes.len() + config.num_listeners as usize),
             Duration::from_secs(120),
             None,
-            &vec![],
+            &[],
             None,
             leader_contact_info.shred_version(),
             socket_addr_space,
