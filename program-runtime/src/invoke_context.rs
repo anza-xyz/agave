@@ -326,13 +326,14 @@ impl<'a> InvokeContext<'a> {
         instruction: &Instruction,
         signers: &[Pubkey],
     ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
-        // Finds the index of each account in the instruction by its pubkey.
-        // Then normalizes / unifies the privileges of duplicate accounts.
-        // Note: This is an O(n^2) algorithm,
-        // but performed on a very small slice and requires no heap allocations.
+        // We reference accounts by an u8 index, so we have a total of 256 accounts.
+        // This algorithm allocates the array on the stack for speed.
+        // On AArch64 in release mode, this function only consumes 912 bytes of stack.
+        let mut transaction_callee_map: [Option<u8>; 256] = [None; 256];
+        let mut instruction_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(instruction.accounts.len());
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-        let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len());
+
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
                 .transaction_context
@@ -345,21 +346,24 @@ impl<'a> InvokeContext<'a> {
                     );
                     InstructionError::MissingAccount
                 })?;
-            if let Some(duplicate_index) =
-                deduplicated_instruction_accounts
-                    .iter()
-                    .position(|instruction_account| {
-                        instruction_account.index_in_transaction == index_in_transaction
-                    })
-            {
-                duplicate_indicies.push(duplicate_index);
-                let instruction_account = deduplicated_instruction_accounts
-                    .get_mut(duplicate_index)
-                    .ok_or(InstructionError::NotEnoughAccountKeys)?;
-                instruction_account
-                    .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
-                instruction_account
-                    .set_is_writable(instruction_account.is_writable() || account_meta.is_writable);
+
+            let index_in_callee = transaction_callee_map
+                .get_mut(index_in_transaction as usize)
+                .ok_or(InstructionError::MissingAccount)?;
+
+            if let Some(index_in_callee) = index_in_callee {
+                let cloned_account = {
+                    let instruction_account = instruction_accounts
+                        .get_mut(*index_in_callee as usize)
+                        .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                    instruction_account
+                        .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
+                    instruction_account.set_is_writable(
+                        instruction_account.is_writable() || account_meta.is_writable,
+                    );
+                    instruction_account.clone()
+                };
+                instruction_accounts.push(cloned_account);
             } else {
                 let index_in_caller = instruction_context
                     .find_index_of_instruction_account(
@@ -374,8 +378,8 @@ impl<'a> InvokeContext<'a> {
                         );
                         InstructionError::MissingAccount
                     })?;
-                duplicate_indicies.push(deduplicated_instruction_accounts.len());
-                deduplicated_instruction_accounts.push(InstructionAccount::new(
+                *index_in_callee = Some(instruction_accounts.len() as u8);
+                instruction_accounts.push(InstructionAccount::new(
                     index_in_transaction,
                     index_in_caller,
                     instruction_account_index as IndexOfAccount,
@@ -384,7 +388,28 @@ impl<'a> InvokeContext<'a> {
                 ));
             }
         }
-        for instruction_account in deduplicated_instruction_accounts.iter() {
+
+        for current_index in 0..instruction_accounts.len() {
+            let instruction_account = instruction_accounts.get(current_index).unwrap();
+
+            if current_index != instruction_account.index_in_callee as usize {
+                let (is_signer, is_writable) = {
+                    let reference_account = instruction_accounts
+                        .get(instruction_account.index_in_callee as usize)
+                        .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                    (
+                        reference_account.is_signer(),
+                        reference_account.is_writable(),
+                    )
+                };
+
+                let current_account = instruction_accounts.get_mut(current_index).unwrap();
+                current_account.set_is_signer(current_account.is_signer() || is_signer);
+                current_account.set_is_writable(current_account.is_writable() || is_writable);
+                // This account is repeated, so there is no need to check for permissions
+                continue;
+            }
+
             let borrowed_account = instruction_context.try_borrow_instruction_account(
                 self.transaction_context,
                 instruction_account.index_in_caller,
@@ -413,15 +438,6 @@ impl<'a> InvokeContext<'a> {
                 return Err(InstructionError::PrivilegeEscalation);
             }
         }
-        let instruction_accounts = duplicate_indicies
-            .into_iter()
-            .map(|duplicate_index| {
-                deduplicated_instruction_accounts
-                    .get(duplicate_index)
-                    .cloned()
-                    .ok_or(InstructionError::NotEnoughAccountKeys)
-            })
-            .collect::<Result<Vec<InstructionAccount>, InstructionError>>()?;
 
         // Find and validate executables / program accounts
         let callee_program_id = instruction.program_id;
