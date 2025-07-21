@@ -100,6 +100,15 @@ mod tests {
     }
 
     #[test]
+    fn verify_args_struct_by_command_run_with_wal_recovery_mode_invalid() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        verify_args_struct_by_command_run_is_error_with_identity_setup(
+            default_run_args,
+            vec!["--wal-recovery-mode", "invalid"],
+        );
+    }
+
+    #[test]
     fn verify_args_struct_by_command_run_with_rocksdb_ledger_compression() {
         // none
         {
