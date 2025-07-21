@@ -153,7 +153,7 @@ const EXIT_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Max number of slots we can be ahead of the root bank
 /// before triggering safety latching
-const MAX_TOWER_HEIGHT: Slot = 8;
+const MAX_TOWER_HEIGHT: Slot = 32 + 8;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Command {
@@ -233,7 +233,7 @@ impl MockAlpenglowConsensus {
     /// prepare to receive votes for the slot indicated
     /// This should be called in advance
     /// in case we are really late getting shreds
-    fn prepare_to_receive(&mut self, slot: Slot) {
+    fn prepare_to_receive(&mut self, slot: Slot) -> Result<(), Slot> {
         trace!(
             "{}: preparing to receive for slot {slot}",
             self.cluster_info.id()
@@ -244,8 +244,7 @@ impl MockAlpenglowConsensus {
             .lock()
             .unwrap();
         if state.current_slot != 0 {
-            datapoint_info!("mock_alpenglow", ("report_failed", 1, i64),);
-            state.reset();
+            return Err(state.current_slot);
         }
         state.current_slot = slot;
         state.current_slot_start = Instant::now();
@@ -271,6 +270,7 @@ impl MockAlpenglowConsensus {
             "Prepared for slot {slot}, total stake is {}",
             state.total_staked
         );
+        Ok(())
     }
 
     /// Collects votes and changes states
@@ -492,6 +492,10 @@ impl MockAlpenglowConsensus {
             let mut send_instructions = Vec::with_capacity(2000);
             {
                 let mut state = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
+                // check if our task was aborted, avoid sending if it was.
+                if state.current_slot != slot {
+                    return;
+                }
 
                 for (peer, info) in state.peers.iter() {
                     send_instructions.push((&packet_buf[0..packet_size], info.address));
@@ -506,21 +510,99 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    fn report_collected_votes(&self, slot: Slot) {
-        trace!("Reporting statistics for slot {}", slot);
-        // avoid holding locks while reporting metrics
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, bank: &Bank) {
+        let Some(config) = get_test_config_from_account(bank) else {
+            debug!("Alpenglow votes disabled by on-chain config");
+            return;
+        };
+        // copy basic parameters from the config
+        self.packet_size
+            .store(config.packet_size, Ordering::Relaxed);
+        self.verify_signatures
+            .store(config.verify_signatures, Ordering::Relaxed);
+        let interval = config.test_interval_slots as u64;
+
+        // ensure we do not start process to early
+        if slot < self.highest_slot || slot < 3 {
+            trace!(
+                "Skipping AG logic for slot {slot}, current highest slot is {}",
+                self.highest_slot
+            );
+            return;
+        }
+
+        // If we fall too far behind and can not root banks, engage safety latch to stop the test
+        if interval > 0 && bank.slot() < slot - MAX_TOWER_HEIGHT {
+            error!(
+                "root bank is too far behind ({} vs {slot}). safety latch triggered, test is disabled",
+                self.highest_slot
+            );
+            self.safety_latch_engaged = true;
+            self.lockdown();
+            datapoint_info!("mock_alpenglow", ("forking_backoff", 1, i64),);
+            return;
+        }
+        self.highest_slot = slot;
+
+        // each test takes 3 slots to complete:
+        // 1. prep
+        // 2. initiate voting notarize
+        // 3. closing vote window and reporting stats.
+        //
+        // If we are set to vote every slot, we will be running at most 3
+        // concurrent processes at once to ensure we are voting every slot.
+        // Generally we'd be trigering some phase of the test for a slot
+        // that divides by interval.
+
+        match interval {
+            0 => {
+                // If test is explicitly disabled, deactivate the safety latch
+                // and do nothing else
+                self.safety_latch_engaged = false;
+            }
+            n => {
+                if slot % interval == 0 {
+                    // prep to receive next slot's votes
+                    match self.prepare_to_receive(slot + 1) {
+                        Ok(_) => {
+                            std::thread::spawn({
+                                let command_sender = self.command_sender.clone();
+                                let state = self.state.clone();
+                                move || Self::runner(slot, command_sender, state)
+                            });
+                        }
+                        Err(slot) => {
+                            error!("Can not initiate mock voting, all slots are busy");
+                            datapoint_info!("mock_alpenglow", ("runner_stuck", 1, i64),);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Runs one test for 3 slots
+    fn runner(slot: Slot, command_sender: Sender<Command>, state: Arc<[Mutex<SharedState>; 3]>) {
+        std::thread::sleep(Duration::from_millis(400));
+        trace!("Starting voting in slot {slot}");
+        command_sender.send(Command::SendNotarize(slot));
+        // collect stuff from previous slot
+        std::thread::sleep(Duration::from_millis(400));
         let (peers, total_staked) = {
-            let mut lockguard = get_state_for_slot(self.state.as_slice(), slot)
-                .lock()
-                .unwrap();
+            let mut lockguard = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
+            // check if tasks have been aborted and do not report garbage
             if lockguard.current_slot == 0 {
-                // no point collecting stats when there is nothing there
                 return;
             }
             let total_staked = lockguard.total_staked;
             let peers = lockguard.reset();
             (peers, total_staked)
         };
+        Self::report_collected_votes(peers, total_staked, slot);
+    }
+
+    fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake, slot: Slot) {
+        trace!("Reporting statistics for slot {}", slot);
 
         let mut total_voted_stake: [Stake; 4] = [0; 4];
         let mut total_voted_nodes: [usize; 4] = [0; 4];
@@ -593,80 +675,6 @@ impl MockAlpenglowConsensus {
                 f64
             ),
         );
-    }
-
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot, bank: &Bank) {
-        let Some(config) = get_test_config_from_account(bank) else {
-            debug!("Alpenglow votes disabled by on-chain config");
-            return;
-        };
-        // copy basic parameters from the config
-        self.packet_size
-            .store(config.packet_size, Ordering::Relaxed);
-        self.verify_signatures
-            .store(config.verify_signatures, Ordering::Relaxed);
-        let interval = config.test_interval_slots as u64;
-
-        // ensure we do not start process to early
-        if slot < self.highest_slot || slot < 3 {
-            trace!(
-                "Skipping AG logic for slot {slot}, current highest slot is {}",
-                self.highest_slot
-            );
-            return;
-        }
-
-        // If we fall too far behind and can not root banks, engage safety latch to stop the test
-        if interval > 0 && bank.slot() < slot - MAX_TOWER_HEIGHT {
-            error!(
-                "root bank is too far behind ({} vs {slot}). safety latch triggered, test is disabled",
-                self.highest_slot
-            );
-            self.safety_latch_engaged = true;
-            self.lockdown();
-            datapoint_info!("mock_alpenglow", ("forking_backoff", 1, i64),);
-            return;
-        }
-        self.highest_slot = slot;
-
-        // each test takes 3 slots to complete:
-        // 1. prep
-        // 2. initiate voting notarize
-        // 3. closing vote window and reporting stats.
-        //
-        // If we are set to vote every slot, we will be running at most 3
-        // concurrent processes at once to ensure we are voting every slot.
-        // Generally we'd be trigering some phase of the test for a slot
-        // that divides by interval.
-
-        match interval {
-            0 => {
-                // If test is explicitly disabled, deactivate the safety latch
-                self.safety_latch_engaged = false;
-                return;
-            }
-            n => {
-                // prep to receive next slot's votes
-                if (slot + 1) % interval == 0 {
-                    self.prepare_to_receive(slot + 1);
-                }
-                if slot % interval == 0 {
-                    trace!("Starting voting in slot {slot}");
-                    self.command_sender.send(Command::SendNotarize(slot));
-                }
-                if (slot - 1) % interval == 0 {
-                    // collect stuff from previous slot
-                    self.report_collected_votes(slot - 1);
-                }
-                // in case of large intervals, prevent us from replying
-                // to stray packets by locking down replies
-                // even if we have missed slot where we should have reported
-                if (slot + 1) - ((slot + 1) / interval) * interval >= 3 {
-                    datapoint_info!("mock_alpenglow", ("report_failed", 1, i64));
-                    self.lockdown();
-                }
-            }
-        }
     }
 
     pub(crate) fn join(self) -> thread::Result<()> {

@@ -1534,7 +1534,6 @@ impl Validator {
                 replay_transactions_threads: config.replay_transactions_threads,
                 shred_sigverify_threads: config.tvu_shred_sigverify_threads,
                 xdp_sender: xdp_sender.clone(),
-                enable_all2all_tests,
             },
             &max_slots,
             block_metadata_notifier,

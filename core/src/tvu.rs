@@ -101,7 +101,6 @@ pub struct TvuConfig {
     pub replay_transactions_threads: NonZeroUsize,
     pub shred_sigverify_threads: NonZeroUsize,
     pub xdp_sender: Option<XdpSender>,
-    pub(crate) enable_all2all_tests: bool,
 }
 
 impl Default for TvuConfig {
@@ -116,7 +115,6 @@ impl Default for TvuConfig {
             replay_transactions_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             shred_sigverify_threads: NonZeroUsize::new(1).expect("1 is non-zero"),
             xdp_sender: None,
-            enable_all2all_tests: false,
         }
     }
 }
@@ -187,13 +185,6 @@ impl Tvu {
         } = sockets;
 
         let (fetch_sender, fetch_receiver) = EvictingSender::new_bounded(SHRED_FETCH_CHANNEL_SIZE);
-<<<<<<< HEAD
-        // disable all2all if not enabled
-        if !tvu_config.enable_all2all_tests {
-            alpenglow_socket = None;
-        }
-=======
->>>>>>> 86b7ac779e (address code review feedback from Brennan and Wen)
 
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
