@@ -13,14 +13,12 @@ use {
         },
         storable_accounts::AccountForStorage,
     },
-    assert_matches::assert_matches,
     itertools::Itertools,
     rand::{prelude::SliceRandom, thread_rng, Rng},
     solana_account::{
         accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
         WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
-    solana_hash::HASH_BYTES,
     solana_pubkey::PUBKEY_BYTES,
     std::{
         hash::DefaultHasher,
@@ -2141,52 +2139,6 @@ impl CalcAccountsHashConfig<'_> {
 }
 
 #[test]
-fn test_verify_accounts_hash() {
-    solana_logger::setup();
-    let db = AccountsDb::new_single_for_tests();
-
-    let key = solana_pubkey::new_rand();
-    let some_data_len = 0;
-    let some_slot: Slot = 0;
-    let account = AccountSharedData::new(1, some_data_len, &key);
-    let ancestors = vec![(some_slot, 0)].into_iter().collect();
-    let epoch_schedule = EpochSchedule::default();
-    let epoch = Epoch::default();
-
-    db.store_for_tests(some_slot, &[(&key, &account)]);
-    db.add_root_and_flush_write_cache(some_slot);
-    let (_, capitalization) = db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
-
-    let config =
-        VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
-
-    assert_matches!(
-        db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config.clone()),
-        Ok(_)
-    );
-
-    db.accounts_hashes.lock().unwrap().remove(&some_slot);
-
-    assert_matches!(
-        db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config.clone()),
-        Err(AccountsHashVerificationError::MissingAccountsHash)
-    );
-
-    db.set_accounts_hash(
-        some_slot,
-        (
-            AccountsHash(Hash::new_from_array([0xca; HASH_BYTES])),
-            capitalization,
-        ),
-    );
-
-    assert_matches!(
-        db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config),
-        Err(AccountsHashVerificationError::MismatchedAccountsHash)
-    );
-}
-
-#[test]
 fn test_verify_bank_capitalization() {
     for pass in 0..2 {
         solana_logger::setup();
@@ -2197,19 +2149,15 @@ fn test_verify_bank_capitalization() {
         let some_slot: Slot = 0;
         let account = AccountSharedData::new(1, some_data_len, &key);
         let ancestors = vec![(some_slot, 0)].into_iter().collect();
-        let epoch_schedule = EpochSchedule::default();
-        let epoch = Epoch::default();
-        let config =
-            VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
 
         db.store_for_tests(some_slot, &[(&key, &account)]);
         if pass == 0 {
             db.add_root_and_flush_write_cache(some_slot);
             db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
 
-            assert_matches!(
-                db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config.clone()),
-                Ok(_)
+            assert_eq!(
+                db.calculate_capitalization_at_startup_from_index(&ancestors, some_slot),
+                1
             );
             continue;
         }
@@ -2225,69 +2173,12 @@ fn test_verify_bank_capitalization() {
         db.add_root_and_flush_write_cache(some_slot);
         db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
 
-        assert_matches!(
-            db.verify_accounts_hash_and_lamports_for_tests(some_slot, 2, config.clone()),
-            Ok(_)
-        );
-
-        assert_matches!(
-            db.verify_accounts_hash_and_lamports_for_tests(some_slot, 10, config),
-            Err(AccountsHashVerificationError::MismatchedTotalLamports(expected, actual)) if expected == 2 && actual == 10
+        assert_eq!(
+            db.calculate_capitalization_at_startup_from_index(&ancestors, some_slot),
+            2
         );
     }
 }
-
-#[test]
-fn test_verify_accounts_hash_no_account() {
-    solana_logger::setup();
-    let db = AccountsDb::new_single_for_tests();
-
-    let some_slot: Slot = 0;
-    let ancestors = vec![(some_slot, 0)].into_iter().collect();
-
-    db.add_root(some_slot);
-    db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
-
-    let epoch_schedule = EpochSchedule::default();
-    let epoch = Epoch::default();
-    let config =
-        VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
-
-    assert_matches!(
-        db.verify_accounts_hash_and_lamports_for_tests(some_slot, 0, config),
-        Ok(_)
-    );
-}
-
-#[test]
-fn test_verify_accounts_hash_bad_account_hash() {
-    solana_logger::setup();
-    let db = AccountsDb::new_single_for_tests();
-
-    let key = Pubkey::default();
-    let some_data_len = 0;
-    let some_slot: Slot = 0;
-    let account = AccountSharedData::new(1, some_data_len, &key);
-    let ancestors = vec![(some_slot, 0)].into_iter().collect();
-
-    let accounts = &[(&key, &account)][..];
-    db.update_accounts_hash_for_tests(some_slot, &ancestors, false, false);
-
-    // provide bogus account hashes
-    db.store_cached((some_slot, accounts));
-    db.add_root_and_flush_write_cache(some_slot);
-
-    let epoch_schedule = EpochSchedule::default();
-    let epoch = Epoch::default();
-    let config =
-        VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
-
-    assert_matches!(
-        db.verify_accounts_hash_and_lamports_for_tests(some_slot, 1, config),
-        Err(AccountsHashVerificationError::MismatchedAccountsHash)
-    );
-}
-
 #[test]
 fn test_storage_finder() {
     solana_logger::setup();

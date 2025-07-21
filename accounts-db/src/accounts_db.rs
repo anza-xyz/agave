@@ -6702,99 +6702,6 @@ impl AccountsDb {
         result
     }
 
-    /// Verify accounts hash at startup (or tests)
-    ///
-    /// Calculate accounts hash(es) and compare them to the values set at startup.
-    /// If `base` is `None`, only calculates the full accounts hash for `[0, slot]`.
-    /// If `base` is `Some`, calculate the full accounts hash for `[0, base slot]`
-    /// and then calculate the incremental accounts hash for `(base slot, slot]`.
-    pub fn verify_accounts_hash_and_lamports(
-        &self,
-        snapshot_storages_and_slots: (&[Arc<AccountStorageEntry>], &[Slot]),
-        slot: Slot,
-        total_lamports: u64,
-        base: Option<(Slot, /*capitalization*/ u64)>,
-        config: VerifyAccountsHashAndLamportsConfig,
-    ) -> Result<(), AccountsHashVerificationError> {
-        let calc_config = CalcAccountsHashConfig {
-            use_bg_thread_pool: config.use_bg_thread_pool,
-            ancestors: Some(config.ancestors),
-            epoch_schedule: config.epoch_schedule,
-            epoch: config.epoch,
-            store_detailed_debug_info_on_failure: config.store_detailed_debug_info,
-        };
-        let hash_mismatch_is_error = !config.ignore_mismatch;
-
-        if let Some((base_slot, base_capitalization)) = base {
-            self.verify_accounts_hash_and_lamports(
-                snapshot_storages_and_slots,
-                base_slot,
-                base_capitalization,
-                None,
-                config,
-            )?;
-
-            let storages_and_slots = snapshot_storages_and_slots
-                .0
-                .iter()
-                .zip(snapshot_storages_and_slots.1.iter())
-                .filter(|storage_and_slot| *storage_and_slot.1 > base_slot)
-                .map(|(storage, slot)| (storage, *slot));
-            let sorted_storages = SortedStorages::new_with_slots(storages_and_slots, None, None);
-            let calculated_incremental_accounts_hash = self.calculate_incremental_accounts_hash(
-                &calc_config,
-                &sorted_storages,
-                HashStats::default(),
-            );
-            let found_incremental_accounts_hash = self
-                .get_incremental_accounts_hash(slot)
-                .ok_or(AccountsHashVerificationError::MissingAccountsHash)?;
-            if calculated_incremental_accounts_hash != found_incremental_accounts_hash {
-                warn!(
-                    "mismatched incremental accounts hash for slot {slot}: \
-                     {calculated_incremental_accounts_hash:?} (calculated) != \
-                     {found_incremental_accounts_hash:?} (expected)"
-                );
-                if hash_mismatch_is_error {
-                    return Err(AccountsHashVerificationError::MismatchedAccountsHash);
-                }
-            }
-        } else {
-            let storages_and_slots = snapshot_storages_and_slots
-                .0
-                .iter()
-                .zip(snapshot_storages_and_slots.1.iter())
-                .filter(|storage_and_slot| *storage_and_slot.1 <= slot)
-                .map(|(storage, slot)| (storage, *slot));
-            let sorted_storages = SortedStorages::new_with_slots(storages_and_slots, None, None);
-            let (calculated_accounts_hash, calculated_lamports) =
-                self.calculate_accounts_hash(&calc_config, &sorted_storages, HashStats::default());
-            if calculated_lamports != total_lamports {
-                warn!(
-                    "Mismatched total lamports: {total_lamports} calculated: {calculated_lamports}"
-                );
-                return Err(AccountsHashVerificationError::MismatchedTotalLamports(
-                    calculated_lamports,
-                    total_lamports,
-                ));
-            }
-            let (found_accounts_hash, _) = self
-                .get_accounts_hash(slot)
-                .ok_or(AccountsHashVerificationError::MissingAccountsHash)?;
-            if calculated_accounts_hash != found_accounts_hash {
-                warn!(
-                    "Mismatched accounts hash for slot {slot}: {calculated_accounts_hash:?} \
-                     (calculated) != {found_accounts_hash:?} (expected)"
-                );
-                if hash_mismatch_is_error {
-                    return Err(AccountsHashVerificationError::MismatchedAccountsHash);
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     /// Returns all of the accounts' pubkeys for a given slot
     pub fn get_pubkeys_for_slot(&self, slot: Slot) -> Vec<Pubkey> {
         let scan_result = self.scan_cache_storage_fallback(
@@ -8724,26 +8631,6 @@ impl AccountsDb {
         } else {
             0
         }
-    }
-
-    pub fn verify_accounts_hash_and_lamports_for_tests(
-        &self,
-        slot: Slot,
-        total_lamports: u64,
-        config: VerifyAccountsHashAndLamportsConfig,
-    ) -> Result<(), AccountsHashVerificationError> {
-        let snapshot_storages = self.get_storages(..);
-        let snapshot_storages_and_slots = (
-            snapshot_storages.0.as_slice(),
-            snapshot_storages.1.as_slice(),
-        );
-        self.verify_accounts_hash_and_lamports(
-            snapshot_storages_and_slots,
-            slot,
-            total_lamports,
-            None,
-            config,
-        )
     }
 
     pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {

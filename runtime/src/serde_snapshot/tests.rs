@@ -19,13 +19,13 @@ mod serde_snapshot_tests {
             accounts::Accounts,
             accounts_db::{
                 get_temp_accounts_paths, test_utils::create_test_accounts, AccountStorageEntry,
-                AccountsDb, AtomicAccountsFileId, VerifyAccountsHashAndLamportsConfig,
+                AccountsDb, AtomicAccountsFileId,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
             accounts_hash::AccountsHash,
             ancestors::Ancestors,
         },
-        solana_clock::{Epoch, Slot},
+        solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
         solana_hash::Hash,
         solana_nohash_hasher::BuildNoHashHasher,
@@ -520,15 +520,10 @@ mod serde_snapshot_tests {
         accounts.assert_load_account(current_slot, purged_pubkey2, 0);
         accounts.assert_load_account(current_slot, dummy_pubkey, dummy_lamport);
 
-        let ancestors = Ancestors::default();
-        let epoch_schedule = EpochSchedule::default();
-        let epoch = Epoch::default();
-        let config =
-            VerifyAccountsHashAndLamportsConfig::new_for_test(&ancestors, &epoch_schedule, epoch);
-
-        accounts
-            .verify_accounts_hash_and_lamports_for_tests(4, 1222, config)
-            .unwrap();
+        let calculated_capitalization =
+            accounts.calculate_capitalization_at_startup_from_index(&Ancestors::default(), 4);
+        let expected_capitalization = 1_222;
+        assert_eq!(calculated_capitalization, expected_capitalization);
     }
 
     #[test_case(StorageAccess::Mmap)]
@@ -812,25 +807,22 @@ mod serde_snapshot_tests {
             );
 
             let no_ancestors = Ancestors::default();
-
             let epoch_schedule = EpochSchedule::default();
-            let epoch = Epoch::default();
-            let config = VerifyAccountsHashAndLamportsConfig::new_for_test(
-                &no_ancestors,
-                &epoch_schedule,
-                epoch,
-            );
 
             accounts.update_accounts_hash_for_tests(current_slot, &no_ancestors, false, false);
-            accounts
-                .verify_accounts_hash_and_lamports_for_tests(current_slot, 22300, config.clone())
-                .unwrap();
 
+            let calculated_capitalization = accounts
+                .calculate_capitalization_at_startup_from_index(&no_ancestors, current_slot);
+            let expected_capitalization = 22_300;
+            assert_eq!(calculated_capitalization, expected_capitalization);
+
+            let accounts_lt_hash_pre = accounts
+                .calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors, current_slot);
             let accounts =
                 reconstruct_accounts_db_via_serialization(&accounts, current_slot, storage_access);
-            accounts
-                .verify_accounts_hash_and_lamports_for_tests(current_slot, 22300, config)
-                .unwrap();
+            let accounts_lt_hash_post = accounts
+                .calculate_accounts_lt_hash_at_startup_from_index(&no_ancestors, current_slot);
+            assert_eq!(accounts_lt_hash_pre, accounts_lt_hash_post);
 
             // repeating should be no-op
             accounts.shrink_all_slots(*startup, &epoch_schedule, None);
