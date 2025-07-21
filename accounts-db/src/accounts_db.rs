@@ -173,23 +173,6 @@ pub(crate) struct ShrinkCollectAliveSeparatedByRefs<'a> {
     pub(crate) many_refs_old_alive: AliveAccounts<'a>,
 }
 
-/// Configuration Parameters for running accounts hash and total lamports verification
-#[derive(Debug, Clone)]
-pub struct VerifyAccountsHashAndLamportsConfig<'a> {
-    /// bank ancestors
-    pub ancestors: &'a Ancestors,
-    /// epoch_schedule
-    pub epoch_schedule: &'a EpochSchedule,
-    /// epoch
-    pub epoch: Epoch,
-    /// true to ignore mismatches
-    pub ignore_mismatch: bool,
-    /// true to dump debug log if mismatch happens
-    pub store_detailed_debug_info: bool,
-    /// true to use dedicated background thread pool for verification
-    pub use_bg_thread_pool: bool,
-}
-
 pub(crate) trait ShrinkCollectRefs<'a>: Sync + Send {
     fn with_capacity(capacity: usize, slot: Slot) -> Self;
     fn collect(&mut self, other: Self);
@@ -8628,25 +8611,6 @@ impl AccountsDb {
 
     pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {
         &self.uncleaned_pubkeys
-    }
-}
-
-// These functions/fields are only usable from a dev context (i.e. tests and benches)
-#[cfg(feature = "dev-context-only-utils")]
-impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
-    pub fn new_for_test(
-        ancestors: &'a Ancestors,
-        epoch_schedule: &'a EpochSchedule,
-        epoch: Epoch,
-    ) -> Self {
-        Self {
-            ancestors,
-            epoch_schedule,
-            epoch,
-            ignore_mismatch: false,
-            store_detailed_debug_info: false,
-            use_bg_thread_pool: false,
-        }
     }
 }
 
