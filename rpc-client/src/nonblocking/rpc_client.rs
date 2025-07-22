@@ -3595,17 +3595,18 @@ impl RpcClient {
 
         response
             .map(|result_json: Value| {
-                if result_json.is_null() {
-                    return Err(
-                        RpcError::ForUser(format!("AccountNotFound: pubkey={pubkey}")).into(),
-                    );
-                }
                 let Response {
                     context,
                     value: rpc_account,
-                } = serde_json::from_value::<Response<Option<UiAccount>>>(result_json)?;
+                } = serde_json::from_value::<Response<UiAccount>>(result_json)
+                    .map_err(|e| {
+                        let msg = e.to_string();
+                        Into::<ClientError>::into(RpcError::ForUser(format!(
+                            "Deserialization failed: {msg} for pubkey={pubkey}"
+                        )))
+                    })?;
                 trace!("Response account {:?} {:?}", pubkey, rpc_account);
-                let account = rpc_account.and_then(|rpc_account| rpc_account.decode());
+                let account = rpc_account.decode();
 
                 Ok(Response {
                     context,
