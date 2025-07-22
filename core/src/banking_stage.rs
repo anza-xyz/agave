@@ -409,43 +409,6 @@ impl BankingStage {
         bank_forks: Arc<RwLock<BankForks>>,
         prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
     ) -> Self {
-        let use_greedy_scheduler = matches!(
-            block_production_method,
-            BlockProductionMethod::CentralSchedulerGreedy
-        );
-        Self::new_central_scheduler(
-            transaction_struct,
-            use_greedy_scheduler,
-            poh_recorder,
-            transaction_recorder,
-            non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            num_threads,
-            transaction_status_sender,
-            replay_vote_sender,
-            log_messages_bytes_limit,
-            bank_forks,
-            prioritization_fee_cache,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_central_scheduler(
-        transaction_struct: TransactionStructure,
-        use_greedy_scheduler: bool,
-        poh_recorder: &Arc<RwLock<PohRecorder>>,
-        transaction_recorder: TransactionRecorder,
-        non_vote_receiver: BankingPacketReceiver,
-        tpu_vote_receiver: BankingPacketReceiver,
-        gossip_vote_receiver: BankingPacketReceiver,
-        num_threads: u32,
-        transaction_status_sender: Option<TransactionStatusSender>,
-        replay_vote_sender: ReplayVoteSender,
-        log_messages_bytes_limit: Option<usize>,
-        bank_forks: Arc<RwLock<BankForks>>,
-        prioritization_fee_cache: &Arc<PrioritizationFeeCache>,
-    ) -> Self {
         assert!(num_threads >= MIN_TOTAL_THREADS);
         let vote_storage = {
             let bank = bank_forks.read().unwrap().working_bank();
@@ -474,6 +437,37 @@ impl BankingStage {
             vote_storage,
         ));
 
+        Self::spawn_scheduler_and_workers_with_structure(
+            &mut bank_thread_hdls,
+            block_production_method,
+            transaction_struct,
+            decision_maker,
+            committer,
+            poh_recorder,
+            transaction_recorder,
+            non_vote_receiver,
+            num_threads,
+            log_messages_bytes_limit,
+            bank_forks,
+        );
+
+        Self { bank_thread_hdls }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_scheduler_and_workers_with_structure(
+        bank_thread_hdls: &mut Vec<JoinHandle<()>>,
+        block_production_method: BlockProductionMethod,
+        transaction_struct: TransactionStructure,
+        decision_maker: DecisionMaker,
+        committer: Committer,
+        poh_recorder: &Arc<RwLock<PohRecorder>>,
+        transaction_recorder: TransactionRecorder,
+        non_vote_receiver: BankingPacketReceiver,
+        num_threads: u32,
+        log_messages_bytes_limit: Option<usize>,
+        bank_forks: Arc<RwLock<BankForks>>,
+    ) {
         match transaction_struct {
             TransactionStructure::Sdk => {
                 let receive_and_buffer = SanitizedTransactionReceiveAndBuffer::new(
@@ -481,9 +475,9 @@ impl BankingStage {
                     bank_forks.clone(),
                 );
                 Self::spawn_scheduler_and_workers(
-                    &mut bank_thread_hdls,
+                    bank_thread_hdls,
                     receive_and_buffer,
-                    use_greedy_scheduler,
+                    block_production_method,
                     decision_maker,
                     committer,
                     poh_recorder,
@@ -499,9 +493,9 @@ impl BankingStage {
                     bank_forks: bank_forks.clone(),
                 };
                 Self::spawn_scheduler_and_workers(
-                    &mut bank_thread_hdls,
+                    bank_thread_hdls,
                     receive_and_buffer,
-                    use_greedy_scheduler,
+                    block_production_method,
                     decision_maker,
                     committer,
                     poh_recorder,
@@ -512,15 +506,13 @@ impl BankingStage {
                 );
             }
         }
-
-        Self { bank_thread_hdls }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn spawn_scheduler_and_workers<R: ReceiveAndBuffer + Send + Sync + 'static>(
         bank_thread_hdls: &mut Vec<JoinHandle<()>>,
         receive_and_buffer: R,
-        use_greedy_scheduler: bool,
+        block_production_method: BlockProductionMethod,
         decision_maker: DecisionMaker,
         committer: Committer,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
@@ -529,6 +521,11 @@ impl BankingStage {
         log_messages_bytes_limit: Option<usize>,
         bank_forks: Arc<RwLock<BankForks>>,
     ) {
+        assert!(num_threads >= MIN_TOTAL_THREADS);
+        let use_greedy_scheduler = match block_production_method {
+            BlockProductionMethod::CentralScheduler => false,
+            BlockProductionMethod::CentralSchedulerGreedy => true,
+        };
         // Create channels for communication between scheduler and workers
         let num_workers = (num_threads).saturating_sub(NUM_VOTE_PROCESSING_THREADS);
         let (work_senders, work_receivers): (Vec<Sender<_>>, Vec<Receiver<_>>) =
