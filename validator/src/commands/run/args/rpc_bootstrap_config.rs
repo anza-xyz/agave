@@ -80,4 +80,24 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_no_snapshot_fetch() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    no_snapshot_fetch: true,
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args.clone(),
+                vec!["--no-snapshot-fetch"],
+                expected_args,
+            );
+        }
+    }
 }
