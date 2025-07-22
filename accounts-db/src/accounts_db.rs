@@ -24,6 +24,7 @@ pub mod tests;
 
 #[cfg(test)]
 use crate::append_vec::StoredAccountMeta;
+
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -53,7 +54,7 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        append_vec::{aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
+        append_vec::{self, aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
@@ -2112,31 +2113,33 @@ impl AccountsDb {
             max_slot_inclusive.unwrap_or_else(|| self.accounts_index.max_root_inclusive());
         info!("exhaustively verifying refcounts as of slot: {max_slot_inclusive}");
         let pubkey_refcount = DashMap::<Pubkey, Vec<Slot>>::default();
-        let slots = self.storage.all_slots();
+        let mut storages = self.storage.all_storages();
+        storages.retain(|s| s.slot() <= max_slot_inclusive);
         // populate
-        slots.into_par_iter().for_each(|slot| {
-            if slot > max_slot_inclusive {
-                return;
-            }
-            if let Some(storage) = self.storage.get_slot_storage_entry(slot) {
-                storage
-                    .accounts
-                    .scan_accounts(|_offset, account| {
-                        let pk = account.pubkey();
-                        match pubkey_refcount.entry(*pk) {
-                            dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
-                                if !occupied_entry.get().iter().any(|s| s == &slot) {
-                                    occupied_entry.get_mut().push(slot);
+        storages
+            .par_chunks(accounts_scan_par_chunk_size(storages.len()))
+            .for_each(|storages| {
+                let mut reader = append_vec::new_scan_full_accounts_buffer();
+                storages.iter().for_each(|storage| {
+                    let slot = storage.slot();
+                    storage
+                        .accounts
+                        .scan_accounts(&mut reader, |_offset, account| {
+                            let pk = account.pubkey();
+                            match pubkey_refcount.entry(*pk) {
+                                dashmap::mapref::entry::Entry::Occupied(mut occupied_entry) => {
+                                    if !occupied_entry.get().iter().any(|s| s == &slot) {
+                                        occupied_entry.get_mut().push(slot);
+                                    }
+                                }
+                                dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
+                                    vacant_entry.insert(vec![slot]);
                                 }
                             }
-                            dashmap::mapref::entry::Entry::Vacant(vacant_entry) => {
-                                vacant_entry.insert(vec![slot]);
-                            }
-                        }
-                    })
-                    .expect("must scan accounts storage");
-            }
-        });
+                        })
+                        .expect("must scan accounts storage")
+                });
+            });
         let total = pubkey_refcount.len();
         let failed = AtomicBool::default();
         let threads = quarter_thread_count();
@@ -4010,7 +4013,8 @@ impl AccountsDb {
                     })
                 }
                 ScanAccountStorageData::DataRefForStorage => {
-                    storage.scan_accounts(|_offset, account| {
+                    let mut reader = append_vec::new_scan_full_accounts_buffer();
+                    storage.scan_accounts(&mut reader, |_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
                     })
@@ -5689,27 +5693,32 @@ impl AccountsDb {
         duplicates_lt_hash: &DuplicatesLtHash,
         startup_slot: Slot,
     ) -> AccountsLtHash {
+        let chunk_size = accounts_scan_par_chunk_size(storages.len());
         // Randomized order works well with rayon work splitting, since we only care about
         // uniform distribution of total work size per batch (other ordering strategies might be
         // useful for optimizing disk read sizes and buffers usage in a single IO queue).
         let storages = AccountStoragesOrderer::with_random_order(storages);
         let mut lt_hash = storages
-            .par_iter()
-            .fold(LtHash::identity, |mut accum, storage| {
-                // Function is calculating the accounts_lt_hash from all accounts in the
-                // storages as of startup_slot. This means that any accounts marked obsolete at a
-                // slot newer than startup_slot should be included in the accounts_lt_hash
-                let obsolete_accounts = storage.get_obsolete_accounts(Some(startup_slot));
-                storage
-                    .accounts
-                    .scan_accounts(|offset, account| {
-                        // Obsolete accounts were not included in the original hash, so they should not be added here
-                        if !obsolete_accounts.contains(&(offset, account.data.len())) {
-                            let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                            accum.mix_in(&account_lt_hash.0);
-                        }
-                    })
-                    .expect("must scan accounts storage");
+            .par_chunks(chunk_size)
+            .fold(LtHash::identity, |mut accum, storages| {
+                let mut reader = append_vec::new_scan_full_accounts_buffer();
+                storages.iter().for_each(|storage| {
+                    // Function is calculating the accounts_lt_hash from all accounts in the
+                    // storages as of startup_slot. This means that any accounts marked obsolete at a
+                    // slot newer than startup_slot should be included in the accounts_lt_hash
+                    let obsolete_accounts = storage.get_obsolete_accounts(Some(startup_slot));
+                    storage
+                        .accounts
+                        .scan_accounts(&mut reader, |offset, account| {
+                            // Obsolete accounts were not included in the original hash, so they should not be added here
+                            if !obsolete_accounts.contains(&(offset, account.data.len())) {
+                                let account_lt_hash =
+                                    Self::lt_hash_account(&account, account.pubkey());
+                                accum.mix_in(&account_lt_hash.0);
+                            }
+                        })
+                        .expect("must scan accounts storage");
+                });
                 accum
             })
             .reduce(LtHash::identity, |mut accum, elem| {
@@ -6596,9 +6605,10 @@ impl AccountsDb {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
     }
 
-    fn generate_index_for_slot(
-        &self,
-        storage: &AccountStorageEntry,
+    fn generate_index_for_slot<'a, 'b: 'a>(
+        &'b self,
+        reader: &mut impl RequiredLenBufFileRead<'a>,
+        storage: &'a AccountStorageEntry,
         slot: Slot,
         store_id: AccountsFileId,
         storage_info: &StorageSizeAndCountMap,
@@ -6636,7 +6646,7 @@ impl AccountsDb {
 
             if secondary {
                 // WITH secondary indexes -- scan accounts WITH account data
-                storage.accounts.scan_accounts(|offset, account| {
+                storage.accounts.scan_accounts(reader, |offset, account| {
                     let data_len = account.data.len() as u64;
                     let stored_size_aligned =
                         storage.accounts.calculate_stored_size(data_len as usize);
@@ -6725,10 +6735,11 @@ impl AccountsDb {
         verify: bool,
     ) -> IndexGenerationInfo {
         let mut total_time = Measure::start("generate_index");
-        let mut slots = self.storage.all_slots();
-        slots.sort_unstable();
+
+        let mut storages = self.storage.all_storages();
+        storages.sort_unstable_by_key(|storage| storage.slot);
         if let Some(limit) = limit_load_slot_count_from_snapshot {
-            slots.truncate(limit); // get rid of the newer slots and keep just the older
+            storages.truncate(limit); // get rid of the newer slots and keep just the older
         }
         let accounts_data_len = AtomicU64::new(0);
 
@@ -6746,17 +6757,16 @@ impl AccountsDb {
             }
             let storage_info = StorageSizeAndCountMap::default();
             let total_processed_slots_across_all_threads = AtomicU64::new(0);
-            let outer_slots_len = slots.len();
-            let threads = num_cpus::get();
-            let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot
+            let outer_slots_len = storages.len();
+            let chunk_size = accounts_scan_par_chunk_size(outer_slots_len);
             let mut index_time = Measure::start("index");
             let insertion_time_us = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);
             let all_accounts_are_zero_lamports_slots = AtomicU64::new(0);
             let mut all_zeros_slots = Mutex::new(Vec::<(Slot, Arc<AccountStorageEntry>)>::new());
-            let scan_time: u64 = slots
+            let scan_time: u64 = storages
                 .par_chunks(chunk_size)
-                .map(|slots| {
+                .map(|storages| {
                     let mut log_status = MultiThreadProgress::new(
                         &total_processed_slots_across_all_threads,
                         2,
@@ -6772,14 +6782,12 @@ impl AccountsDb {
                     let mut local_num_did_not_exist = 0;
                     let mut local_num_existed_in_mem = 0;
                     let mut local_num_existed_on_disk = 0;
-                    for (index, slot) in slots.iter().enumerate() {
+                    let mut reader = append_vec::new_scan_full_accounts_buffer();
+                    for (index, storage) in storages.iter().enumerate() {
                         let mut scan_time = Measure::start("scan");
                         log_status.report(index as u64);
-                        let Some(storage) = self.storage.get_slot_storage_entry(*slot) else {
-                            // no storage at this slot, no information to pull out
-                            continue;
-                        };
                         let store_id = storage.id();
+                        let slot = storage.slot();
 
                         scan_time.stop();
                         scan_time_sum += scan_time.as_us();
@@ -6797,8 +6805,9 @@ impl AccountsDb {
                                 num_existed_in_mem,
                                 num_existed_on_disk,
                             } = self.generate_index_for_slot(
+                                &mut reader,
                                 &storage,
-                                *slot,
+                                slot,
                                 store_id,
                                 &storage_info,
                             );
@@ -6810,7 +6819,7 @@ impl AccountsDb {
                             accounts_data_len_sum += accounts_data_len_this_slot;
                             if all_accounts_are_zero_lamports {
                                 all_accounts_are_zero_lamports_slots_inner += 1;
-                                all_zeros_slots_inner.push((*slot, Arc::clone(&storage)));
+                                all_zeros_slots_inner.push((slot, Arc::clone(&storage)));
                             }
                             local_zero_lamport_pubkeys.append(&mut zero_lamport_pubkeys_this_slot);
 
@@ -6827,7 +6836,7 @@ impl AccountsDb {
                                     let slot_list = index_entry.slot_list.read().unwrap();
                                     let mut count = 0;
                                     for (slot2, account_info2) in slot_list.iter() {
-                                        if slot2 == slot {
+                                        if *slot2 == slot {
                                             count += 1;
                                             let ai = AccountInfo::new(
                                                 StorageLocation::AppendVec(store_id, offset), // will never be cached
@@ -6948,7 +6957,7 @@ impl AccountsDb {
                     .load(Ordering::Relaxed),
                 populate_duplicate_keys_us,
                 total_including_duplicates: total_including_duplicates.load(Ordering::Relaxed),
-                total_slots: slots.len() as u64,
+                total_slots: storages.len() as u64,
                 all_accounts_are_zero_lamports_slots: all_accounts_are_zero_lamports_slots
                     .load(Ordering::Relaxed),
                 ..GenerateIndexTimings::default()
@@ -7068,8 +7077,8 @@ impl AccountsDb {
 
             if pass == 0 {
                 // Need to add these last, otherwise older updates will be cleaned
-                for root in &slots {
-                    self.accounts_index.add_root(*root);
+                for storage in &storages {
+                    self.accounts_index.add_root(storage.slot());
                 }
 
                 self.set_storage_count_and_alive_bytes(storage_info, &mut timings);

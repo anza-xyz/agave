@@ -67,7 +67,9 @@ impl<const N: usize> Backing for Stack<N> {
 
 /// An extension of the `BufRead` trait for file readers that allow tracking file
 /// read position offset.
-pub(crate) trait FileBufRead: BufRead {
+pub(crate) trait FileBufRead<'a>: BufRead {
+    fn set_file(&mut self, file: &'a File, read_limit: usize);
+
     /// Returns the current file offset corresponding to the start of the buffer
     /// that will be returned by the next call to `fill_buf`.
     ///
@@ -97,6 +99,9 @@ pub(crate) trait RequiredLenBufRead: BufRead {
     fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]>;
 }
 
+pub(crate) trait RequiredLenBufFileRead<'a>: RequiredLenBufRead + FileBufRead<'a> {}
+impl<'a, T: RequiredLenBufRead + FileBufRead<'a>> RequiredLenBufFileRead<'a> for T {}
+
 /// read a file a large buffer at a time and provide access to a slice in that buffer
 pub struct BufferedReader<'a, T> {
     /// when we are next asked to read from file, start at this offset
@@ -110,26 +115,36 @@ pub struct BufferedReader<'a, T> {
     /// how many bytes are valid in the file. The file's len may be longer.
     file_len_valid: usize,
     /// reference to file handle
-    file: &'a File,
+    file: Option<&'a File>,
 }
 
-impl<'a, T> BufferedReader<'a, T> {
-    /// `buffer_size`: how much to try to read at a time
-    /// `file_len_valid`: # bytes that are valid in the file, may be less than overall file len
-    /// `default_min_read_requirement`: make sure we always have this much data available if we're asked to read
-    pub fn new(backing: T, file_len_valid: usize, file: &'a File) -> Self {
+impl<'a, T: Backing> BufferedReader<'a, T> {
+    pub fn new(backing: T) -> Self {
         Self {
             file_offset_of_next_read: 0,
             buf: backing,
             buf_valid_bytes: 0..0,
             file_last_offset: 0,
-            file_len_valid,
-            file,
+            file_len_valid: 0,
+            file: None,
         }
+    }
+
+    pub fn with_file(mut self, file: &'a File, read_limit: usize) -> Self {
+        self.set_file(file, read_limit);
+        self
     }
 }
 
-impl<T: Backing> FileBufRead for BufferedReader<'_, T> {
+impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
+    fn set_file(&mut self, file: &'a File, read_limit: usize) {
+        self.file = Some(file);
+        self.file_len_valid = read_limit;
+        self.file_last_offset = 0;
+        self.file_offset_of_next_read = 0;
+        self.buf_valid_bytes = 0..0;
+    }
+
     #[inline(always)]
     fn get_file_offset(&self) -> usize {
         if self.buf_valid_bytes.is_empty() {
@@ -150,8 +165,11 @@ where
         // we haven't used all the bytes we read last time, so adjust the effective offset
         debug_assert!(self.buf_valid_bytes.len() <= self.file_offset_of_next_read);
         self.file_last_offset = self.file_offset_of_next_read - self.buf_valid_bytes.len();
+        let Some(file) = &self.file else {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "no open file"));
+        };
         read_more_buffer(
-            self.file,
+            file,
             self.file_len_valid,
             &mut self.file_offset_of_next_read,
             // SAFETY: `read_more_buffer` will only _write_ to uninitialized memory and lifetime is tied to self.
@@ -169,8 +187,8 @@ where
 
 impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
     /// create a new buffered reader with a stack-allocated buffer
-    pub fn new_stack(file_len_valid: usize, file: &'a File) -> Self {
-        BufferedReader::new(Stack::new(), file_len_valid, file)
+    pub fn new_stack() -> Self {
+        BufferedReader::new(Stack::new())
     }
 }
 
@@ -191,8 +209,11 @@ impl<T: Backing> io::Read for BufferedReader<'_, T> {
         }
 
         // Read directly from file into space still left in the buf.
+        let Some(file) = &self.file else {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "no open file"));
+        };
         let bytes_read = read_into_buffer(
-            self.file,
+            file,
             self.file_len_valid,
             self.file_offset_of_next_read,
             buf,
@@ -317,7 +338,12 @@ impl<R: BufRead> BufRead for BufReaderWithOverflow<R> {
     }
 }
 
-impl<R: FileBufRead> FileBufRead for BufReaderWithOverflow<R> {
+impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
+    fn set_file(&mut self, file: &'a File, read_limit: usize) {
+        self.reader.set_file(file, read_limit);
+        self.overflow_buf.clear();
+    }
+
     fn get_file_offset(&self) -> usize {
         self.reader.get_file_offset() - self.overflow_buf.len()
     }

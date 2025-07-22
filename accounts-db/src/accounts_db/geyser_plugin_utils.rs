@@ -2,6 +2,8 @@ use {
     crate::{
         accounts_db::{AccountStorageEntry, AccountsDb},
         accounts_update_notifier_interface::AccountsUpdateNotifierInterface,
+        append_vec,
+        buffered_reader::RequiredLenBufFileRead,
     },
     solana_account::AccountSharedData,
     solana_clock::Slot,
@@ -62,13 +64,17 @@ impl AccountsDb {
 
         let mut notify_stats = GeyserPluginNotifyAtSnapshotRestoreStats::default();
         if accounts_update_notifier.snapshot_notifications_enabled() {
-            let mut slots = self.storage.all_slots();
-            slots.sort_unstable_by_key(|&slot| Reverse(slot));
-            slots
-                .into_iter()
-                .filter_map(|slot| self.storage.get_slot_storage_entry(slot))
+            let mut storages = self.storage.all_storages();
+            storages.sort_unstable_by_key(|storage| Reverse(storage.slot));
+            let mut reader = append_vec::new_scan_full_accounts_buffer();
+            storages
+                .iter()
                 .map(|storage| {
-                    Self::notify_accounts_in_storage(accounts_update_notifier.as_ref(), &storage)
+                    Self::notify_accounts_in_storage(
+                        &mut reader,
+                        accounts_update_notifier.as_ref(),
+                        &storage,
+                    )
                 })
                 .for_each(|stats| notify_stats += stats);
         }
@@ -96,16 +102,18 @@ impl AccountsDb {
         }
     }
 
-    fn notify_accounts_in_storage(
+    fn notify_accounts_in_storage<'a>(
+        reader: &mut impl RequiredLenBufFileRead<'a>,
         notifier: &dyn AccountsUpdateNotifierInterface,
-        storage: &AccountStorageEntry,
+        storage: &'a AccountStorageEntry,
     ) -> GeyserPluginNotifyAtSnapshotRestoreStats {
         let mut pure_notify_time = Duration::ZERO;
         let mut i = 0;
         let notifying_start = Instant::now();
+
         storage
             .accounts
-            .scan_accounts_for_geyser(|account| {
+            .scan_accounts_for_geyser(reader, |account| {
                 i += 1;
                 // later entries in the same slot are more recent and override earlier accounts for the same pubkey
                 // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
