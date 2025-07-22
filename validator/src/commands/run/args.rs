@@ -60,6 +60,7 @@ const WEN_RESTART_HELP: &str =
 
 pub mod account_secondary_indexes;
 pub mod accounts_db_config;
+pub mod accounts_index_config;
 pub mod blockstore_options;
 pub mod json_rpc_config;
 pub mod pub_sub_config;
@@ -1682,6 +1683,7 @@ mod tests {
         super::*,
         crate::cli::thread_args::thread_args,
         scopeguard::defer,
+        solana_accounts_db::accounts_index::AccountsIndexConfig,
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
         std::{
             fs,
@@ -1723,7 +1725,15 @@ mod tests {
                     ..PubSubConfig::default_for_tests()
                 },
                 send_transaction_service_config: SendTransactionServiceConfig::default(),
-                accounts_db_config: AccountsDbConfig::default(),
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        num_flush_threads: Some(
+                            solana_accounts_db::accounts_index::default_num_flush_threads(),
+                        ),
+                        ..AccountsIndexConfig::default()
+                    }),
+                    ..AccountsDbConfig::default()
+                },
             }
         }
     }

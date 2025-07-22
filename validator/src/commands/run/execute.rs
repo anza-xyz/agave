@@ -96,7 +96,6 @@ pub fn execute(
     let cli::thread_args::NumThreadConfig {
         accounts_db_background_threads,
         accounts_db_foreground_threads,
-        accounts_index_flush_threads,
         block_production_num_workers,
         ip_echo_server_threads,
         rayon_global_threads,
@@ -294,10 +293,7 @@ pub fn execute(
     let tower_storage: Arc<dyn tower_storage::TowerStorage> =
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
-    let mut accounts_index_config = AccountsIndexConfig {
-        num_flush_threads: Some(accounts_index_flush_threads),
-        ..AccountsIndexConfig::default()
-    };
+    let mut accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
     if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
         accounts_index_config.bins = Some(bins);
     }
