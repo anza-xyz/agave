@@ -1051,8 +1051,8 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                // // 128KiB covers a reasonably large distribution of typical account sizes.
-                // // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                // 128KiB covers a reasonably large distribution of typical account sizes.
+                // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
                 const MIN_CAPACITY: usize = 1024 * 128;
                 const MAX_CAPACITY: usize =
                     STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;

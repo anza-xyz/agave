@@ -3,14 +3,14 @@
 //!
 //! Callers can use these types to iterate efficiently over append vecs. They can do so by repeatedly
 //! calling:
-//! * `fill_buf_required(account_header_len)` to scan the account header and determine the account
+//! * `fill_buf_required(account_meta_len)` to scan the account metadata parts and determine the account
 //!   data size,
 //!  * optionally extend the obtained buffer to full account data using
 //!    `fill_buf_required(account_all_bytes_len)`
 //!  * `consume(account_all_bytes_len)` to move to the next account
 //!
 //! When reading full accounts data whose sizes exceed the small stack buffer, the `BufReaderWithOverflow`
-//! can be used, which supports dynamically allocated buffer for preparing contiguous data slices.
+//! should be used, which supports dynamically allocated buffer for preparing contiguous data slices.
 use {
     crate::file_io::{read_into_buffer, read_more_buffer},
     std::{
@@ -717,7 +717,6 @@ mod tests {
 
     #[test_case(Stack::<16>::new(), 16)]
     fn test_overflow_reader_read_and_fill_buf(backing: impl Backing, buffer_size: usize) {
-        // Setup a sample file with 64 bytes of data
         const FILE_SIZE: usize = 64;
         let mut sample_file = tempfile().unwrap();
         let bytes = rand_bytes::<FILE_SIZE>();
@@ -744,8 +743,10 @@ mod tests {
             io::ErrorKind::QuotaExceeded
         );
 
+        // Required buffer is at maximum configured limit.
         let buf = reader.fill_buf_required(32).unwrap();
         assert_eq!(buf, &bytes[16..48]);
+        // Same buffer should be returned.
         let buf = reader.fill_buf().unwrap();
         assert_eq!(buf, &bytes[16..48]);
 
