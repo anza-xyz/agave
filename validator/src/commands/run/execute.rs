@@ -294,9 +294,6 @@ pub fn execute(
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
     let mut accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
-    if let Ok(bins) = value_t!(matches, "accounts_index_bins", usize) {
-        accounts_index_config.bins = Some(bins);
-    }
 
     accounts_index_config.index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {
         IndexLimitMb::InMemOnly
