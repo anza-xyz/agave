@@ -139,14 +139,14 @@ impl BlockProductionManager {
 
 /// Context for creating block-production threads.
 pub struct BlockProductionContext {
-    poh_recorder: Arc<RwLock<PohRecorder>>,
-    transaction_recorder: TransactionRecorder,
-    non_vote_receiver: BankingPacketReceiver,
-    tpu_vote_receiver: BankingPacketReceiver,
-    gossip_vote_receiver: BankingPacketReceiver,
-    transaction_status_sender: Option<TransactionStatusSender>,
-    replay_vote_sender: ReplayVoteSender,
-    log_messages_bytes_limit: Option<usize>,
-    bank_forks: Arc<RwLock<BankForks>>,
-    prioritization_fee_cache: Arc<PrioritizationFeeCache>,
+    pub poh_recorder: Arc<RwLock<PohRecorder>>,
+    pub transaction_recorder: TransactionRecorder,
+    pub non_vote_receiver: BankingPacketReceiver,
+    pub tpu_vote_receiver: BankingPacketReceiver,
+    pub gossip_vote_receiver: BankingPacketReceiver,
+    pub transaction_status_sender: Option<TransactionStatusSender>,
+    pub replay_vote_sender: ReplayVoteSender,
+    pub log_messages_bytes_limit: Option<usize>,
+    pub bank_forks: Arc<RwLock<BankForks>>,
+    pub prioritization_fee_cache: Arc<PrioritizationFeeCache>,
 }

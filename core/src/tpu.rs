@@ -13,8 +13,8 @@ pub use {
 use {
     crate::{
         admin_rpc_post_init::{KeyUpdaterType, KeyUpdaters},
-        banking_stage::BankingStage,
         banking_trace::{Channels, TracerThread},
+        block_production_manager::{BlockProductionContext, BlockProductionManager},
         cluster_info_vote_listener::{
             ClusterInfoVoteListener, DuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
             VerifiedVoteSender, VoteTracker,
@@ -105,7 +105,7 @@ pub struct Tpu {
     fetch_stage: FetchStage,
     sig_verifier: SigVerifier,
     vote_sigverify_stage: SigVerifyStage,
-    banking_stage: BankingStage,
+    block_production_manager: BlockProductionManager,
     forwarding_stage: JoinHandle<()>,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
@@ -324,20 +324,22 @@ impl Tpu {
             duplicate_confirmed_slot_sender,
         );
 
-        let banking_stage = BankingStage::new(
-            block_production_method,
-            transaction_struct,
-            poh_recorder,
-            transaction_recorder,
-            non_vote_receiver,
-            tpu_vote_receiver,
-            gossip_vote_receiver,
-            transaction_status_sender,
-            replay_vote_sender,
-            log_messages_bytes_limit,
-            bank_forks.clone(),
-            prioritization_fee_cache,
-        );
+        let mut block_production_manager =
+            BlockProductionManager::with_context(BlockProductionContext {
+                poh_recorder: poh_recorder.clone(),
+                transaction_recorder,
+                non_vote_receiver,
+                tpu_vote_receiver,
+                gossip_vote_receiver,
+                transaction_status_sender,
+                replay_vote_sender,
+                log_messages_bytes_limit,
+                bank_forks: bank_forks.clone(),
+                prioritization_fee_cache: prioritization_fee_cache.clone(),
+            });
+        block_production_manager
+            .spawn_non_vote_threads(block_production_method, transaction_struct)
+            .expect("failed to spawn non-vote threads");
 
         let SpawnForwardingStageResult {
             join_handle: forwarding_stage,
@@ -393,7 +395,7 @@ impl Tpu {
             fetch_stage,
             sig_verifier,
             vote_sigverify_stage,
-            banking_stage,
+            block_production_manager,
             forwarding_stage,
             cluster_info_vote_listener,
             broadcast_stage,
@@ -412,7 +414,7 @@ impl Tpu {
             self.sig_verifier.join(),
             self.vote_sigverify_stage.join(),
             self.cluster_info_vote_listener.join(),
-            self.banking_stage.join(),
+            self.block_production_manager.shutdown(),
             self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.map_or(Ok(()), |t| t.join()),
