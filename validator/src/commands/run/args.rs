@@ -1692,7 +1692,7 @@ fn validators_set(
 mod tests {
     use {
         super::*,
-        crate::cli::thread_args::thread_args,
+        crate::cli::{get_deprecated_arguments, thread_args::thread_args},
         scopeguard::defer,
         solana_accounts_db::accounts_index::AccountsIndexConfig,
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
@@ -1774,7 +1774,8 @@ mod tests {
         expected_args: RunArgs,
     ) {
         let app = add_args(App::new("run_command"), default_args)
-            .args(&thread_args(&default_args.thread_args));
+            .args(&thread_args(&default_args.thread_args))
+            .args(&get_deprecated_arguments());
 
         crate::commands::tests::verify_args_struct_by_command::<RunArgs>(
             app,
