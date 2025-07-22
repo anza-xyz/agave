@@ -1866,12 +1866,12 @@ fn test_accounts_db_purge1() {
 
     let ancestors = linear_ancestors(current_slot);
     info!("ancestors: {ancestors:?}");
-    let hash = accounts.update_accounts_hash_for_tests(current_slot, &ancestors, true, true);
+    let hash = accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors, current_slot);
 
     accounts.clean_accounts_for_tests();
 
     assert_eq!(
-        accounts.update_accounts_hash_for_tests(current_slot, &ancestors, true, true),
+        accounts.calculate_accounts_lt_hash_at_startup_from_index(&ancestors, current_slot),
         hash
     );
 
@@ -2153,7 +2153,6 @@ fn test_verify_bank_capitalization() {
         db.store_for_tests(some_slot, &[(&key, &account)]);
         if pass == 0 {
             db.add_root_and_flush_write_cache(some_slot);
-            db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
 
             assert_eq!(
                 db.calculate_capitalization_at_startup_from_index(&ancestors, some_slot),
@@ -2171,7 +2170,6 @@ fn test_verify_bank_capitalization() {
             )],
         );
         db.add_root_and_flush_write_cache(some_slot);
-        db.update_accounts_hash_for_tests(some_slot, &ancestors, true, true);
 
         assert_eq!(
             db.calculate_capitalization_at_startup_from_index(&ancestors, some_slot),
@@ -7059,153 +7057,6 @@ fn test_handle_dropped_roots_for_ancient_assert() {
     let dropped_roots = vec![slot0];
     insert_store(&db, entry);
     db.handle_dropped_roots_for_ancient(dropped_roots.into_iter());
-}
-
-define_accounts_db_test!(test_calculate_incremental_accounts_hash, |accounts_db| {
-    let owner = Pubkey::new_unique();
-    let mut accounts: Vec<_> = (0..10)
-        .map(|_| (Pubkey::new_unique(), AccountSharedData::new(0, 0, &owner)))
-        .collect();
-
-    // store some accounts into slot 0
-    let slot = 0;
-    {
-        accounts[0].1.set_lamports(0);
-        accounts[1].1.set_lamports(1);
-        accounts[2].1.set_lamports(10);
-        accounts[3].1.set_lamports(100);
-        //accounts[4].1.set_lamports(1_000); <-- will be added next slot
-
-        let accounts = vec![
-            (&accounts[0].0, &accounts[0].1),
-            (&accounts[1].0, &accounts[1].1),
-            (&accounts[2].0, &accounts[2].1),
-            (&accounts[3].0, &accounts[3].1),
-        ];
-        accounts_db.store_cached((slot, accounts.as_slice()));
-        accounts_db.add_root_and_flush_write_cache(slot);
-    }
-
-    // store some accounts into slot 1
-    let slot = slot + 1;
-    {
-        //accounts[0].1.set_lamports(0);      <-- unchanged
-        accounts[1].1.set_lamports(0); /*     <-- drain account */
-        //accounts[2].1.set_lamports(10);     <-- unchanged
-        //accounts[3].1.set_lamports(100);    <-- unchanged
-        accounts[4].1.set_lamports(1_000); /* <-- add account */
-
-        let accounts = vec![
-            (&accounts[1].0, &accounts[1].1),
-            (&accounts[4].0, &accounts[4].1),
-        ];
-        accounts_db.store_cached((slot, accounts.as_slice()));
-        accounts_db.add_root_and_flush_write_cache(slot);
-    }
-
-    // calculate the full accounts hash
-    let full_accounts_hash = {
-        accounts_db.clean_accounts(Some(slot - 1), false, &EpochSchedule::default());
-        let (storages, _) = accounts_db.get_storages(..=slot);
-        let storages = SortedStorages::new(&storages);
-        accounts_db.calculate_accounts_hash(
-            &CalcAccountsHashConfig::default(),
-            &storages,
-            HashStats::default(),
-        )
-    };
-    assert_eq!(full_accounts_hash.1, 1_110);
-    let full_accounts_hash_slot = slot;
-
-    // Calculate the expected full accounts hash here and ensure it matches.
-    // Ensure the zero-lamport accounts are NOT included in the full accounts hash.
-    let full_account_hashes = [(2, 0), (3, 0), (4, 1)].into_iter().map(|(index, _slot)| {
-        let (pubkey, account) = &accounts[index];
-        AccountsDb::hash_account(account, pubkey).0
-    });
-    let expected_accounts_hash = AccountsHash(compute_merkle_root(full_account_hashes));
-    assert_eq!(full_accounts_hash.0, expected_accounts_hash);
-
-    // store accounts into slot 2
-    let slot = slot + 1;
-    {
-        //accounts[0].1.set_lamports(0);         <-- unchanged
-        //accounts[1].1.set_lamports(0);         <-- unchanged
-        accounts[2].1.set_lamports(0); /*        <-- drain account */
-        //accounts[3].1.set_lamports(100);       <-- unchanged
-        //accounts[4].1.set_lamports(1_000);     <-- unchanged
-        accounts[5].1.set_lamports(10_000); /*   <-- add account */
-        accounts[6].1.set_lamports(100_000); /*  <-- add account */
-        //accounts[7].1.set_lamports(1_000_000); <-- will be added next slot
-
-        let accounts = vec![
-            (&accounts[2].0, &accounts[2].1),
-            (&accounts[5].0, &accounts[5].1),
-            (&accounts[6].0, &accounts[6].1),
-        ];
-        accounts_db.store_cached((slot, accounts.as_slice()));
-        accounts_db.add_root_and_flush_write_cache(slot);
-    }
-
-    // store accounts into slot 3
-    let slot = slot + 1;
-    {
-        //accounts[0].1.set_lamports(0);          <-- unchanged
-        //accounts[1].1.set_lamports(0);          <-- unchanged
-        //accounts[2].1.set_lamports(0);          <-- unchanged
-        accounts[3].1.set_lamports(0); /*         <-- drain account */
-        //accounts[4].1.set_lamports(1_000);      <-- unchanged
-        accounts[5].1.set_lamports(0); /*         <-- drain account */
-        //accounts[6].1.set_lamports(100_000);    <-- unchanged
-        accounts[7].1.set_lamports(1_000_000); /* <-- add account */
-
-        let accounts = vec![
-            (&accounts[3].0, &accounts[3].1),
-            (&accounts[5].0, &accounts[5].1),
-            (&accounts[7].0, &accounts[7].1),
-        ];
-        accounts_db.store_cached((slot, accounts.as_slice()));
-        accounts_db.add_root_and_flush_write_cache(slot);
-    }
-
-    // calculate the incremental accounts hash
-    let incremental_accounts_hash = {
-        accounts_db.set_latest_full_snapshot_slot(full_accounts_hash_slot);
-        accounts_db.clean_accounts(Some(slot - 1), false, &EpochSchedule::default());
-        let (storages, _) = accounts_db.get_storages(full_accounts_hash_slot + 1..=slot);
-        let storages = SortedStorages::new(&storages);
-        accounts_db.calculate_incremental_accounts_hash(
-            &CalcAccountsHashConfig::default(),
-            &storages,
-            HashStats::default(),
-        )
-    };
-    assert_eq!(incremental_accounts_hash.1, 1_100_000);
-
-    // Ensure the zero-lamport accounts are included in the IAH.
-    // Accounts 2, 3, and 5 are all zero-lamports.
-    let incremental_account_hashes =
-        [(2, 2), (3, 3), (5, 3), (6, 2), (7, 3)]
-            .into_iter()
-            .map(|(index, _slot)| {
-                let (pubkey, account) = &accounts[index];
-                if account.is_zero_lamport() {
-                    // For incremental accounts hash, the hash of a zero lamport account is the hash of its pubkey.
-                    // Ensure this implementation detail remains in sync with AccountsHasher::de_dup_in_parallel().
-                    let hash = blake3::hash(bytemuck::bytes_of(pubkey));
-                    Hash::new_from_array(hash.into())
-                } else {
-                    AccountsDb::hash_account(account, pubkey).0
-                }
-            });
-    let expected_accounts_hash =
-        IncrementalAccountsHash(compute_merkle_root(incremental_account_hashes));
-    assert_eq!(incremental_accounts_hash.0, expected_accounts_hash);
-});
-
-fn compute_merkle_root(hashes: impl IntoIterator<Item = Hash>) -> Hash {
-    let hashes = hashes.into_iter().collect();
-    AccountsHasher::compute_merkle_root_recurse(hashes, MERKLE_FANOUT)
 }
 
 /// Test that `clean` reclaims old accounts when cleaning old storages

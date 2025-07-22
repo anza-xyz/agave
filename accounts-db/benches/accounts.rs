@@ -43,22 +43,6 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
 }
 
 #[bench]
-fn bench_update_accounts_hash(bencher: &mut Bencher) {
-    solana_logger::setup();
-    let accounts_db = new_accounts_db(vec![PathBuf::from("update_accounts_hash")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    create_test_accounts(&accounts, &mut pubkeys, 50_000, 0);
-    accounts.accounts_db.add_root_and_flush_write_cache(0);
-    let ancestors = Ancestors::from(vec![0]);
-    bencher.iter(|| {
-        accounts
-            .accounts_db
-            .update_accounts_hash_for_tests(0, &ancestors, false, false);
-    });
-}
-
-#[bench]
 fn bench_accounts_delta_hash(bencher: &mut Bencher) {
     solana_logger::setup();
     let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delta_hash")]);

@@ -5930,100 +5930,6 @@ impl AccountsDb {
         AccountsHasher::checked_cast_for_capitalization(balances.map(|b| b as u128).sum::<u128>())
     }
 
-    pub fn calculate_accounts_hash_from_index(
-        &self,
-        max_slot: Slot,
-        config: &CalcAccountsHashConfig<'_>,
-    ) -> (AccountsHash, u64) {
-        let mut collect = Measure::start("collect");
-        let keys: Vec<_> = self
-            .accounts_index
-            .account_maps
-            .iter()
-            .flat_map(|map| {
-                let mut keys = map.keys();
-                keys.sort_unstable(); // hashmap is not ordered, but bins are relative to each other
-                keys
-            })
-            .collect();
-        collect.stop();
-
-        // Pick a chunk size big enough to allow us to produce output vectors that are smaller than the overall size.
-        // We'll also accumulate the lamports within each chunk and fewer chunks results in less contention to accumulate the sum.
-        let chunks = crate::accounts_hash::MERKLE_FANOUT.pow(4);
-        let total_lamports = Mutex::<u64>::new(0);
-
-        let get_account_hashes = || {
-            keys.par_chunks(chunks)
-                .map(|pubkeys| {
-                    let mut sum = 0u128;
-                    let account_hashes: Vec<Hash> = pubkeys
-                        .iter()
-                        .filter_map(|pubkey| {
-                            let index_entry = self.accounts_index.get_cloned(pubkey)?;
-                            self.accounts_index
-                                .get_account_info_with_and_then(
-                                    &index_entry,
-                                    config.ancestors,
-                                    Some(max_slot),
-                                    |(slot, account_info)| {
-                                        if account_info.is_zero_lamport() {
-                                            return None;
-                                        }
-                                        self.get_account_accessor(
-                                            slot,
-                                            pubkey,
-                                            &account_info.storage_location(),
-                                        )
-                                        .get_loaded_account(|loaded_account| {
-                                            let mut loaded_hash = loaded_account.loaded_hash();
-                                            let balance = loaded_account.lamports();
-                                            let hash_is_missing =
-                                                loaded_hash == AccountHash(Hash::default());
-                                            if hash_is_missing {
-                                                let computed_hash = Self::hash_account(
-                                                    &loaded_account,
-                                                    loaded_account.pubkey(),
-                                                );
-                                                loaded_hash = computed_hash;
-                                            }
-                                            sum += balance as u128;
-                                            loaded_hash.0
-                                        })
-                                    },
-                                )
-                                .flatten()
-                        })
-                        .collect();
-                    let mut total = total_lamports.lock().unwrap();
-                    *total = AccountsHasher::checked_cast_for_capitalization(*total as u128 + sum);
-                    account_hashes
-                })
-                .collect()
-        };
-
-        let mut scan = Measure::start("scan");
-        let account_hashes: Vec<Vec<Hash>> = self.thread_pool_clean.install(get_account_hashes);
-        scan.stop();
-
-        let total_lamports = *total_lamports.lock().unwrap();
-
-        let mut hash_time = Measure::start("hash");
-        let (accumulated_hash, hash_total) = AccountsHasher::calculate_hash(account_hashes);
-        hash_time.stop();
-
-        datapoint_info!(
-            "calculate_accounts_hash_from_index",
-            ("accounts_scan", scan.as_us(), i64),
-            ("hash", hash_time.as_us(), i64),
-            ("hash_total", hash_total, i64),
-            ("collect", collect.as_us(), i64),
-        );
-
-        let accounts_hash = AccountsHash(accumulated_hash);
-        (accounts_hash, total_lamports)
-    }
-
     /// Calculates the accounts lt hash
     ///
     /// Only intended to be called at startup (or by tests).
@@ -6172,26 +6078,6 @@ impl AccountsDb {
             .expect("capitalization cannot overflow")
     }
 
-    /// This is only valid to call from tests.
-    /// run the accounts hash calculation and store the results
-    pub fn update_accounts_hash_for_tests(
-        &self,
-        slot: Slot,
-        ancestors: &Ancestors,
-        debug_verify: bool,
-        is_startup: bool,
-    ) -> (AccountsHash, u64) {
-        self.update_accounts_hash_with_verify_from(
-            CalcAccountsHashDataSource::IndexForTests,
-            debug_verify,
-            slot,
-            ancestors,
-            None,
-            &EpochSchedule::default(),
-            is_startup,
-        )
-    }
-
     fn update_old_slot_stats(&self, stats: &HashStats, storage: Option<&Arc<AccountStorageEntry>>) {
         if let Some(storage) = storage {
             stats.roots_older_than_epoch.fetch_add(1, Ordering::Relaxed);
@@ -6257,155 +6143,6 @@ impl AccountsDb {
 
         // if we made it here, we have hashed info and we should try to load from the cache
         true
-    }
-
-    pub fn calculate_accounts_hash_from(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        slot: Slot,
-        config: &CalcAccountsHashConfig<'_>,
-    ) -> (AccountsHash, u64) {
-        match data_source {
-            CalcAccountsHashDataSource::Storages => {
-                if self.accounts_cache.contains_any_slots(slot) {
-                    // this indicates a race condition
-                    inc_new_counter_info!("accounts_hash_items_in_write_cache", 1);
-                }
-
-                let mut collect_time = Measure::start("collect");
-                let (combined_maps, slots) = self.get_storages(..=slot);
-                collect_time.stop();
-
-                let mut sort_time = Measure::start("sort_storages");
-                let min_root = self.accounts_index.min_alive_root();
-                let storages = SortedStorages::new_with_slots(
-                    combined_maps.iter().zip(slots),
-                    min_root,
-                    Some(slot),
-                );
-                sort_time.stop();
-
-                let mut timings = HashStats {
-                    collect_snapshots_us: collect_time.as_us(),
-                    storage_sort_us: sort_time.as_us(),
-                    ..HashStats::default()
-                };
-                timings.calc_storage_size_quartiles(&combined_maps);
-
-                self.calculate_accounts_hash(config, &storages, timings)
-            }
-            CalcAccountsHashDataSource::IndexForTests => {
-                self.calculate_accounts_hash_from_index(slot, config)
-            }
-        }
-    }
-
-    fn calculate_accounts_hash_with_verify_from(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        debug_verify: bool,
-        slot: Slot,
-        config: CalcAccountsHashConfig<'_>,
-        expected_capitalization: Option<u64>,
-    ) -> (AccountsHash, u64) {
-        let (accounts_hash, total_lamports) =
-            self.calculate_accounts_hash_from(data_source, slot, &config);
-        if debug_verify {
-            // calculate the other way (store or non-store) and verify results match.
-            let data_source_other = match data_source {
-                CalcAccountsHashDataSource::IndexForTests => CalcAccountsHashDataSource::Storages,
-                CalcAccountsHashDataSource::Storages => CalcAccountsHashDataSource::IndexForTests,
-            };
-            let (accounts_hash_other, total_lamports_other) =
-                self.calculate_accounts_hash_from(data_source_other, slot, &config);
-
-            let success = accounts_hash == accounts_hash_other
-                && total_lamports == total_lamports_other
-                && total_lamports == expected_capitalization.unwrap_or(total_lamports);
-            assert!(
-                success,
-                "calculate_accounts_hash_with_verify mismatch. hashes: {}, {}; lamports: {}, {}; \
-                 expected lamports: {:?}, data source: {:?}, slot: {}",
-                accounts_hash.0,
-                accounts_hash_other.0,
-                total_lamports,
-                total_lamports_other,
-                expected_capitalization,
-                data_source,
-                slot
-            );
-        }
-        (accounts_hash, total_lamports)
-    }
-
-    /// run the accounts hash calculation and store the results
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_accounts_hash_with_verify_from(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        debug_verify: bool,
-        slot: Slot,
-        ancestors: &Ancestors,
-        expected_capitalization: Option<u64>,
-        epoch_schedule: &EpochSchedule,
-        is_startup: bool,
-    ) -> (AccountsHash, u64) {
-        let epoch = epoch_schedule.get_epoch(slot);
-        let (accounts_hash, total_lamports) = self.calculate_accounts_hash_with_verify_from(
-            data_source,
-            debug_verify,
-            slot,
-            CalcAccountsHashConfig {
-                use_bg_thread_pool: !is_startup,
-                ancestors: Some(ancestors),
-                epoch_schedule,
-                epoch,
-                store_detailed_debug_info_on_failure: false,
-            },
-            expected_capitalization,
-        );
-        self.set_accounts_hash(slot, (accounts_hash, total_lamports));
-        (accounts_hash, total_lamports)
-    }
-
-    /// Calculate the full accounts hash for `storages` and save the results at `slot`
-    pub fn update_accounts_hash(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        slot: Slot,
-        stats: HashStats,
-    ) -> (AccountsHash, /*capitalization*/ u64) {
-        let accounts_hash = self.calculate_accounts_hash(config, storages, stats);
-        let old_accounts_hash = self.set_accounts_hash(slot, accounts_hash);
-        if let Some(old_accounts_hash) = old_accounts_hash {
-            warn!(
-                "Accounts hash was already set for slot {slot}! old: {old_accounts_hash:?}, new: \
-                 {accounts_hash:?}"
-            );
-        }
-        accounts_hash
-    }
-
-    /// Calculate the incremental accounts hash for `storages` and save the results at `slot`
-    pub fn update_incremental_accounts_hash(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        slot: Slot,
-        stats: HashStats,
-    ) -> (IncrementalAccountsHash, /*capitalization*/ u64) {
-        let incremental_accounts_hash =
-            self.calculate_incremental_accounts_hash(config, storages, stats);
-        let old_incremental_accounts_hash =
-            self.set_incremental_accounts_hash(slot, incremental_accounts_hash);
-        if let Some(old_incremental_accounts_hash) = old_incremental_accounts_hash {
-            warn!(
-                "Incremental accounts hash was already set for slot {slot}! old: \
-                 {old_incremental_accounts_hash:?}, new: {incremental_accounts_hash:?}"
-            );
-        }
-        incremental_accounts_hash
     }
 
     /// Set the accounts hash for `slot`
@@ -6541,6 +6278,7 @@ impl AccountsDb {
     ///
     /// This is intended to be used by startup verification, and also AccountsHashVerifier.
     /// Uses account storage files as the data source for the calculation.
+    // obsolete, will be removed next
     pub fn calculate_accounts_hash(
         &self,
         config: &CalcAccountsHashConfig<'_>,
@@ -6567,6 +6305,7 @@ impl AccountsDb {
     ///   included in the incremental snapshot.  This ensures reconstructing the AccountsDb is
     ///   still correct when using this incremental accounts hash.
     /// - `storages` must be the same as the ones going into the incremental snapshot.
+    // obsolete, will be removed next
     pub fn calculate_incremental_accounts_hash(
         &self,
         config: &CalcAccountsHashConfig<'_>,
@@ -6587,6 +6326,7 @@ impl AccountsDb {
 
     /// The shared code for calculating accounts hash from storages.
     /// Used for both full accounts hash and incremental accounts hash calculation.
+    // obsolete, will be removed next
     fn calculate_accounts_hash_from_storages(
         &self,
         config: &CalcAccountsHashConfig<'_>,

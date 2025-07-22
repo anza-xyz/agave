@@ -784,7 +784,7 @@ struct SerializableAccountsDb<'a> {
     account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
-    accounts_hash: AccountsHash,
+    accounts_hash: AccountsHash,            // obsolete, will be removed next
     write_version: u64,
 }
 
