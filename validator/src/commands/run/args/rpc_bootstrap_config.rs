@@ -125,7 +125,7 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec![
-                    // entrypoint is required for check-vote-account
+                    // required by --check-vote-account
                     "--entrypoint",
                     "127.0.0.1:8000",
                     "--check-vote-account",
@@ -154,7 +154,7 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec![
-                    // --known-validator is required
+                    // required by --only-known-rpc
                     "--known-validator",
                     &known_validators_pubkey.to_string(),
                     "--only-known-rpc",
@@ -179,7 +179,7 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args,
                 vec![
-                    // --known-validator is require
+                    // required by --no-untrusted-rpc
                     "--known-validator",
                     &known_validators_pubkey.to_string(),
                     "--no-untrusted-rpc",
