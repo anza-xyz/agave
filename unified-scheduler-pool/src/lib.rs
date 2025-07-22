@@ -1097,7 +1097,7 @@ impl TaskHandler for DefaultTaskHandler {
                 );
                 // Note that we're about to partially commit side effects to bank in _pre commit_
                 // callback. Extra care must be taken in the case of poh failure just below;
-                bank.write_cost_tracker().unwrap().try_add(&cost)?;
+                bank.write_cost_tracker().unwrap().try_stage_next(&cost)?;
 
                 let RecordTransactionsSummary {
                     result,
@@ -1109,10 +1109,14 @@ impl TaskHandler for DefaultTaskHandler {
                     .unwrap()
                     .record_transactions(bank.slot(), vec![transaction.to_versioned_transaction()]);
                 match result {
-                    Ok(()) => Ok(starting_transaction_index),
+                    Ok(()) => {
+                        bank.write_cost_tracker().unwrap().commit_staged();
+                        Ok(starting_transaction_index)
+                    }
                     Err(_) => {
                         // Poh failed; need to revert the committed cost state change.
                         bank.write_cost_tracker().unwrap().remove(&cost);
+                        bank.write_cost_tracker().unwrap().reset_staged();
                         Err(TransactionError::CommitCancelled)
                     }
                 }

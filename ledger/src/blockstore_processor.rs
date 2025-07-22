@@ -235,7 +235,7 @@ pub fn execute_batch<'a>(
         // Block verification (including unified scheduler) case;
         // collect and check transaction costs
         let tx_costs = get_transaction_costs(bank, &commit_results, batch.sanitized_transactions());
-        check_block_cost_limits(bank, &tx_costs).map(|_| tx_costs)
+        check_block_cost_limits(bank, &tx_costs, transaction_indexes.as_ref()).map(|_| tx_costs)
     } else if record_transaction_meta {
         // Unified scheduler block production case;
         // the scheduler will track costs elsewhere but costs are recalculated
@@ -336,16 +336,31 @@ fn get_transaction_costs<'a, Tx: TransactionWithMeta>(
 
 fn check_block_cost_limits<Tx: TransactionWithMeta>(
     bank: &Bank,
-    tx_costs: &[Option<TransactionCost<'_, Tx>>],
+    tx_costs: &Vec<Option<TransactionCost<'_, Tx>>>,
+    tx_indexes: &[usize],
 ) -> Result<()> {
-    let mut cost_tracker = bank.write_cost_tracker().unwrap();
-    for tx_cost in tx_costs.iter().flatten() {
-        cost_tracker
-            .try_add(tx_cost)
-            .map_err(TransactionError::from)?;
-    }
+    let tx_costs_with_indexes: Vec<_> = tx_costs.iter().zip(tx_indexes).collect();
+    let mut sorted_by_index = tx_costs_with_indexes
+        .iter()
+        .map(|(_, tx_idx)| *tx_idx)
+        .enumerate()
+        .collect::<Vec<_>>();
+    sorted_by_index.sort_by_key(|(_, tx_idx)| *tx_idx);
 
-    Ok(())
+    sorted_by_index
+        .iter()
+        .map(|(idx, _)| tx_costs_with_indexes[*idx])
+        .filter_map(|(opt, idx)| opt.as_ref().map(|cost| (cost, idx)))
+        .try_for_each(|(tx_cost, tx_idx)| {
+            bank.cost_tracker_latch.wait_until(*tx_idx);
+            let res = bank
+                .write_cost_tracker()
+                .unwrap()
+                .try_stage_and_commit(tx_cost, *tx_idx);
+            bank.cost_tracker_latch.task_done();
+            res.map(|_| ())
+        })
+        .map_err(TransactionError::from)
 }
 
 #[derive(Default)]
@@ -5329,15 +5344,19 @@ pub mod tests {
             .unwrap()
             .set_limits(u64::MAX, block_limit, u64::MAX);
 
-        let tx_costs = vec![None, Some(tx_cost), None];
+        let mut tx_costs = vec![None, Some(tx_cost), None];
+        let mut tx_indexes = vec![0, 1, 2];
         // The transaction will fit when added the first time
-        assert!(check_block_cost_limits(&bank, &tx_costs).is_ok());
+        assert!(check_block_cost_limits(&bank, &tx_costs, &tx_indexes).is_ok());
         // But adding a second time will exceed the block limit
         assert_eq!(
             Err(TransactionError::WouldExceedMaxBlockCostLimit),
-            check_block_cost_limits(&bank, &tx_costs)
+            check_block_cost_limits(&bank, &tx_costs, &tx_indexes)
         );
+
         // Adding another None will noop (even though the block is already full)
-        assert!(check_block_cost_limits(&bank, &tx_costs[0..1]).is_ok());
+        tx_costs.truncate(1);
+        tx_indexes.truncate(1);
+        assert!(check_block_cost_limits(&bank, &tx_costs, &tx_indexes).is_ok());
     }
 }

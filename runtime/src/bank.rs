@@ -99,7 +99,10 @@ use {
     },
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_compute_budget_instruction::instructions_processor::process_compute_budget_instructions,
-    solana_cost_model::{block_cost_limits::simd_0256_block_limits, cost_tracker::CostTracker},
+    solana_cost_model::{
+        block_cost_limits::simd_0256_block_limits,
+        cost_tracker::{CostTracker, IndexedLatch},
+    },
     solana_epoch_info::EpochInfo,
     solana_epoch_schedule::EpochSchedule,
     solana_feature_gate_interface as feature,
@@ -547,6 +550,7 @@ impl PartialEq for Bank {
             freeze_started: _,
             vote_only_bank: _,
             cost_tracker: _,
+            cost_tracker_latch: _,
             accounts_data_size_initial: _,
             accounts_data_size_delta_on_chain: _,
             accounts_data_size_delta_off_chain: _,
@@ -852,6 +856,7 @@ pub struct Bank {
     vote_only_bank: bool,
 
     cost_tracker: RwLock<CostTracker>,
+    pub cost_tracker_latch: IndexedLatch,
 
     /// The initial accounts data size at the start of this Bank, before processing any transactions/etc
     accounts_data_size_initial: u64,
@@ -1091,6 +1096,7 @@ impl Bank {
             freeze_started: AtomicBool::default(),
             vote_only_bank: false,
             cost_tracker: RwLock::<CostTracker>::default(),
+            cost_tracker_latch: IndexedLatch::new(),
             accounts_data_size_initial: 0,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
@@ -1345,6 +1351,7 @@ impl Bank {
             )),
             freeze_started: AtomicBool::new(false),
             cost_tracker: RwLock::new(parent.read_cost_tracker().unwrap().new_from_parent_limits()),
+            cost_tracker_latch: IndexedLatch::new(),
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
@@ -1794,6 +1801,7 @@ impl Bank {
             freeze_started: AtomicBool::new(fields.hash != Hash::default()),
             vote_only_bank: false,
             cost_tracker: RwLock::new(CostTracker::default()),
+            cost_tracker_latch: IndexedLatch::new(),
             accounts_data_size_initial,
             accounts_data_size_delta_on_chain: AtomicI64::new(0),
             accounts_data_size_delta_off_chain: AtomicI64::new(0),
