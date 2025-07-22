@@ -46,7 +46,7 @@ impl BlockProductionManager {
         let vote_shutdown_signal = Arc::new(AtomicBool::new(false));
         let non_vote_shutdown_signal = Arc::new(AtomicBool::new(false));
 
-        let vote_thread_handle = Self::spawn_vote_thread(&context);
+        let vote_thread_handle = Self::spawn_vote_thread(vote_shutdown_signal.clone(), &context);
 
         Self {
             vote_shutdown_signal,
@@ -114,8 +114,12 @@ impl BlockProductionManager {
         Ok(())
     }
 
-    fn spawn_vote_thread(context: &BlockProductionContext) -> JoinHandle<()> {
+    fn spawn_vote_thread(
+        vote_shutdown_signal: Arc<AtomicBool>,
+        context: &BlockProductionContext,
+    ) -> JoinHandle<()> {
         BankingStage::spawn_vote_worker(
+            vote_shutdown_signal.clone(),
             context.tpu_vote_receiver.clone(),
             context.gossip_vote_receiver.clone(),
             DecisionMaker::new(context.poh_recorder.clone()),
