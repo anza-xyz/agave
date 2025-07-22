@@ -382,7 +382,7 @@ pub const DEFAULT_MAX_ANCIENT_STORAGES: usize = 100_000;
 #[cfg(not(test))]
 const ABSURD_CONSECUTIVE_FAILED_ITERATIONS: usize = 100;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AccountShrinkThreshold {
     /// Measure the total space sparseness across all candidates
     /// And select the candidates by using the top sparse account storage entries to shrink.
