@@ -79,6 +79,7 @@ impl AccountsFile {
     ///
     /// The second element of the returned tuple is the number of accounts in the
     /// accounts file.
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_from_file(
         path: impl Into<PathBuf>,
         current_len: usize,
@@ -415,7 +416,7 @@ impl AccountsFile {
     /// So, return.len() is 1 + (number of accounts written)
     /// After each account is appended, the internal `current_len` is updated
     /// and will be available to other threads.
-    pub fn append_accounts<'a>(
+    pub fn write_accounts<'a>(
         &self,
         accounts: &impl StorableAccounts<'a>,
         skip: usize,

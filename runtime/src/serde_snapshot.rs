@@ -23,7 +23,6 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
-        epoch_accounts_hash::EpochAccountsHash,
     },
     solana_builtins::prototype::BuiltinPrototype,
     solana_clock::{Epoch, Slot, UnixTimestamp},
@@ -195,7 +194,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             stakes: dvb.stakes,
             is_delta: dvb.is_delta,
             incremental_snapshot_persistence: None,
-            epoch_accounts_hash: None,
             versioned_epoch_stakes: HashMap::default(), // populated from ExtraFieldsToDeserialize
             accounts_lt_hash: None,                     // populated from ExtraFieldsToDeserialize
             bank_hash_stats: BankHashStats::default(),  // populated from AccountsDbFields
@@ -412,7 +410,7 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     #[serde(deserialize_with = "default_on_eof")]
-    epoch_accounts_hash: Option<Hash>,
+    _obsolete_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
     versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     #[serde(deserialize_with = "default_on_eof")]
@@ -431,7 +429,7 @@ struct ExtraFieldsToDeserialize {
 pub struct ExtraFieldsToSerialize<'a> {
     pub lamports_per_signature: u64,
     pub incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>,
-    pub epoch_accounts_hash: Option<EpochAccountsHash>,
+    pub obsolete_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
 }
@@ -464,7 +462,7 @@ where
     let ExtraFieldsToDeserialize {
         lamports_per_signature,
         incremental_snapshot_persistence,
-        epoch_accounts_hash,
+        _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
     } = extra_fields;
@@ -473,7 +471,6 @@ where
         .fee_rate_governor
         .clone_with_lamports_per_signature(lamports_per_signature);
     bank_fields.incremental_snapshot_persistence = incremental_snapshot_persistence;
-    bank_fields.epoch_accounts_hash = epoch_accounts_hash;
     bank_fields.versioned_epoch_stakes = versioned_epoch_stakes;
     bank_fields.accounts_lt_hash = accounts_lt_hash.map(Into::into);
 
@@ -627,24 +624,6 @@ where
     )
 }
 
-#[cfg(test)]
-pub(crate) fn bank_to_stream_no_extra_fields<W>(
-    stream: &mut BufWriter<W>,
-    bank: &Bank,
-    snapshot_storages: &[Vec<Arc<AccountStorageEntry>>],
-) -> Result<(), Error>
-where
-    W: Write,
-{
-    bincode::serialize_into(
-        stream,
-        &SerializableBankAndStorageNoExtra {
-            bank,
-            snapshot_storages,
-        },
-    )
-}
-
 /// Serializes bank snapshot into `stream` with bincode
 pub fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
@@ -723,7 +702,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
         let versioned_epoch_stakes = std::mem::take(&mut bank_fields.versioned_epoch_stakes);
-        let accounts_lt_hash = bank_fields.accounts_lt_hash.clone().map(Into::into);
+        let accounts_lt_hash = Some(bank_fields.accounts_lt_hash.clone().into());
         let bank_fields_to_serialize = (
             SerializableVersionedBank::from(bank_fields),
             SerializableAccountsDb::<'_> {
@@ -737,7 +716,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
             ExtraFieldsToSerialize {
                 lamports_per_signature,
                 incremental_snapshot_persistence: None,
-                epoch_accounts_hash: self.bank.get_epoch_accounts_hash_to_serialize(),
+                obsolete_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash,
             },
@@ -798,7 +777,7 @@ struct SerializableAccountsDb<'a> {
     slot: Slot,
     account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
+    accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
     accounts_hash: AccountsHash,
     write_version: u64,
 }
@@ -894,7 +873,6 @@ where
         accounts_db_config,
         accounts_update_notifier,
         exit,
-        bank_fields.epoch_accounts_hash,
         capitalizations,
         bank_fields.incremental_snapshot_persistence.as_ref(),
         bank_fields.accounts_lt_hash.is_some(),
@@ -1059,7 +1037,6 @@ fn reconstruct_accountsdb_from_fields<E>(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-    epoch_accounts_hash: Option<Hash>,
     capitalizations: (u64, Option<u64>),
     incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     has_accounts_lt_hash: bool,
@@ -1073,12 +1050,6 @@ where
         accounts_update_notifier,
         exit,
     );
-
-    if let Some(epoch_accounts_hash) = epoch_accounts_hash {
-        accounts_db
-            .epoch_accounts_hash_manager
-            .set_valid(EpochAccountsHash::new(epoch_accounts_hash), 0);
-    }
 
     // Store the accounts hash & capitalization, from the full snapshot, in the new AccountsDb
     {
@@ -1240,11 +1211,6 @@ where
         })
         .unwrap();
 
-    // When generating the index, we want to calculate the duplicates lt hash value (needed to do
-    // the lattice-based verification of the accounts in the background) optimistically.
-    // This means, either when the cli arg is set, or when the snapshot has an accounts lt hash.
-    let is_accounts_lt_hash_enabled =
-        accounts_db.is_experimental_accumulator_hash_enabled() || has_accounts_lt_hash;
     info!("Building accounts index...");
     let start = Instant::now();
     let IndexGenerationInfo {
@@ -1253,7 +1219,7 @@ where
     } = accounts_db.generate_index(
         limit_load_slot_count_from_snapshot,
         verify_index,
-        is_accounts_lt_hash_enabled,
+        has_accounts_lt_hash,
     );
     info!("Building accounts index... Done in {:?}", start.elapsed());
 

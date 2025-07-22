@@ -210,6 +210,7 @@ axum = "0.7.9"
 aya = "0.13"
 backoff = "0.4.0"
 base64 = "0.22.1"
+bencher = "0.1.5"
 bincode = "1.3.3"
 bitflags = { version = "2.9.1" }
 blake3 = "1.8.2"
@@ -241,7 +242,7 @@ criterion-stats = "0.3.0"
 crossbeam-channel = "0.5.15"
 csv = "1.3.1"
 ctrlc = "3.4.7"
-curve25519-dalek = { version = "4.1.3", features = ["digest", "rand_core"] }
+curve25519-dalek = { version = "4.2.0", features = ["digest", "rand_core"] }
 dashmap = "5.5.3"
 derivation-path = { version = "0.2.0", default-features = false }
 derive-where = "1.5.0"
@@ -256,7 +257,7 @@ eager = "0.1.0"
 ed25519-dalek = "=1.0.1"
 ed25519-dalek-bip32 = "0.2.0"
 enum-iterator = "1.5.0"
-env_logger = "0.9.3"
+env_logger = "0.11.8"
 etcd-client = "0.11.1"
 fast-math = "0.1"
 fd-lock = "3.0.13"
@@ -281,7 +282,7 @@ hyper = "0.14.32"
 hyper-proxy = "0.9.1"
 im = "15.1.0"
 indexmap = "2.10.0"
-indicatif = "0.17.12"
+indicatif = "0.18.0"
 io-uring = "0.7.8"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
@@ -306,7 +307,7 @@ light-poseidon = "0.2.0"
 log = "0.4.27"
 lru = "0.7.7"
 lz4 = "1.28.1"
-memmap2 = "0.9.5"
+memmap2 = "0.9.7"
 memoffset = "0.9"
 merlin = { version = "3", default-features = false }
 min-max-heap = "1.3.0"
@@ -326,6 +327,7 @@ percentage = "0.1.0"
 pickledb = { version = "0.5.1", default-features = false }
 predicates = "2.1"
 pretty-hex = "0.3.0"
+pretty_assertions = "1.4.1"
 prio-graph = "0.3.0"
 proc-macro2 = "1.0.95"
 proptest = "1.7"
@@ -349,7 +351,7 @@ reqwest = { version = "0.12.22", default-features = false }
 reqwest-middleware = "0.4.2"
 rolling-file = "0.2.0"
 rpassword = "7.4"
-rustls = { version = "0.23.28", features = ["std"], default-features = false }
+rustls = { version = "0.23.29", features = ["std"], default-features = false }
 scopeguard = "1.2.0"
 semver = "1.0.26"
 seqlock = "0.2.0"
@@ -357,7 +359,7 @@ serde = "1.0.219" # must match the serde_derive version, see https://github.com/
 serde-big-array = "0.5.1"
 serde_bytes = "0.11.17"
 serde_derive = "1.0.219" # must match the serde version, see https://github.com/serde-rs/serde/issues/2584#issuecomment-1685252251
-serde_json = "1.0.140"
+serde_json = "1.0.141"
 serde_with = { version = "3.14.0", default-features = false }
 serde_yaml = "0.9.34"
 serial_test = "2.0.0"
@@ -498,7 +500,7 @@ solana-rpc-client-types = { path = "rpc-client-types", version = "=3.0.0" }
 solana-runtime = { path = "runtime", version = "=3.0.0" }
 solana-runtime-transaction = { path = "runtime-transaction", version = "=3.0.0" }
 solana-sanitize = "2.2.1"
-solana-sbpf = "=0.11.1"
+solana-sbpf = "=0.12.0"
 solana-sdk-ids = "2.2.1"
 solana-secp256k1-program = "2.2.3"
 solana-secp256k1-recover = "2.2.1"
@@ -555,7 +557,7 @@ solana-unified-scheduler-pool = { path = "unified-scheduler-pool", version = "=3
 solana-validator-exit = "2.2.1"
 solana-version = { path = "version", version = "=3.0.0" }
 solana-vote = { path = "vote", version = "=3.0.0" }
-solana-vote-interface = "2.2.5"
+solana-vote-interface = "2.2.6"
 solana-vote-program = { path = "programs/vote", version = "=3.0.0", default-features = false }
 solana-wen-restart = { path = "wen-restart", version = "=3.0.0" }
 solana-zk-elgamal-proof-program = { path = "programs/zk-elgamal-proof", version = "=3.0.0" }
@@ -582,7 +584,7 @@ symlink = "0.1.0"
 syn = "2.0"
 sys-info = "0.9.1"
 sysctl = "0.4.6"
-systemstat = "0.2.4"
+systemstat = "0.2.5"
 tar = "0.4.44"
 tarpc = "0.29.0"
 tempfile = "3.20.0"

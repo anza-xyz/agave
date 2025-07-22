@@ -28,6 +28,7 @@ use {
         cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
         contact_info::Protocol,
     },
+    solana_inflation::Inflation,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
@@ -121,6 +122,7 @@ pub struct TestValidatorGenesis {
     upgradeable_programs: Vec<UpgradeableProgramInfo>,
     ticks_per_slot: Option<u64>,
     epoch_schedule: Option<EpochSchedule>,
+    inflation: Option<Inflation>,
     node_config: TestValidatorNodeConfig,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
@@ -153,6 +155,7 @@ impl Default for TestValidatorGenesis {
             upgradeable_programs: Vec::<UpgradeableProgramInfo>::default(),
             ticks_per_slot: Option::<u64>::default(),
             epoch_schedule: Option::<EpochSchedule>::default(),
+            inflation: Option::<Inflation>::default(),
             node_config: TestValidatorNodeConfig::default(),
             validator_exit: Arc::<RwLock<Exit>>::default(),
             start_progress: Arc::<RwLock<ValidatorStartProgress>>::default(),
@@ -249,6 +252,11 @@ impl TestValidatorGenesis {
 
     pub fn epoch_schedule(&mut self, epoch_schedule: EpochSchedule) -> &mut Self {
         self.epoch_schedule = Some(epoch_schedule);
+        self
+    }
+
+    pub fn inflation(&mut self, inflation: Inflation) -> &mut Self {
+        self.inflation = Some(inflation);
         self
     }
 
@@ -839,7 +847,7 @@ impl TestValidator {
             .read()
             .unwrap()
             .root_bank()
-            .set_startup_verification_complete();
+            .set_initial_accounts_hash_verification_completed();
     }
 
     /// Initialize the ledger directory
@@ -943,6 +951,10 @@ impl TestValidator {
 
         if let Some(ticks_per_slot) = config.ticks_per_slot {
             genesis_config.ticks_per_slot = ticks_per_slot;
+        }
+
+        if let Some(inflation) = config.inflation {
+            genesis_config.inflation = inflation;
         }
 
         for feature in feature_set {

@@ -4695,8 +4695,7 @@ pub mod tests {
                 lamports,
                 space,
                 &owner_pubkey,
-            )
-            .into(),
+            ),
             &[],
         )?;
 

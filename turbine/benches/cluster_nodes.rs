@@ -1,8 +1,5 @@
-#![feature(test)]
-
-extern crate test;
-
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     rand::{seq::SliceRandom, Rng},
     solana_clock::Slot,
     solana_cluster_type::ClusterType,
@@ -16,7 +13,6 @@ use {
         cluster_nodes::{make_test_cluster, new_cluster_nodes, ClusterNodes},
         retransmit_stage::RetransmitStage,
     },
-    test::Bencher,
 };
 
 fn make_cluster_nodes<R: Rng>(
@@ -71,12 +67,17 @@ fn get_retransmit_peers_deterministic_wrapper(b: &mut Bencher, unstaked_ratio: O
     b.iter(|| get_retransmit_peers_deterministic(&cluster_nodes, slot, &slot_leader));
 }
 
-#[bench]
 fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2(b: &mut Bencher) {
     get_retransmit_peers_deterministic_wrapper(b, Some((1, 2)));
 }
 
-#[bench]
 fn bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32(b: &mut Bencher) {
     get_retransmit_peers_deterministic_wrapper(b, Some((1, 32)));
 }
+
+benchmark_group!(
+    benches,
+    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_2,
+    bench_get_retransmit_peers_deterministic_unstaked_ratio_1_32
+);
+benchmark_main!(benches);

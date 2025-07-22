@@ -178,7 +178,7 @@ pub mod tests {
 
         // Mark startup verification complete - status still unknown as no slots have been
         // optimistically confirmed yet
-        bank0.set_startup_verification_complete();
+        bank0.set_initial_accounts_hash_verification_completed();
         assert_eq!(health.check(), RpcHealthStatus::Unknown);
 
         // Mark slot 15 as being optimistically confirmed in the Blockstore, this could

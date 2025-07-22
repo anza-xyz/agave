@@ -83,7 +83,7 @@ pub struct PubSubService {
 impl PubSubService {
     pub fn new(
         pubsub_config: PubSubConfig,
-        subscriptions: &Arc<RpcSubscriptions>,
+        subscriptions: &RpcSubscriptions,
         pubsub_addr: SocketAddr,
     ) -> (Trigger, Self) {
         let subscription_control = subscriptions.control().clone();
@@ -401,6 +401,12 @@ async fn handle_connection(
             pin!(receive_future);
             loop {
                 select! {
+                    biased; // See [prioritization] note below.
+
+                    // [prioritization]
+                    // This block must come FIRST in the `select!` macro. This prioritizes
+                    // processing received messages over sending messages. This ensures the timely
+                    // processing of new subscriptions and time-sensitive opcodes like `PING`.
                     result = &mut receive_future => match result {
                         Ok(_) => break,
                         Err(soketto::connection::Error::Closed) => return Ok(()),

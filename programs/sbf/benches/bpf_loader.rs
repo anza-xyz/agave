@@ -60,13 +60,7 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount {
-            index_in_transaction: 2,
-            index_in_caller: 2,
-            index_in_callee: 0,
-            is_signer: false,
-            is_writable: true,
-        }];
+        let instruction_accounts = vec![InstructionAccount::new(2, 2, 0, false, true)];
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,
@@ -249,8 +243,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        !direct_mapping, // copy_account_data
-        true,            // mask_out_rent_epoch_in_vm_serialization
+        direct_mapping,
+        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -284,8 +278,8 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        !direct_mapping, // copy_account_data
-        true,            // mask_out_rent_epoch_in_vm_serialization
+        direct_mapping,
+        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -332,24 +326,19 @@ fn clone_regions(regions: &[MemoryRegion]) -> Vec<MemoryRegion> {
         regions
             .iter()
             .map(|region| {
-                let mut new_region = if region.writable.get() {
+                let mut new_region = if region.writable {
                     MemoryRegion::new_writable(
-                        slice::from_raw_parts_mut(
-                            region.host_addr.get() as *mut _,
-                            region.len as usize,
-                        ),
+                        slice::from_raw_parts_mut(region.host_addr as *mut _, region.len as usize),
                         region.vm_addr,
                     )
                 } else {
                     MemoryRegion::new_readonly(
-                        slice::from_raw_parts(
-                            region.host_addr.get() as *const _,
-                            region.len as usize,
-                        ),
+                        slice::from_raw_parts(region.host_addr as *const _, region.len as usize),
                         region.vm_addr,
                     )
                 };
-                new_region.cow_callback_payload = region.cow_callback_payload;
+                new_region.access_violation_handler_payload =
+                    region.access_violation_handler_payload;
                 new_region
             })
             .collect()

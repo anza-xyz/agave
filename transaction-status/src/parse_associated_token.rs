@@ -5,19 +5,8 @@ use {
     borsh::BorshDeserialize,
     serde_json::json,
     solana_message::{compiled_instruction::CompiledInstruction, AccountKeys},
-    solana_pubkey::Pubkey,
     spl_associated_token_account::instruction::AssociatedTokenAccountInstruction,
 };
-
-// A helper function to convert spl_associated_token_account::id() as spl_sdk::pubkey::Pubkey
-// to solana_pubkey::Pubkey
-#[deprecated(
-    since = "2.3.0",
-    note = "Use `spl_associated_token_account_client::program::id()` instead"
-)]
-pub fn spl_associated_token_id() -> Pubkey {
-    spl_associated_token_account::id()
-}
 
 pub fn parse_associated_token(
     instruction: &CompiledInstruction,
@@ -100,6 +89,7 @@ mod test {
     use {
         super::*,
         solana_message::Message,
+        solana_pubkey::Pubkey,
         solana_sdk_ids::sysvar,
         spl_associated_token_account::{
             get_associated_token_address, get_associated_token_address_with_program_id,

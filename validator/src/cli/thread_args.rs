@@ -102,8 +102,6 @@ pub struct NumThreadConfig {
     pub rayon_global_threads: NonZeroUsize,
     pub replay_forks_threads: NonZeroUsize,
     pub replay_transactions_threads: NonZeroUsize,
-    pub rocksdb_compaction_threads: NonZeroUsize,
-    pub rocksdb_flush_threads: NonZeroUsize,
     pub tpu_transaction_forward_receive_threads: NonZeroUsize,
     pub tpu_transaction_receive_threads: NonZeroUsize,
     pub tpu_vote_transaction_receive_threads: NonZeroUsize,
@@ -146,16 +144,6 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
             ReplayTransactionsThreadsArg::NAME,
             NonZeroUsize
         ),
-        rocksdb_compaction_threads: value_t_or_exit!(
-            matches,
-            RocksdbCompactionThreadsArg::NAME,
-            NonZeroUsize
-        ),
-        rocksdb_flush_threads: value_t_or_exit!(
-            matches,
-            RocksdbFlushThreadsArg::NAME,
-            NonZeroUsize
-        ),
         tpu_transaction_forward_receive_threads: value_t_or_exit!(
             matches,
             TpuTransactionForwardReceiveThreadArgs::NAME,
@@ -186,7 +174,7 @@ pub fn parse_num_threads_args(matches: &ArgMatches) -> NumThreadConfig {
 }
 
 /// Configuration for CLAP arguments that control the number of threads for various functions
-trait ThreadArg {
+pub trait ThreadArg {
     /// The argument's name
     const NAME: &'static str;
     /// The argument's long name
@@ -314,7 +302,7 @@ impl ThreadArg for ReplayTransactionsThreadsArg {
     }
 }
 
-struct RocksdbCompactionThreadsArg;
+pub struct RocksdbCompactionThreadsArg;
 impl ThreadArg for RocksdbCompactionThreadsArg {
     const NAME: &'static str = "rocksdb_compaction_threads";
     const LONG_NAME: &'static str = "rocksdb-compaction-threads";
@@ -325,7 +313,7 @@ impl ThreadArg for RocksdbCompactionThreadsArg {
     }
 }
 
-struct RocksdbFlushThreadsArg;
+pub struct RocksdbFlushThreadsArg;
 impl ThreadArg for RocksdbFlushThreadsArg {
     const NAME: &'static str = "rocksdb_flush_threads";
     const LONG_NAME: &'static str = "rocksdb-flush-threads";

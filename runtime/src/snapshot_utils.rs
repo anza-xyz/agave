@@ -2,9 +2,8 @@ use {
     crate::{
         bank::{BankFieldsToDeserialize, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         serde_snapshot::{
-            self, AccountsDbFields, BankIncrementalSnapshotPersistence, ExtraFieldsToSerialize,
-            SerializableAccountStorageEntry, SnapshotAccountsDbFields, SnapshotBankFields,
-            SnapshotStreams,
+            self, AccountsDbFields, ExtraFieldsToSerialize, SerializableAccountStorageEntry,
+            SnapshotAccountsDbFields, SnapshotBankFields, SnapshotStreams,
         },
         snapshot_archive_info::{
             FullSnapshotArchiveInfo, IncrementalSnapshotArchiveInfo, SnapshotArchiveInfo,
@@ -27,7 +26,6 @@ use {
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
         accounts_hash::{AccountsDeltaHash, AccountsHash},
-        epoch_accounts_hash::EpochAccountsHash,
         hardened_unpack::{self, ArchiveChunker, BytesChannelReader, MultiBytes, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
@@ -76,7 +74,7 @@ const VERSION_STRING_V1_2_0: &str = "1.2.0";
 pub const TMP_SNAPSHOT_ARCHIVE_PREFIX: &str = "tmp-snapshot-archive-";
 pub const BANK_SNAPSHOT_PRE_FILENAME_EXTENSION: &str = "pre";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
-    NonZeroU64::new(50_000).unwrap();
+    NonZeroU64::new(100_000).unwrap();
 pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: NonZeroU64 =
     NonZeroU64::new(100).unwrap();
 pub const DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN: NonZeroUsize =
@@ -832,8 +830,6 @@ pub fn serialize_and_archive_snapshot_package(
         bank_hash_stats,
         accounts_delta_hash,
         accounts_hash,
-        epoch_accounts_hash,
-        bank_incremental_snapshot_persistence,
         write_version,
         enqueued: _,
     } = snapshot_package;
@@ -847,8 +843,6 @@ pub fn serialize_and_archive_snapshot_package(
         bank_hash_stats,
         accounts_delta_hash,
         accounts_hash,
-        epoch_accounts_hash,
-        bank_incremental_snapshot_persistence.as_ref(),
         write_version,
         should_flush_and_hard_link_storages,
     )?;
@@ -910,8 +904,6 @@ fn serialize_snapshot(
     bank_hash_stats: BankHashStats,
     accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
-    epoch_accounts_hash: Option<EpochAccountsHash>,
-    bank_incremental_snapshot_persistence: Option<&BankIncrementalSnapshotPersistence>,
     write_version: u64,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
@@ -964,10 +956,10 @@ fn serialize_snapshot(
             let versioned_epoch_stakes = mem::take(&mut bank_fields.versioned_epoch_stakes);
             let extra_fields = ExtraFieldsToSerialize {
                 lamports_per_signature: bank_fields.fee_rate_governor.lamports_per_signature,
-                incremental_snapshot_persistence: bank_incremental_snapshot_persistence,
-                epoch_accounts_hash,
+                incremental_snapshot_persistence: None,
+                obsolete_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
-                accounts_lt_hash: bank_fields.accounts_lt_hash.clone().map(Into::into),
+                accounts_lt_hash: Some(bank_fields.accounts_lt_hash.clone().into()),
             };
             serde_snapshot::serialize_bank_snapshot_into(
                 stream,

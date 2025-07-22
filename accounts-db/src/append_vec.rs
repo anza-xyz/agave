@@ -23,7 +23,7 @@ use {
             StoredAccountsInfo,
         },
         accounts_hash::AccountHash,
-        buffered_reader::{BufferedReader, BufferedReaderStatus, Stack},
+        buffered_reader::{BufferedReader, ContiguousBufFileRead, Stack},
         file_io::read_into_buffer,
         is_zero_lamport::IsZeroLamport,
         storable_accounts::StorableAccounts,
@@ -40,7 +40,7 @@ use {
         self,
         convert::TryFrom,
         fs::{remove_file, File, OpenOptions},
-        io::{Seek, SeekFrom, Write},
+        io::{BufRead, Seek, SeekFrom, Write},
         mem::{self, MaybeUninit},
         path::{Path, PathBuf},
         ptr, slice,
@@ -118,7 +118,7 @@ impl<'a> ValidSlice<'a> {
     }
 
     #[inline(always)]
-    #[cfg(all(unix, test))]
+    #[cfg(test)]
     pub(crate) fn slice(&self) -> &[u8] {
         self.0
     }
@@ -169,7 +169,6 @@ enum AppendVecFileBacking {
     /// A file-backed block of memory that is used to store the data for each appended item.
     Mmap(MmapMut),
     /// This was opened as a read only file
-    #[cfg_attr(not(unix), allow(dead_code))]
     File(File),
 }
 
@@ -294,8 +293,8 @@ impl AppendVec {
         let mmap = unsafe { MmapMut::map_mut(&data) };
         let mmap = mmap.unwrap_or_else(|err| {
             panic!(
-                "Failed to map the data file (size: {size}): {err}. \
-                 Please increase sysctl vm.max_map_count or equivalent for your platform.",
+                "Failed to map the data file (size: {size}): {err}. Please increase sysctl \
+                 vm.max_map_count or equivalent for your platform.",
             );
         });
         APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
@@ -368,13 +367,7 @@ impl AppendVec {
 
     /// when we can use file i/o as opposed to mmap, this is the trigger to tell us
     /// that no more appending will occur and we can close the initial mmap.
-    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn reopen_as_readonly(&self) -> Option<Self> {
-        #[cfg(not(unix))]
-        // must open as mmmap on non-unix
-        return None;
-
-        #[cfg(unix)]
         match &self.backing {
             AppendVecFileBacking::File(_file) => {
                 // already a file, so already read-only
@@ -423,6 +416,7 @@ impl AppendVec {
         self.file_size
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn new_from_file(
         path: impl Into<PathBuf>,
         current_len: usize,
@@ -463,8 +457,7 @@ impl AppendVec {
             // fallback to the old/slow impl that does the full sanitization.
             // [^1]: https://github.com/anza-xyz/agave/issues/6797
             info!(
-                "Could not optimistically create new AppendVec, \
-                 falling back to pessimistic impl: \
+                "Could not optimistically create new AppendVec, falling back to pessimistic impl: \
                  file size ({}) and current length ({}) do not match for '{}'",
                 new.file_size,
                 current_len,
@@ -476,7 +469,6 @@ impl AppendVec {
     }
 
     /// Creates an appendvec from file without performing sanitize checks or counting the number of accounts
-    #[cfg_attr(not(unix), allow(unused_variables))]
     pub fn new_from_file_unchecked(
         path: impl Into<PathBuf>,
         current_len: usize,
@@ -492,8 +484,6 @@ impl AppendVec {
             .create(false)
             .open(&path)?;
 
-        #[cfg(unix)]
-        // we must use mmap on non-linux
         if storage_access == StorageAccess::File {
             APPEND_VEC_STATS.files_open.fetch_add(1, Ordering::Relaxed);
 
@@ -516,7 +506,10 @@ impl AppendVec {
             let result = MmapMut::map_mut(&data);
             if result.is_err() {
                 // for vm.max_map_count, error is: {code: 12, kind: Other, message: "Cannot allocate memory"}
-                info!("memory map error: {:?}. This may be because vm.max_map_count is not set correctly.", result);
+                info!(
+                    "memory map error: {result:?}. This may be because vm.max_map_count is not \
+                     set correctly."
+                );
             }
             result?
         };
@@ -1056,27 +1049,31 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                let self_len = self.len();
                 const BUFFER_SIZE: usize = PAGE_SIZE * 8;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
-                    self_len,
-                    file,
-                    STORE_META_OVERHEAD,
-                );
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self.len(), file);
+                let mut min_buf_len = STORE_META_OVERHEAD;
                 // Buffer for account data that doesn't fit within the stack allocated buffer.
                 // This will be re-used for each account that doesn't fit within the stack allocated buffer.
                 let mut data_overflow_buffer = vec![];
-                while let BufferedReaderStatus::Success = reader.read()? {
-                    let (offset, bytes_subset) = reader.get_offset_and_data();
-                    let (meta, next) = Self::get_type::<StoredMeta>(bytes_subset, 0).unwrap();
-                    let (account_meta, next) =
-                        Self::get_type::<AccountMeta>(bytes_subset, next).unwrap();
-                    let (hash, next) = Self::get_type::<AccountHash>(bytes_subset, next).unwrap();
+                loop {
+                    let offset = reader.get_file_offset();
+                    let bytes = match reader
+                        .fill_buf_required_or_overflow(min_buf_len, &mut data_overflow_buffer)
+                    {
+                        Ok([]) => break,
+                        Ok(bytes) => ValidSlice::new(bytes),
+                        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(err) => return Err(AccountsFileError::Io(err)),
+                    };
+
+                    let (meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
+                    let (account_meta, next) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
+                    let (hash, next) = Self::get_type::<AccountHash>(bytes, next).unwrap();
                     let data_len = meta.data_len as usize;
-                    let leftover = bytes_subset.len() - next;
+                    let leftover = bytes.len() - next;
                     if leftover >= data_len {
                         // we already read enough data to load this account
-                        let data = &bytes_subset.0[next..(next + data_len)];
+                        let data = &bytes.0[next..(next + data_len)];
                         let stored_size = aligned_stored_size(data_len);
                         let account = StoredAccountMeta {
                             meta,
@@ -1087,54 +1084,27 @@ impl AppendVec {
                             hash,
                         };
                         callback(account);
-                        reader.advance_offset(stored_size);
-                    } else if STORE_META_OVERHEAD + data_len <= BUFFER_SIZE {
-                        reader.set_required_data_len(STORE_META_OVERHEAD + data_len);
+                        reader.consume(stored_size);
+                        // restore default required buffer size
+                        min_buf_len = STORE_META_OVERHEAD;
                     } else {
-                        const MAX_CAPACITY: usize = MAX_PERMITTED_DATA_LENGTH as usize;
-                        // 128KiB covers a reasonably large distribution of typical account sizes.
-                        // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
-                        const MIN_CAPACITY: usize = 1024 * 128;
-                        let capacity = data_overflow_buffer.capacity();
-                        if data_len > capacity {
-                            let next_cap = data_len
-                                .next_power_of_two()
-                                .clamp(MIN_CAPACITY, MAX_CAPACITY);
-                            data_overflow_buffer.reserve_exact(next_cap - capacity);
-                            // SAFETY: We only write to the uninitialized portion of the buffer via `copy_from_slice` and `read_into_buffer`.
-                            // Later, we ensure we only read from the initialized portion of the buffer.
-                            unsafe {
-                                data_overflow_buffer.set_len(next_cap);
+                        // repeat loop with required buffer size holding whole account data
+                        min_buf_len = STORE_META_OVERHEAD + data_len;
+
+                        if min_buf_len > BUFFER_SIZE {
+                            const MAX_CAPACITY: usize =
+                                STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+                            // 128KiB covers a reasonably large distribution of typical account sizes.
+                            // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
+                            const MIN_CAPACITY: usize = 1024 * 128;
+                            if min_buf_len > data_overflow_buffer.capacity() {
+                                let next_cap = min_buf_len
+                                    .next_power_of_two()
+                                    .clamp(MIN_CAPACITY, MAX_CAPACITY);
+                                data_overflow_buffer
+                                    .reserve_exact(next_cap - data_overflow_buffer.len());
                             }
                         }
-
-                        // Copy already read data to overflow buffer.
-                        data_overflow_buffer[..leftover].copy_from_slice(&bytes_subset.0[next..]);
-
-                        // Read remaining data into overflow buffer.
-                        let Ok(bytes_read) = read_into_buffer(
-                            file,
-                            self_len,
-                            offset + next + leftover,
-                            &mut data_overflow_buffer[leftover..data_len],
-                        ) else {
-                            break;
-                        };
-                        if bytes_read + leftover < data_len {
-                            break;
-                        }
-                        let data = &data_overflow_buffer[..data_len];
-                        let stored_size = aligned_stored_size(data_len);
-                        let account = StoredAccountMeta {
-                            meta,
-                            account_meta,
-                            data,
-                            offset,
-                            stored_size,
-                            hash,
-                        };
-                        callback(account);
-                        reader.advance_offset(stored_size);
                     }
                 }
             }
@@ -1253,13 +1223,17 @@ impl AppendVec {
             AppendVecFileBacking::File(file) => {
                 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
                 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
-                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(
-                    self_len,
-                    file,
-                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>(),
-                );
-                while let BufferedReaderStatus::Success = reader.read()? {
-                    let (offset, bytes) = reader.get_offset_and_data();
+                let mut reader = BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(self_len, file);
+                const REQUIRED_READ_LEN: usize =
+                    mem::size_of::<StoredMeta>() + mem::size_of::<AccountMeta>();
+                loop {
+                    let offset = reader.get_file_offset();
+                    let bytes = match reader.fill_buf_required(REQUIRED_READ_LEN) {
+                        Ok([]) => break,
+                        Ok(bytes) => ValidSlice::new(bytes),
+                        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                        Err(err) => return Err(AccountsFileError::Io(err)),
+                    };
                     let (stored_meta, next) = Self::get_type::<StoredMeta>(bytes, 0).unwrap();
                     let (account_meta, _) = Self::get_type::<AccountMeta>(bytes, next).unwrap();
                     if account_meta.lamports == 0 && stored_meta.pubkey == Pubkey::default() {
@@ -1280,7 +1254,7 @@ impl AppendVec {
                         offset,
                         stored_size,
                     });
-                    reader.advance_offset(stored_size);
+                    reader.consume(stored_size);
                 }
             }
         }
@@ -1698,12 +1672,17 @@ pub mod tests {
 
         let mut test_accounts = Vec::with_capacity(num_accounts);
         let mut file_size = 0;
+        let special_file_interval = num_accounts / 8;
         for i in 0..num_accounts {
             let data_len = match i {
-                // ensure one max size account
-                0 => MAX_PERMITTED_DATA_LENGTH as usize,
-                // ensure one 64KiB account
-                x if x == num_accounts - 1 => 1 << 16,
+                // Create several spread out accounts with varying sizes:
+                // for (x / special_file_interval) in 0..7 range
+                x if x % special_file_interval == 0 => {
+                    // mult increases in 0 to 3 range twice
+                    let mult = (x / special_file_interval) % 4;
+                    // and data_len goes over 0..MAX_PERMITTED_DATA_LENGTH range also twice
+                    mult * (MAX_PERMITTED_DATA_LENGTH as usize) / 3
+                }
                 // Otherwise use a reasonably small account to avoid long test times
                 x => x % 256,
             };

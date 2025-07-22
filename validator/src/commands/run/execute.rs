@@ -45,10 +45,6 @@ use {
     solana_keypair::Keypair,
     solana_ledger::{
         blockstore_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
-        blockstore_options::{
-            AccessType, BlockstoreCompressionType, BlockstoreOptions, BlockstoreRecoveryMode,
-            LedgerColumnOptions,
-        },
         use_snapshot_archives_at_startup::{self, UseSnapshotArchivesAtStartup},
     },
     solana_logger::redirect_stderr_to_file,
@@ -111,8 +107,6 @@ pub fn execute(
         rayon_global_threads,
         replay_forks_threads,
         replay_transactions_threads,
-        rocksdb_compaction_threads,
-        rocksdb_flush_threads,
         tpu_transaction_forward_receive_threads,
         tpu_transaction_receive_threads,
         tpu_vote_transaction_receive_threads,
@@ -169,21 +163,6 @@ pub fn execute(
 
     let init_complete_file = matches.value_of("init_complete_file");
 
-    let rpc_bootstrap_config = bootstrap::RpcBootstrapConfig {
-        no_genesis_fetch: matches.is_present("no_genesis_fetch"),
-        no_snapshot_fetch: matches.is_present("no_snapshot_fetch"),
-        check_vote_account: matches
-            .value_of("check_vote_account")
-            .map(|url| url.to_string()),
-        only_known_rpc: matches.is_present("only_known_rpc"),
-        max_genesis_archive_unpacked_size: value_t_or_exit!(
-            matches,
-            "max_genesis_archive_unpacked_size",
-            u64
-        ),
-        incremental_snapshot_fetch: !matches.is_present("no_incremental_snapshots"),
-    };
-
     let private_rpc = matches.is_present("private_rpc");
     let do_port_check = !matches.is_present("no_port_check");
     let tpu_coalesce = value_t!(matches, "tpu_coalesce_ms", u64)
@@ -197,10 +176,6 @@ pub fn execute(
             ledger_path.display(),
         )
     })?;
-
-    let recovery_mode = matches
-        .value_of("wal_recovery_mode")
-        .map(BlockstoreRecoveryMode::from);
 
     let max_ledger_shreds = if matches.is_present("limit_ledger_size") {
         let limit_ledger_size = match matches.value_of("limit_ledger_size") {
@@ -216,36 +191,6 @@ pub fn execute(
         Some(limit_ledger_size)
     } else {
         None
-    };
-
-    let column_options = LedgerColumnOptions {
-        compression_type: match matches.value_of("rocksdb_ledger_compression") {
-            None => BlockstoreCompressionType::default(),
-            Some(ledger_compression_string) => match ledger_compression_string {
-                "none" => BlockstoreCompressionType::None,
-                "snappy" => BlockstoreCompressionType::Snappy,
-                "lz4" => BlockstoreCompressionType::Lz4,
-                "zlib" => BlockstoreCompressionType::Zlib,
-                _ => panic!("Unsupported ledger_compression: {ledger_compression_string}"),
-            },
-        },
-        rocks_perf_sample_interval: value_t_or_exit!(
-            matches,
-            "rocksdb_perf_sample_interval",
-            usize
-        ),
-    };
-
-    let blockstore_options = BlockstoreOptions {
-        recovery_mode,
-        column_options,
-        // The validator needs to open many files, check that the process has
-        // permission to do so in order to fail quickly and give a direct error
-        enforce_ulimit_nofile: true,
-        // The validator needs primary (read/write)
-        access_type: AccessType::Primary,
-        num_rocksdb_compaction_threads: rocksdb_compaction_threads,
-        num_rocksdb_flush_threads: rocksdb_flush_threads,
     };
 
     let accounts_hash_cache_path = matches
@@ -270,12 +215,6 @@ pub fn execute(
         None
     };
 
-    let known_validators = validators_set(
-        &identity_keypair.pubkey(),
-        matches,
-        "known_validators",
-        "--known-validator",
-    )?;
     let repair_validators = validators_set(
         &identity_keypair.pubkey(),
         matches,
@@ -322,9 +261,13 @@ pub fn execute(
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
     let tpu_use_quic = !matches.is_present("tpu_disable_quic");
+    if !tpu_use_quic {
+        warn!("TPU QUIC was disabled via --tpu_disable_quic, this will prevent validator from receiving transactions!");
+    }
     let vote_use_quic = value_t_or_exit!(matches, "vote_use_quic", bool);
 
     let tpu_enable_udp = if matches.is_present("tpu_enable_udp") {
+        warn!("Submission of TPU transactions via UDP is deprecated.");
         true
     } else {
         DEFAULT_TPU_ENABLE_UDP
@@ -345,16 +288,7 @@ pub fn execute(
     } else {
         AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
-    let entrypoint_addrs = values_t!(matches, "entrypoint", String)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entrypoint| {
-            solana_net_utils::parse_host_port(&entrypoint)
-                .map_err(|err| format!("failed to parse entrypoint address: {err}"))
-        })
-        .collect::<Result<HashSet<_>, _>>()?
-        .into_iter()
-        .collect::<Vec<_>>();
+    let entrypoint_addrs = run_args.entrypoints;
     for addr in &entrypoint_addrs {
         if !socket_addr_space.check(addr) {
             Err(format!("invalid entrypoint address: {addr}"))?;
@@ -497,12 +431,6 @@ pub fn execute(
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         storage_access,
         scan_filter_for_shrinking,
-        enable_experimental_accumulator_hash: !matches
-            .is_present("no_accounts_db_experimental_accumulator_hash"),
-        verify_experimental_accumulator_hash: matches
-            .is_present("accounts_db_verify_experimental_accumulator_hash"),
-        snapshots_use_experimental_accumulator_hash: matches
-            .is_present("accounts_db_snapshots_use_experimental_accumulator_hash"),
         num_clean_threads: Some(accounts_db_clean_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
         num_hash_threads: Some(accounts_db_hash_threads),
@@ -678,12 +606,12 @@ pub fn execute(
         },
         voting_disabled: matches.is_present("no_voting") || restricted_repair_only_mode,
         wait_for_supermajority: value_t!(matches, "wait_for_supermajority", Slot).ok(),
-        known_validators,
+        known_validators: run_args.known_validators,
         repair_validators,
         repair_whitelist,
         gossip_validators,
         max_ledger_shreds,
-        blockstore_options,
+        blockstore_options: run_args.blockstore_options,
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
         contact_debug_interval,
@@ -720,7 +648,6 @@ pub fn execute(
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
-        accounts_db_test_hash_calculation: matches.is_present("accounts_db_test_hash_calculation"),
         accounts_db_config,
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
@@ -911,7 +838,7 @@ pub fn execute(
             (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
         } else {
             match (
-                !matches.is_present("no_incremental_snapshots"),
+                run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
                 value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
             ) {
                 (true, incremental_snapshot_interval_slots) => {
@@ -1263,7 +1190,7 @@ pub fn execute(
             authorized_voter_keypairs.clone(),
             &cluster_entrypoints,
             &mut validator_config,
-            rpc_bootstrap_config,
+            run_args.rpc_bootstrap_config,
             do_port_check,
             use_progress_bar,
             maximum_local_snapshot_age,

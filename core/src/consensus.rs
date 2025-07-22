@@ -336,11 +336,11 @@ impl Tower {
 
     #[cfg(test)]
     pub fn new_random(node_pubkey: Pubkey) -> Self {
-        use {rand::Rng, solana_vote_program::vote_state::VoteState};
+        use {rand::Rng, solana_vote_program::vote_state::VoteStateV3};
 
         let mut rng = rand::thread_rng();
         let root_slot = rng.gen();
-        let vote_state = VoteState::new_rand_for_tests(node_pubkey, root_slot);
+        let vote_state = VoteStateV3::new_rand_for_tests(node_pubkey, root_slot);
         let last_vote = TowerSync::from(
             vote_state
                 .votes
@@ -407,7 +407,7 @@ impl Tower {
             if voted_stake == 0 {
                 continue;
             }
-            trace!("{} {} with stake {}", vote_account_pubkey, key, voted_stake);
+            trace!("{vote_account_pubkey} {key} with stake {voted_stake}");
             let mut vote_state = TowerVoteState::from(account.vote_state_view());
             for vote in &vote_state.votes {
                 lockout_intervals
@@ -418,7 +418,7 @@ impl Tower {
 
             if key == *vote_account_pubkey {
                 my_latest_landed_vote = vote_state.nth_recent_lockout(0).map(|l| l.slot());
-                debug!("vote state {:?}", vote_state);
+                debug!("vote state {vote_state:?}");
                 debug!(
                     "observed slot {}",
                     vote_state
@@ -578,8 +578,8 @@ impl Tower {
         if let Some(last_voted_slot) = self.last_vote.last_voted_slot() {
             if heaviest_slot_on_same_fork <= last_voted_slot {
                 warn!(
-                    "Trying to refresh timestamp for vote on {last_voted_slot} \
-                     using smaller heaviest bank {heaviest_slot_on_same_fork}"
+                    "Trying to refresh timestamp for vote on {last_voted_slot} using smaller \
+                     heaviest bank {heaviest_slot_on_same_fork}"
                 );
                 return;
             }
@@ -961,7 +961,7 @@ impl Tower {
                      vote({last_voted_slot}), meaning some inconsistency between saved tower and \
                      ledger."
                 );
-                warn!("{}", message);
+                warn!("{message}");
                 datapoint_warn!("tower_warn", ("warn", message, String));
             }
             &empty_ancestors
@@ -1116,8 +1116,8 @@ impl Tower {
                             last_vote_ancestors,
                         )
                         .expect(
-                            "candidate_slot and switch_slot exist in descendants map, \
-                             so they must exist in ancestors map",
+                            "candidate_slot and switch_slot exist in descendants map, so they \
+                             must exist in ancestors map",
                         )
                 }
             {
@@ -1255,11 +1255,7 @@ impl Tower {
         );
         let new_check = Some((switch_slot, decision.clone()));
         if new_check != self.last_switch_threshold_check {
-            trace!(
-                "new switch threshold check: slot {}: {:?}",
-                switch_slot,
-                decision,
-            );
+            trace!("new switch threshold check: slot {switch_slot}: {decision:?}",);
             self.last_switch_threshold_check = new_check;
         }
         decision
@@ -1472,7 +1468,7 @@ impl Tower {
                     "For some reason, we're REPROCESSING slots which has already been voted and \
                      ROOTED by us; VOTING will be SUSPENDED UNTIL {last_voted_slot}!",
                 );
-                error!("{}", message);
+                error!("{message}");
                 datapoint_error!("tower_error", ("error", message, String));
 
                 // Let's pass-through adjust_lockouts_with_slot_history just for sanitization,
@@ -1571,7 +1567,7 @@ impl Tower {
         }
 
         // Check for errors if not anchored
-        info!("adjusted tower's anchored slot: {:?}", anchored_slot);
+        info!("adjusted tower's anchored slot: {anchored_slot:?}");
         if anchored_slot.is_none() {
             // this error really shouldn't happen unless ledger/tower is corrupted
             return Err(TowerError::FatallyInconsistent(
@@ -1737,9 +1733,8 @@ pub fn reconcile_blockstore_roots_with_external_source(
             .collect();
         if !new_roots.is_empty() {
             info!(
-                "Reconciling slots as root based on external root: {:?} (external: {:?}, \
-                 blockstore: {})",
-                new_roots, external_source, last_blockstore_root
+                "Reconciling slots as root based on external root: {new_roots:?} (external: \
+                 {external_source:?}, blockstore: {last_blockstore_root})"
             );
 
             // Unfortunately, we can't supply duplicate-confirmed hashes,
@@ -1761,10 +1756,9 @@ pub fn reconcile_blockstore_roots_with_external_source(
             // That's because we might have a chance of recovering properly with
             // newer snapshot.
             warn!(
-                "Couldn't find any ancestor slots from external source ({:?}) towards blockstore \
-                 root ({}); blockstore pruned or only tower moved into new ledger or just hard \
-                 fork?",
-                external_source, last_blockstore_root,
+                "Couldn't find any ancestor slots from external source ({external_source:?}) \
+                 towards blockstore root ({last_blockstore_root}); blockstore pruned or only \
+                 tower moved into new ledger or just hard fork?",
             );
         }
     }

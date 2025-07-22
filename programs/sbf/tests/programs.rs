@@ -1140,7 +1140,10 @@ fn test_program_sbf_caller_has_access_to_cpi_program() {
     ];
     let instruction = Instruction::new_with_bytes(caller_pubkey, &[1], account_metas.clone());
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        TransactionError::InstructionError(0, InstructionError::MissingAccount),
+    );
 }
 
 #[test]
@@ -1281,17 +1284,17 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_c")]
     {
         programs.extend_from_slice(&[
-            ("alloc", 19332),
+            ("alloc", 18572),
             ("sbf_to_sbf", 316),
             ("multiple_static", 210),
             ("noop", 6),
             ("noop++", 6),
             ("relative_call", 212),
-            ("return_data", 1027),
-            ("sanity", 2396),
-            ("sanity++", 2296),
-            ("secp256k1_recover", 25483),
-            ("sha", 1447),
+            ("return_data", 1026),
+            ("sanity", 2374),
+            ("sanity++", 2274),
+            ("secp256k1_recover", 25422),
+            ("sha", 1446),
             ("struct_pass", 108),
             ("struct_ret", 122),
         ]);
@@ -1299,20 +1302,20 @@ fn assert_instruction_count() {
     #[cfg(feature = "sbf_rust")]
     {
         programs.extend_from_slice(&[
-            ("solana_sbf_rust_128bit", 969),
-            ("solana_sbf_rust_alloc", 5077),
-            ("solana_sbf_rust_custom_heap", 304),
-            ("solana_sbf_rust_dep_crate", 2),
-            ("solana_sbf_rust_iter", 1514),
-            ("solana_sbf_rust_many_args", 1290),
-            ("solana_sbf_rust_mem", 1302),
-            ("solana_sbf_rust_membuiltins", 331),
-            ("solana_sbf_rust_noop", 314),
-            ("solana_sbf_rust_param_passing", 108),
-            ("solana_sbf_rust_rand", 278),
-            ("solana_sbf_rust_sanity", 51325),
-            ("solana_sbf_rust_secp256k1_recover", 89388),
-            ("solana_sbf_rust_sha", 22855),
+            ("solana_sbf_rust_128bit", 801),
+            ("solana_sbf_rust_alloc", 4983),
+            ("solana_sbf_rust_custom_heap", 303),
+            ("solana_sbf_rust_dep_crate", 3),
+            ("solana_sbf_rust_iter", 1414),
+            ("solana_sbf_rust_many_args", 1287),
+            ("solana_sbf_rust_mem", 1298),
+            ("solana_sbf_rust_membuiltins", 330),
+            ("solana_sbf_rust_noop", 313),
+            ("solana_sbf_rust_param_passing", 109),
+            ("solana_sbf_rust_rand", 276),
+            ("solana_sbf_rust_sanity", 18116),
+            ("solana_sbf_rust_secp256k1_recover", 89274),
+            ("solana_sbf_rust_sha", 22811),
         ]);
     }
 
@@ -3676,7 +3679,7 @@ fn test_cpi_account_ownership_writability() {
                         result.unwrap_err().unwrap(),
                         TransactionError::InstructionError(
                             0,
-                            InstructionError::ExternalAccountDataModified
+                            InstructionError::ExternalAccountDataModified,
                         )
                     );
                 } else {
@@ -3936,8 +3939,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &account_metas[2].pubkey);
         account.set_data(b"foobar".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data =
-            vec![TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLEE_SHRINKS_SMALLER_THAN_ORIGINAL_LEN,
+            direct_mapping as u8,
+        ];
         instruction_data.extend_from_slice(4usize.to_le_bytes().as_ref());
         let instruction = Instruction::new_with_bytes(
             account_metas[3].pubkey,
@@ -3950,12 +3955,12 @@ fn test_cpi_account_data_updates() {
             let account = bank.get_account(&account_keypair.pubkey()).unwrap();
             // deprecated_callee is incapable of resizing accounts
             assert_eq!(account.data(), b"foobar");
-        } else if deprecated_caller && (deprecated_callee || !direct_mapping) {
+        } else if deprecated_caller {
             assert_eq!(
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping {
+                    if direct_mapping && deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged
@@ -3976,7 +3981,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+            direct_mapping as u8,
+        ];
         // realloc to "foobazbad" then shrink to "foobazb"
         instruction_data.extend_from_slice(7usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
@@ -4010,7 +4018,10 @@ fn test_cpi_account_data_updates() {
         let mut account = AccountSharedData::new(42, 0, &account_metas[3].pubkey);
         account.set_data(b"foo".to_vec());
         bank.store_account(&account_keypair.pubkey(), &account);
-        let mut instruction_data = vec![TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS];
+        let mut instruction_data = vec![
+            TEST_CPI_ACCOUNT_UPDATE_CALLER_GROWS_CALLEE_SHRINKS,
+            direct_mapping as u8,
+        ];
         // realloc to "foobazbad" then shrink to "f"
         instruction_data.extend_from_slice(1usize.to_le_bytes().as_ref());
         instruction_data.extend_from_slice(b"bazbad");
@@ -4038,89 +4049,6 @@ fn test_cpi_account_data_updates() {
             assert_eq!(account.data(), b"f");
         }
     }
-}
-
-#[test]
-#[cfg(feature = "sbf_rust")]
-fn test_cpi_change_account_data_memory_allocation() {
-    use solana_program_runtime::{declare_process_instruction, loaded_programs::ProgramCacheEntry};
-
-    solana_logger::setup();
-
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-
-    declare_process_instruction!(MockBuiltin, 42, |invoke_context| {
-        let transaction_context = &invoke_context.transaction_context;
-        let instruction_context = transaction_context.get_current_instruction_context()?;
-        let instruction_data = instruction_context.get_instruction_data();
-        let mut borrowed_account =
-            instruction_context.try_borrow_instruction_account(transaction_context, 0)?;
-
-        // Test changing the account data both in place and by changing the
-        // underlying vector. CPI will have to detect the vector change and
-        // update the corresponding memory region. In all cases CPI will have
-        // to zero the spare bytes correctly.
-        match instruction_data[0] {
-            0xFE => borrowed_account.set_data(instruction_data.to_vec()),
-            0xFD => borrowed_account.set_data_from_slice(instruction_data),
-            0xFC => {
-                // Exercise the update_caller_account capacity check where account len != capacity.
-                let mut data = instruction_data.to_vec();
-                data.reserve_exact(1);
-                borrowed_account.set_data(data)
-            }
-            _ => panic!(),
-        }
-        .unwrap();
-
-        Ok(())
-    });
-
-    let builtin_program_id = Pubkey::new_unique();
-    bank.get_transaction_processor().add_builtin(
-        &bank,
-        builtin_program_id,
-        "test_cpi_change_account_data_memory_allocation_builtin",
-        ProgramCacheEntry::new_builtin(0, 42, MockBuiltin::vm),
-    );
-
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank);
-    let authority_keypair = Keypair::new();
-
-    let (bank, invoke_program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_invoke",
-    );
-
-    let account_keypair = Keypair::new();
-    let mint_pubkey = mint_keypair.pubkey();
-    let account_metas = vec![
-        AccountMeta::new(mint_pubkey, true),
-        AccountMeta::new(account_keypair.pubkey(), false),
-        AccountMeta::new_readonly(builtin_program_id, false),
-        AccountMeta::new_readonly(invoke_program_id, false),
-    ];
-
-    let mut account = AccountSharedData::new(42, 20, &builtin_program_id);
-    account.set_data(vec![0xFF; 20]);
-    bank.store_account(&account_keypair.pubkey(), &account);
-    let mut instruction_data = vec![TEST_CPI_CHANGE_ACCOUNT_DATA_MEMORY_ALLOCATION];
-    instruction_data.extend_from_slice(builtin_program_id.as_ref());
-    let instruction =
-        Instruction::new_with_bytes(invoke_program_id, &instruction_data, account_metas.clone());
-
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok(), "{result:?}");
 }
 
 #[test]
@@ -4312,6 +4240,74 @@ fn test_program_sbf_deplete_cost_meter_with_divide_by_zero() {
 
     // all compute unit limit should be consumed due to SBF VM error
     assert_eq!(result.executed_units, u64::from(compute_unit_limit));
+}
+
+#[test]
+#[cfg(feature = "sbf_rust")]
+fn test_deny_access_beyond_current_length() {
+    solana_logger::setup();
+
+    let GenesisConfigInfo {
+        genesis_config,
+        mint_keypair,
+        ..
+    } = create_genesis_config(100_123_456_789);
+
+    for direct_mapping in [false, true] {
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        let feature_set = Arc::make_mut(&mut bank.feature_set);
+        // by default test banks have all features enabled, so we only need to
+        // disable when needed
+        if !direct_mapping {
+            feature_set.deactivate(&feature_set::bpf_account_data_direct_mapping::id());
+        }
+        let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
+        let mut bank_client = BankClient::new_shared(bank);
+        let authority_keypair = Keypair::new();
+
+        let (bank, invoke_program_id) = load_program_of_loader_v4(
+            &mut bank_client,
+            &bank_forks,
+            &mint_keypair,
+            &authority_keypair,
+            "solana_sbf_rust_invoke",
+        );
+        let account = AccountSharedData::new(42, 0, &invoke_program_id);
+        let readonly_account_keypair = Keypair::new();
+        let writable_account_keypair = Keypair::new();
+        bank.store_account(&readonly_account_keypair.pubkey(), &account);
+        bank.store_account(&writable_account_keypair.pubkey(), &account);
+
+        let mint_pubkey = mint_keypair.pubkey();
+        let account_metas = vec![
+            AccountMeta::new(mint_pubkey, true),
+            AccountMeta::new_readonly(readonly_account_keypair.pubkey(), false),
+            AccountMeta::new(writable_account_keypair.pubkey(), false),
+            AccountMeta::new_readonly(invoke_program_id, false),
+        ];
+
+        for (instruction_account_index, expected_error) in [
+            (1, InstructionError::AccountDataTooSmall),
+            (2, InstructionError::InvalidRealloc),
+        ] {
+            let mut instruction_data = vec![TEST_READ_ACCOUNT, instruction_account_index];
+            instruction_data.extend_from_slice(3usize.to_le_bytes().as_ref());
+            let instruction = Instruction::new_with_bytes(
+                invoke_program_id,
+                &instruction_data,
+                account_metas.clone(),
+            );
+            let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
+            if direct_mapping {
+                assert_eq!(
+                    result.unwrap_err().unwrap(),
+                    TransactionError::InstructionError(0, expected_error)
+                );
+            } else {
+                result.unwrap();
+            }
+        }
+    }
 }
 
 #[test]
@@ -5214,12 +5210,12 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let message = Message::new(&[instruction], Some(&mint_pubkey));
                 let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+                let last_line = logs.last().unwrap();
 
                 if direct_mapping {
-                    assert!(logs.last().unwrap().ends_with(" failed: InvalidLength"));
-                } else if result.is_err() {
-                    // without direct mapping, we should never get the InvalidLength error
-                    assert!(!logs.last().unwrap().ends_with(" failed: InvalidLength"));
+                    assert!(last_line.contains(" failed: Access violation"), "{logs:?}");
+                } else {
+                    assert!(result.is_ok(), "{logs:?}");
                 }
             }
 
@@ -5234,14 +5230,19 @@ fn test_mem_syscalls_overlap_account_begin_or_end() {
                 let message = Message::new(&[instruction], Some(&mint_pubkey));
                 let tx = Transaction::new(&[&mint_keypair], message.clone(), bank.last_blockhash());
                 let (result, _, logs, _) = process_transaction_and_record_inner(&bank, tx);
+                let last_line = logs.last().unwrap();
 
-                if direct_mapping && !deprecated {
-                    // we have a resize area
+                if direct_mapping && (!deprecated || instr < 8) {
                     assert!(
-                        logs.last().unwrap().ends_with(" failed: InvalidLength"),
-                        "{logs:?}"
+                        last_line.contains(" failed: account data too small")
+                            || last_line.contains(" failed: Failed to reallocate account data")
+                            || last_line.contains(" failed: Access violation"),
+                        "{logs:?}",
                     );
                 } else {
+                    // direct_mapping && deprecated && instr >= 8 succeeds with zero-length accounts
+                    // because there is no MemoryRegion for the account,
+                    // so there can be no error when leaving that non-existent region.
                     assert!(result.is_ok(), "{logs:?}");
                 }
             }

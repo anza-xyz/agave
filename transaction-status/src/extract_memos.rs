@@ -6,20 +6,6 @@ use {
     solana_pubkey::Pubkey,
 };
 
-// A helper function to convert spl_memo::v1::id() as spl_sdk::pubkey::Pubkey to
-// solana_pubkey::Pubkey
-#[deprecated(since = "2.3.0", note = "Use `spl_memo::v1::id()` instead")]
-pub fn spl_memo_id_v1() -> Pubkey {
-    spl_memo::v1::id()
-}
-
-// A helper function to convert spl_memo::id() as spl_sdk::pubkey::Pubkey to
-// solana_pubkey::Pubkey
-#[deprecated(since = "2.3.0", note = "Use `spl_memo::id()` instead")]
-pub fn spl_memo_id_v3() -> Pubkey {
-    spl_memo::id()
-}
-
 pub fn extract_and_fmt_memos<T: ExtractMemos>(message: &T) -> Option<String> {
     let memos = message.extract_memos();
     if memos.is_empty() {

@@ -55,12 +55,12 @@ impl CargoRegistryService {
                 };
 
                 if result.is_ok() {
-                    info!("Published the crate successfully. {:?}", result);
+                    info!("Published the crate successfully. {result:?}");
                     response_builder::success_response()
                 } else {
                     response_builder::error_response(
                         hyper::StatusCode::BAD_REQUEST,
-                        format!("Failed to publish the crate. {:?}", result).as_str(),
+                        format!("Failed to publish the crate. {result:?}").as_str(),
                     )
                 }
             }
@@ -283,7 +283,7 @@ async fn main() {
     });
 
     let server = Server::bind(&bind_addr).serve(registry_service);
-    info!("Server running on http://{}", bind_addr);
+    info!("Server running on http://{bind_addr}");
 
     let _ = server.await;
 }

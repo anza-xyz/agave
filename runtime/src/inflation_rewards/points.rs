@@ -207,13 +207,14 @@ pub(crate) fn calculate_stake_points_and_credits(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_native_token::sol_to_lamports, solana_vote_program::vote_state::VoteState,
+        super::*, solana_native_token::sol_to_lamports,
+        solana_vote_program::vote_state::VoteStateV3,
     };
 
     fn new_stake(
         stake: u64,
         voter_pubkey: &Pubkey,
-        vote_state: &VoteState,
+        vote_state: &VoteStateV3,
         activation_epoch: Epoch,
     ) -> Stake {
         Stake {
@@ -224,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_stake_state_calculate_points_with_typical_values() {
-        let mut vote_state = VoteState::default();
+        let mut vote_state = VoteStateV3::default();
 
         // bootstrap means fully-vested stake at epoch 0 with
         //  10_000_000 SOL is a big but not unreasonable stake
