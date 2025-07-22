@@ -67,100 +67,63 @@ mod tests {
             tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
         },
         solana_rpc::rpc::JsonRpcConfig,
+        test_case::test_case,
     };
 
+    #[test_case("program-id", AccountIndex::ProgramId)]
+    #[test_case("spl-token-mint", AccountIndex::SplTokenMint)]
+    #[test_case("spl-token-owner", AccountIndex::SplTokenOwner)]
+    fn verify_args_struct_by_command_run_with_account_indexes(
+        arg_value: &str,
+        expected_index: AccountIndex,
+    ) {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            json_rpc_config: JsonRpcConfig {
+                account_indexes: AccountSecondaryIndexes {
+                    keys: None,
+                    indexes: HashSet::from([expected_index]),
+                },
+                ..default_run_args.json_rpc_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--account-index", arg_value],
+            expected_args,
+        );
+    }
+
     #[test]
-    fn verify_args_struct_by_command_run_with_account_indexes() {
-        // program-id
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: None,
-                        indexes: HashSet::from([AccountIndex::ProgramId]),
-                    },
-                    ..default_run_args.json_rpc_config.clone()
+    fn verify_args_struct_by_command_run_with_account_indexes_multiple() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            json_rpc_config: JsonRpcConfig {
+                account_indexes: AccountSecondaryIndexes {
+                    keys: None,
+                    indexes: HashSet::from([
+                        AccountIndex::ProgramId,
+                        AccountIndex::SplTokenMint,
+                        AccountIndex::SplTokenOwner,
+                    ]),
                 },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--account-index", "program-id"],
-                expected_args,
-            );
-        }
-
-        // spl-token-mint
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: None,
-                        indexes: HashSet::from([AccountIndex::SplTokenMint]),
-                    },
-                    ..default_run_args.json_rpc_config.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--account-index", "spl-token-mint"],
-                expected_args,
-            );
-        }
-
-        // spl-token-owner
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: None,
-                        indexes: HashSet::from([AccountIndex::SplTokenOwner]),
-                    },
-                    ..default_run_args.json_rpc_config.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec!["--account-index", "spl-token-owner"],
-                expected_args,
-            );
-        }
-
-        // all
-        {
-            let default_run_args = crate::commands::run::args::RunArgs::default();
-            let expected_args = RunArgs {
-                json_rpc_config: JsonRpcConfig {
-                    account_indexes: AccountSecondaryIndexes {
-                        keys: None,
-                        indexes: HashSet::from([
-                            AccountIndex::ProgramId,
-                            AccountIndex::SplTokenMint,
-                            AccountIndex::SplTokenOwner,
-                        ]),
-                    },
-                    ..default_run_args.json_rpc_config.clone()
-                },
-                ..default_run_args.clone()
-            };
-            verify_args_struct_by_command_run_with_identity_setup(
-                default_run_args,
-                vec![
-                    "--account-index",
-                    "program-id",
-                    "--account-index",
-                    "spl-token-mint",
-                    "--account-index",
-                    "spl-token-owner",
-                ],
-                expected_args,
-            );
-        }
+                ..default_run_args.json_rpc_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec![
+                "--account-index",
+                "program-id",
+                "--account-index",
+                "spl-token-mint",
+                "--account-index",
+                "spl-token-owner",
+            ],
+            expected_args,
+        );
     }
 
     #[test]
