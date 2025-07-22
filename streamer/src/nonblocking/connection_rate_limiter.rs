@@ -135,8 +135,9 @@ impl TokenBucket {
     }
 
     /// Attempts to consume tokens from bucket.
-    /// On success, returns Ok(amount of tokens left in the bucket)
-    /// On failure, returns Err(amount of tokens missing to fill request)
+    ///
+    /// On success, returns Ok(amount of tokens left in the bucket).
+    /// On failure, returns Err(amount of tokens missing to fill request).
     pub fn consume_tokens(&self, request_size: u64) -> Result<u64, u64> {
         let now = self.time_us();
         self.update_state(now);
@@ -154,8 +155,7 @@ impl TokenBucket {
         }
     }
 
-    /// Retrieves monotonic time since bucket
-    /// creation
+    /// Retrieves monotonic time since bucket creation.
     fn time_us(&self) -> u64 {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.base_time);
