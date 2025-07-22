@@ -63,7 +63,6 @@ impl BlockProductionManager {
         transaction_structure: TransactionStructure,
     ) -> thread::Result<()> {
         if !self.non_vote_thread_handles.is_empty() {
-            info!("shutting down non-vote block-production threads");
             self.shutdown_non_vote_threads()?;
         }
 
@@ -100,17 +99,20 @@ impl BlockProductionManager {
 
         // Signal and wait for vote thread shutdown.
         {
+            info!("shutting down vote block-production thread");
             self.vote_shutdown_signal.store(true, Ordering::Relaxed);
             if let Some(hdl) = self.vote_thread_handle.take() {
                 hdl.join()?;
             }
         }
+        info!("block-production threads shutdown complete");
 
         Ok(())
     }
 
     /// Shtudown and wait for non-vote threads.
     fn shutdown_non_vote_threads(&mut self) -> thread::Result<()> {
+        info!("shutting down non-vote block-production threads");
         self.non_vote_shutdown_signal.store(true, Ordering::Relaxed);
         for handle in self.non_vote_thread_handles.drain(..) {
             handle.join()?;
