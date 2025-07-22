@@ -1431,7 +1431,7 @@ impl ClusterInfo {
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(std::cmp::min(get_thread_count(), 8))
-            .thread_name(|i| format!("solRunGossip{i:02}"))
+            .thread_name(|i| format!("solGossipRun{i:02}"))
             .build()
             .unwrap();
         let mut epoch_specs = bank_forks.map(EpochSpecs::from);
