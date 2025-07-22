@@ -1134,7 +1134,7 @@ fn download_snapshots(
     }
 
     // Check and see if we've already got the full snapshot; if not, download it
-    if snapshot_utils::get_full_snapshot_archives(&full_snapshot_archives_dir)
+    if snapshot_utils::get_full_snapshot_archives(full_snapshot_archives_dir)
         .into_iter()
         .any(|snapshot_archive| {
             snapshot_archive.slot() == full_snapshot_hash.0
