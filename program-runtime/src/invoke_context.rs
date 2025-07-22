@@ -347,9 +347,10 @@ impl<'a> InvokeContext<'a> {
                     InstructionError::MissingAccount
                 })?;
 
+            debug_assert!((index_in_transaction as usize) < transaction_callee_map.len());
             let index_in_callee = transaction_callee_map
                 .get_mut(index_in_transaction as usize)
-                .ok_or(InstructionError::MissingAccount)?;
+                .unwrap();
 
             if let Some(index_in_callee) = index_in_callee {
                 let cloned_account = {
