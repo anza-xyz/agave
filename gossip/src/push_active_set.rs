@@ -1,6 +1,7 @@
 use {
-    crate::weighted_shuffle::WeightedShuffle,
+    crate::{cluster_info::REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, weighted_shuffle::WeightedShuffle},
     indexmap::IndexMap,
+    log::error,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
@@ -9,13 +10,37 @@ use {
 };
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
+// Current mainnet unstaked distribution as of 7/21/25
+const DEFAULT_ALPHA: f64 = 1.82;
+// `rotate()` called once every 7500ms.
+const FS: f64 = 1.0 / REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS as f64;
+// 30_000ms convergence time
+const TC: f64 = 30_000.0;
+// Low pass filter smoothing constant
+// K ~ 0.611
+const K: f64 = {
+    const FC: f64 = 1.0 / TC;
+    const W_C: f64 = 2.0 * std::f64::consts::PI * FC / FS;
+    W_C / (1.0 + W_C)
+};
 
 // Each entry corresponds to a stake bucket for
 //     min stake of { this node, crds value owner }
 // The entry represents set of gossip nodes to actively
 // push to for crds values belonging to the bucket.
-#[derive(Default)]
-pub(crate) struct PushActiveSet([PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES]);
+pub(crate) struct PushActiveSet {
+    entries: [PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES],
+    alpha: f64,
+}
+
+impl Default for PushActiveSet {
+    fn default() -> Self {
+        Self {
+            entries: Default::default(),
+            alpha: DEFAULT_ALPHA,
+        }
+    }
+}
 
 // Keys are gossip nodes to push messages to.
 // Values are which origins the node has pruned.
@@ -69,6 +94,9 @@ impl PushActiveSet {
         nodes: &[Pubkey],
         stakes: &HashMap<Pubkey, u64>,
     ) {
+        if nodes.is_empty() {
+            return;
+        }
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
         // using sampling probabilities obtained from the stake bucket of each
@@ -77,11 +105,54 @@ impl PushActiveSet {
             .iter()
             .map(|node| get_stake_bucket(stakes.get(node)))
             .collect();
+
+        // Get fraction of unstaked nodes in the cluster.
+        let num_unstaked = buckets.iter().filter(|&&b| b == 0).count();
+        let fraction_unstaked = num_unstaked as f64 / nodes.len() as f64;
+        let alpha_target = 1.0 + fraction_unstaked.min(1.0);
+
+        // SAFETY & CORRECTNESS NOTES
+        //
+        // `alpha` is updated with a first-order low-pass filter:
+        //
+        //     `alpha` = K * `alpha_target` + (1 – K) * `alpha_previous`
+        //
+        // where  0 < K < 1  (fixed at compile time, K ~ 0.611) and
+        //       `alpha_target` ∈ [1.0, 2.0]
+        //
+        // Why this cannot panic or go out of bounds:
+        //
+        // 1. **Finite/Guaranteed range** – All terms are `f64` values in
+        //    [1, 2]-> `K`, `alpha_target`, and `alpha_previous`.  Multiplication
+        //    and addition in this range cannot overflow an IEEE-754 `f64`
+        //    (overflow requires ~1e308).
+        //
+        // 2. **No division** – No divide-by-zero risk.
+        //
+        // 3. **NaN / +-Inf protection** – `contains` ensures any accidental `NaN` or
+        //    `+-Inf` (impossible here unless prior state is corrupt) reduces to DEFAULT_ALPHA.
+        //
+        // 4. **Lag / Overshoot protection** – `alpha_target` changes smoothly in practice
+        //    (small d(alpha_target)/dt). If future code changes make `alpha_target` jump
+        //    larger, we must retune `TC`/`K` or use a higher‑order filter to avoid
+        //    lag/overshoot.
+        let alpha = K * alpha_target + (1.0 - K) * self.alpha;
+        if (1.0..=2.0).contains(&alpha) {
+            self.alpha = alpha;
+        } else {
+            // We should never see this, but if we do, log and reset to safe default.
+            error!(
+                "rotate: computed alpha={} is out of bounds or non-finite. Resetting to {}",
+                alpha, DEFAULT_ALPHA,
+            );
+            self.alpha = DEFAULT_ALPHA;
+        }
+
         // (k, entry) represents push active set where the stake bucket of
         //     min stake of {this node, crds value owner}
         // is equal to `k`. The `entry` maintains set of gossip nodes to
         // actively push to for crds values belonging to this bucket.
-        for (k, entry) in self.0.iter_mut().enumerate() {
+        for (k, entry) in self.entries.iter_mut().enumerate() {
             let weights: Vec<u64> = buckets
                 .iter()
                 .map(|&bucket| {
@@ -94,7 +165,7 @@ impl PushActiveSet {
                     // receiving end when pruning incoming links:
                     // https://github.com/solana-labs/solana/blob/81394cf92/gossip/src/received_cache.rs#L100-L105
                     let bucket = bucket.min(k) as u64;
-                    bucket.saturating_add(1).saturating_pow(2)
+                    (bucket.saturating_add(1) as f64).powf(self.alpha) as u64
                 })
                 .collect();
             entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
@@ -102,7 +173,7 @@ impl PushActiveSet {
     }
 
     fn get_entry(&self, stake: Option<&u64>) -> &PushActiveSetEntry {
-        &self.0[get_stake_bucket(stake)]
+        &self.entries[get_stake_bucket(stake)]
     }
 }
 
@@ -222,11 +293,11 @@ mod tests {
         let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
         let mut active_set = PushActiveSet::default();
-        assert!(active_set.0.iter().all(|entry| entry.0.is_empty()));
+        assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
         active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
-        assert!(active_set.0.iter().all(|entry| entry.0.len() == 5));
+        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
-        for entry in &active_set.0 {
+        for entry in &active_set.entries {
             for (node, filter) in entry.0.iter() {
                 assert!(filter.contains(node));
             }
@@ -249,7 +320,7 @@ mod tests {
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
         active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes);
-        assert!(active_set.0.iter().all(|entry| entry.0.len() == 7));
+        assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
             .eq([18, 0, 7, 15, 11].into_iter().map(|k| &nodes[k])));
@@ -328,5 +399,74 @@ mod tests {
         entry.rotate(&mut rng, 4, NUM_BLOOM_FILTER_ITEMS, &nodes, &weights);
         let keys = [&nodes[5], &nodes[7], &nodes[1], &nodes[13]];
         assert!(entry.0.keys().eq(keys));
+    }
+
+    #[test]
+    fn test_alpha_converges_to_expected_target() {
+        const CLUSTER_SIZE: usize = 415;
+        const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
+        const TOLERANCE: f64 = 0.01; // allow 1% tolerance
+
+        let unstaked_fraction: f64 = 0.39; // 39% of nodes unstaked
+        let num_unstaked: usize = (CLUSTER_SIZE as f64 * unstaked_fraction) as usize;
+
+        let mut rng = ChaChaRng::from_seed([77u8; 32]);
+        let nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
+
+        let mut stakes = HashMap::new();
+        for (i, node) in nodes.iter().enumerate() {
+            let stake = if i < num_unstaked {
+                0
+            } else {
+                rng.gen_range(1..=MAX_STAKE)
+            };
+            stakes.insert(*node, stake);
+        }
+
+        let mut active_set = PushActiveSet::default();
+        let expected_target_alpha = 1.0 + unstaked_fraction;
+
+        // Simulate repeated calls to `rotate()` (as would happen every 7.5s)
+        // 8 calls (60s) should be enough to converge to the expected target alpha.
+        // We converge in about 4 calls (30s).
+        for _ in 0..8 {
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+        }
+
+        let actual_alpha = active_set.alpha;
+
+        assert!(
+            (actual_alpha - expected_target_alpha).abs() < TOLERANCE,
+            "alpha={} did not converge to expected target_alpha={}",
+            actual_alpha,
+            expected_target_alpha
+        );
+
+        // Now increase unstaked fraction to 93% and check that alpha converges to 1.93
+        let unstaked_fraction: f64 = 0.93; // 93% of nodes unstaked
+        let num_unstaked: usize = (CLUSTER_SIZE as f64 * unstaked_fraction) as usize;
+        let expected_target_alpha = 1.0 + unstaked_fraction;
+
+        let mut stakes = HashMap::new();
+        for (i, node) in nodes.iter().enumerate() {
+            let stake = if i < num_unstaked {
+                0
+            } else {
+                rng.gen_range(1..=MAX_STAKE)
+            };
+            stakes.insert(*node, stake);
+        }
+
+        for _ in 0..8 {
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+        }
+
+        let actual_alpha = active_set.alpha;
+        assert!(
+            (actual_alpha - expected_target_alpha).abs() < TOLERANCE,
+            "alpha={} did not reconverge to expected target_alpha={}",
+            actual_alpha,
+            expected_target_alpha
+        );
     }
 }
