@@ -1,4 +1,4 @@
-use std::env;
+use {log::warn, std::env};
 //TODO remove this hack when rayon fixes itself
 
 // reduce the number of threads each pool is allowed to half the cpu core count, to avoid rayon
@@ -6,7 +6,13 @@ use std::env;
 static MAX_RAYON_THREADS: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
     env::var("SOLANA_RAYON_THREADS")
         .ok()
-        .and_then(|num_threads| num_threads.parse().ok())
+        .and_then(|num_threads| {
+            warn!(
+                "Use of SOLANA_RAYON_THREADS has been deprecated and will be removed soon. Use \
+                 the individual agave-validator CLI flags to configure threadpool sizes"
+            );
+            num_threads.parse().ok()
+        })
         .unwrap_or_else(|| num_cpus::get() / 2)
         .max(1)
 });
