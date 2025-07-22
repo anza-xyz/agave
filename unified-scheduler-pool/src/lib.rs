@@ -452,10 +452,10 @@ where
 
         let mut exiting = false;
         let cleaner_main_loop = move || {
+            info!("cleaner_main_loop: started...");
+
             let weak_scheduler_pool: Weak<Self> =
                 scheduler_pool_receiver.into_iter().next().unwrap();
-
-            info!("cleaner_main_loop: started...");
             loop {
                 sleep(pool_cleaner_interval);
 
@@ -2252,11 +2252,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
                             let Ok(banking_packet) = banking_packet else {
+                                info!("disconnected banking_packet_receiver");
                                 // Don't break here; handler threads are expected to outlive its
                                 // associated scheduler thread always. So, disable banking packet
-                                // receiver then continue to be cleaned up properly later, much
-                                // like block verification handler thread.
-                                info!("disconnected banking_packet_receiver");
+                                // handler then continue to be cleaned up properly later, much like
+                                // block verification handler thread.
                                 handler_context.disable_banking_packet_handler();
                                 continue;
                             };
