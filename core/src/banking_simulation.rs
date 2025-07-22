@@ -774,10 +774,6 @@ impl BankingSimulator {
         assert!(retracer.is_enabled());
         info!("Enabled banking retracer (dir_byte_limit: {BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT})",);
 
-        // Create a partially-dummy ClusterInfo for the banking stage.
-        let cluster_info_for_banking = Arc::new(DummyClusterInfo {
-            id: simulated_leader.into(),
-        });
         let Channels {
             non_vote_sender,
             non_vote_receiver,
@@ -830,7 +826,6 @@ impl BankingSimulator {
         let banking_stage = BankingStage::new_num_threads(
             block_production_method.clone(),
             transaction_struct.clone(),
-            &cluster_info_for_banking,
             &poh_recorder,
             transaction_recorder,
             non_vote_receiver,

@@ -4,7 +4,6 @@ use {
         HOLD_TRANSACTIONS_SLOT_OFFSET,
     },
     solana_poh::poh_recorder::{BankStart, PohRecorder},
-    solana_pubkey::Pubkey,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
         sync::{atomic::{AtomicBool, Ordering::Relaxed}, Arc, RwLock},
@@ -32,7 +31,6 @@ impl BufferedPacketsDecision {
 
 #[derive(Clone, derive_more::Debug)]
 pub struct DecisionMaker {
-    my_pubkey: Pubkey,
     #[debug("{poh_recorder:p}")]
     poh_recorder: Arc<RwLock<PohRecorder>>,
 
@@ -41,9 +39,8 @@ pub struct DecisionMaker {
 }
 
 impl DecisionMaker {
-    pub fn new(my_pubkey: Pubkey, poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
+    pub fn new(poh_recorder: Arc<RwLock<PohRecorder>>) -> Self {
         Self {
-            my_pubkey,
             poh_recorder,
             cached_decision: None,
             last_decision_time: Instant::now(),
@@ -71,11 +68,9 @@ impl DecisionMaker {
         {
             let poh_recorder = self.poh_recorder.read().unwrap();
             decision = Self::consume_or_forward_packets(
-                &self.my_pubkey,
                 || Self::bank_start(&poh_recorder),
                 || Self::would_be_leader_shortly(&poh_recorder),
                 || Self::would_be_leader(&poh_recorder),
-                || Self::leader_pubkey(&poh_recorder),
             );
         }
 
@@ -83,11 +78,9 @@ impl DecisionMaker {
     }
 
     fn consume_or_forward_packets(
-        my_pubkey: &Pubkey,
         bank_start_fn: impl FnOnce() -> Option<BankStart>,
         would_be_leader_shortly_fn: impl FnOnce() -> bool,
         would_be_leader_fn: impl FnOnce() -> bool,
-        leader_pubkey_fn: impl FnOnce() -> Option<Pubkey>,
     ) -> BufferedPacketsDecision {
         // If has active bank, then immediately process buffered packets
         // otherwise, based on leader schedule to either forward or hold packets
@@ -101,17 +94,9 @@ impl DecisionMaker {
             // Node will be leader within ~20 slots, hold the transactions in
             // case it is the only node which produces an accepted slot.
             BufferedPacketsDecision::ForwardAndHold
-        } else if let Some(x) = leader_pubkey_fn() {
-            if x != *my_pubkey {
-                // If the current node is not the leader, forward the buffered packets
-                BufferedPacketsDecision::Forward
-            } else {
-                // If the current node is the leader, return the buffered packets as is
-                BufferedPacketsDecision::Hold
-            }
         } else {
-            // We don't know the leader. Hold the packets for now
-            BufferedPacketsDecision::Hold
+            // If the current node is not the leader, forward the buffered packets
+            BufferedPacketsDecision::Forward
         }
     }
 
@@ -129,10 +114,6 @@ impl DecisionMaker {
 
     fn would_be_leader(poh_recorder: &PohRecorder) -> bool {
         poh_recorder.would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET * DEFAULT_TICKS_PER_SLOT)
-    }
-
-    fn leader_pubkey(poh_recorder: &PohRecorder) -> Option<Pubkey> {
-        poh_recorder.leader_after_n_slots(FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET)
     }
 }
 
@@ -177,6 +158,7 @@ mod tests {
         solana_clock::NUM_CONSECUTIVE_LEADER_SLOTS,
         solana_ledger::{blockstore::Blockstore, genesis_utils::create_genesis_config},
         solana_poh::poh_recorder::create_test_recorder,
+        solana_pubkey::Pubkey,
         solana_runtime::bank::Bank,
         std::{
             env::temp_dir,
@@ -215,7 +197,7 @@ mod tests {
         poh_service.join().unwrap();
 
         let my_pubkey = Pubkey::new_unique();
-        let decision_maker = DecisionMaker::new(my_pubkey, poh_recorder.clone());
+        let decision_maker = DecisionMaker::new(poh_recorder.clone());
         poh_recorder.write().unwrap().reset(bank.clone(), None);
         let slot = bank.slot() + 1;
         let bank = Arc::new(Bank::new_from_parent(bank, &my_pubkey, slot));
@@ -274,8 +256,6 @@ mod tests {
 
     #[test]
     fn test_should_process_or_forward_packets() {
-        let my_pubkey = solana_pubkey::new_rand();
-        let my_pubkey1 = solana_pubkey::new_rand();
         let bank = Arc::new(Bank::default_for_tests());
         let bank_start = Some(BankStart {
             working_bank: bank,
@@ -284,43 +264,26 @@ mod tests {
         // having active bank allows to consume immediately
         assert_matches!(
             DecisionMaker::consume_or_forward_packets(
-                &my_pubkey,
                 || bank_start.clone(),
                 || panic!("should not be called"),
                 || panic!("should not be called"),
-                || panic!("should not be called")
             ),
             BufferedPacketsDecision::Consume(_)
-        );
-        // Unknown leader, hold the packets
-        assert_matches!(
-            DecisionMaker::consume_or_forward_packets(
-                &my_pubkey,
-                || None,
-                || false,
-                || false,
-                || None
-            ),
-            BufferedPacketsDecision::Hold
         );
         // Leader other than me, forward the packets
         assert_matches!(
             DecisionMaker::consume_or_forward_packets(
-                &my_pubkey,
                 || None,
                 || false,
                 || false,
-                || Some(my_pubkey1),
             ),
             BufferedPacketsDecision::Forward
         );
         // Will be leader shortly, hold the packets
         assert_matches!(
             DecisionMaker::consume_or_forward_packets(
-                &my_pubkey,
                 || None,
                 || true,
-                || panic!("should not be called"),
                 || panic!("should not be called"),
             ),
             BufferedPacketsDecision::Hold
@@ -328,24 +291,11 @@ mod tests {
         // Will be leader (not shortly), forward and hold
         assert_matches!(
             DecisionMaker::consume_or_forward_packets(
-                &my_pubkey,
                 || None,
                 || false,
                 || true,
-                || panic!("should not be called"),
             ),
             BufferedPacketsDecision::ForwardAndHold
-        );
-        // Current leader matches my pubkey, hold
-        assert_matches!(
-            DecisionMaker::consume_or_forward_packets(
-                &my_pubkey1,
-                || None,
-                || false,
-                || false,
-                || Some(my_pubkey1),
-            ),
-            BufferedPacketsDecision::Hold
         );
     }
 }

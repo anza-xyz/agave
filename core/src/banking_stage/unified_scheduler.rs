@@ -32,7 +32,6 @@ use {
     super::{
         decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
         packet_deserializer::PacketDeserializer,
-        LikeClusterInfo,
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
@@ -48,16 +47,14 @@ pub(crate) fn ensure_banking_stage_setup(
     pool: &DefaultSchedulerPool,
     bank_forks: &Arc<RwLock<BankForks>>,
     channels: &Channels,
-    cluster_info: &impl LikeClusterInfo,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     transaction_recorder: TransactionRecorder,
     num_threads: u32,
 ) {
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
-    let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+    let mut decision_maker = DecisionMaker::new(poh_recorder.clone());
     let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(decision_maker.clone()));
-
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();
