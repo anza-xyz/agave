@@ -4,7 +4,7 @@ use {
         commands::{FromClapArgMatches, Result},
     },
     clap::{value_t, ArgMatches},
-    solana_accounts_db::accounts_index::AccountsIndexConfig,
+    solana_accounts_db::accounts_index::{AccountsIndexConfig, IndexLimitMb},
     std::num::NonZeroUsize,
 };
 
@@ -13,9 +13,16 @@ impl FromClapArgMatches for AccountsIndexConfig {
         let num_flush_threads = value_t!(matches, AccountsIndexFlushThreadsArg::NAME, NonZeroUsize)
             .unwrap_or_else(|_| solana_accounts_db::accounts_index::default_num_flush_threads());
 
+        let index_limit_mb = if !matches.is_present("enable_accounts_disk_index") {
+            IndexLimitMb::InMemOnly
+        } else {
+            IndexLimitMb::Minimal
+        };
+
         Ok(AccountsIndexConfig {
             num_flush_threads: Some(num_flush_threads),
             bins: value_t!(matches, "accounts_index_bins", usize).ok(),
+            index_limit_mb,
             ..AccountsIndexConfig::default()
         })
     }
@@ -67,6 +74,46 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--accounts-index-bins", "512"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_disable_accounts_disk_index() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                index: Some(AccountsIndexConfig {
+                    index_limit_mb: IndexLimitMb::InMemOnly,
+                    ..default_run_args.accounts_db_config.clone().index.unwrap()
+                }),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--disable-accounts-disk-index"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_with_enable_accounts_disk_index() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                index: Some(AccountsIndexConfig {
+                    index_limit_mb: IndexLimitMb::Minimal,
+                    ..default_run_args.accounts_db_config.clone().index.unwrap()
+                }),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--enable-accounts-disk-index"],
             expected_args,
         );
     }
