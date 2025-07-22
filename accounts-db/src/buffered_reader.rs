@@ -390,7 +390,10 @@ pub fn large_file_buf_reader(
 #[cfg(test)]
 mod tests {
     use {
-        super::*, crate::append_vec::ValidSlice, std::io::Write, tempfile::tempfile,
+        super::*,
+        crate::append_vec::ValidSlice,
+        std::io::{Read as _, Write},
+        tempfile::tempfile,
         test_case::test_case,
     };
 
@@ -710,5 +713,54 @@ mod tests {
         assert_eq!(slice.len(), 0);
         let offset_after = reader.get_file_offset();
         assert_eq!(offset_before, offset_after);
+    }
+
+    #[test_case(Stack::<16>::new(), 16)]
+    fn test_overflow_reader_read_and_fill_buf(backing: impl Backing, buffer_size: usize) {
+        // Setup a sample file with 64 bytes of data
+        const FILE_SIZE: usize = 64;
+        let mut sample_file = tempfile().unwrap();
+        let bytes = rand_bytes::<FILE_SIZE>();
+        sample_file.write_all(&bytes).unwrap();
+
+        let mut reader = BufReaderWithOverflow::new(
+            BufferedReader::new(backing, FILE_SIZE, &sample_file),
+            0,
+            32,
+        );
+        let buf = reader.fill_buf().unwrap();
+        assert_eq!(buf, &bytes[0..buffer_size]);
+
+        reader.consume(8);
+        let mut buf = [0; 8];
+        assert_eq!(reader.read(&mut buf).unwrap(), 8);
+        assert_eq!(buf, &bytes[8..16]);
+
+        assert_eq!(
+            reader
+                .fill_buf_required(40)
+                .expect_err("should exceed len limit")
+                .kind(),
+            io::ErrorKind::QuotaExceeded
+        );
+
+        let buf = reader.fill_buf_required(32).unwrap();
+        assert_eq!(buf, &bytes[16..48]);
+        let buf = reader.fill_buf().unwrap();
+        assert_eq!(buf, &bytes[16..48]);
+
+        let mut buf = [0; 48];
+        assert_eq!(reader.read(&mut buf).unwrap(), 48);
+        assert_eq!(buf, &bytes[16..64]);
+
+        assert_eq!(reader.read(&mut buf).unwrap(), 0);
+
+        assert_eq!(
+            reader
+                .fill_buf_required(1)
+                .expect_err("should reach EOF")
+                .kind(),
+            io::ErrorKind::UnexpectedEof
+        );
     }
 }
