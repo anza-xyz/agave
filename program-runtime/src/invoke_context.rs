@@ -328,8 +328,8 @@ impl<'a> InvokeContext<'a> {
     ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
-        // On AArch64 in release mode, this function only consumes 912 bytes of stack.
-        let mut transaction_callee_map: [Option<u8>; 256] = [None; 256];
+        // On AArch64 in release mode, this function only consumes 640 bytes of stack.
+        let mut transaction_callee_map: [u8; 256] = [u8::MAX; 256];
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
@@ -352,7 +352,7 @@ impl<'a> InvokeContext<'a> {
                 .get_mut(index_in_transaction as usize)
                 .unwrap();
 
-            if let Some(index_in_callee) = index_in_callee {
+            if (*index_in_callee as usize) < instruction_accounts.len() {
                 let cloned_account = {
                     let instruction_account = instruction_accounts
                         .get_mut(*index_in_callee as usize)
@@ -379,7 +379,7 @@ impl<'a> InvokeContext<'a> {
                         );
                         InstructionError::MissingAccount
                     })?;
-                *index_in_callee = Some(instruction_accounts.len() as u8);
+                *index_in_callee = instruction_accounts.len() as u8;
                 instruction_accounts.push(InstructionAccount::new(
                     index_in_transaction,
                     index_in_caller,
