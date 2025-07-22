@@ -526,6 +526,35 @@ pub fn execute(
         )
     });
 
+    let account_paths: Vec<PathBuf> =
+        if let Ok(account_paths) = values_t!(matches, "account_paths", String) {
+            account_paths
+                .join(",")
+                .split(',')
+                .map(PathBuf::from)
+                .collect()
+        } else {
+            vec![ledger_path.join("accounts")]
+        };
+    let account_paths = create_and_canonicalize_directories(account_paths)
+        .map_err(|err| format!("unable to access account path: {err}"))?;
+
+    // From now on, use run/ paths in the same way as the previous account_paths.
+    let (account_run_paths, account_snapshot_paths) =
+        create_all_accounts_run_and_snapshot_dirs(&account_paths)
+            .map_err(|err| format!("unable to create account directories: {err}"))?;
+
+    // These snapshot paths are only used for initial clean up, add in shrink paths if they exist.
+    let account_snapshot_paths =
+        if let Some(account_shrink_snapshot_paths) = account_shrink_snapshot_paths {
+            account_snapshot_paths
+                .into_iter()
+                .chain(account_shrink_snapshot_paths)
+                .collect()
+        } else {
+            account_snapshot_paths
+        };
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -648,6 +677,8 @@ pub fn execute(
         poh_hashes_per_batch: value_of(matches, "poh_hashes_per_batch")
             .unwrap_or(poh_service::DEFAULT_HASHES_PER_BATCH),
         process_ledger_before_services: matches.is_present("process_ledger_before_services"),
+        account_paths: account_run_paths,
+        account_snapshot_paths,
         accounts_db_config,
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
@@ -706,37 +737,6 @@ pub fn execute(
     let dynamic_port_range =
         solana_net_utils::parse_port_range(matches.value_of("dynamic_port_range").unwrap())
             .expect("invalid dynamic_port_range");
-
-    let account_paths: Vec<PathBuf> =
-        if let Ok(account_paths) = values_t!(matches, "account_paths", String) {
-            account_paths
-                .join(",")
-                .split(',')
-                .map(PathBuf::from)
-                .collect()
-        } else {
-            vec![ledger_path.join("accounts")]
-        };
-    let account_paths = create_and_canonicalize_directories(account_paths)
-        .map_err(|err| format!("unable to access account path: {err}"))?;
-
-    let (account_run_paths, account_snapshot_paths) =
-        create_all_accounts_run_and_snapshot_dirs(&account_paths)
-            .map_err(|err| format!("unable to create account directories: {err}"))?;
-
-    // From now on, use run/ paths in the same way as the previous account_paths.
-    validator_config.account_paths = account_run_paths;
-
-    // These snapshot paths are only used for initial clean up, add in shrink paths if they exist.
-    validator_config.account_snapshot_paths =
-        if let Some(account_shrink_snapshot_paths) = account_shrink_snapshot_paths {
-            account_snapshot_paths
-                .into_iter()
-                .chain(account_shrink_snapshot_paths)
-                .collect()
-        } else {
-            account_snapshot_paths
-        };
 
     let maximum_local_snapshot_age = value_t_or_exit!(matches, "maximum_local_snapshot_age", u64);
     let maximum_full_snapshot_archives_to_retain =
