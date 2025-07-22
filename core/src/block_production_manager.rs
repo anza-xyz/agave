@@ -66,9 +66,14 @@ impl BlockProductionManager {
         transaction_structure: TransactionStructure,
     ) -> thread::Result<()> {
         if !self.non_vote_thread_handles.is_empty() {
+            info!("shutting down non-vote block-production threads");
             self.shutdown_non_vote_threads()?;
         }
 
+        info!(
+            "spawning non-vote block-production threads with method: {}, transaction structure: {}",
+            block_production_method, transaction_structure
+        );
         self.non_vote_shutdown_signal
             .store(false, Ordering::Relaxed);
         BankingStage::spawn_scheduler_and_workers_with_structure(
