@@ -243,10 +243,8 @@ impl HandlerContext {
 
     fn disable_banking_packet_handler(&mut self) {
         self.banking_packet_receiver = never();
-        self.banking_packet_handler = Box::new(|_, _| {
-            // This is safe because of the paired use of never() just above.
-            unreachable!()
-        });
+        self.banking_packet_handler =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
     }
 }
 
@@ -792,10 +790,8 @@ where
         // very short window of race condition due to untimely spawning of block production
         // scheduler.
         handler_context.banking_packet_receiver = never();
-        handler_context.banking_packet_handler = Box::new(|_, _| {
-            // This is safe because of the paired use of never() just above.
-            unreachable!()
-        });
+        handler_context.banking_packet_handler =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
         handler_context.banking_stage_monitor = Box::new(ExitedBankingMonitor);
     }
 
@@ -830,7 +826,9 @@ where
                     self.block_verification_handler_count,
                     // Return various type-specific no-op values.
                     never(),
-                    Box::new(|_, _| {}),
+                    Box::new(|_, _| {
+                        unreachable!("paired with never() receiver, this cannot be called")
+                    }),
                     None,
                     None,
                 )
