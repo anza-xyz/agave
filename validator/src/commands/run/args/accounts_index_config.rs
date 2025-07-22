@@ -15,6 +15,7 @@ impl FromClapArgMatches for AccountsIndexConfig {
 
         Ok(AccountsIndexConfig {
             num_flush_threads: Some(num_flush_threads),
+            bins: value_t!(matches, "accounts_index_bins", usize).ok(),
             ..AccountsIndexConfig::default()
         })
     }
@@ -46,6 +47,26 @@ mod tests {
         verify_args_struct_by_command_run_with_identity_setup(
             default_run_args,
             vec!["--accounts-index-flush-threads", "2"],
+            expected_args,
+        );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_index_bins() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                index: Some(AccountsIndexConfig {
+                    bins: Some(512),
+                    ..default_run_args.accounts_db_config.clone().index.unwrap()
+                }),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--accounts-index-bins", "512"],
             expected_args,
         );
     }
