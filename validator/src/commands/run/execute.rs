@@ -555,6 +555,13 @@ pub fn execute(
             account_snapshot_paths
         };
 
+    let snapshot_config = process_snapshot_config(
+        matches,
+        &ledger_path,
+        &account_paths,
+        run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
+    )?;
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
         tower_storage,
@@ -682,6 +689,7 @@ pub fn execute(
         accounts_db_config,
         accounts_db_skip_shrink: true,
         accounts_db_force_initial_clean: matches.is_present("no_skip_initial_accounts_db_clean"),
+        snapshot_config,
         tpu_coalesce,
         no_wait_for_vote_to_start_leader: matches.is_present("no_wait_for_vote_to_start_leader"),
         runtime_config: RuntimeConfig {
@@ -739,190 +747,10 @@ pub fn execute(
             .expect("invalid dynamic_port_range");
 
     let maximum_local_snapshot_age = value_t_or_exit!(matches, "maximum_local_snapshot_age", u64);
-    let maximum_full_snapshot_archives_to_retain =
-        value_t_or_exit!(matches, "maximum_full_snapshots_to_retain", NonZeroUsize);
-    let maximum_incremental_snapshot_archives_to_retain = value_t_or_exit!(
-        matches,
-        "maximum_incremental_snapshots_to_retain",
-        NonZeroUsize
-    );
-    let snapshot_packager_niceness_adj =
-        value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
     let minimal_snapshot_download_speed =
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
-
-    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
-        Path::new(snapshots)
-    } else {
-        &ledger_path
-    };
-    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create snapshots directory '{}': {err}",
-            snapshots_dir.display(),
-        )
-    })?;
-
-    if account_paths
-        .iter()
-        .any(|account_path| account_path == &snapshots_dir)
-    {
-        Err(
-            "the --accounts and --snapshots paths must be unique since they \
-             both create 'snapshots' subdirectories, otherwise there may be collisions"
-                .to_string(),
-        )?;
-    }
-
-    let bank_snapshots_dir = snapshots_dir.join("snapshots");
-    fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
-        format!(
-            "failed to create bank snapshots directory '{}': {err}",
-            bank_snapshots_dir.display(),
-        )
-    })?;
-
-    let full_snapshot_archives_dir =
-        if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
-            PathBuf::from(full_snapshot_archive_path)
-        } else {
-            snapshots_dir.clone()
-        };
-    fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create full snapshot archives directory '{}': {err}",
-            full_snapshot_archives_dir.display(),
-        )
-    })?;
-
-    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
-        matches.value_of("incremental_snapshot_archive_path")
-    {
-        PathBuf::from(incremental_snapshot_archive_path)
-    } else {
-        snapshots_dir.clone()
-    };
-    fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
-        format!(
-            "failed to create incremental snapshot archives directory '{}': {err}",
-            incremental_snapshot_archives_dir.display(),
-        )
-    })?;
-
-    let archive_format = {
-        let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
-        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
-            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
-        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
-            config.compression_level =
-                value_t_or_exit!(matches, "snapshot_zstd_compression_level", i32);
-        }
-        archive_format
-    };
-
-    let snapshot_version = matches
-        .value_of("snapshot_version")
-        .map(|value| {
-            value
-                .parse::<SnapshotVersion>()
-                .map_err(|err| format!("unable to parse snapshot version: {err}"))
-        })
-        .transpose()?
-        .unwrap_or(SnapshotVersion::default());
-
-    let (full_snapshot_archive_interval, incremental_snapshot_archive_interval) =
-        if matches.is_present("no_snapshots") {
-            // snapshots are disabled
-            (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
-        } else {
-            match (
-                run_args.rpc_bootstrap_config.incremental_snapshot_fetch,
-                value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
-            ) {
-                (true, incremental_snapshot_interval_slots) => {
-                    // incremental snapshots are enabled
-                    // use --snapshot-interval-slots for the incremental snapshot interval
-                    let full_snapshot_interval_slots =
-                        value_t_or_exit!(matches, "full_snapshot_interval_slots", NonZeroU64);
-                    (
-                        SnapshotInterval::Slots(full_snapshot_interval_slots),
-                        SnapshotInterval::Slots(incremental_snapshot_interval_slots),
-                    )
-                }
-                (false, full_snapshot_interval_slots) => {
-                    // incremental snapshots are *disabled*
-                    // use --snapshot-interval-slots for the *full* snapshot interval
-                    // also warn if --full-snapshot-interval-slots was specified
-                    if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
-                        warn!(
-                            "Incremental snapshots are disabled, yet \
-                             --full-snapshot-interval-slots was specified! \
-                             Note that --full-snapshot-interval-slots is *ignored* \
-                             when incremental snapshots are disabled. \
-                             Use --snapshot-interval-slots instead.",
-                        );
-                    }
-                    (
-                        SnapshotInterval::Slots(full_snapshot_interval_slots),
-                        SnapshotInterval::Disabled,
-                    )
-                }
-            }
-        };
-
-    validator_config.snapshot_config = SnapshotConfig {
-        usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
-            SnapshotUsage::LoadOnly
-        } else {
-            SnapshotUsage::LoadAndGenerate
-        },
-        full_snapshot_archive_interval,
-        incremental_snapshot_archive_interval,
-        bank_snapshots_dir,
-        full_snapshot_archives_dir,
-        incremental_snapshot_archives_dir,
-        archive_format,
-        snapshot_version,
-        maximum_full_snapshot_archives_to_retain,
-        maximum_incremental_snapshot_archives_to_retain,
-        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
-    };
-
-    info!(
-        "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
-        match full_snapshot_archive_interval {
-            SnapshotInterval::Disabled => "disabled".to_string(),
-            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
-        },
-        match incremental_snapshot_archive_interval {
-            SnapshotInterval::Disabled => "disabled".to_string(),
-            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
-        },
-    );
-
-    // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
-    // Minimally we should warn the user in case this was a mistake.
-    if let SnapshotInterval::Slots(full_snapshot_interval_slots) = full_snapshot_archive_interval {
-        let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
-        if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
-            warn!(
-                "The full snapshot interval is excessively large: {}! This will negatively \
-                impact the background cleanup tasks in accounts-db. Consider a smaller value.",
-                full_snapshot_interval_slots,
-            );
-        }
-    }
-
-    if !is_snapshot_config_valid(&validator_config.snapshot_config) {
-        Err(
-            "invalid snapshot configuration provided: snapshot intervals are incompatible. \
-             \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
-             (if enabled)"
-                .to_string(),
-        )?;
-    }
 
     configure_banking_trace_dir_byte_limit(&mut validator_config, matches);
     validator_config.block_verification_method = value_t_or_exit!(
@@ -1351,6 +1179,195 @@ fn configure_banking_trace_dir_byte_limit(
         // explicit user-supplied override value
         value_t_or_exit!(matches, "banking_trace_dir_byte_limit", u64)
     };
+}
+
+fn process_snapshot_config(
+    matches: &ArgMatches,
+    ledger_path: &Path,
+    account_paths: &[PathBuf],
+    incremental_snapshot_fetch: bool,
+) -> Result<SnapshotConfig, Box<dyn std::error::Error>> {
+    let (full_snapshot_archive_interval, incremental_snapshot_archive_interval) =
+        if matches.is_present("no_snapshots") {
+            // snapshots are disabled
+            (SnapshotInterval::Disabled, SnapshotInterval::Disabled)
+        } else {
+            match (
+                incremental_snapshot_fetch,
+                value_t_or_exit!(matches, "snapshot_interval_slots", NonZeroU64),
+            ) {
+                (true, incremental_snapshot_interval_slots) => {
+                    // incremental snapshots are enabled
+                    // use --snapshot-interval-slots for the incremental snapshot interval
+                    let full_snapshot_interval_slots =
+                        value_t_or_exit!(matches, "full_snapshot_interval_slots", NonZeroU64);
+                    (
+                        SnapshotInterval::Slots(full_snapshot_interval_slots),
+                        SnapshotInterval::Slots(incremental_snapshot_interval_slots),
+                    )
+                }
+                (false, full_snapshot_interval_slots) => {
+                    // incremental snapshots are *disabled*
+                    // use --snapshot-interval-slots for the *full* snapshot interval
+                    // also warn if --full-snapshot-interval-slots was specified
+                    if matches.occurrences_of("full_snapshot_interval_slots") > 0 {
+                        warn!(
+                            "Incremental snapshots are disabled, yet \
+                             --full-snapshot-interval-slots was specified! \
+                             Note that --full-snapshot-interval-slots is *ignored* \
+                             when incremental snapshots are disabled. \
+                             Use --snapshot-interval-slots instead.",
+                        );
+                    }
+                    (
+                        SnapshotInterval::Slots(full_snapshot_interval_slots),
+                        SnapshotInterval::Disabled,
+                    )
+                }
+            }
+        };
+
+    info!(
+        "Snapshot configuration: full snapshot interval: {}, incremental snapshot interval: {}",
+        match full_snapshot_archive_interval {
+            SnapshotInterval::Disabled => "disabled".to_string(),
+            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
+        },
+        match incremental_snapshot_archive_interval {
+            SnapshotInterval::Disabled => "disabled".to_string(),
+            SnapshotInterval::Slots(interval) => format!("{interval} slots"),
+        },
+    );
+    // It is unlikely that a full snapshot interval greater than an epoch is a good idea.
+    // Minimally we should warn the user in case this was a mistake.
+    if let SnapshotInterval::Slots(full_snapshot_interval_slots) = full_snapshot_archive_interval {
+        let full_snapshot_interval_slots = full_snapshot_interval_slots.get();
+        if full_snapshot_interval_slots > DEFAULT_SLOTS_PER_EPOCH {
+            warn!(
+                "The full snapshot interval is excessively large: {}! This will negatively \
+                impact the background cleanup tasks in accounts-db. Consider a smaller value.",
+                full_snapshot_interval_slots,
+            );
+        }
+    }
+
+    let snapshots_dir = if let Some(snapshots) = matches.value_of("snapshots") {
+        Path::new(snapshots)
+    } else {
+        ledger_path
+    };
+    let snapshots_dir = create_and_canonicalize_directory(snapshots_dir).map_err(|err| {
+        format!(
+            "failed to create snapshots directory '{}': {err}",
+            snapshots_dir.display(),
+        )
+    })?;
+    if account_paths
+        .iter()
+        .any(|account_path| account_path == &snapshots_dir)
+    {
+        Err(
+            "the --accounts and --snapshots paths must be unique since they \
+             both create 'snapshots' subdirectories, otherwise there may be collisions"
+                .to_string(),
+        )?;
+    }
+
+    let bank_snapshots_dir = snapshots_dir.join("snapshots");
+    fs::create_dir_all(&bank_snapshots_dir).map_err(|err| {
+        format!(
+            "failed to create bank snapshots directory '{}': {err}",
+            bank_snapshots_dir.display(),
+        )
+    })?;
+
+    let full_snapshot_archives_dir =
+        if let Some(full_snapshot_archive_path) = matches.value_of("full_snapshot_archive_path") {
+            PathBuf::from(full_snapshot_archive_path)
+        } else {
+            snapshots_dir.clone()
+        };
+    fs::create_dir_all(&full_snapshot_archives_dir).map_err(|err| {
+        format!(
+            "failed to create full snapshot archives directory '{}': {err}",
+            full_snapshot_archives_dir.display(),
+        )
+    })?;
+
+    let incremental_snapshot_archives_dir = if let Some(incremental_snapshot_archive_path) =
+        matches.value_of("incremental_snapshot_archive_path")
+    {
+        PathBuf::from(incremental_snapshot_archive_path)
+    } else {
+        snapshots_dir.clone()
+    };
+    fs::create_dir_all(&incremental_snapshot_archives_dir).map_err(|err| {
+        format!(
+            "failed to create incremental snapshot archives directory '{}': {err}",
+            incremental_snapshot_archives_dir.display(),
+        )
+    })?;
+
+    let archive_format = {
+        let archive_format_str = value_t_or_exit!(matches, "snapshot_archive_format", String);
+        let mut archive_format = ArchiveFormat::from_cli_arg(&archive_format_str)
+            .unwrap_or_else(|| panic!("Archive format not recognized: {archive_format_str}"));
+        if let ArchiveFormat::TarZstd { config } = &mut archive_format {
+            config.compression_level =
+                value_t_or_exit!(matches, "snapshot_zstd_compression_level", i32);
+        }
+        archive_format
+    };
+
+    let snapshot_version = matches
+        .value_of("snapshot_version")
+        .map(|value| {
+            value
+                .parse::<SnapshotVersion>()
+                .map_err(|err| format!("unable to parse snapshot version: {err}"))
+        })
+        .transpose()?
+        .unwrap_or(SnapshotVersion::default());
+
+    let maximum_full_snapshot_archives_to_retain =
+        value_t_or_exit!(matches, "maximum_full_snapshots_to_retain", NonZeroUsize);
+    let maximum_incremental_snapshot_archives_to_retain = value_t_or_exit!(
+        matches,
+        "maximum_incremental_snapshots_to_retain",
+        NonZeroUsize
+    );
+
+    let snapshot_packager_niceness_adj =
+        value_t_or_exit!(matches, "snapshot_packager_niceness_adj", i8);
+
+    let snapshot_config = SnapshotConfig {
+        usage: if full_snapshot_archive_interval == SnapshotInterval::Disabled {
+            SnapshotUsage::LoadOnly
+        } else {
+            SnapshotUsage::LoadAndGenerate
+        },
+        full_snapshot_archive_interval,
+        incremental_snapshot_archive_interval,
+        bank_snapshots_dir,
+        full_snapshot_archives_dir,
+        incremental_snapshot_archives_dir,
+        archive_format,
+        snapshot_version,
+        maximum_full_snapshot_archives_to_retain,
+        maximum_incremental_snapshot_archives_to_retain,
+        packager_thread_niceness_adj: snapshot_packager_niceness_adj,
+    };
+
+    if !is_snapshot_config_valid(&snapshot_config) {
+        Err(
+            "invalid snapshot configuration provided: snapshot intervals are incompatible. \
+             \n\t- full snapshot interval MUST be larger than incremental snapshot interval \
+             (if enabled)"
+                .to_string(),
+        )?;
+    }
+
+    Ok(snapshot_config)
 }
 
 fn process_account_indexes(matches: &ArgMatches) -> AccountSecondaryIndexes {
