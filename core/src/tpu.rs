@@ -66,7 +66,7 @@ use {
     std::{
         collections::HashMap,
         net::{SocketAddr, UdpSocket},
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread::{self, JoinHandle},
         time::Duration,
     },
@@ -105,7 +105,7 @@ pub struct Tpu {
     fetch_stage: FetchStage,
     sig_verifier: SigVerifier,
     vote_sigverify_stage: SigVerifyStage,
-    block_production_manager: BlockProductionManager,
+    block_production_manager: Arc<Mutex<BlockProductionManager>>,
     forwarding_stage: JoinHandle<()>,
     cluster_info_vote_listener: ClusterInfoVoteListener,
     broadcast_stage: BroadcastStage,
@@ -340,6 +340,7 @@ impl Tpu {
         block_production_manager
             .spawn_non_vote_threads(block_production_method, transaction_struct)
             .expect("failed to spawn non-vote threads");
+        let block_production_manager = Arc::new(Mutex::new(block_production_manager));
 
         let SpawnForwardingStageResult {
             join_handle: forwarding_stage,
@@ -414,7 +415,7 @@ impl Tpu {
             self.sig_verifier.join(),
             self.vote_sigverify_stage.join(),
             self.cluster_info_vote_listener.join(),
-            self.block_production_manager.shutdown(),
+            self.block_production_manager.lock().unwrap().shutdown(),
             self.forwarding_stage.join(),
             self.staked_nodes_updater_service.join(),
             self.tpu_quic_t.map_or(Ok(()), |t| t.join()),

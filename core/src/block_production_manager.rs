@@ -26,8 +26,9 @@ use {
 pub struct BlockProductionManager {
     /// Signal to shutdown vote thread.
     vote_shutdown_signal: Arc<AtomicBool>,
-    /// Vote thread handle.
-    vote_thread_handle: JoinHandle<()>,
+    /// Vote thread handle - wrapped in an `Option` to allow for shutdown
+    /// without taking ownership.
+    vote_thread_handle: Option<JoinHandle<()>>,
 
     /// Signal to shutdown non-vote thread(s).
     non_vote_shutdown_signal: Arc<AtomicBool>,
@@ -50,7 +51,7 @@ impl BlockProductionManager {
 
         Self {
             vote_shutdown_signal,
-            vote_thread_handle,
+            vote_thread_handle: Some(vote_thread_handle),
             non_vote_shutdown_signal,
             non_vote_thread_handles: vec![],
             context,
@@ -93,13 +94,15 @@ impl BlockProductionManager {
     }
 
     /// Perform final shutdown.
-    pub fn shutdown(mut self) -> thread::Result<()> {
+    pub fn shutdown(&mut self) -> thread::Result<()> {
         self.shutdown_non_vote_threads()?;
 
         // Signal and wait for vote thread shutdown.
         {
             self.vote_shutdown_signal.store(true, Ordering::Relaxed);
-            self.vote_thread_handle.join()?;
+            if let Some(hdl) = self.vote_thread_handle.take() {
+                hdl.join()?;
+            }
         }
 
         Ok(())
