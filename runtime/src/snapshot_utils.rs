@@ -1123,11 +1123,9 @@ fn archive_snapshot(
             let mut sorted_storage_indices = (0..snapshot_storages.len()).collect::<Vec<_>>();
             sorted_storage_indices.sort_by_key(|&i| snapshot_storages[i].accounts.len());
             for i in 0..sorted_storage_indices.len() {
-                let index = sorted_storage_indices[if i % 2 == 0 {
-                    i / 2
-                } else {
-                    sorted_storage_indices.len() - i / 2 - 1
-                }];
+                // Balance large and small files with bias towards small (1 large + 2 small), such
+                // that during unpacking large writes and mixed with file metadata operations.
+                let index = get_from_start_or_end_index_by_ratio(&sorted_storage_indices, i, 3);
                 let storage = &snapshot_storages[index];
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
@@ -1208,6 +1206,21 @@ fn archive_snapshot(
         hash: snapshot_hash,
         archive_format,
     })
+}
+
+/// Get the `nth` element (0-based) from `values` selected from start or end with `ratio`.
+///
+/// 1:ratio elements are selected from the start and the rest from the end.
+/// This function calculates permutation of `values` balancing extreme elements.
+fn get_from_start_or_end_index_by_ratio(values: &[usize], nth: usize, ratio: usize) -> usize {
+    let nth_div = nth / ratio;
+    let nth_rem = nth % ratio;
+    let value_index = if nth_rem == 0 {
+        nth_div
+    } else {
+        values.len() - (nth_div * (ratio - 1) + nth_rem)
+    };
+    values[value_index]
 }
 
 /// Get the bank snapshots in a directory
@@ -3668,5 +3681,25 @@ mod tests {
                 .to_string()
                 .starts_with("invalid full snapshot slot file size"));
         }
+    }
+
+    #[test]
+    fn test_get_values_from_start_or_end_index_by_ratio() {
+        let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        let shuffled: Vec<_> = (0..values.len())
+            .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 3))
+            .collect();
+        assert_eq!(shuffled, vec![1, 10, 9, 2, 8, 7, 3, 6, 5, 4]);
+
+        let shuffled: Vec<_> = (0..values.len())
+            .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 2))
+            .collect();
+        assert_eq!(shuffled, vec![1, 10, 2, 9, 3, 8, 4, 7, 5, 6]);
+
+        let values = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let shuffled: Vec<_> = (0..values.len())
+            .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 3))
+            .collect();
+        assert_eq!(shuffled, vec![1, 9, 8, 2, 7, 6, 3, 5, 4]);
     }
 }
