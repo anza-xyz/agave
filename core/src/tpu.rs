@@ -409,6 +409,10 @@ impl Tpu {
         }
     }
 
+    pub fn block_production_manager(&self) -> Arc<Mutex<BlockProductionManager>> {
+        self.block_production_manager.clone()
+    }
+
     pub fn join(self) -> thread::Result<()> {
         let results = vec![
             self.fetch_stage.join(),

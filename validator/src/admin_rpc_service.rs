@@ -1038,6 +1038,7 @@ mod tests {
                         solana_core::cluster_slots_service::cluster_slots::ClusterSlots::default(),
                     ),
                     gossip_socket: None,
+                    block_production_manager: None,
                 }))),
                 staked_nodes_overrides: Arc::new(RwLock::new(HashMap::new())),
                 rpc_to_plugin_manager_sender: None,

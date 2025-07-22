@@ -1,5 +1,6 @@
 use {
     crate::{
+        block_production_manager::BlockProductionManager,
         cluster_slots_service::cluster_slots::ClusterSlots,
         repair::{outstanding_requests::OutstandingRequests, serve_repair::ShredRepairType},
     },
@@ -11,7 +12,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         net::UdpSocket,
-        sync::{Arc, RwLock},
+        sync::{Arc, Mutex, RwLock},
     },
 };
 
@@ -80,4 +81,5 @@ pub struct AdminRpcRequestMetadataPostInit {
     pub outstanding_repair_requests: Arc<RwLock<OutstandingRequests<ShredRepairType>>>,
     pub cluster_slots: Arc<ClusterSlots>,
     pub gossip_socket: Option<AtomicUdpSocket>,
+    pub block_production_manager: Option<Arc<Mutex<BlockProductionManager>>>,
 }

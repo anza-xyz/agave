@@ -1663,6 +1663,7 @@ impl Validator {
             outstanding_repair_requests,
             cluster_slots,
             gossip_socket: Some(node.sockets.gossip.clone()),
+            block_production_manager: Some(tpu.block_production_manager()),
         });
 
         Ok(Self {
