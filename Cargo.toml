@@ -2,7 +2,6 @@
 members = [
     "account-decoder",
     "account-decoder-client-types",
-    "accounts-bench",
     "accounts-cluster-bench",
     "accounts-db",
     "accounts-db/accounts-hash-cache-tool",

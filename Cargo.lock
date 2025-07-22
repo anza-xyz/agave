@@ -6764,23 +6764,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-accounts-bench"
-version = "3.0.0"
-dependencies = [
- "clap 2.33.3",
- "log",
- "rayon",
- "solana-accounts-db",
- "solana-clock",
- "solana-epoch-schedule",
- "solana-logger",
- "solana-measure",
- "solana-pubkey",
- "solana-rent-collector",
- "solana-version",
-]
-
-[[package]]
 name = "solana-accounts-cluster-bench"
 version = "3.0.0"
 dependencies = [
