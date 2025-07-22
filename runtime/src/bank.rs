@@ -2174,7 +2174,14 @@ impl Bank {
     }
 
     pub fn get_slot_history(&self) -> SlotHistory {
-        from_account(&self.get_account(&sysvar::slot_history::id()).unwrap()).unwrap()
+        let history: SlotHistory =
+            from_account(&self.get_account(&sysvar::slot_history::id()).unwrap()).unwrap();
+        assert_eq!(
+            history.bits.len(),
+            solana_slot_history::MAX_ENTRIES,
+            "malformed slot history sysvar"
+        );
+        history
     }
 
     fn update_epoch_stakes(&mut self, leader_schedule_epoch: Epoch) {
