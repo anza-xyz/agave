@@ -15,7 +15,9 @@
 use {
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     assert_matches::assert_matches,
-    crossbeam_channel::{self, never, select_biased, Receiver, RecvError, SendError, Sender},
+    crossbeam_channel::{
+        self, never, select_biased, Receiver, RecvError, RecvTimeoutError, SendError, Sender,
+    },
     dashmap::DashMap,
     derive_where::derive_where,
     dyn_clone::{clone_trait_object, DynClone},
@@ -156,6 +158,7 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
 }
@@ -261,16 +264,16 @@ impl HandlerContext {
 
     fn clone_for_scheduler_thread(&self) -> Self {
         let mut context = self.clone();
-        context.disable_banking_packet_handler();
+        if self.banking_stage_helper.is_some() {
+            context.disable_banking_packet_handler();
+        }
         context
     }
 
     fn disable_banking_packet_handler(&mut self) {
         self.banking_packet_receiver = never();
-        self.banking_packet_handler = Box::new(|_, _| {
-            // This is safe because of the paired use of never() just above.
-            unreachable!()
-        });
+        self.banking_packet_handler =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
     }
 }
 
@@ -515,12 +518,14 @@ where
 
         let mut exiting = false;
         let cleaner_main_loop = move || {
-            let weak_scheduler_pool: Weak<Self> =
-                scheduler_pool_receiver.into_iter().next().unwrap();
+            info!("cleaner_main_loop: started...");
 
+            let weak_scheduler_pool: Weak<Self> = scheduler_pool_receiver.recv().unwrap();
             loop {
-                sleep(pool_cleaner_interval);
-                trace!("Scheduler pool cleaner: start!!!",);
+                match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
+                    Ok(_) => unreachable!(),
+                    Err(RecvTimeoutError::Disconnected | RecvTimeoutError::Timeout) => (),
+                }
 
                 let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
                     // this is the only safe termination point of cleaner_main_loop while all other
@@ -665,6 +670,7 @@ where
                     triggered_timeout_listener_count,
                 ));
             }
+            info!("cleaner_main_loop: ...finished");
         };
 
         let cleaner_thread = thread::Builder::new()
@@ -689,6 +695,7 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
+            scheduler_pool_sender: scheduler_pool_sender.clone(),
             cleaner_thread,
             _phantom: PhantomData,
         });
@@ -848,10 +855,8 @@ where
         // very short window of race condition due to untimely spawning of block production
         // scheduler.
         handler_context.banking_packet_receiver = never();
-        handler_context.banking_packet_handler = Box::new(|_, _| {
-            // This is safe because of the paired use of never() just above.
-            unreachable!()
-        });
+        handler_context.banking_packet_handler =
+            Box::new(|_, _| unreachable!("paired with never() receiver, this cannot be called"));
         handler_context.banking_stage_monitor = Box::new(ExitedBankingMonitor);
     }
 
@@ -886,7 +891,9 @@ where
                     self.block_verification_handler_count,
                     // Return various type-specific no-op values.
                     never(),
-                    Box::new(|_, _| {}),
+                    Box::new(|_, _| {
+                        unreachable!("paired with never() receiver, this cannot be called")
+                    }),
                     None,
                     None,
                 )
@@ -1017,7 +1024,7 @@ where
         // Drop impl, because of the need to take the ownership of the join handle of the cleaner
         // thread...
         let mut this = self;
-        let this: Self = loop {
+        let mut this: Self = loop {
             match Arc::try_unwrap(this) {
                 Ok(pool) => {
                     break pool;
@@ -1032,6 +1039,8 @@ where
                 }
             }
         };
+        // Accelerate cleaner thread joining by disconnection
+        this.scheduler_pool_sender = crossbeam_channel::bounded(1).0;
         this.cleaner_thread.join().unwrap();
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
@@ -2321,11 +2330,11 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             let banking_stage_helper = banking_stage_helper.as_ref().unwrap();
 
                             let Ok(banking_packet) = banking_packet else {
+                                info!("disconnected banking_packet_receiver");
                                 // Don't break here; handler threads are expected to outlive its
                                 // associated scheduler thread always. So, disable banking packet
-                                // receiver then continue to be cleaned up properly later, much
-                                // like block verification handler thread.
-                                info!("disconnected banking_packet_receiver");
+                                // handler then continue to be cleaned up properly later, much like
+                                // block verification handler thread.
                                 handler_context.disable_banking_packet_handler();
                                 continue;
                             };
