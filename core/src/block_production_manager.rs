@@ -1,9 +1,6 @@
 use {
     crate::{
-        banking_stage::{
-            committer::Committer, decision_maker::DecisionMaker, vote_storage::VoteStorage,
-            BankingStage,
-        },
+        banking_stage::{committer::Committer, vote_storage::VoteStorage, BankingStage},
         validator::{BlockProductionMethod, TransactionStructure},
     },
     agave_banking_stage_ingress_types::BankingPacketReceiver,
@@ -81,13 +78,12 @@ impl BlockProductionManager {
             &mut self.non_vote_thread_handles,
             block_production_method,
             transaction_structure,
-            DecisionMaker::new(self.context.poh_recorder.clone()),
+            self.context.poh_recorder.clone(),
             Committer::new(
                 self.context.transaction_status_sender.clone(),
                 self.context.replay_vote_sender.clone(),
                 self.context.prioritization_fee_cache.clone(),
             ),
-            &self.context.poh_recorder,
             self.context.transaction_recorder.clone(),
             self.context.non_vote_receiver.clone(),
             BankingStage::num_threads(),
@@ -131,7 +127,7 @@ impl BlockProductionManager {
             vote_shutdown_signal.clone(),
             context.tpu_vote_receiver.clone(),
             context.gossip_vote_receiver.clone(),
-            DecisionMaker::new(context.poh_recorder.clone()),
+            context.poh_recorder.clone(),
             context.bank_forks.clone(),
             Committer::new(
                 context.transaction_status_sender.clone(),
