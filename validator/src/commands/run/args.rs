@@ -1735,10 +1735,7 @@ mod tests {
         super::*,
         crate::cli::thread_args::thread_args,
         solana_rpc::rpc::MAX_REQUEST_BODY_SIZE,
-        std::{
-            net::{IpAddr, Ipv4Addr},
-            num::NonZeroUsize,
-        },
+        std::net::{IpAddr, Ipv4Addr},
     };
 
     impl Default for RunArgs {
