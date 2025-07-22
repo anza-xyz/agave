@@ -555,7 +555,7 @@ pub fn execute(
             account_snapshot_paths
         };
 
-    let snapshot_config = process_snapshot_config(
+    let snapshot_config = new_snapshot_config(
         matches,
         &ledger_path,
         &account_paths,
@@ -1181,7 +1181,7 @@ fn configure_banking_trace_dir_byte_limit(
     };
 }
 
-fn process_snapshot_config(
+fn new_snapshot_config(
     matches: &ArgMatches,
     ledger_path: &Path,
     account_paths: &[PathBuf],
