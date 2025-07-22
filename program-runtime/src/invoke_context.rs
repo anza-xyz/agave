@@ -333,6 +333,7 @@ impl<'a> InvokeContext<'a> {
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
+        debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
 
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
