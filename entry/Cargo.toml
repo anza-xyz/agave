@@ -16,11 +16,15 @@ targets = ["x86_64-unknown-linux-gnu"]
 crate-type = ["lib"]
 name = "solana_entry"
 
+[features]
+dev-context-only-utils = []
+
 [dependencies]
 bincode = { workspace = true }
 crossbeam-channel = { workspace = true }
 dlopen2 = { workspace = true }
 log = { workspace = true }
+num_cpus = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
@@ -30,7 +34,6 @@ solana-merkle-tree = { workspace = true }
 solana-metrics = { workspace = true }
 solana-packet = { workspace = true }
 solana-perf = { workspace = true }
-solana-rayon-threadlimit = { workspace = true }
 solana-runtime-transaction = { workspace = true }
 solana-sha256-hasher = { workspace = true }
 solana-transaction = { workspace = true }
@@ -39,6 +42,7 @@ solana-transaction-error = { workspace = true }
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
 assert_matches = { workspace = true }
+solana-entry = { path = ".", features = ["dev-context-only-utils"] }
 solana-keypair = { workspace = true }
 solana-logger = { workspace = true }
 solana-message = { workspace = true }

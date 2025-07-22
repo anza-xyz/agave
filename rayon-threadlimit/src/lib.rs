@@ -15,8 +15,11 @@ pub fn get_thread_count() -> usize {
     *MAX_RAYON_THREADS
 }
 
-// Only used in legacy code.
-// Use get_thread_count instead in all new code.
+#[deprecated(
+    since = "3.0.0",
+    note = "The solana-rayon-threadlimit crate will be removed, use num_cpus::get() or something \
+            similar instead"
+)]
 pub fn get_max_thread_count() -> usize {
     get_thread_count().saturating_mul(2)
 }

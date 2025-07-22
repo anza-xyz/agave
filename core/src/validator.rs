@@ -83,7 +83,7 @@ use {
         transaction_recorder::TransactionRecorder,
     },
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::{get_max_thread_count, get_thread_count},
+    solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::{
@@ -379,7 +379,7 @@ impl Default for ValidatorConfig {
 impl ValidatorConfig {
     pub fn default_for_test() -> Self {
         let max_thread_count =
-            NonZeroUsize::new(get_max_thread_count()).expect("thread count is non-zero");
+            NonZeroUsize::new(num_cpus::get()).expect("thread count is non-zero");
 
         Self {
             accounts_db_config: Some(ACCOUNTS_DB_CONFIG_FOR_TESTING),
