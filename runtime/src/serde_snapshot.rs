@@ -165,6 +165,9 @@ struct DeserializableVersionedBank {
 
 impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
     fn from(dvb: DeserializableVersionedBank) -> Self {
+        // This serves as a canary for the LtHash.
+        // If it is not replaced during deserialization, it indicates a bug.
+        const LT_HASH_CANARY: LtHash = LtHash([0xCAFE; LtHash::NUM_ELEMENTS]);
         BankFieldsToDeserialize {
             blockhash_queue: dvb.blockhash_queue,
             ancestors: dvb.ancestors,
@@ -196,8 +199,8 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             is_delta: dvb.is_delta,
             incremental_snapshot_persistence: None,
             versioned_epoch_stakes: HashMap::default(), // populated from ExtraFieldsToDeserialize
-            accounts_lt_hash: AccountsLtHash(LtHash([0xCAFE; LtHash::NUM_ELEMENTS])), // populated from ExtraFieldsToDeserialize
-            bank_hash_stats: BankHashStats::default(), // populated from AccountsDbFields
+            accounts_lt_hash: AccountsLtHash(LT_HASH_CANARY), // populated from ExtraFieldsToDeserialize
+            bank_hash_stats: BankHashStats::default(),        // populated from AccountsDbFields
         }
     }
 }
