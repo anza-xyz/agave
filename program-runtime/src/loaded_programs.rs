@@ -1060,6 +1060,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
+    // HANA TODO i want to check if an initial miss results in a second hit
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
