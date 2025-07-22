@@ -14,6 +14,7 @@ edition = { workspace = true }
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
+base64 = { workspace = true }
 bincode = { workspace = true }
 bs58 = { workspace = true }
 crossbeam-channel = { workspace = true }
