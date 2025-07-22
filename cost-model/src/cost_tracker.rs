@@ -233,13 +233,13 @@ impl CostTracker {
         datapoint_info!(
             "cost_tracker_stats",
             "is_leader" => is_leader.to_string(),
-            ("bank_slot", bank_slot as i64, i64),
-            ("block_cost", self.block_cost as i64, i64),
-            ("vote_cost", self.vote_cost as i64, i64),
-            ("transaction_count", self.transaction_count.0 as i64, i64),
-            ("number_of_accounts", self.number_of_accounts() as i64, i64),
+            ("bank_slot", bank_slot, i64),
+            ("block_cost", self.block_cost, i64),
+            ("vote_cost", self.vote_cost, i64),
+            ("transaction_count", self.transaction_count.0, i64),
+            ("number_of_accounts", self.number_of_accounts(), i64),
             ("costliest_account", costliest_account.to_string(), String),
-            ("costliest_account_cost", costliest_account_cost as i64, i64),
+            ("costliest_account_cost", costliest_account_cost, i64),
             (
                 "allocated_accounts_data_size",
                 self.allocated_accounts_data_size.0,
@@ -270,8 +270,8 @@ impl CostTracker {
                 self.secp256r1_instruction_signature_count.0,
                 i64
             ),
-            ("total_transaction_fee", total_transaction_fee as i64, i64),
-            ("total_priority_fee", total_priority_fee as i64, i64),
+            ("total_transaction_fee", total_transaction_fee, i64),
+            ("total_priority_fee", total_priority_fee, i64),
         );
     }
 

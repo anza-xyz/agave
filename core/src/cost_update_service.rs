@@ -53,10 +53,10 @@ impl CostUpdateService {
                     is_leader_block,
                 } => {
                     let (total_transaction_fee, total_priority_fee) = {
-                        let read_collector_fee_details = bank.read_collector_fee_details().unwrap();
+                        let collector_fee_details = bank.get_collector_fee_details();
                         (
-                            read_collector_fee_details.total_transaction_fee(),
-                            read_collector_fee_details.total_priority_fee(),
+                            collector_fee_details.total_transaction_fee(),
+                            collector_fee_details.total_priority_fee(),
                         )
                     };
                     for loop_count in 1..=MAX_LOOP_COUNT {
