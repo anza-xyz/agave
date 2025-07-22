@@ -559,8 +559,6 @@ pub fn rpc_bootstrap(
     node: &Node,
     identity_keypair: &Arc<Keypair>,
     ledger_path: &Path,
-    full_snapshot_archives_dir: &Path,
-    incremental_snapshot_archives_dir: &Path,
     vote_account: &Pubkey,
     authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     cluster_entrypoints: &[ContactInfo],
@@ -593,6 +591,14 @@ pub fn rpc_bootstrap(
     if bootstrap_config.no_genesis_fetch && bootstrap_config.no_snapshot_fetch {
         return;
     }
+    let full_snapshot_archives_dir = validator_config
+        .snapshot_config
+        .full_snapshot_archives_dir
+        .clone();
+    let incremental_snapshot_archives_dir = validator_config
+        .snapshot_config
+        .incremental_snapshot_archives_dir
+        .clone();
 
     let total_snapshot_download_time = Instant::now();
     let mut get_rpc_nodes_time = Duration::new(0, 0);
@@ -643,8 +649,8 @@ pub fn rpc_bootstrap(
             use_progress_bar,
             &mut gossip,
             &rpc_client,
-            full_snapshot_archives_dir,
-            incremental_snapshot_archives_dir,
+            &full_snapshot_archives_dir,
+            &incremental_snapshot_archives_dir,
             maximum_local_snapshot_age,
             start_progress,
             minimal_snapshot_download_speed,

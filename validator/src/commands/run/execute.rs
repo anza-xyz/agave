@@ -921,8 +921,8 @@ pub fn execute(
         full_snapshot_archive_interval,
         incremental_snapshot_archive_interval,
         bank_snapshots_dir,
-        full_snapshot_archives_dir: full_snapshot_archives_dir.clone(),
-        incremental_snapshot_archives_dir: incremental_snapshot_archives_dir.clone(),
+        full_snapshot_archives_dir,
+        incremental_snapshot_archives_dir,
         archive_format,
         snapshot_version,
         maximum_full_snapshot_archives_to_retain,
@@ -1204,8 +1204,14 @@ pub fn execute(
     solana_metrics::set_host_id(identity_keypair.pubkey().to_string());
     solana_metrics::set_panic_hook("validator", Some(String::from(solana_version)));
     solana_entry::entry::init_poh();
-    snapshot_utils::remove_tmp_snapshot_archives(&full_snapshot_archives_dir);
-    snapshot_utils::remove_tmp_snapshot_archives(&incremental_snapshot_archives_dir);
+    snapshot_utils::remove_tmp_snapshot_archives(
+        &validator_config.snapshot_config.full_snapshot_archives_dir,
+    );
+    snapshot_utils::remove_tmp_snapshot_archives(
+        &validator_config
+            .snapshot_config
+            .incremental_snapshot_archives_dir,
+    );
 
     let should_check_duplicate_instance = true;
     if !cluster_entrypoints.is_empty() {
@@ -1213,8 +1219,6 @@ pub fn execute(
             &node,
             &identity_keypair,
             &ledger_path,
-            &full_snapshot_archives_dir,
-            &incremental_snapshot_archives_dir,
             &vote_account,
             authorized_voter_keypairs.clone(),
             &cluster_entrypoints,
