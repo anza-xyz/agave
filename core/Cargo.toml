@@ -181,7 +181,7 @@ sysctl = { workspace = true }
 
 [dev-dependencies]
 agave-reserved-account-keys = { workspace = true }
-criterion = { workspace = true }
+bencher = { workspace = true }
 fs_extra = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
@@ -215,19 +215,38 @@ codecov = { repository = "solana-labs/solana", branch = "master", service = "git
 
 [[bench]]
 name = "banking_stage"
+harness = false
+
+[[bench]]
+name = "banking_trace"
+harness = false
+
+[[bench]]
+name = "consensus"
+harness = false
+
+[[bench]]
+name = "consumer"
+harness = false
 
 [[bench]]
 name = "gen_keys"
-
-[[bench]]
-name = "sigverify_stage"
+harness = false
 
 [[bench]]
 name = "receive_and_buffer"
 harness = false
 
 [[bench]]
+name = "shredder"
+harness = false
+
+[[bench]]
 name = "scheduler"
+harness = false
+
+[[bench]]
+name = "sigverify_stage"
 harness = false
 
 [lints]

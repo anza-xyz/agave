@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)]
-#![feature(test)]
 
 use {
+    bencher::{benchmark_group, benchmark_main, Bencher},
     crossbeam_channel::{unbounded, Receiver},
     rayon::{
         iter::IndexedParallelIterator,
@@ -33,10 +33,7 @@ use {
         Arc, RwLock,
     },
     tempfile::TempDir,
-    test::Bencher,
 };
-
-extern crate test;
 
 fn create_accounts(num: usize) -> Vec<Keypair> {
     (0..num).into_par_iter().map(|_| Keypair::new()).collect()
@@ -135,7 +132,7 @@ fn setup() -> BenchFrame {
     }
 }
 
-fn bench_process_and_record_transactions(bencher: &mut Bencher, batch_size: usize) {
+fn bench_process_and_record_transactions(b: &mut Bencher, batch_size: usize) {
     const TRANSACTIONS_PER_ITERATION: usize = 64;
     assert_eq!(
         TRANSACTIONS_PER_ITERATION % batch_size,
@@ -156,9 +153,9 @@ fn bench_process_and_record_transactions(bencher: &mut Bencher, batch_size: usiz
     } = setup();
     let consumer = create_consumer(transaction_recorder);
     let transactions = create_transactions(&bank, 2_usize.pow(20));
-    let mut transaction_iter = transactions.chunks(batch_size);
 
-    bencher.iter(move || {
+    b.iter(|| {
+        let mut transaction_iter = transactions.chunks(batch_size);
         for _ in 0..batches_per_iteration {
             let summary =
                 consumer.process_and_record_transactions(&bank, transaction_iter.next().unwrap());
@@ -173,17 +170,22 @@ fn bench_process_and_record_transactions(bencher: &mut Bencher, batch_size: usiz
     poh_service.join().unwrap();
 }
 
-#[bench]
-fn bench_process_and_record_transactions_unbatched(bencher: &mut Bencher) {
-    bench_process_and_record_transactions(bencher, 1);
+fn bench_process_and_record_transactions_unbatched(b: &mut Bencher) {
+    bench_process_and_record_transactions(c, 1);
 }
 
-#[bench]
-fn bench_process_and_record_transactions_half_batch(bencher: &mut Bencher) {
-    bench_process_and_record_transactions(bencher, 32);
+fn bench_process_and_record_transactions_half_batch(b: &mut Bencher) {
+    bench_process_and_record_transactions(c, 32);
 }
 
-#[bench]
-fn bench_process_and_record_transactions_full_batch(bencher: &mut Bencher) {
-    bench_process_and_record_transactions(bencher, 64);
+fn bench_process_and_record_transactions_full_batch(b: &mut Bencher) {
+    bench_process_and_record_transactions(c, 64);
 }
+
+benchmark_group!(
+    benches,
+    bench_process_and_record_transactions_unbatched,
+    bench_process_and_record_transactions_half_batch,
+    bench_process_and_record_transactions_full_batch
+);
+benchmark_main!(benches);
