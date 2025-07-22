@@ -125,7 +125,7 @@ struct ProcessTransactionsResult {
     last_sent_time: Option<Instant>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub retry_rate_ms: u64,
     pub leader_forward_count: u64,
