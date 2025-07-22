@@ -455,7 +455,7 @@ impl BankingStage {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn spawn_scheduler_and_workers_with_structure(
+    pub(crate) fn spawn_scheduler_and_workers_with_structure(
         bank_thread_hdls: &mut Vec<JoinHandle<()>>,
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
@@ -608,7 +608,7 @@ impl BankingStage {
         }
     }
 
-    fn spawn_vote_worker(
+    pub(crate) fn spawn_vote_worker(
         tpu_receiver: BankingPacketReceiver,
         gossip_receiver: BankingPacketReceiver,
         decision_maker: DecisionMaker,
