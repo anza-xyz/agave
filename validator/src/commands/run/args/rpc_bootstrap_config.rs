@@ -59,6 +59,7 @@ mod tests {
         crate::commands::run::args::{
             tests::verify_args_struct_by_command_run_with_identity_setup, RunArgs,
         },
+        std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 
     #[test]
@@ -96,6 +97,36 @@ mod tests {
             verify_args_struct_by_command_run_with_identity_setup(
                 default_run_args.clone(),
                 vec!["--no-snapshot-fetch"],
+                expected_args,
+            );
+        }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_check_vote_account() {
+        // long arg
+        {
+            let default_run_args = RunArgs::default();
+            let expected_args = RunArgs {
+                entrypoints: vec![SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000,
+                )],
+                rpc_bootstrap_config: RpcBootstrapConfig {
+                    check_vote_account: Some("https://api.mainnet-beta.solana.com".to_string()),
+                    ..RpcBootstrapConfig::default()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    // entrypoint is required for check-vote-account
+                    "--entrypoint",
+                    "127.0.0.1:8000",
+                    "--check-vote-account",
+                    "https://api.mainnet-beta.solana.com",
+                ],
                 expected_args,
             );
         }
