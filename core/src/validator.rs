@@ -181,7 +181,17 @@ impl BlockVerificationMethod {
 }
 
 #[derive(
-    Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display, Serialize, Deserialize,
+    Clone,
+    Debug,
+    EnumString,
+    EnumVariantNames,
+    Default,
+    IntoStaticStr,
+    Display,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
 )]
 #[strum(serialize_all = "kebab-case")]
 #[serde(rename_all = "kebab-case")]
@@ -202,7 +212,17 @@ impl BlockProductionMethod {
 }
 
 #[derive(
-    Clone, EnumString, EnumVariantNames, Default, IntoStaticStr, Display, Serialize, Deserialize,
+    Clone,
+    Debug,
+    EnumString,
+    EnumVariantNames,
+    Default,
+    IntoStaticStr,
+    Display,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
 )]
 #[strum(serialize_all = "kebab-case")]
 #[serde(rename_all = "kebab-case")]
