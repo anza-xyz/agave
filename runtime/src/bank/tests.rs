@@ -974,9 +974,9 @@ fn test_purge_empty_accounts() {
         bank.freeze();
         bank.squash();
         bank.force_flush_accounts_cache();
-        let hash = bank.update_accounts_hash_for_tests();
+        let hash = bank.calculate_accounts_lt_hash_for_tests();
         bank.clean_accounts_for_tests();
-        assert_eq!(bank.update_accounts_hash_for_tests(), hash);
+        assert_eq!(bank.calculate_accounts_lt_hash_for_tests(), hash);
 
         let bank0 = new_from_parent_with_fork_next_slot(bank.clone(), bank_forks.as_ref());
         let blockhash = bank.last_blockhash();
@@ -997,9 +997,9 @@ fn test_purge_empty_accounts() {
         assert_eq!(bank1.get_account(&keypair.pubkey()), None);
 
         info!("bank0 purge");
-        let hash = bank0.update_accounts_hash_for_tests();
+        let hash = bank0.calculate_accounts_lt_hash_for_tests();
         bank0.clean_accounts_for_tests();
-        assert_eq!(bank0.update_accounts_hash_for_tests(), hash);
+        assert_eq!(bank0.calculate_accounts_lt_hash_for_tests(), hash);
 
         assert_eq!(
             bank0.get_account(&keypair.pubkey()).unwrap().lamports(),
@@ -1034,7 +1034,6 @@ fn test_purge_empty_accounts() {
         bank1.freeze();
         bank1.squash();
         add_root_and_flush_write_cache(&bank1);
-        bank1.update_accounts_hash_for_tests();
         assert!(bank1.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 
         // keypair should have 0 tokens on both forks
@@ -2179,7 +2178,6 @@ fn test_bank_hash_internal_state() {
     bank2.transfer(amount, &mint_keypair, &pubkey2).unwrap();
     bank2.squash();
     bank2.force_flush_accounts_cache();
-    bank2.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
     assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 }
 
@@ -2214,7 +2212,6 @@ fn test_bank_hash_internal_state_verify() {
             // we later modify bank 2, so this flush is destructive to the test
             bank2.freeze();
             add_root_and_flush_write_cache(&bank2);
-            bank2.update_accounts_hash_for_tests();
             assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
         }
         let bank3 = new_bank_from_parent_with_bank_forks(
@@ -2235,7 +2232,6 @@ fn test_bank_hash_internal_state_verify() {
             // Doing so throws an assert. So, we can't flush 3 until 2 is flushed.
             bank3.freeze();
             add_root_and_flush_write_cache(&bank3);
-            bank3.update_accounts_hash_for_tests();
             assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
             continue;
         }
@@ -2245,7 +2241,6 @@ fn test_bank_hash_internal_state_verify() {
         bank2.freeze(); // <-- keep freeze() *outside* `if pass == 2 {}`
         if pass == 2 {
             add_root_and_flush_write_cache(&bank2);
-            bank2.update_accounts_hash_for_tests();
             assert!(bank2.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
 
             // Verifying the accounts lt hash is only intended to be called at startup, and
@@ -2261,7 +2256,6 @@ fn test_bank_hash_internal_state_verify() {
 
         bank3.freeze();
         add_root_and_flush_write_cache(&bank3);
-        bank3.update_accounts_hash_for_tests();
         assert!(bank3.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));
     }
 }
@@ -2287,7 +2281,6 @@ fn test_verify_snapshot_bank() {
     .unwrap();
     bank.freeze();
     add_root_and_flush_write_cache(&bank);
-    bank.update_accounts_hash_for_tests();
     assert!(bank.verify_snapshot_bank(false, false, bank.slot(), None));
 
     // tamper the bank after freeze!
@@ -3596,13 +3589,11 @@ fn test_add_instruction_processor_for_existing_unrelated_accounts() {
         );
 
         // Re-adding builtin programs should be no-op
-        bank.update_accounts_hash_for_tests();
-        let old_hash = bank.get_accounts_hash().unwrap();
+        let old_hash = bank.calculate_accounts_lt_hash_for_tests();
         bank.add_mockup_builtin(vote_id, MockBuiltin::vm);
         bank.add_mockup_builtin(stake_id, MockBuiltin::vm);
         add_root_and_flush_write_cache(&bank);
-        bank.update_accounts_hash_for_tests();
-        let new_hash = bank.get_accounts_hash().unwrap();
+        let new_hash = bank.calculate_accounts_lt_hash_for_tests();
         assert_eq!(old_hash, new_hash);
         {
             let stakes = bank.stakes_cache.stakes();
@@ -10793,6 +10784,7 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
     assert!(bank.process_transaction(&transaction).is_ok());
 }
 
+// this test is obsolete and will be removed next
 #[test]
 fn test_bank_verify_accounts_hash_with_base() {
     let GenesisConfigInfo {
@@ -10845,8 +10837,6 @@ fn test_bank_verify_accounts_hash_with_base() {
     // update the base accounts hash
     bank.squash();
     bank.force_flush_accounts_cache();
-    bank.update_accounts_hash(CalcAccountsHashDataSource::Storages, false);
-    let base_slot = bank.slot();
 
     // make more banks, do more transactions, ensure there's more zero-lamport accounts
     for _ in 0..2 {
@@ -10863,7 +10853,6 @@ fn test_bank_verify_accounts_hash_with_base() {
     // update the incremental accounts hash
     bank.squash();
     bank.force_flush_accounts_cache();
-    bank.update_incremental_accounts_hash(base_slot);
 
     // ensure the accounts hash verifies
     assert!(bank.verify_accounts_hash(VerifyAccountsHashConfig::default_for_test(), None));

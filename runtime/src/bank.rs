@@ -75,18 +75,13 @@ use {
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
         accounts_db::{
-            AccountStorageEntry, AccountsDb, AccountsDbConfig, CalcAccountsHashDataSource,
-            DuplicatesLtHash, PubkeyHashAccount,
+            AccountStorageEntry, AccountsDb, AccountsDbConfig, DuplicatesLtHash, PubkeyHashAccount,
         },
-        accounts_hash::{
-            AccountsHash, AccountsLtHash, CalcAccountsHashConfig, HashStats,
-            IncrementalAccountsHash,
-        },
+        accounts_hash::{AccountsHash, AccountsLtHash, IncrementalAccountsHash},
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
         blockhash_queue::BlockhashQueue,
-        sorted_storages::SortedStorages,
         storable_accounts::StorableAccounts,
     },
     solana_bpf_loader_program::syscalls::{
@@ -4823,81 +4818,6 @@ impl Bank {
             .load_account_into_read_cache(&self.ancestors, key);
     }
 
-    pub fn update_accounts_hash(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        is_startup: bool,
-    ) -> AccountsHash {
-        let (accounts_hash, total_lamports) = self
-            .rc
-            .accounts
-            .accounts_db
-            .update_accounts_hash_with_verify_from(
-                data_source,
-                false, // debug_verify
-                self.slot(),
-                &self.ancestors,
-                Some(self.capitalization()),
-                self.epoch_schedule(),
-                is_startup,
-            );
-        if total_lamports != self.capitalization() {
-            datapoint_info!(
-                "capitalization_mismatch",
-                ("slot", self.slot(), i64),
-                ("calculated_lamports", total_lamports, i64),
-                ("capitalization", self.capitalization(), i64),
-            );
-
-            // cap mismatch detected. It has been logged to metrics above.
-            // Run both versions of the calculation to attempt to get more info.
-            let debug_verify = true;
-            self.rc
-                .accounts
-                .accounts_db
-                .update_accounts_hash_with_verify_from(
-                    data_source,
-                    debug_verify,
-                    self.slot(),
-                    &self.ancestors,
-                    Some(self.capitalization()),
-                    self.epoch_schedule(),
-                    is_startup,
-                );
-
-            panic!(
-                "capitalization_mismatch. slot: {}, calculated_lamports: {}, capitalization: {}",
-                self.slot(),
-                total_lamports,
-                self.capitalization()
-            );
-        }
-        accounts_hash
-    }
-
-    /// Calculate the incremental accounts hash from `base_slot` to `self`
-    pub fn update_incremental_accounts_hash(&self, base_slot: Slot) -> IncrementalAccountsHash {
-        let config = CalcAccountsHashConfig {
-            use_bg_thread_pool: true,
-            ancestors: None, // does not matter, will not be used
-            epoch_schedule: &self.epoch_schedule,
-            epoch: self.epoch,
-            store_detailed_debug_info_on_failure: false,
-        };
-        let storages = self.get_snapshot_storages(Some(base_slot));
-        let sorted_storages = SortedStorages::new(&storages);
-        self.rc
-            .accounts
-            .accounts_db
-            .update_incremental_accounts_hash(
-                &config,
-                &sorted_storages,
-                self.slot(),
-                HashStats::default(),
-            )
-            .0
-    }
-
     /// A snapshot bank should be purged of 0 lamport accounts which are not part of the hash
     /// calculation and could shield other real accounts.
     pub fn verify_snapshot_bank(
@@ -5983,8 +5903,11 @@ impl Bank {
         self.transaction_processor.get_sysvar_cache_for_tests()
     }
 
-    pub fn update_accounts_hash_for_tests(&self) -> AccountsHash {
-        self.update_accounts_hash(CalcAccountsHashDataSource::IndexForTests, false)
+    pub fn calculate_accounts_lt_hash_for_tests(&self) -> AccountsLtHash {
+        self.rc
+            .accounts
+            .accounts_db
+            .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, self.slot)
     }
 
     pub fn new_program_cache_for_tx_batch_for_slot(&self, slot: Slot) -> ProgramCacheForTxBatch {
