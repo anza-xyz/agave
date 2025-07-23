@@ -8675,6 +8675,7 @@ dependencies = [
  "serde_derive",
  "serial_test",
  "siphasher 1.0.1",
+ "solana-account",
  "solana-bloom",
  "solana-clap-utils",
  "solana-client",

@@ -25,6 +25,7 @@ use {
     itertools::Itertools,
     solana_keypair::Keypair,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
     solana_signer::Signer,
     solana_streamer::socket::SocketAddrSpace,
     solana_time_utils::timestamp,
@@ -250,6 +251,7 @@ impl CrdsGossipPush {
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
         socket_addr_space: &SocketAddrSpace,
+        maybe_bank_ref: Option<&Bank>,
     ) {
         let mut rng = rand::thread_rng();
         // Active and valid gossip nodes with matching shred-version.
@@ -287,6 +289,7 @@ impl CrdsGossipPush {
             cluster_size,
             &nodes,
             stakes,
+            maybe_bank_ref,
         )
     }
 }
@@ -447,6 +450,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         let new_msg = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
@@ -514,6 +518,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(),
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         // push 3's contact info to 1 and 2 and 3
@@ -557,6 +562,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         let new_msg = CrdsValue::new_unsigned(CrdsData::from(ContactInfo::new_localhost(
@@ -605,6 +611,7 @@ mod tests {
             &ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
 
         let mut ci = ContactInfo::new_localhost(&solana_pubkey::new_rand(), 0);

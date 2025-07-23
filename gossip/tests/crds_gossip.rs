@@ -296,6 +296,7 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
             &node.ping_cache,
             &mut Vec::new(), // pings
             &SocketAddrSpace::Unspecified,
+            None,
         );
     });
     let mut total_bytes = bytes_tx;
@@ -468,6 +469,7 @@ fn network_run_push(
                     &node.ping_cache,
                     &mut Vec::new(), // pings
                     &SocketAddrSpace::Unspecified,
+                    None,
                 );
             });
         }
@@ -796,6 +798,7 @@ fn test_prune_errors() {
         &ping_cache,
         &mut Vec::new(), // pings
         &SocketAddrSpace::Unspecified,
+        None,
     );
     let now = timestamp();
     let stakes = HashMap::<Pubkey, u64>::default();
