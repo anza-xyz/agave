@@ -158,6 +158,8 @@ pub struct SchedulerPool<S: SpawnableScheduler<TH>, TH: TaskHandler> {
     weak_self: Weak<Self>,
     next_scheduler_id: AtomicSchedulerId,
     max_usage_queue_count: usize,
+    /// Used to send self to the cleaner thread on pool creation; also used to promptly terminate
+    /// it on pool destruction.
     scheduler_pool_sender: Sender<Weak<Self>>,
     cleaner_thread: JoinHandle<()>,
     _phantom: PhantomData<TH>,
@@ -522,12 +524,22 @@ where
 
             let weak_scheduler_pool: Weak<Self> = scheduler_pool_receiver.recv().unwrap();
             loop {
-                match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
-                    Ok(_) => unreachable!(),
-                    Err(RecvTimeoutError::Disconnected | RecvTimeoutError::Timeout) => (),
-                }
+                let scheduler_pool =
+                    match scheduler_pool_receiver.recv_timeout(pool_cleaner_interval) {
+                        Err(RecvTimeoutError::Timeout) => {
+                            // Most usual case: it's time to do some cleanup work after interval if
+                            // scheduler_pool is still live.
+                            weak_scheduler_pool.upgrade()
+                        }
+                        Err(RecvTimeoutError::Disconnected) => {
+                            // Disconnection should happen only after Arc has gone
+                            weak_scheduler_pool.upgrade().unwrap_none();
+                            None
+                        }
+                        Ok(_) => unreachable!("no second scheduler_pool should ever be sent"),
+                    };
 
-                let Some(scheduler_pool) = weak_scheduler_pool.upgrade() else {
+                let Some(scheduler_pool) = scheduler_pool else {
                     // this is the only safe termination point of cleaner_main_loop while all other
                     // `break`s being due to poisoned locks.
                     break;
@@ -695,12 +707,13 @@ where
             weak_self: weak_self.clone(),
             next_scheduler_id: AtomicSchedulerId::default(),
             max_usage_queue_count,
-            scheduler_pool_sender: scheduler_pool_sender.clone(),
+            scheduler_pool_sender,
             cleaner_thread,
             _phantom: PhantomData,
         });
 
-        scheduler_pool_sender
+        scheduler_pool
+            .scheduler_pool_sender
             .send(Arc::downgrade(&scheduler_pool))
             .unwrap();
 
