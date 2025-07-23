@@ -4053,6 +4053,17 @@ impl Bank {
             cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
         }
 
+        if self
+            .feature_set
+            .is_active(&feature_set::raise_account_cu_limit::id())
+        {
+            let mut cost_tracker = self.write_cost_tracker().unwrap();
+            let block_cost_limit = cost_tracker.get_block_limit();
+            let vote_cost_limit = cost_tracker.get_vote_limit();
+            let account_cost_limit = (block_cost_limit as f64 * 0.4) as u64;
+            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+        }
+
         if !debug_do_not_add_builtins {
             for builtin in BUILTINS
                 .iter()
@@ -5312,6 +5323,14 @@ impl Bank {
             let mut cost_tracker = self.write_cost_tracker().unwrap();
             let account_cost_limit = cost_tracker.get_account_limit();
             let vote_cost_limit = cost_tracker.get_vote_limit();
+            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
+        }
+
+        if new_feature_activations.contains(&feature_set::raise_account_cu_limit::id()) {
+            let mut cost_tracker = self.write_cost_tracker().unwrap();
+            let block_cost_limit = cost_tracker.get_block_limit();
+            let vote_cost_limit = cost_tracker.get_vote_limit();
+            let account_cost_limit = (block_cost_limit as f64 * 0.4) as u64;
             cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
         }
     }

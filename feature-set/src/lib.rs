@@ -1115,6 +1115,10 @@ pub mod raise_block_limits_to_100m {
     solana_pubkey::declare_id!("P1BCUMpAC7V2GRBRiJCNUgpMyWZhoqt3LKo712ePqsz");
 }
 
+pub mod raise_account_cu_limit {
+    solana_pubkey::declare_id!("ToBeMade21111111111111111111111111111111111");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -1354,6 +1358,7 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (disable_zk_elgamal_proof_program::id(), "Disables zk-elgamal-proof program"),
         (reenable_zk_elgamal_proof_program::id(), "Re-enables zk-elgamal-proof program"),
         (raise_block_limits_to_100m::id(), "SIMD-0286: Raise block limit to 100M"),
+        (raise_account_cu_limit::id(), "SIMD-0306: Raise account CU limit to 40% max"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
