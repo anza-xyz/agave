@@ -225,14 +225,14 @@ fn setup_different_sized_fec_blocks(
     let reed_solomon_cache = ReedSolomonCache::default();
     for i in 0..2 {
         let is_last = i == 1;
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last,
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            false,
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );

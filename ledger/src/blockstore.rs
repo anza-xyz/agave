@@ -2425,7 +2425,7 @@ impl Blockstore {
         }
 
         if !slot_entries.is_empty() {
-            for s in shredder.make_merkle_shreds_from_entries(
+            all_shreds.extend(shredder.make_merkle_shreds_from_entries(
                 keypair,
                 &slot_entries,
                 is_full_slot,
@@ -2434,9 +2434,7 @@ impl Blockstore {
                 0, // next_code_index
                 &reed_solomon_cache,
                 &mut ProcessShredsStats::default(),
-            ) {
-                all_shreds.push(s);
-            }
+            ));
         }
         let num_data = all_shreds.iter().filter(|shred| shred.is_data()).count();
         self.insert_shreds(all_shreds, None, false)?;
