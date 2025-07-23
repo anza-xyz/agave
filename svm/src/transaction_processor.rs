@@ -600,6 +600,9 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             *fee_payer_address,
             loaded_fee_payer.account.clone(),
             fee_payer_loaded_rent_epoch,
+            account_loader
+                .feature_set
+                .formalize_loaded_transaction_data_size,
         );
 
         Ok(ValidatedTransactionDetails {

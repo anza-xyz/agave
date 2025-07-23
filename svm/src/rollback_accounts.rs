@@ -1,5 +1,5 @@
 use {
-    crate::nonce_info::NonceInfo,
+    crate::{account_loader::TRANSACTION_ACCOUNT_BASE_SIZE, nonce_info::NonceInfo},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -12,13 +12,16 @@ use {
 pub enum RollbackAccounts {
     FeePayerOnly {
         fee_payer: TransactionAccount,
+        formalize_loaded_transaction_data_size: bool,
     },
     SameNonceAndFeePayer {
         nonce: TransactionAccount,
+        formalize_loaded_transaction_data_size: bool,
     },
     SeparateNonceAndFeePayer {
         nonce: TransactionAccount,
         fee_payer: TransactionAccount,
+        formalize_loaded_transaction_data_size: bool,
     },
 }
 
@@ -27,6 +30,7 @@ impl Default for RollbackAccounts {
     fn default() -> Self {
         Self::FeePayerOnly {
             fee_payer: TransactionAccount::default(),
+            formalize_loaded_transaction_data_size: false, // HANA test with true
         }
     }
 }
@@ -67,6 +71,7 @@ impl RollbackAccounts {
         fee_payer_address: Pubkey,
         mut fee_payer_account: AccountSharedData,
         fee_payer_loaded_rent_epoch: Epoch,
+        formalize_loaded_transaction_data_size: bool,
     ) -> Self {
         if let Some(nonce) = nonce {
             if &fee_payer_address == nonce.address() {
@@ -78,11 +83,13 @@ impl RollbackAccounts {
 
                 RollbackAccounts::SameNonceAndFeePayer {
                     nonce: (fee_payer_address, fee_payer_account),
+                    formalize_loaded_transaction_data_size,
                 }
             } else {
                 RollbackAccounts::SeparateNonceAndFeePayer {
                     nonce: (nonce.address, nonce.account),
                     fee_payer: (fee_payer_address, fee_payer_account),
+                    formalize_loaded_transaction_data_size,
                 }
             }
         } else {
@@ -95,6 +102,7 @@ impl RollbackAccounts {
             fee_payer_account.set_rent_epoch(fee_payer_loaded_rent_epoch);
             RollbackAccounts::FeePayerOnly {
                 fee_payer: (fee_payer_address, fee_payer_account),
+                formalize_loaded_transaction_data_size,
             }
         }
     }
@@ -110,15 +118,25 @@ impl RollbackAccounts {
     /// Iterator over accounts tracked for rollback.
     pub fn iter(&self) -> RollbackAccountsIter<'_> {
         match self {
-            Self::FeePayerOnly { fee_payer } => RollbackAccountsIter {
+            Self::FeePayerOnly {
+                fee_payer,
+                formalize_loaded_transaction_data_size: _,
+            } => RollbackAccountsIter {
                 fee_payer: Some(fee_payer),
                 nonce: None,
             },
-            Self::SameNonceAndFeePayer { nonce } => RollbackAccountsIter {
+            Self::SameNonceAndFeePayer {
+                nonce,
+                formalize_loaded_transaction_data_size: _,
+            } => RollbackAccountsIter {
                 fee_payer: None,
                 nonce: Some(nonce),
             },
-            Self::SeparateNonceAndFeePayer { nonce, fee_payer } => RollbackAccountsIter {
+            Self::SeparateNonceAndFeePayer {
+                nonce,
+                fee_payer,
+                formalize_loaded_transaction_data_size: _,
+            } => RollbackAccountsIter {
                 fee_payer: Some(fee_payer),
                 nonce: Some(nonce),
             },
@@ -128,11 +146,32 @@ impl RollbackAccounts {
     /// Size of accounts tracked for rollback, used when calculating the actual
     /// cost of transaction processing in the cost model.
     pub fn data_size(&self) -> usize {
+        let base_account_size = self.base_account_size();
         let mut total_size: usize = 0;
         for (_, account) in self.iter() {
+            total_size = total_size.saturating_add(base_account_size);
             total_size = total_size.saturating_add(account.data().len());
         }
         total_size
+    }
+
+    // temporary function until `feature_set::formalize_loaded_transaction_data_size()` is activated
+    fn base_account_size(&self) -> usize {
+        match self {
+            Self::FeePayerOnly {
+                formalize_loaded_transaction_data_size,
+                ..
+            }
+            | Self::SameNonceAndFeePayer {
+                formalize_loaded_transaction_data_size,
+                ..
+            }
+            | Self::SeparateNonceAndFeePayer {
+                formalize_loaded_transaction_data_size,
+                ..
+            } if *formalize_loaded_transaction_data_size => TRANSACTION_ACCOUNT_BASE_SIZE,
+            _ => 0,
+        }
     }
 }
 
