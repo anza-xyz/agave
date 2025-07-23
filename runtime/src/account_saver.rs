@@ -581,6 +581,7 @@ mod tests {
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer: (from_address, from_account_pre.clone()),
                 },
+                loaded_accounts_data_size: 0, // unused
             },
         )))];
         let max_collected_accounts = max_number_of_accounts_to_collect(&txs, &processing_results);

@@ -147,6 +147,7 @@ pub struct FeesOnlyTransaction {
     pub load_error: TransactionError,
     pub rollback_accounts: RollbackAccounts,
     pub fee_details: FeeDetails,
+    pub loaded_accounts_data_size: u32,
 }
 
 // This is an internal SVM type that tracks account changes throughout a
@@ -443,11 +444,28 @@ pub(crate) fn load_transaction<CB: TransactionProcessingCallback>(
                     compute_budget: tx_details.compute_budget,
                     loaded_accounts_data_size: loaded_tx_accounts.loaded_accounts_data_size,
                 }),
-                Err(err) => TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
-                    load_error: err,
-                    fee_details: tx_details.fee_details,
-                    rollback_accounts: tx_details.rollback_accounts,
-                }),
+                Err(err) => {
+                    let formalize_loaded_transaction_data_size = account_loader
+                        .feature_set
+                        .formalize_loaded_transaction_data_size;
+
+                    let loaded_accounts_data_size = address_lookup_table_data_size(
+                        message,
+                        formalize_loaded_transaction_data_size,
+                    )
+                    .saturating_add(
+                        tx_details
+                            .rollback_accounts
+                            .data_size(formalize_loaded_transaction_data_size),
+                    ) as u32;
+
+                    TransactionLoadResult::FeesOnly(FeesOnlyTransaction {
+                        load_error: err,
+                        fee_details: tx_details.fee_details,
+                        rollback_accounts: tx_details.rollback_accounts,
+                        loaded_accounts_data_size,
+                    })
+                }
             }
         }
     }
@@ -482,6 +500,19 @@ impl LoadedTransactionAccounts {
         } else {
             Ok(())
         }
+    }
+}
+
+fn address_lookup_table_data_size(
+    message: &impl SVMMessage,
+    formalize_loaded_transaction_data_size: bool,
+) -> usize {
+    if formalize_loaded_transaction_data_size {
+        message
+            .num_lookup_tables()
+            .saturating_mul(ADDRESS_LOOKUP_TABLE_BASE_SIZE)
+    } else {
+        0
     }
 }
 
@@ -536,9 +567,9 @@ fn load_transaction_accounts_simd186<CB: TransactionProcessingCallback>(
 
     // Transactions pay a base fee per address lookup table.
     loaded_transaction_accounts.increase_calculated_data_size(
-        message
-            .num_lookup_tables()
-            .saturating_mul(ADDRESS_LOOKUP_TABLE_BASE_SIZE),
+        address_lookup_table_data_size(
+            message, true, /* formalize_loaded_transaction_data_size */
+        ),
         loaded_accounts_bytes_limit,
         error_metrics,
     )?;

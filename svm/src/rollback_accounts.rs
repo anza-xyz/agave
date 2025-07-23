@@ -1,5 +1,5 @@
 use {
-    crate::nonce_info::NonceInfo,
+    crate::{account_loader::TRANSACTION_ACCOUNT_BASE_SIZE, nonce_info::NonceInfo},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_clock::Epoch,
     solana_pubkey::Pubkey,
@@ -127,9 +127,12 @@ impl RollbackAccounts {
 
     /// Size of accounts tracked for rollback, used when calculating the actual
     /// cost of transaction processing in the cost model.
-    pub fn data_size(&self) -> usize {
+    pub(crate) fn data_size(&self, formalize_loaded_transaction_data_size: bool) -> usize {
         let mut total_size: usize = 0;
         for (_, account) in self.iter() {
+            if formalize_loaded_transaction_data_size {
+                total_size = total_size.saturating_add(TRANSACTION_ACCOUNT_BASE_SIZE);
+            }
             total_size = total_size.saturating_add(account.data().len());
         }
         total_size

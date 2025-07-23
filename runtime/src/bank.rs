@@ -3172,7 +3172,7 @@ impl Bank {
                     None,
                     None,
                     0,
-                    fees_only_tx.rollback_accounts.data_size() as u32,
+                    fees_only_tx.loaded_accounts_data_size,
                 ),
             },
             Err(error) => (vec![], Err(error), None, None, None, 0, 0),
