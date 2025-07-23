@@ -601,11 +601,6 @@ impl RpcClient {
         self.sender.url()
     }
 
-    #[deprecated(since = "2.0.2", note = "RpcClient::node_version is no longer used")]
-    pub async fn set_node_version(&self, _version: semver::Version) -> Result<(), ()> {
-        Ok(())
-    }
-
     /// Get the configured default [commitment level][cl].
     ///
     /// [cl]: https://solana.com/docs/rpc#configuring-state-commitment
