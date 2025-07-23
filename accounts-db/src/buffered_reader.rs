@@ -438,7 +438,7 @@ mod tests {
         // First read 16 bytes to fill buffer
         let file_len_valid = 32;
         let default_min_read = 8;
-        let mut reader = BufferedReader::new(backing, file_len_valid, &sample_file);
+        let mut reader = BufferedReader::new(backing).with_file(&sample_file, file_len_valid);
         let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf_required(default_min_read).unwrap());
         let mut expected_offset = 0;
@@ -499,7 +499,7 @@ mod tests {
 
         // First read 16 bytes to fill buffer
         let default_min_read_size = 8;
-        let mut reader = BufferedReader::new(backing, valid_len, &sample_file);
+        let mut reader = BufferedReader::new(backing).with_file(&sample_file, valid_len);
         let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf_required(default_min_read_size).unwrap());
         let mut expected_offset = 0;
@@ -579,7 +579,7 @@ mod tests {
         // First read 16 bytes to fill buffer
         let file_len_valid = 32;
         let default_min_read_size = 8;
-        let mut reader = BufferedReader::new(backing, file_len_valid, &sample_file);
+        let mut reader = BufferedReader::new(backing).with_file(&sample_file, file_len_valid);
         let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf_required(default_min_read_size).unwrap());
         let mut expected_offset = 0;
@@ -652,7 +652,7 @@ mod tests {
         // First read 16 bytes to fill buffer
         let valid_len = 32;
         let default_min_read = 8;
-        let mut reader = BufferedReader::new(backing, valid_len, &sample_file);
+        let mut reader = BufferedReader::new(backing).with_file(&sample_file, valid_len);
         let offset = reader.get_file_offset();
         let slice = ValidSlice::new(reader.fill_buf_required(default_min_read).unwrap());
         let mut expected_offset = 0;
@@ -698,9 +698,8 @@ mod tests {
         let bytes = rand_bytes::<FILE_SIZE>();
         sample_file.write_all(&bytes).unwrap();
 
-        let file_len_valid = 32;
         let mut reader = BufReaderWithOverflow::new(
-            BufferedReader::new(backing, file_len_valid, &sample_file),
+            BufferedReader::new(backing).with_file(&sample_file, FILE_SIZE),
             0,
             usize::MAX,
         );
@@ -746,7 +745,7 @@ mod tests {
         sample_file.write_all(&bytes).unwrap();
 
         let mut reader = BufReaderWithOverflow::new(
-            BufferedReader::new(backing, FILE_SIZE, &sample_file),
+            BufferedReader::new(backing).with_file(&sample_file, FILE_SIZE),
             0,
             32,
         );

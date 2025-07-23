@@ -1710,9 +1710,10 @@ pub mod tests {
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
+        let mut reader = new_scan_full_accounts_buffer();
         for av in [&av_mmap, &av_file] {
             let mut index = 0;
-            av.scan_accounts_stored_meta(|v| {
+            av.scan_accounts_stored_meta(&mut reader, |v| {
                 let (pubkey, account) = &test_accounts[index];
                 let recovered = v.to_account_shared_data();
                 assert_eq!(&recovered, account);
@@ -1759,9 +1760,11 @@ pub mod tests {
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
 
+        let mut reader = new_scan_full_accounts_buffer();
+
         let mut sample = 0;
         let now = Instant::now();
-        av.scan_accounts_stored_meta(|v| {
+        av.scan_accounts_stored_meta(&mut reader, |v| {
             let account = create_test_account(sample + 1);
             let recovered = v.to_account_shared_data();
             assert_eq!(recovered, account.1);

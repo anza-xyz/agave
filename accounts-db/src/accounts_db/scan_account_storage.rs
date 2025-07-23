@@ -642,7 +642,8 @@ mod tests {
             accum: Vec::default(),
             calls: calls.clone(),
         };
-        AccountsDb::scan_single_account_storage(&storage, &mut scanner).unwrap();
+        let mut reader = append_vec::new_scan_full_accounts_buffer();
+        AccountsDb::scan_single_account_storage(&mut reader, &storage, &mut scanner).unwrap();
         let accum = scanner.scanning_complete();
         assert_eq!(calls.load(Ordering::Relaxed), 1);
         assert_eq!(
@@ -688,7 +689,8 @@ mod tests {
                 value_to_use_for_lamports: expected,
             };
 
-            AccountsDb::scan_single_account_storage(&storage, &mut test_scan).unwrap();
+            let mut reader = append_vec::new_scan_full_accounts_buffer();
+            AccountsDb::scan_single_account_storage(&mut reader, &storage, &mut test_scan).unwrap();
             let accum = test_scan.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), 1);
             assert_eq!(
@@ -709,6 +711,7 @@ mod tests {
             storages.iter().for_each(|storage| {
                 accounts_db.storage.remove(&storage.slot(), false);
             });
+            let mut reader = append_vec::new_scan_full_accounts_buffer();
 
             // replace the sample storages, storing default hash values so that we rehash during scan
             let storages = storages
@@ -719,7 +722,7 @@ mod tests {
                     let mut all_accounts = Vec::default();
                     storage
                         .accounts
-                        .scan_accounts(|_offset, acct| {
+                        .scan_accounts(&mut reader, |_offset, acct| {
                             all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
                         })
                         .expect("must scan accounts storage");
@@ -746,6 +749,7 @@ mod tests {
         let accounts_db = AccountsDb::new_single_for_tests();
         let (storages, _raw_expected) = sample_storages_and_accounts(&accounts_db);
         let max_slot = storages.iter().map(|storage| storage.slot()).max().unwrap();
+        let mut reader = append_vec::new_scan_full_accounts_buffer();
 
         // replace the sample storages, storing default hash values so that we rehash during scan
         let storages = storages
@@ -756,7 +760,7 @@ mod tests {
                 let mut all_accounts = Vec::default();
                 storage
                     .accounts
-                    .scan_accounts(|_offset, acct| {
+                    .scan_accounts(&mut reader, |_offset, acct| {
                         all_accounts.push((*acct.pubkey(), acct.to_account_shared_data()));
                     })
                     .expect("must scan accounts storage");
@@ -1138,6 +1142,7 @@ mod tests {
         for (i, offsets) in offsets.unwrap().offsets.iter().enumerate() {
             storage.mark_accounts_obsolete(vec![(*offsets, 0)].into_iter(), i as Slot);
         }
+        let mut reader = append_vec::new_scan_full_accounts_buffer();
 
         // Perform scans of the storage assuming a different slot and verify the number of accounts found matches
         for max_slot in 0..num_accounts {
@@ -1154,7 +1159,7 @@ mod tests {
             };
             scanner.set_slot(max_slot as Slot, false, &storage);
 
-            AccountsDb::scan_single_account_storage(&storage, &mut scanner).unwrap();
+            AccountsDb::scan_single_account_storage(&mut reader, &storage, &mut scanner).unwrap();
             scanner.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), expected_count as u64);
         }
