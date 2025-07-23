@@ -718,6 +718,11 @@ pub fn execute(
             "block_verification_method",
             BlockVerificationMethod
         ),
+        block_production_method: value_t_or_exit!(
+            matches,
+            "block_production_method",
+            BlockProductionMethod
+        ),
     };
 
     let reserved = validator_config
@@ -769,11 +774,7 @@ pub fn execute(
         }
         BlockVerificationMethod::UnifiedScheduler => {}
     }
-    validator_config.block_production_method = value_t_or_exit!(
-        matches, // comment to align formatting...
-        "block_production_method",
-        BlockProductionMethod
-    );
+
     validator_config.transaction_struct = value_t_or_exit!(
         matches, // comment to align formatting...
         "transaction_struct",
