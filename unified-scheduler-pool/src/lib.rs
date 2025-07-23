@@ -857,10 +857,6 @@ where
     }
 
     fn unregister_banking_stage(&self) {
-        if !self.block_production_supported() {
-            return;
-        }
-
         let handler_context = &mut self.banking_stage_handler_context.lock().unwrap();
         let handler_context = handler_context.as_mut().unwrap();
         // Replace with dummy ones to unblock validator shutdown.
