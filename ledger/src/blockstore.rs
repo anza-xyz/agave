@@ -10783,30 +10783,33 @@ pub mod tests {
         let leader_keypair = Arc::new(Keypair::new());
         let reed_solomon_cache = ReedSolomonCache::default();
         let shredder = Shredder::new(slot, 0, 0, 0).unwrap();
-        let (shreds1, code1) = shredder.entries_to_shreds(
-            &leader_keypair,
-            &entries,
-            true, // is_last_in_slot
-            Some(Hash::new_unique()),
-            0,    // next_shred_index
-            0,    // next_code_index,
-            true, // merkle_variant
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
+        let (shreds1, code1): (Vec<Shred>, Vec<Shred>) = shredder
+            .make_merkle_shreds_from_entries(
+                &leader_keypair,
+                &entries,
+                true, // is_last_in_slot
+                Some(Hash::new_unique()),
+                0, // next_shred_index
+                0, // next_code_index,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .partition(Shred::is_data);
         let last_data1 = shreds1.last().unwrap();
         let last_code1 = code1.last().unwrap();
-        let (shreds2, code2) = shredder.entries_to_shreds(
-            &leader_keypair,
-            &entries,
-            true, // is_last_in_slot
-            Some(last_data1.chained_merkle_root().unwrap()),
-            last_data1.index(), // next_shred_index
-            last_code1.index(), // next_code_index,
-            true,               // merkle_variant
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
+
+        let (shreds2, code2) = shredder
+            .make_merkle_shreds_from_entries(
+                &leader_keypair,
+                &entries,
+                true, // is_last_in_slot
+                Some(last_data1.chained_merkle_root().unwrap()),
+                last_data1.index() + 1, // next_shred_index
+                last_code1.index() + 1, // next_code_index,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            )
+            .partition(Shred::is_data);
         ((shreds1, code1), (shreds2, code2))
     }
 
@@ -10903,9 +10906,6 @@ pub mod tests {
         blockstore
             .insert_shreds(shreds.clone(), None, false)
             .unwrap();
-        for s in shreds.iter() {
-            dbg!(s.last_in_slot());
-        }
         assert!(blockstore.is_dead(slot));
         // All the shreds other than the two last index shreds because those two
         // are marked as last, but less than the first received index == 10.
