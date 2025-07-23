@@ -26,7 +26,7 @@ use {
     },
     solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::{Bank, TotalAccountsStats},
+    solana_runtime::bank::Bank,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
