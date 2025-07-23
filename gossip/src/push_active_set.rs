@@ -1,25 +1,30 @@
 use {
     crate::{
-        low_pass_filter::{filter_alpha, interpolate, SCALE},
+        cluster_info::REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS,
+        low_pass_filter as lpf,
+        stake_weighting_config::{get_gossip_config_from_account, WeightingConfig},
         weighted_shuffle::WeightedShuffle,
     },
     indexmap::IndexMap,
+    log::error,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
+    solana_runtime::bank::Bank,
     std::collections::HashMap,
 };
 
 const NUM_PUSH_ACTIVE_SET_ENTRIES: usize = 25;
-const ALPHA_MIN: u64 = SCALE;
-const ALPHA_MAX: u64 = 2 * SCALE;
+const ALPHA_MIN: u64 = lpf::SCALE.get();
+const ALPHA_MAX: u64 = 2 * lpf::SCALE.get();
 const DEFAULT_ALPHA: u64 = ALPHA_MAX;
+// Low pass filter convergence time (ms)
+const DEFAULT_TC_MS: u64 = 30_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WeightingMode {
     // alpha = 2.0 -> Quadratic
-    #[allow(dead_code)]
     Static,
     // alpha in [1.0, 2.0], smoothed over time, scaled up by 1000 to avoid floating-point math
     Dynamic,
@@ -27,9 +32,9 @@ pub enum WeightingMode {
 
 #[inline]
 fn get_weight(bucket: u64, alpha: u64) -> u64 {
-    debug_assert!((ALPHA_MIN..=ALPHA_MIN + SCALE).contains(&alpha));
+    debug_assert!((ALPHA_MIN..=ALPHA_MIN + lpf::SCALE.get()).contains(&alpha));
     let b = bucket + 1;
-    interpolate(b, alpha - ALPHA_MIN)
+    lpf::interpolate(b, alpha.saturating_sub(ALPHA_MIN))
 }
 
 // Each entry corresponds to a stake bucket for
@@ -40,25 +45,69 @@ pub(crate) struct PushActiveSet {
     entries: [PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES],
     alpha: u64, // current alpha (fixed-point, 1000–2000)
     mode: WeightingMode,
+    filter_k: u64,
+    tc_ms: u64,
 }
 
 impl Default for PushActiveSet {
     fn default() -> Self {
+        let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS);
         Self {
             entries: Default::default(),
             alpha: DEFAULT_ALPHA,
             mode: WeightingMode::Dynamic,
+            filter_k, // default: 611
+            tc_ms: DEFAULT_TC_MS,
         }
     }
 }
 
-#[cfg(test)]
 impl PushActiveSet {
+    #[cfg(test)]
     fn new_static() -> Self {
         Self {
             entries: Default::default(),
             alpha: DEFAULT_ALPHA,
             mode: WeightingMode::Static,
+            filter_k: lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS),
+            tc_ms: DEFAULT_TC_MS,
+        }
+    }
+
+    fn apply_cfg(&mut self, cfg: WeightingConfig) {
+        match cfg.weighting_mode {
+            0 => {
+                if self.mode != WeightingMode::Static {
+                    info!("Switching mode: {:?} -> Static", self.mode);
+                    self.mode = WeightingMode::Static;
+                }
+                return;
+            }
+            1 => {
+                if self.mode != WeightingMode::Dynamic {
+                    info!("Switching mode: {:?} -> Dynamic", self.mode);
+                    self.mode = WeightingMode::Dynamic;
+                }
+            }
+            _ => {
+                error!("Invalid weighting mode: {}", cfg.weighting_mode);
+                return;
+            }
+        }
+
+        // Only recompute K if tc_ms changed
+        let new_tc_ms = if cfg.tc_ms != 0 {
+            cfg.tc_ms
+        } else {
+            DEFAULT_TC_MS
+        };
+        if new_tc_ms != self.tc_ms {
+            self.filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms);
+            self.tc_ms = new_tc_ms;
+            info!(
+                "Recomputed filter K = {} (tc_ms = {})",
+                self.filter_k, new_tc_ms
+            );
         }
     }
 }
@@ -114,9 +163,15 @@ impl PushActiveSet {
         // Gossip nodes to be sampled for each push active set.
         nodes: &[Pubkey],
         stakes: &HashMap<Pubkey, u64>,
+        maybe_bank_ref: Option<&Bank>,
     ) {
         if nodes.is_empty() {
             return;
+        }
+        if let Some(bank) = maybe_bank_ref {
+            if let Some(cfg) = get_gossip_config_from_account(bank) {
+                self.apply_cfg(cfg);
+            }
         }
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
@@ -155,9 +210,16 @@ impl PushActiveSet {
             }
             WeightingMode::Dynamic => {
                 let num_unstaked = buckets.iter().filter(|&&b| b == 0).count();
-                let f_scaled = ((num_unstaked * SCALE as usize) + nodes.len() / 2) / nodes.len();
-                let alpha_target = ALPHA_MIN + (f_scaled as u64).min(SCALE);
-                self.alpha = filter_alpha(self.alpha, alpha_target, ALPHA_MIN, ALPHA_MAX);
+                let f_scaled =
+                    ((num_unstaked * lpf::SCALE.get() as usize) + nodes.len() / 2) / nodes.len();
+                let alpha_target = ALPHA_MIN.saturating_add(f_scaled as u64);
+                self.alpha = lpf::filter_alpha(
+                    self.alpha,
+                    alpha_target,
+                    self.filter_k,
+                    ALPHA_MIN,
+                    ALPHA_MAX,
+                );
 
                 for (k, entry) in self.entries.iter_mut().enumerate() {
                     let weights: Vec<u64> = buckets
@@ -316,7 +378,7 @@ mod tests {
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
         let mut active_set = PushActiveSet::new_static();
         assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
         for entry in &active_set.entries {
@@ -341,7 +403,7 @@ mod tests {
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes);
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, None);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
@@ -372,7 +434,7 @@ mod tests {
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
         let mut active_set = PushActiveSet::default();
         assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
         for entry in &active_set.entries {
@@ -398,7 +460,7 @@ mod tests {
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([7, 2, 4, 12].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes);
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, None);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
@@ -494,17 +556,13 @@ mod tests {
         let expected_alpha_milli = 1000 + (percent_unstaked as u16 * 10);
 
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
-        let mut active_set = PushActiveSet {
-            entries: Default::default(),
-            alpha: 2000, // start from worst-case (2.0)
-            mode: WeightingMode::Dynamic,
-        };
+        let mut active_set = PushActiveSet::default();
 
         // Simulate repeated calls to `rotate()` (as would happen every 7.5s)
         // 8 calls (60s) should be enough to converge to the expected target alpha.
         // We converge in about 4 calls (30s).
         for _ in 0..8 {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         }
 
         let actual_alpha = active_set.alpha;
@@ -522,7 +580,7 @@ mod tests {
 
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..8 {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         }
 
         let actual_alpha = active_set.alpha;
@@ -543,18 +601,14 @@ mod tests {
         let mut rng = ChaChaRng::from_seed([99u8; 32]);
         let nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
 
-        let mut active_set = PushActiveSet {
-            entries: Default::default(),
-            alpha: 2000, // start at alpha = 2000
-            mode: WeightingMode::Dynamic,
-        };
+        let mut active_set = PushActiveSet::default();
 
         // 0% unstaked → alpha_target = 1000
         let num_unstaked = 0;
         let expected_alpha_0 = 1000;
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..ROTATE_CALLS {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         }
         let alpha = active_set.alpha;
         assert!(
@@ -569,7 +623,7 @@ mod tests {
         let expected_alpha_100 = 2000;
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..ROTATE_CALLS {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         }
         let alpha = active_set.alpha;
         assert!(
@@ -583,7 +637,7 @@ mod tests {
         let num_unstaked = 0;
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..ROTATE_CALLS {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
         }
         let alpha = active_set.alpha;
         assert!(
@@ -599,12 +653,13 @@ mod tests {
         let mut alpha = ALPHA_MAX;
         let target_down = ALPHA_MIN;
         let target_up = ALPHA_MAX;
+        let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS);
 
         // Expected values from rotating to 1000 from 2000
         let expected_down = [1389, 1151, 1058, 1022, 1008, 1003, 1001, 1000];
 
         for (i, expected) in expected_down.iter().enumerate() {
-            alpha = filter_alpha(alpha, target_down, ALPHA_MIN, ALPHA_MAX);
+            alpha = lpf::filter_alpha(alpha, target_down, filter_k, ALPHA_MIN, ALPHA_MAX);
             assert_eq!(
                 alpha, *expected as u64,
                 "step {}: alpha did not match expected during convergence down",
@@ -615,7 +670,7 @@ mod tests {
         // Rotate upward from current alpha (1000) to 2000
         let expected_up = [1611, 1848, 1940, 1976, 1990, 1996, 1998, 1999];
         for (i, expected) in expected_up.iter().enumerate() {
-            alpha = filter_alpha(alpha, target_up, ALPHA_MIN, ALPHA_MAX);
+            alpha = lpf::filter_alpha(alpha, target_up, filter_k, ALPHA_MIN, ALPHA_MAX);
             assert_eq!(
                 alpha, *expected as u64,
                 "step {}: alpha did not match expected during convergence up",
@@ -626,7 +681,7 @@ mod tests {
         // Rotate downward again from current alpha (1999) to 1000
         let expected_down2 = [1388, 1150, 1058, 1022, 1008, 1003, 1001, 1000];
         for (i, expected) in expected_down2.iter().enumerate() {
-            alpha = filter_alpha(alpha, target_down, ALPHA_MIN, ALPHA_MAX);
+            alpha = lpf::filter_alpha(alpha, target_down, filter_k, ALPHA_MIN, ALPHA_MAX);
             assert_eq!(
                 alpha, *expected as u64,
                 "step {}: alpha did not match expected during final convergence down",
