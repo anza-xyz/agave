@@ -68,9 +68,9 @@ pub(crate) fn ensure_banking_stage_setup(
             for batch in batches.iter() {
                 // over-provision nevertheless some of packets could be invalid.
                 let task_id_base = helper.generate_task_ids(batch.len());
-                let packets = PacketDeserializer::deserialize_packets_with_indexes(batch);
+                let packets = PacketDeserializer::deserialize_packets_for_unified_scheduler(batch);
 
-                for (packet, packet_index) in packets {
+                for (packet, packet_index, packet_size) in packets {
                     let Some((transaction, _deactivation_slot)) = packet
                         .build_sanitized_transaction(
                             bank.vote_only_bank(),
@@ -83,7 +83,7 @@ pub(crate) fn ensure_banking_stage_setup(
 
                     let index = task_id_base + packet_index;
 
-                    let task = helper.create_new_task(transaction, index);
+                    let task = helper.create_new_task(transaction, index, packet_size);
                     helper.send_new_task(task);
                 }
             }
