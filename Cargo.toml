@@ -282,7 +282,7 @@ hyper-proxy = "0.9.1"
 im = "15.1.0"
 indexmap = "2.10.0"
 indicatif = "0.18.0"
-io-uring = "0.7.8"
+io-uring = "0.7.9"
 itertools = "0.12.1"
 jemallocator = { package = "tikv-jemallocator", version = "0.6.0", features = [
     "unprefixed_malloc_on_supported_platforms",
