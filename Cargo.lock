@@ -267,6 +267,7 @@ dependencies = [
  "solana-program-runtime",
  "solana-pubkey",
  "solana-rent",
+ "solana-rent-collector",
  "solana-rpc",
  "solana-runtime",
  "solana-runtime-transaction",
