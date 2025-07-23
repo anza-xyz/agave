@@ -717,7 +717,7 @@ mod tests {
                 );
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context()
+                    .get_next_instruction_context_mut()
                     .unwrap()
                     .configure(program_indices, instruction_accounts, &instruction_data);
                 invoke_context.push().unwrap();
@@ -860,7 +860,7 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .get_next_instruction_context()
+                .get_next_instruction_context_mut()
                 .unwrap()
                 .configure(program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
@@ -1106,7 +1106,7 @@ mod tests {
             with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
             invoke_context
                 .transaction_context
-                .get_next_instruction_context()
+                .get_next_instruction_context_mut()
                 .unwrap()
                 .configure(program_indices, instruction_accounts, &instruction_data);
             invoke_context.push().unwrap();
@@ -1375,7 +1375,7 @@ mod tests {
             deduplicated_instruction_accounts(&transaction_accounts_indexes, |index| index > 0);
         let instruction_data = [];
         transaction_context
-            .get_next_instruction_context()
+            .get_next_instruction_context_mut()
             .unwrap()
             .configure(program_indices, instruction_accounts, &instruction_data);
         transaction_context.push().unwrap();

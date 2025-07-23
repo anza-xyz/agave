@@ -366,14 +366,23 @@ impl TransactionContext {
         self.get_instruction_context_at_nesting_level(level)
     }
 
-    /// Returns the InstructionContext to configure for the next invocation.
+    /// Returns the mutable InstructionContext to configure for the next invocation.
     ///
     /// The last InstructionContext is always empty and pre-reserved for the next instruction.
-    pub fn get_next_instruction_context(
+    pub fn get_next_instruction_context_mut(
         &mut self,
     ) -> Result<&mut InstructionContext, InstructionError> {
         self.instruction_trace
             .last_mut()
+            .ok_or(InstructionError::CallDepth)
+    }
+
+    /// Returns the immutable InstructionContext. This function assumes it has already been
+    /// configured with the correct values in `prepare_next_instruction` or
+    /// `prepare_next_top_level_instruction`
+    pub fn get_next_instruction_context(&self) -> Result<&InstructionContext, InstructionError> {
+        self.instruction_trace
+            .last()
             .ok_or(InstructionError::CallDepth)
     }
 
@@ -400,7 +409,7 @@ impl TransactionContext {
             }
         }
         {
-            let instruction_context = self.get_next_instruction_context()?;
+            let instruction_context = self.get_next_instruction_context_mut()?;
             instruction_context.nesting_level = nesting_level;
             instruction_context.instruction_accounts_lamport_sum =
                 callee_instruction_accounts_lamport_sum;
@@ -631,8 +640,8 @@ impl InstructionContext {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
-        self.program_accounts = program_accounts.to_vec();
-        self.instruction_accounts = instruction_accounts.to_vec();
+        self.program_accounts = program_accounts;
+        self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
     }
 
@@ -862,6 +871,10 @@ impl InstructionContext {
             }
         }
         Ok(result)
+    }
+
+    pub fn instruction_accounts(&self) -> &[InstructionAccount] {
+        &self.instruction_accounts
     }
 }
 

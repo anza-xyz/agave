@@ -24,6 +24,7 @@ use {
     solana_svm::{program_loader, transaction_processor::TransactionBatchProcessor},
     solana_svm_callback::TransactionProcessingCallback,
     solana_svm_conformance::proto::{AcctState, InstrEffects, InstrFixture},
+    solana_svm_transaction::instruction::SVMInstruction,
     solana_sysvar::last_restart_slot,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
@@ -413,15 +414,16 @@ fn execute_fixture_as_instr(
         ));
     }
 
+    invoke_context
+        .prepare_next_top_level_instruction(
+            sanitized_message,
+            &SVMInstruction::from(&sanitized_message.instructions()[0]),
+            vec![program_idx as IndexOfAccount],
+        )
+        .expect("Failed to configure instruction");
     let mut compute_units_consumed = 0u64;
     let mut timings = ExecuteTimings::default();
-    let result = invoke_context.process_instruction(
-        &sanitized_message.instructions()[0].data,
-        &instruction_accounts,
-        &[program_idx as IndexOfAccount],
-        &mut compute_units_consumed,
-        &mut timings,
-    );
+    let result = invoke_context.process_instruction(&mut compute_units_consumed, &mut timings);
 
     if output.result == 0 {
         assert!(

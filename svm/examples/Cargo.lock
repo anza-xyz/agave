@@ -7173,6 +7173,7 @@ dependencies = [
  "solana-stable-layout",
  "solana-svm-callback",
  "solana-svm-feature-set",
+ "solana-svm-transaction",
  "solana-system-interface",
  "solana-sysvar",
  "solana-sysvar-id",

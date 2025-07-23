@@ -28,6 +28,7 @@ use {
     },
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_message::SVMMessage},
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
@@ -306,32 +307,23 @@ impl<'a> InvokeContext<'a> {
         instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
-        let (instruction_accounts, program_indices) =
-            self.prepare_instruction(&instruction, signers)?;
+        self.prepare_next_instruction(&instruction, signers)?;
         let mut compute_units_consumed = 0;
-        self.process_instruction(
-            &instruction.data,
-            &instruction_accounts,
-            &program_indices,
-            &mut compute_units_consumed,
-            &mut ExecuteTimings::default(),
-        )?;
+        self.process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
         Ok(())
     }
 
-    /// Helper to prepare for process_instruction()
-    #[allow(clippy::type_complexity)]
-    pub fn prepare_instruction(
+    fn prepare_next_instruction_inner(
         &mut self,
         instruction: &Instruction,
         signers: &[Pubkey],
-    ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
+        instruction_accounts: &mut Vec<InstructionAccount>,
+    ) -> Result<IndexOfAccount, InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
         // On AArch64 in release mode, this function only consumes 640 bytes of stack.
         let mut transaction_callee_map: [u8; 256] = [u8::MAX; 256];
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(instruction.accounts.len());
+
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
         debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
 
@@ -460,28 +452,88 @@ impl<'a> InvokeContext<'a> {
             ic_msg!(self, "Account {} is not executable", callee_program_id);
             return Err(InstructionError::AccountNotExecutable);
         }
-        let program_account_index = borrowed_program_account.get_index_in_transaction();
 
-        Ok((instruction_accounts, vec![program_account_index]))
+        Ok(borrowed_program_account.get_index_in_transaction())
+    }
+
+    /// Helper to prepare for process_instruction() when the instruction is not a top level one,
+    /// and depends on `AccountMeta`s
+    pub fn prepare_next_instruction(
+        &mut self,
+        instruction: &Instruction,
+        signers: &[Pubkey],
+    ) -> Result<(), InstructionError> {
+        let mut instruction_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(instruction.accounts.len());
+
+        // The point of creating an inner function for the logic is to appease the borrow checker,
+        // since we cannot borrow the current instruction context as immutable and borrow the next
+        // instruction context as mutable. An alternative would be to place everything inside a
+        // block, but I think that would hinder readability.
+        let program_account_index =
+            self.prepare_next_instruction_inner(instruction, signers, &mut instruction_accounts)?;
+
+        self.transaction_context
+            .get_next_instruction_context_mut()?
+            .configure(
+                vec![program_account_index],
+                instruction_accounts,
+                &instruction.data,
+            );
+        Ok(())
+    }
+
+    /// Helper to prepare for process_instruction()/process_precompile() when the instruction is
+    /// a top level one
+    pub fn prepare_next_top_level_instruction(
+        &mut self,
+        message: &impl SVMMessage,
+        instruction: &SVMInstruction,
+        program_indices: Vec<IndexOfAccount>,
+    ) -> Result<(), InstructionError> {
+        // We reference accounts by an u8 index, so we have a total of 256 accounts.
+        // This algorithm allocates the array on the stack for speed.
+        // On AArch64 in release mode, this function only consumes 464 bytes of stack (when it is
+        // not inlined).
+        let mut transaction_callee_map: [u8; 256] = [u8::MAX; 256];
+        debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
+
+        let mut instruction_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(instruction.accounts.len());
+        for index_in_transaction in instruction.accounts.iter() {
+            debug_assert!((*index_in_transaction as usize) < transaction_callee_map.len());
+
+            let index_in_callee = transaction_callee_map
+                .get_mut(*index_in_transaction as usize)
+                .unwrap();
+
+            if (*index_in_callee as usize) > instruction_accounts.len() {
+                *index_in_callee = instruction_accounts.len() as u8;
+            }
+
+            let index_in_transaction = *index_in_transaction as usize;
+            instruction_accounts.push(InstructionAccount::new(
+                index_in_transaction as IndexOfAccount,
+                index_in_transaction as IndexOfAccount,
+                *index_in_callee as IndexOfAccount,
+                message.is_signer(index_in_transaction),
+                message.is_writable(index_in_transaction),
+            ));
+        }
+
+        self.transaction_context
+            .get_next_instruction_context_mut()?
+            .configure(program_indices, instruction_accounts, instruction.data);
+        Ok(())
     }
 
     /// Processes an instruction and returns how many compute units were used
     pub fn process_instruction(
         &mut self,
-        instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
-        program_indices: &[IndexOfAccount],
         compute_units_consumed: &mut u64,
         timings: &mut ExecuteTimings,
     ) -> Result<(), InstructionError> {
         *compute_units_consumed = 0;
-        self.transaction_context
-            .get_next_instruction_context()?
-            .configure(
-                program_indices.to_vec(),
-                instruction_accounts.to_vec(),
-                instruction_data,
-            );
         self.push()?;
         self.process_executable_chain(compute_units_consumed, timings)
             // MUST pop if and only if `push` succeeded, independent of `result`.
@@ -494,19 +546,9 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         program_id: &Pubkey,
         instruction_data: &[u8],
-        instruction_accounts: &[InstructionAccount],
-        program_indices: &[IndexOfAccount],
         message_instruction_datas_iter: impl Iterator<Item = &'ix_data [u8]>,
     ) -> Result<(), InstructionError> {
-        self.transaction_context
-            .get_next_instruction_context()?
-            .configure(
-                program_indices.to_vec(),
-                instruction_accounts.to_vec(),
-                instruction_data,
-            );
         self.push()?;
-
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
         self.environment_config
             .epoch_stake_callback
@@ -903,13 +945,12 @@ pub fn mock_process_instruction_with_feature_set<
     );
     invoke_context.program_cache_for_tx_batch = &mut program_cache_for_tx_batch;
     pre_adjustments(&mut invoke_context);
-    let result = invoke_context.process_instruction(
-        instruction_data,
-        &instruction_accounts,
-        &program_indices,
-        &mut 0,
-        &mut ExecuteTimings::default(),
-    );
+    invoke_context
+        .transaction_context
+        .get_next_instruction_context_mut()
+        .unwrap()
+        .configure(program_indices, instruction_accounts, instruction_data);
+    let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
     assert_eq!(result, expected_result);
     post_adjustments(&mut invoke_context);
     let mut transaction_accounts = transaction_context.deconstruct_without_keys().unwrap();
@@ -1046,7 +1087,7 @@ mod tests {
                         );
                         invoke_context
                             .transaction_context
-                            .get_next_instruction_context()
+                            .get_next_instruction_context_mut()
                             .unwrap()
                             .configure(vec![3], instruction_accounts, &[]);
                         let result = invoke_context.push();
@@ -1121,7 +1162,7 @@ mod tests {
         for _ in 0..invoke_stack.len() {
             invoke_context
                 .transaction_context
-                .get_next_instruction_context()
+                .get_next_instruction_context_mut()
                 .unwrap()
                 .configure(
                     vec![one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
@@ -1204,7 +1245,7 @@ mod tests {
         // Account modification tests
         invoke_context
             .transaction_context
-            .get_next_instruction_context()
+            .get_next_instruction_context_mut()
             .unwrap()
             .configure(vec![4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
@@ -1263,7 +1304,7 @@ mod tests {
         let compute_units_to_consume = 10;
         invoke_context
             .transaction_context
-            .get_next_instruction_context()
+            .get_next_instruction_context_mut()
             .unwrap()
             .configure(vec![4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
@@ -1275,18 +1316,13 @@ mod tests {
             },
             metas.clone(),
         );
-        let (inner_instruction_accounts, program_indices) = invoke_context
-            .prepare_instruction(&inner_instruction, &[])
+        invoke_context
+            .prepare_next_instruction(&inner_instruction, &[])
             .unwrap();
 
         let mut compute_units_consumed = 0;
-        let result = invoke_context.process_instruction(
-            &inner_instruction.data,
-            &inner_instruction_accounts,
-            &program_indices,
-            &mut compute_units_consumed,
-            &mut ExecuteTimings::default(),
-        );
+        let result = invoke_context
+            .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default());
 
         // Because the instruction had compute cost > 0, then regardless of the execution result,
         // the number of compute units consumed should be a non-default which is something greater
@@ -1314,7 +1350,7 @@ mod tests {
 
         invoke_context
             .transaction_context
-            .get_next_instruction_context()
+            .get_next_instruction_context_mut()
             .unwrap()
             .configure(vec![0], vec![], &[]);
         invoke_context.push().unwrap();
@@ -1338,7 +1374,7 @@ mod tests {
             (Pubkey::new_unique(), dummy_account),
             (program_key, program_account),
         ];
-        let instruction_accounts = [
+        let instruction_accounts = vec![
             InstructionAccount::new(0, 0, 0, false, true),
             InstructionAccount::new(1, 1, 1, false, false),
         ];
@@ -1353,13 +1389,12 @@ mod tests {
         let new_len = (user_account_data_len as i64).saturating_add(resize_delta) as u64;
         let instruction_data = bincode::serialize(&MockInstruction::Resize { new_len }).unwrap();
 
-        let result = invoke_context.process_instruction(
-            &instruction_data,
-            &instruction_accounts,
-            &[2],
-            &mut 0,
-            &mut ExecuteTimings::default(),
-        );
+        invoke_context
+            .transaction_context
+            .get_next_instruction_context_mut()
+            .unwrap()
+            .configure(vec![2], instruction_accounts, &instruction_data);
+        let result = invoke_context.process_instruction(&mut 0, &mut ExecuteTimings::default());
 
         assert!(result.is_ok());
         assert_eq!(

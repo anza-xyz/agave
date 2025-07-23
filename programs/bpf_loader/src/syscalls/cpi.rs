@@ -329,7 +329,6 @@ trait SyscallInvokeSigned {
         invoke_context: &mut InvokeContext,
     ) -> Result<Instruction, Error>;
     fn translate_accounts<'a>(
-        instruction_accounts: &[InstructionAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -428,7 +427,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
     }
 
     fn translate_accounts<'a>(
-        instruction_accounts: &[InstructionAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -444,7 +442,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         )?;
 
         translate_and_update_accounts(
-            instruction_accounts,
             &account_info_keys,
             account_infos,
             account_infos_addr,
@@ -650,7 +647,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
     }
 
     fn translate_accounts<'a>(
-        instruction_accounts: &[InstructionAccount],
         account_infos_addr: u64,
         account_infos_len: u64,
         is_loader_deprecated: bool,
@@ -666,7 +662,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         )?;
 
         translate_and_update_accounts(
-            instruction_accounts,
             &account_info_keys,
             account_infos,
             account_infos_addr,
@@ -776,7 +771,6 @@ where
 // Finish translating accounts, build CallerAccount values and update callee
 // accounts in preparation of executing the callee.
 fn translate_and_update_accounts<'a, T, F>(
-    instruction_accounts: &[InstructionAccount],
     account_info_keys: &[&Pubkey],
     account_infos: &[T],
     account_infos_addr: u64,
@@ -795,8 +789,11 @@ where
     ) -> Result<CallerAccount<'a>, Error>,
 {
     let transaction_context = &invoke_context.transaction_context;
+    let next_instruction_accounts = transaction_context
+        .get_next_instruction_context()?
+        .instruction_accounts();
     let instruction_context = transaction_context.get_current_instruction_context()?;
-    let mut accounts = Vec::with_capacity(instruction_accounts.len());
+    let mut accounts = Vec::with_capacity(next_instruction_accounts.len());
 
     // unwrapping here is fine: we're in a syscall and the method below fails
     // only outside syscalls
@@ -809,7 +806,8 @@ where
         .get_feature_set()
         .bpf_account_data_direct_mapping;
 
-    for (instruction_account_index, instruction_account) in instruction_accounts.iter().enumerate()
+    for (instruction_account_index, instruction_account) in
+        next_instruction_accounts.iter().enumerate()
     {
         if instruction_account_index as IndexOfAccount != instruction_account.index_in_callee {
             continue; // Skip duplicate account
@@ -1029,12 +1027,11 @@ fn cpi_common<S: SyscallInvokeSigned>(
         .try_borrow_last_program_account(transaction_context)?
         .get_owner()
         == bpf_loader_deprecated::id();
-    let (instruction_accounts, program_indices) =
-        invoke_context.prepare_instruction(&instruction, &signers)?;
+
     check_authorized_program(&instruction.program_id, &instruction.data, invoke_context)?;
+    invoke_context.prepare_next_instruction(&instruction, &signers)?;
 
     let mut accounts = S::translate_accounts(
-        &instruction_accounts,
         account_infos_addr,
         account_infos_len,
         is_loader_deprecated,
@@ -1044,13 +1041,8 @@ fn cpi_common<S: SyscallInvokeSigned>(
 
     // Process the callee instruction
     let mut compute_units_consumed = 0;
-    invoke_context.process_instruction(
-        &instruction.data,
-        &instruction_accounts,
-        &program_indices,
-        &mut compute_units_consumed,
-        &mut ExecuteTimings::default(),
-    )?;
+    invoke_context
+        .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())?;
 
     // re-bind to please the borrow checker
     let transaction_context = &invoke_context.transaction_context;
@@ -1303,7 +1295,7 @@ mod tests {
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
         },
         solana_sdk_ids::system_program,
-        solana_transaction_context::TransactionAccount,
+        solana_transaction_context::{InstructionAccount, TransactionAccount},
         std::{
             cell::{Cell, RefCell},
             mem, ptr,
@@ -1349,7 +1341,7 @@ mod tests {
             );
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context()
+                .get_next_instruction_context_mut()
                 .unwrap()
                 .configure($program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
@@ -1852,11 +1844,19 @@ mod tests {
 
         mock_create_vm!(_vm, Vec::new(), vec![account_metadata], &mut invoke_context);
 
+        invoke_context
+            .transaction_context
+            .get_next_instruction_context_mut()
+            .unwrap()
+            .configure(
+                vec![0],
+                vec![
+                    InstructionAccount::new(1, 0, 0, false, true),
+                    InstructionAccount::new(1, 0, 0, false, true),
+                ],
+                &[],
+            );
         let accounts = SyscallInvokeSignedRust::translate_accounts(
-            &[
-                InstructionAccount::new(1, 0, 0, false, true),
-                InstructionAccount::new(1, 0, 0, false, true),
-            ],
             vm_addr,
             1,
             false,

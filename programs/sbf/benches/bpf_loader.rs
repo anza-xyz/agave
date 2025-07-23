@@ -68,7 +68,7 @@ macro_rules! with_mock_invoke_context {
         );
         $invoke_context
             .transaction_context
-            .get_next_instruction_context()
+            .get_next_instruction_context_mut()
             .unwrap()
             .configure(vec![0, 1], instruction_accounts, &[]);
         $invoke_context.push().unwrap();

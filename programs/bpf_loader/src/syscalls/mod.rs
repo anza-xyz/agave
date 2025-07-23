@@ -50,7 +50,7 @@ use {
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_transaction_context::{IndexOfAccount, InstructionAccount},
+    solana_transaction_context::IndexOfAccount,
     solana_type_overrides::sync::Arc,
     std::{
         alloc::Layout,
@@ -2201,6 +2201,7 @@ mod tests {
         solana_slot_hashes::{self as slot_hashes, SlotHashes},
         solana_stable_layout::stable_instruction::StableInstruction,
         solana_sysvar::stake_history::{self, StakeHistory, StakeHistoryEntry},
+        solana_transaction_context::InstructionAccount,
         std::{
             hash::{DefaultHasher, Hash, Hasher},
             mem,
@@ -2234,7 +2235,7 @@ mod tests {
             with_mock_invoke_context!($invoke_context, transaction_context, transaction_accounts);
             $invoke_context
                 .transaction_context
-                .get_next_instruction_context()
+                .get_next_instruction_context_mut()
                 .unwrap()
                 .configure(vec![0, 1], vec![], &[]);
             $invoke_context.push().unwrap();
@@ -4450,7 +4451,7 @@ mod tests {
                 )];
                 invoke_context
                     .transaction_context
-                    .get_next_instruction_context()
+                    .get_next_instruction_context_mut()
                     .unwrap()
                     .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();

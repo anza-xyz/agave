@@ -270,8 +270,8 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .map(|seeds| Pubkey::create_program_address(seeds, caller).unwrap())
             .collect::<Vec<_>>();
 
-        let (instruction_accounts, program_indices) = invoke_context
-            .prepare_instruction(instruction, &signers)
+        invoke_context
+            .prepare_next_instruction(instruction, &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
@@ -279,8 +279,13 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        let mut account_indices = Vec::with_capacity(instruction_accounts.len());
-        for instruction_account in instruction_accounts.iter() {
+
+        let next_instruction_accounts = transaction_context
+            .get_next_instruction_context()
+            .unwrap()
+            .instruction_accounts();
+        let mut account_indices = Vec::with_capacity(next_instruction_accounts.len());
+        for instruction_account in next_instruction_accounts.iter() {
             let account_key = transaction_context
                 .get_key_of_account_at_index(instruction_account.index_in_transaction)
                 .unwrap();
@@ -325,13 +330,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
 
         let mut compute_units_consumed = 0;
         invoke_context
-            .process_instruction(
-                &instruction.data,
-                &instruction_accounts,
-                &program_indices,
-                &mut compute_units_consumed,
-                &mut ExecuteTimings::default(),
-            )
+            .process_instruction(&mut compute_units_consumed, &mut ExecuteTimings::default())
             .map_err(|err| ProgramError::try_from(err).unwrap_or_else(|err| panic!("{}", err)))?;
 
         // Copy invoke_context accounts modifications into caller's account_info
