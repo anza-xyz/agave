@@ -24,7 +24,7 @@ use {
     solana_nonce::{self as nonce, state::DurableNonce},
     solana_program_entrypoint::MAX_PERMITTED_DATA_INCREASE,
     solana_program_runtime::execution_budget::SVMTransactionExecutionAndFeeBudgetLimits,
-    solana_pubkey::{pubkey, Pubkey},
+    solana_pubkey::Pubkey,
     solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
     solana_signer::Signer,
     solana_svm::{
@@ -296,7 +296,7 @@ impl SvmTestEnvironment<'_> {
 }
 
 // container for a transaction batch and all data needed to run and verify it against svm
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct SvmTestEntry {
     // features are enabled by default; these will be disabled
     pub disabled_features: Vec<Pubkey>,
@@ -494,21 +494,6 @@ impl SvmTestEntry {
         }
 
         feature_set
-    }
-}
-
-// NOTE `1ncomp1ete111111111111111111111111111111111` corresponds to `stricter_abi_and_runtime_constraints::id()`
-// by hardcoding the string, we ensure when the feature is finished, it will automatically be tested
-impl Default for SvmTestEntry {
-    fn default() -> Self {
-        Self {
-            disabled_features: vec![pubkey!("1ncomp1ete111111111111111111111111111111111")],
-            with_loader_v4: false,
-            initial_programs: vec![],
-            initial_accounts: AccountsMap::default(),
-            transaction_batch: vec![],
-            final_accounts: AccountsMap::default(),
-        }
     }
 }
 
