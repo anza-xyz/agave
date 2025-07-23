@@ -185,7 +185,7 @@ where
     }
 }
 
-impl<'a, const N: usize> BufferedReader<'a, Stack<N>> {
+impl<const N: usize> BufferedReader<'_, Stack<N>> {
     /// create a new buffered reader with a stack-allocated buffer
     pub fn new_stack() -> Self {
         BufferedReader::new(Stack::new())

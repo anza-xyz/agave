@@ -73,7 +73,7 @@ impl AccountsDb {
                     Self::notify_accounts_in_storage(
                         &mut reader,
                         accounts_update_notifier.as_ref(),
-                        &storage,
+                        storage,
                     )
                 })
                 .for_each(|stats| notify_stats += stats);
