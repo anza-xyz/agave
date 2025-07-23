@@ -729,6 +729,7 @@ pub fn execute(
             "block_production_method",
             BlockProductionMethod
         ),
+        transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
     };
 
@@ -781,12 +782,6 @@ pub fn execute(
         }
         BlockVerificationMethod::UnifiedScheduler => {}
     }
-
-    validator_config.transaction_struct = value_t_or_exit!(
-        matches, // comment to align formatting...
-        "transaction_struct",
-        TransactionStructure
-    );
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
