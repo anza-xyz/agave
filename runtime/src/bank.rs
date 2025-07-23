@@ -5505,7 +5505,7 @@ impl Bank {
         }
     }
 
-    /// Get all the accounts for this bank and calculate stats
+    /// Get all the accounts for this bank and calculate total data_len
     pub fn get_total_accounts_data_len(&self) -> ScanResult<u64> {
         let accounts = self.get_all_accounts(false)?;
         let mut data_len = 0_u64;
