@@ -11017,7 +11017,7 @@ pub mod tests {
                                 blockstore.lowest_cleanup_slot.write().unwrap();
                             blockstore.insert_shreds(shreds, None, false).unwrap();
                             assert!(blockstore.get_duplicate_slot(slot).is_some());
-                            assert!(blockstore.is_dead(slot));
+                            assert!(!blockstore.is_dead(slot));
                             assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
                             signal_sender.send(Ok(())).unwrap();
                         }
