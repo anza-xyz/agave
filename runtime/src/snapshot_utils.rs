@@ -1210,15 +1210,15 @@ fn archive_snapshot(
 
 /// Get the `nth` element (0-based) from `values` selected from start or end with `ratio`.
 ///
-/// 1:ratio elements are selected from the start and the rest from the end.
+/// 1:ratio elements are selected from the end and the rest from the start.
 /// This function calculates permutation of `values` balancing extreme elements.
 fn get_from_start_or_end_index_by_ratio(values: &[usize], nth: usize, ratio: usize) -> usize {
     let nth_div = nth / ratio;
     let nth_rem = nth % ratio;
     let value_index = if nth_rem == 0 {
-        nth_div
+        values.len() - 1 - nth_div
     } else {
-        values.len() - (nth_div * (ratio - 1) + nth_rem)
+        nth_div * (ratio - 1) + nth_rem - 1
     };
     values[value_index]
 }
@@ -3689,17 +3689,17 @@ mod tests {
         let shuffled: Vec<_> = (0..values.len())
             .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 3))
             .collect();
-        assert_eq!(shuffled, vec![1, 10, 9, 2, 8, 7, 3, 6, 5, 4]);
+        assert_eq!(shuffled, vec![10, 1, 2, 9, 3, 4, 8, 5, 6, 7]);
 
         let shuffled: Vec<_> = (0..values.len())
             .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 2))
             .collect();
-        assert_eq!(shuffled, vec![1, 10, 2, 9, 3, 8, 4, 7, 5, 6]);
+        assert_eq!(shuffled, vec![10, 1, 9, 2, 8, 3, 7, 4, 6, 5]);
 
         let values = [1, 2, 3, 4, 5, 6, 7, 8, 9];
         let shuffled: Vec<_> = (0..values.len())
             .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 3))
             .collect();
-        assert_eq!(shuffled, vec![1, 9, 8, 2, 7, 6, 3, 5, 4]);
+        assert_eq!(shuffled, vec![9, 1, 2, 8, 3, 4, 7, 5, 6]);
     }
 }
