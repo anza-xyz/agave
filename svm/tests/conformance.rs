@@ -112,9 +112,30 @@ fn execute_fixtures() {
     run_from_folder(&base_dir);
     base_dir.pop();
 
+    // bpf-loader-v2 tests
+    base_dir.push("bpf-loader-v2");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // bpf-loader-v3 tests
+    base_dir.push("bpf-loader-v3");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // bpf-loader-v3 tests
+    base_dir.push("bpf-loader-v3-programs");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
     // System program tests
     base_dir.push("system");
     run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // non-builtin-programs tests
+    base_dir.push("unknown");
+    run_from_folder(&base_dir);
+    base_dir.pop();
 
     cleanup();
 }
