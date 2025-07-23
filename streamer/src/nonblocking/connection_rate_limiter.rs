@@ -12,6 +12,8 @@ use {
     },
 };
 
+/// Limits the rate of connections per IP address.
+/// This has known issues and should be avoided.
 pub struct ConnectionRateLimiter {
     limiter: DefaultKeyedRateLimiter<IpAddr>,
 }
@@ -58,6 +60,7 @@ impl ConnectionRateLimiter {
 
 /// Connection rate limiter for enforcing connection rates from
 /// all clients.
+/// This has known issues and should be avoided.
 pub struct TotalConnectionRateLimiter {
     limiter: DefaultDirectRateLimiter,
 }
@@ -82,8 +85,12 @@ impl TotalConnectionRateLimiter {
     }
 }
 
-/// Enforces a rate limit on the volume of requests
-/// per unit time.
+/// Enforces a rate limit on the volume of requests per unit time.
+///
+/// Instances update the amount of tokens upon access, and thus does not
+/// need to be constantly polled to refill.
+/// Uses atomics internally so should be relatively cheap to access
+/// from many threads
 pub struct TokenBucket {
     tokens_per_second: f64,
     max_tokens: u64,
@@ -198,8 +205,14 @@ impl TokenBucket {
     }
 }
 
-/// Provides rate limiting for multiple source IP addresses
-/// on demand. Uses LazyLru logic under the hood.
+/// Provides rate limiting for multiple contexts at the same time
+///
+/// This can use e.g. IP address as a Key.
+/// Internally this is a [DashMap] of [TokenBucket] instances
+/// that are created on demand using a prototype [TokenBucket]
+/// to copy initial state from.
+/// Uses LazyLru logic under the hood to keep the amount of items
+/// under control.
 pub struct KeyedRateLimiter<K>
 where
     K: Hash + Eq,
@@ -208,6 +221,7 @@ where
     target_capacity: usize,
     prototype_bucket: TokenBucket,
     countdown_to_shrink: AtomicUsize,
+    approx_len: AtomicUsize,
 }
 
 impl<K> KeyedRateLimiter<K>
@@ -226,6 +240,7 @@ where
             target_capacity,
             prototype_bucket,
             countdown_to_shrink: AtomicUsize::new(0),
+            approx_len: AtomicUsize::new(0),
         }
     }
 
@@ -260,7 +275,8 @@ where
 
         if entry_added {
             // we want to check for length, but not too often
-            let step = self.target_capacity / 8;
+            // this should reduce probability of lock contention
+            let step = self.target_capacity / 4;
             if self
                 .countdown_to_shrink
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
@@ -279,13 +295,21 @@ where
         res
     }
 
+    /// Returns approximate amount of entries in the datastructure.
+    /// Should be within ~10% of the true amount.
+    pub fn len_approx(&self) -> usize {
+        self.approx_len.load(Ordering::Relaxed)
+    }
+
     // apply lazy-LRU eviction policy to each DashMap shard.
     fn maybe_shrink(&self) {
+        let mut actual_len = 0;
         let target_shard_size = self.target_capacity / self.data.shards().len();
         for shardlock in self.data.shards() {
             let mut shard = shardlock.write();
 
             if shard.len() < target_shard_size.saturating_mul(2) {
+                actual_len += shard.len();
                 continue;
             }
 
@@ -305,7 +329,9 @@ where
                     .map(|(key, _last_update, value)| (key, value)),
             );
             debug_assert!(shard.len() <= target_shard_size);
+            actual_len += shard.len();
         }
+        self.approx_len.store(actual_len, Ordering::Relaxed);
     }
 }
 
