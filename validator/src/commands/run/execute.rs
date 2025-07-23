@@ -300,10 +300,6 @@ pub fn execute(
     }
 
     const MB: usize = 1_024 * 1_024;
-    accounts_index_config.scan_results_limit_bytes =
-        value_t!(matches, "accounts_index_scan_results_limit_mb", usize)
-            .ok()
-            .map(|mb| mb * MB);
 
     let account_shrink_paths: Option<Vec<PathBuf>> =
         values_t!(matches, "account_shrink_path", String)

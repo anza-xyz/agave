@@ -28,11 +28,18 @@ impl FromClapArgMatches for AccountsIndexConfig {
             vec![]
         };
 
+        const MIB: usize = 1_024 * 1_024;
+        let scan_results_limit_bytes =
+            value_t!(matches, "accounts_index_scan_results_limit_mb", usize)
+                .ok()
+                .map(|mb| mb * MIB);
+
         Ok(AccountsIndexConfig {
             num_flush_threads: Some(num_flush_threads),
             bins: value_t!(matches, "accounts_index_bins", usize).ok(),
             index_limit_mb,
             drives: Some(accounts_index_paths),
+            scan_results_limit_bytes,
             ..AccountsIndexConfig::default()
         })
     }
@@ -187,5 +194,25 @@ mod tests {
                 expected_args,
             );
         }
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_index_scan_results_limit_mb() {
+        let default_run_args = crate::commands::run::args::RunArgs::default();
+        let expected_args = RunArgs {
+            accounts_db_config: AccountsDbConfig {
+                index: Some(AccountsIndexConfig {
+                    scan_results_limit_bytes: Some(2 * 1024 * 1024),
+                    ..default_run_args.accounts_db_config.clone().index.unwrap()
+                }),
+                ..default_run_args.accounts_db_config.clone()
+            },
+            ..default_run_args.clone()
+        };
+        verify_args_struct_by_command_run_with_identity_setup(
+            default_run_args,
+            vec!["--accounts-index-scan-results-limit-mb", "2"],
+            expected_args,
+        );
     }
 }
