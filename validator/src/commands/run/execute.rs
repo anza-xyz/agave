@@ -713,6 +713,11 @@ pub fn execute(
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         retransmit_xdp,
         use_tpu_client_next: !matches.is_present("use_connection_cache"),
+        block_verification_method: value_t_or_exit!(
+            matches,
+            "block_verification_method",
+            BlockVerificationMethod
+        ),
     };
 
     let reserved = validator_config
@@ -752,11 +757,7 @@ pub fn execute(
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
 
     configure_banking_trace_dir_byte_limit(&mut validator_config, matches);
-    validator_config.block_verification_method = value_t_or_exit!(
-        matches,
-        "block_verification_method",
-        BlockVerificationMethod
-    );
+
     match validator_config.block_verification_method {
         BlockVerificationMethod::BlockstoreProcessor => {
             warn!(
