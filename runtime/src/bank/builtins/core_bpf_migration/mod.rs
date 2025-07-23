@@ -505,7 +505,7 @@ pub(crate) mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
         solana_pubkey::Pubkey,
-        solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
         solana_signer::Signer,
         solana_transaction::Transaction,
         std::{fs::File, io::Read, sync::Arc},
@@ -1717,5 +1717,144 @@ pub(crate) mod tests {
         bank.compute_and_apply_features_after_snapshot_restore();
 
         check_builtin_is_bpf(&bank);
+    }
+
+    #[test]
+    fn test_migrate_bpf_loader_v2_to_v3() {
+        let mut bank = create_simple_test_bank(0);
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let program_account = {
+                let elf = [4u8; 200]; // Mock ELF to start.
+                let space = elf.len();
+                let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+                let owner = &bpf_loader::id();
+
+                let mut account = AccountSharedData::new(lamports, space, owner);
+                account.set_executable(true);
+                account.data_as_mut_slice().copy_from_slice(&elf);
+                bank.store_account_and_update_capitalization(
+                    &bpf_loader_v2_program_address,
+                    &account,
+                );
+                account
+            };
+
+            assert_eq!(
+                &bank.get_account(&bpf_loader_v2_program_address).unwrap(),
+                &program_account
+            );
+        };
+
+        let test_context = TestContext::new(
+            &bank,
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            None,
+        );
+        let TestContext {
+            source_buffer_address,
+            ..
+        } = test_context;
+
+        let (
+            expected_post_upgrade_capitalization,
+            expected_post_upgrade_accounts_data_size_delta_off_chain,
+        ) = test_context
+            .calculate_post_migration_capitalization_and_accounts_data_size_delta_off_chain(&bank);
+
+        // Perform the upgrade.
+        let upgrade_slot = bank.slot();
+        bank.migrate_bpf_loader_v2_to_v3(
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            "test_migrate_bpf_loader_v2_to_v3",
+        )
+        .unwrap();
+
+        // Run the post-upgrade program checks.
+        test_context.run_program_checks(&bank, upgrade_slot);
+
+        // Check the bank's capitalization.
+        assert_eq!(bank.capitalization(), expected_post_upgrade_capitalization);
+
+        // Check the bank's accounts data size delta off-chain.
+        assert_eq!(
+            bank.accounts_data_size_delta_off_chain.load(Relaxed),
+            expected_post_upgrade_accounts_data_size_delta_off_chain
+        );
+
+        // Check the migrated program account is now owned by the upgradeable loader.
+        let migrated_program_account = bank.get_account(&bpf_loader_v2_program_address).unwrap();
+        assert_eq!(
+            migrated_program_account.owner(),
+            &bpf_loader_upgradeable::id()
+        );
+    }
+
+    #[test]
+    fn test_migrate_bpf_loader_v2_to_v3_fail_invalid_buffer() {
+        let mut bank = create_simple_test_bank(0);
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let program_account = {
+                let elf = [4u8; 200]; // Mock ELF to start.
+                let space = elf.len();
+                let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+                let owner = &bpf_loader::id();
+
+                let mut account = AccountSharedData::new(lamports, space, owner);
+                account.set_executable(true);
+                account.data_as_mut_slice().copy_from_slice(&elf);
+                bank.store_account_and_update_capitalization(
+                    &bpf_loader_v2_program_address,
+                    &account,
+                );
+                account
+            };
+
+            assert_eq!(
+                &bank.get_account(&bpf_loader_v2_program_address).unwrap(),
+                &program_account
+            );
+        };
+
+        // Set up the source buffer with a valid authority, but the migration
+        // config will define the upgrade authority to be `None`.
+        {
+            let elf = test_elf();
+            let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
+            let space = buffer_metadata_size + elf.len();
+            let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+            let owner = &bpf_loader_upgradeable::id();
+
+            let buffer_metadata = UpgradeableLoaderState::Program {
+                programdata_address: Pubkey::new_unique(),
+            };
+
+            let mut account =
+                AccountSharedData::new_data_with_space(lamports, &buffer_metadata, space, owner)
+                    .unwrap();
+            account.data_as_mut_slice()[buffer_metadata_size..].copy_from_slice(&elf);
+
+            bank.store_account_and_update_capitalization(&source_buffer_address, &account);
+        }
+
+        // Try to perform the upgrade.
+        assert_matches!(
+            bank.migrate_bpf_loader_v2_to_v3(
+                &bpf_loader_v2_program_address,
+                &source_buffer_address,
+                "test_migrate_bpf_loader_v2_to_v3",
+            )
+            .unwrap_err(),
+            CoreBpfMigrationError::InvalidBufferAccount(_)
+        )
     }
 }
