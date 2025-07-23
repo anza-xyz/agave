@@ -44,11 +44,10 @@ use {
             StorageAccess,
         },
         accounts_hash::{
-            AccountHash, AccountLtHash, AccountsDeltaHash, AccountsHash, AccountsHashKind,
-            AccountsHasher, AccountsLtHash, CalcAccountsHashConfig, CalculateHashIntermediate,
-            HashStats, IncrementalAccountsHash, SerdeAccountsDeltaHash, SerdeAccountsHash,
-            SerdeIncrementalAccountsHash, ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH,
-            ZERO_LAMPORT_ACCOUNT_LT_HASH,
+            AccountHash, AccountLtHash, AccountsHash, AccountsHashKind, AccountsHasher,
+            AccountsLtHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
+            IncrementalAccountsHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
+            ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH, ZERO_LAMPORT_ACCOUNT_LT_HASH,
         },
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
@@ -1341,7 +1340,6 @@ pub struct AccountsDb {
     /// Thread pool for AccountsHashVerifier
     pub thread_pool_hash: ThreadPool,
 
-    accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
     accounts_hashes: Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>>,
     incremental_accounts_hashes:
         Mutex<HashMap<Slot, (IncrementalAccountsHash, /*capitalization*/ u64)>>,
@@ -1839,7 +1837,6 @@ impl AccountsDb {
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
             file_size: DEFAULT_FILE_SIZE,
-            accounts_delta_hashes: Mutex::new(HashMap::new()),
             accounts_hashes: Mutex::new(HashMap::new()),
             incremental_accounts_hashes: Mutex::new(HashMap::new()),
             external_purge_slots_stats: PurgeStats::default(),
@@ -3938,11 +3935,8 @@ impl AccountsDb {
         &self,
         dropped_roots: impl Iterator<Item = Slot>,
     ) {
-        let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
-
         dropped_roots.for_each(|slot| {
             self.accounts_index.clean_dead_slot(slot);
-            accounts_delta_hashes.remove(&slot);
             // the storage has been removed from this slot and recycled or dropped
             assert!(self.storage.remove(&slot, false).is_none());
             debug_assert!(
@@ -6555,39 +6549,6 @@ impl AccountsDb {
         }
     }
 
-    /// Set the accounts delta hash for `slot` in the `accounts_delta_hashes` map
-    ///
-    /// returns the previous accounts delta hash for `slot`
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn set_accounts_delta_hash(
-        &self,
-        slot: Slot,
-        accounts_delta_hash: AccountsDeltaHash,
-    ) -> Option<AccountsDeltaHash> {
-        self.accounts_delta_hashes
-            .lock()
-            .unwrap()
-            .insert(slot, accounts_delta_hash)
-    }
-
-    /// After deserializing a snapshot, set the accounts delta hash for the new AccountsDb
-    pub fn set_accounts_delta_hash_from_snapshot(
-        &mut self,
-        slot: Slot,
-        accounts_delta_hash: SerdeAccountsDeltaHash,
-    ) -> Option<AccountsDeltaHash> {
-        self.set_accounts_delta_hash(slot, accounts_delta_hash.into())
-    }
-
-    /// Get the accounts delta hash for `slot` in the `accounts_delta_hashes` map
-    pub fn get_accounts_delta_hash(&self, slot: Slot) -> Option<AccountsDeltaHash> {
-        self.accounts_delta_hashes
-            .lock()
-            .unwrap()
-            .get(&slot)
-            .cloned()
-    }
-
     fn update_index<'a>(
         &self,
         infos: Vec<AccountInfo>,
@@ -6813,13 +6774,6 @@ impl AccountsDb {
     ) {
         let mut measure = Measure::start("remove_dead_slots_metadata-ms");
         self.clean_dead_slots_from_accounts_index(dead_slots_iter.clone());
-
-        let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
-        for slot in dead_slots_iter {
-            accounts_delta_hashes.remove(slot);
-        }
-        drop(accounts_delta_hashes);
-
         measure.stop();
         inc_new_counter_info!("remove_dead_slots_metadata-ms", measure.as_ms() as usize);
     }

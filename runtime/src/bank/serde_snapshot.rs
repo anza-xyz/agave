@@ -234,10 +234,6 @@ mod tests {
         let mut bank = Bank::new_from_parent(bank0.clone(), &Pubkey::default(), 1);
         bank.freeze();
         add_root_and_flush_write_cache(&bank0);
-        bank.rc
-            .accounts
-            .accounts_db
-            .set_accounts_delta_hash(bank.slot(), AccountsDeltaHash(Hash::new_unique()));
         bank.rc.accounts.accounts_db.set_accounts_hash(
             bank.slot(),
             (AccountsHash(Hash::new_unique()), u64::default()),

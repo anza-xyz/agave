@@ -1160,7 +1160,7 @@ where
     let AccountsDbFields(
         _snapshot_storages,
         snapshot_version,
-        snapshot_slot,
+        _snapshot_slot,
         snapshot_bank_hash_info,
         _snapshot_historical_roots,
         _snapshot_historical_roots_with_hash,
@@ -1190,14 +1190,6 @@ where
     );
 
     // Process deserialized data, set necessary fields in self
-    let old_accounts_delta_hash = accounts_db.set_accounts_delta_hash_from_snapshot(
-        snapshot_slot,
-        snapshot_bank_hash_info.accounts_delta_hash,
-    );
-    assert!(
-        old_accounts_delta_hash.is_none(),
-        "There should not already be an AccountsDeltaHash at slot {snapshot_slot}: {old_accounts_delta_hash:?}",
-        );
     accounts_db.storage.initialize(storage);
     accounts_db
         .next_id
