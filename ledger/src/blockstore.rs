@@ -10776,6 +10776,7 @@ pub mod tests {
     /// Prepare two FEC sets of shreds for the same slot index
     /// with reasonable shred indices, but in such a way that
     /// both FEC sets include a shred with LAST_IN_SLOT flag set.
+    #[allow(clippy::type_complexity)]
     fn setup_duplicate_last_in_slot(
         slot: Slot,
     ) -> ((Vec<Shred>, Vec<Shred>), (Vec<Shred>, Vec<Shred>)) {
