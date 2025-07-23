@@ -2,7 +2,9 @@
 //!
 //! This can be expensive since we have to walk the append vecs being cleaned up.
 
+mod pending_snapshot_packages;
 mod stats;
+pub use pending_snapshot_packages::PendingSnapshotPackages;
 #[cfg(feature = "dev-context-only-utils")]
 use qualifier_attr::qualifiers;
 use {
@@ -11,7 +13,7 @@ use {
         bank_forks::BankForks,
         snapshot_bank_utils,
         snapshot_controller::SnapshotController,
-        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind},
+        snapshot_package::{AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage},
         snapshot_utils::SnapshotError,
     },
     crossbeam_channel::{Receiver, SendError, Sender},
@@ -26,7 +28,7 @@ use {
         fmt::{self, Debug, Formatter},
         sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
-            Arc, LazyLock, RwLock,
+            Arc, LazyLock, Mutex, RwLock,
         },
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -131,7 +133,7 @@ pub enum SnapshotRequestKind {
 pub struct SnapshotRequestHandler {
     pub snapshot_controller: Arc<SnapshotController>,
     pub snapshot_request_receiver: SnapshotRequestReceiver,
-    pub accounts_package_sender: Sender<AccountsPackage>,
+    pub pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
 }
 
 impl SnapshotRequestHandler {
@@ -140,7 +142,6 @@ impl SnapshotRequestHandler {
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
-        exit: &AtomicBool,
     ) -> Option<Result<Slot, SnapshotError>> {
         let (snapshot_request, num_outstanding_requests, num_re_enqueued_requests) =
             self.get_next_snapshot_request()?;
@@ -161,7 +162,6 @@ impl SnapshotRequestHandler {
             non_snapshot_time_us,
             snapshot_request,
             accounts_package_kind,
-            exit,
         ))
     }
 
@@ -185,8 +185,6 @@ impl SnapshotRequestHandler {
         let requests_len = requests.len();
         debug!("outstanding snapshot requests ({requests_len}): {requests:?}");
 
-        // NOTE: This code to select the next request is mirrored in AccountsHashVerifier.
-        // Please ensure they stay in sync.
         match requests_len {
             0 => None,
             1 => {
@@ -231,7 +229,6 @@ impl SnapshotRequestHandler {
         non_snapshot_time_us: u128,
         snapshot_request: SnapshotRequest,
         accounts_package_kind: AccountsPackageKind,
-        exit: &AtomicBool,
     ) -> Result<Slot, SnapshotError> {
         info!("handling snapshot request: {snapshot_request:?}, {accounts_package_kind:?}");
         let mut total_time = Measure::start("snapshot_request_receiver_total_time");
@@ -301,15 +298,11 @@ impl SnapshotRequestHandler {
                 }
             }
         };
-        let send_result = self.accounts_package_sender.send(accounts_package);
-        if let Err(err) = send_result {
-            // Sending the accounts package should never fail *unless* we're shutting down.
-            let accounts_package = &err.0;
-            assert!(
-                exit.load(Ordering::Relaxed),
-                "Failed to send accounts package: {err}, {accounts_package:?}"
-            );
-        }
+        let snapshot_package = SnapshotPackage::new(accounts_package);
+        self.pending_snapshot_packages
+            .lock()
+            .unwrap()
+            .push(snapshot_package);
         snapshot_time.stop();
         info!(
             "Handled snapshot request. accounts package kind: {:?}, slot: {}, bank hash: {}",
@@ -433,10 +426,9 @@ impl AbsRequestHandlers {
     pub fn handle_snapshot_requests(
         &self,
         non_snapshot_time_us: u128,
-        exit: &AtomicBool,
     ) -> Option<Result<Slot, SnapshotError>> {
         self.snapshot_request_handler
-            .handle_snapshot_requests(non_snapshot_time_us, exit)
+            .handle_snapshot_requests(non_snapshot_time_us)
     }
 }
 
@@ -519,9 +511,7 @@ impl AccountsBackgroundService {
                         // background threads, and these must not happen concurrently.
                         let snapshot_handle_result = bank
                             .has_initial_accounts_hash_verification_completed()
-                            .then(|| {
-                                request_handlers.handle_snapshot_requests(non_snapshot_time, &exit)
-                            })
+                            .then(|| request_handlers.handle_snapshot_requests(non_snapshot_time))
                             .flatten();
 
                         if let Some(snapshot_handle_result) = snapshot_handle_result {
@@ -813,7 +803,7 @@ mod test {
             ..SnapshotConfig::default()
         };
 
-        let (accounts_package_sender, _accounts_package_receiver) = crossbeam_channel::unbounded();
+        let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
         let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
         let snapshot_controller = Arc::new(SnapshotController::new(
             snapshot_request_sender.clone(),
@@ -823,7 +813,7 @@ mod test {
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller,
             snapshot_request_receiver,
-            accounts_package_sender,
+            pending_snapshot_packages,
         };
 
         let send_snapshot_request = |snapshot_root_bank, request_kind| {

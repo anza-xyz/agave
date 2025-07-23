@@ -3,7 +3,6 @@
 pub use solana_perf::report_target_features;
 use {
     crate::{
-        accounts_hash_verifier::AccountsHashVerifier,
         admin_rpc_post_init::{AdminRpcRequestMetadataPostInit, KeyUpdaterType, KeyUpdaters},
         banking_trace::{self, BankingTracer, TraceError},
         cluster_info_vote_listener::VoteTracker,
@@ -21,7 +20,7 @@ use {
         },
         sample_performance_service::SamplePerformanceService,
         sigverify,
-        snapshot_packager_service::{PendingSnapshotPackages, SnapshotPackagerService},
+        snapshot_packager_service::SnapshotPackagerService,
         stats_reporter_service::StatsReporterService,
         system_monitor_service::{
             verify_net_stats_access, SystemMonitorService, SystemMonitorStatsReportConfig,
@@ -101,7 +100,7 @@ use {
     solana_runtime::{
         accounts_background_service::{
             AbsRequestHandlers, AccountsBackgroundService, DroppedSlotsReceiver,
-            PrunedBanksRequestHandler, SnapshotRequestHandler,
+            PendingSnapshotPackages, PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank::Bank,
         bank_forks::BankForks,
@@ -545,7 +544,6 @@ pub struct Validator {
     geyser_plugin_service: Option<GeyserPluginService>,
     blockstore_metric_report_service: BlockstoreMetricReportService,
     accounts_background_service: AccountsBackgroundService,
-    accounts_hash_verifier: AccountsHashVerifier,
     turbine_quic_endpoint: Option<Endpoint>,
     turbine_quic_endpoint_runtime: Option<TokioRuntime>,
     turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
@@ -882,18 +880,10 @@ impl Validator {
             None
         };
 
-        let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();
-        let accounts_hash_verifier = AccountsHashVerifier::new(
-            accounts_package_sender.clone(),
-            accounts_package_receiver,
-            pending_snapshot_packages,
-            exit.clone(),
-            snapshot_controller.clone(),
-        );
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_controller: snapshot_controller.clone(),
             snapshot_request_receiver,
-            accounts_package_sender,
+            pending_snapshot_packages,
         };
         let pruned_banks_request_handler = PrunedBanksRequestHandler {
             pruned_banks_receiver,
@@ -1708,7 +1698,6 @@ impl Validator {
             geyser_plugin_service,
             blockstore_metric_report_service,
             accounts_background_service,
-            accounts_hash_verifier,
             turbine_quic_endpoint,
             turbine_quic_endpoint_runtime,
             turbine_quic_endpoint_join_handle,
@@ -1838,9 +1827,6 @@ impl Validator {
         self.accounts_background_service
             .join()
             .expect("accounts_background_service");
-        self.accounts_hash_verifier
-            .join()
-            .expect("accounts_hash_verifier");
         if let Some(turbine_quic_endpoint) = &self.turbine_quic_endpoint {
             solana_turbine::quic_endpoint::close_quic_endpoint(turbine_quic_endpoint);
         }
