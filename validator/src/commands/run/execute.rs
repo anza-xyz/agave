@@ -30,6 +30,7 @@ use {
     solana_core::{
         banking_trace::DISABLED_BAKING_TRACE_DIR,
         consensus::tower_storage,
+        repair::repair_handler::RepairHandlerType,
         snapshot_packager_service::SnapshotPackagerService,
         system_monitor_service::SystemMonitorService,
         validator::{
@@ -652,6 +653,7 @@ pub fn execute(
         known_validators: run_args.known_validators,
         repair_validators,
         repair_whitelist,
+        repair_handler_type: RepairHandlerType::default(),
         gossip_validators,
         max_ledger_shreds,
         blockstore_options: run_args.blockstore_options,
