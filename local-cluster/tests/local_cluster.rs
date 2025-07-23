@@ -4930,14 +4930,8 @@ fn test_duplicate_with_pruned_ancestor() {
             0,
             Hash::default(),
         );
-        let shreds = entries_to_test_shreds(
-            &entries,
-            last_majority_vote,
-            last_minority_vote,
-            true,
-            0,
-            true, // merkle_variant
-        );
+        let shreds =
+            entries_to_test_shreds(&entries, last_majority_vote, last_minority_vote, true, 0);
         our_blockstore.insert_shreds(shreds, None, false).unwrap();
     }
 

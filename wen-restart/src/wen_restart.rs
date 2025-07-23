@@ -3016,14 +3016,7 @@ mod tests {
         let mut entries = create_ticks(num_slots * TICKS_PER_SLOT, 0, test_state.last_blockhash);
         assert!(entries.len() > 1);
         entries.pop();
-        let shreds = entries_to_test_shreds(
-            &entries,
-            not_full_slot,
-            parent_slot,
-            false,
-            0,
-            true, // merkle_variant
-        );
+        let shreds = entries_to_test_shreds(&entries, not_full_slot, parent_slot, false, 0);
         test_state
             .blockstore
             .insert_shreds(shreds, None, false)
