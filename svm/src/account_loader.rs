@@ -2833,6 +2833,9 @@ mod tests {
         fee_payer_account.set_lamports(0);
         account_loader.update_accounts_for_failed_tx(&RollbackAccounts::FeePayerOnly {
             fee_payer: (fee_payer, fee_payer_account),
+            formalize_loaded_transaction_data_size: account_loader
+                .feature_set
+                .formalize_loaded_transaction_data_size,
         });
 
         assert_eq!(

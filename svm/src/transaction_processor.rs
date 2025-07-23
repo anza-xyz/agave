@@ -2125,7 +2125,8 @@ mod tests {
                     None, // nonce
                     *fee_payer_address,
                     post_validation_fee_payer_account.clone(),
-                    fee_payer_rent_epoch
+                    fee_payer_rent_epoch,
+                    formalize_loaded_transaction_data_size,
                 ),
                 compute_budget: compute_budget_and_limits.budget,
                 loaded_accounts_bytes_limit: compute_budget_and_limits
@@ -2202,6 +2203,7 @@ mod tests {
                     *fee_payer_address,
                     post_validation_fee_payer_account.clone(),
                     0, // rent epoch
+                    formalize_loaded_transaction_data_size,
                 ),
                 compute_budget: compute_budget_and_limits.budget,
                 loaded_accounts_bytes_limit: compute_budget_and_limits
@@ -2483,6 +2485,7 @@ mod tests {
                         *fee_payer_address,
                         post_validation_fee_payer_account.clone(),
                         0, // fee_payer_rent_epoch
+                        formalize_loaded_transaction_data_size,
                     ),
                     compute_budget: compute_budget_and_limits.budget,
                     loaded_accounts_bytes_limit: compute_budget_and_limits

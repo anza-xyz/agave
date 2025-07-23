@@ -206,11 +206,12 @@ mod tests {
             fee_payer_address,
             rent_epoch_updated_fee_payer_account,
             fee_payer_rent_epoch,
+            false, // ignored
         );
 
         let expected_fee_payer = (fee_payer_address, fee_payer_account);
         match rollback_accounts {
-            RollbackAccounts::FeePayerOnly { fee_payer } => {
+            RollbackAccounts::FeePayerOnly { fee_payer, .. } => {
                 assert_eq!(expected_fee_payer, fee_payer);
             }
             _ => panic!("Expected FeePayerOnly variant"),
@@ -245,10 +246,12 @@ mod tests {
             nonce_address,
             rent_epoch_updated_fee_payer_account,
             u64::MAX, // ignored
+            false,    // ignored
         );
 
         let expected_rollback_accounts = RollbackAccounts::SameNonceAndFeePayer {
             nonce: (nonce_address, nonce_account),
+            formalize_loaded_transaction_data_size: false,
         };
 
         assert_eq!(expected_rollback_accounts, rollback_accounts);
@@ -285,12 +288,15 @@ mod tests {
             fee_payer_address,
             rent_epoch_updated_fee_payer_account.clone(),
             u64::MAX, // ignored
+            false,    // ignored
         );
 
         let expected_nonce = (nonce_address, nonce_account);
         let expected_fee_payer = (fee_payer_address, fee_payer_account);
         match rollback_accounts {
-            RollbackAccounts::SeparateNonceAndFeePayer { nonce, fee_payer } => {
+            RollbackAccounts::SeparateNonceAndFeePayer {
+                nonce, fee_payer, ..
+            } => {
                 assert_eq!(expected_nonce, nonce);
                 assert_eq!(expected_fee_payer, fee_payer);
             }
