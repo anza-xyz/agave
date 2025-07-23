@@ -26,7 +26,7 @@ use {
     },
     solana_native_token::lamports_to_sol,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::{Bank, TotalAccountsStats},
+    solana_runtime::bank::Bank,
     solana_transaction::versioned::VersionedTransaction,
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, Encodable, EncodedConfirmedBlock,
@@ -816,6 +816,33 @@ impl AccountsOutputStreamer {
                 println!("\n{:#?}", self.total_accounts_stats.borrow());
                 Ok(())
             }
+        }
+    }
+}
+
+/// Struct to collect stats when scanning all accounts for AccountsOutputStreamer
+#[derive(Debug, Default, Copy, Clone, Serialize)]
+pub struct TotalAccountsStats {
+    /// Total number of accounts
+    pub num_accounts: usize,
+    /// Total data size of all accounts
+    pub data_len: usize,
+
+    /// Total number of executable accounts
+    pub num_executable_accounts: usize,
+    /// Total data size of executable accounts
+    pub executable_data_len: usize,
+}
+
+impl TotalAccountsStats {
+    pub fn accumulate_account(&mut self, account: &AccountSharedData) {
+        let data_len = account.data().len();
+        self.num_accounts += 1;
+        self.data_len += data_len;
+
+        if account.executable() {
+            self.num_executable_accounts += 1;
+            self.executable_data_len += data_len;
         }
     }
 }

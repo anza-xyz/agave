@@ -5952,33 +5952,6 @@ enum ApplyFeatureActivationsCaller {
     WarpFromParent,
 }
 
-/// Struct to collect stats when scanning all accounts in `get_total_accounts_stats()`
-#[derive(Debug, Default, Copy, Clone, Serialize)]
-pub struct TotalAccountsStats {
-    /// Total number of accounts
-    pub num_accounts: usize,
-    /// Total data size of all accounts
-    pub data_len: usize,
-
-    /// Total number of executable accounts
-    pub num_executable_accounts: usize,
-    /// Total data size of executable accounts
-    pub executable_data_len: usize,
-}
-
-impl TotalAccountsStats {
-    pub fn accumulate_account(&mut self, account: &AccountSharedData) {
-        let data_len = account.data().len();
-        self.num_accounts += 1;
-        self.data_len += data_len;
-
-        if account.executable() {
-            self.num_executable_accounts += 1;
-            self.executable_data_len += data_len;
-        }
-    }
-}
-
 impl Drop for Bank {
     fn drop(&mut self) {
         if let Some(drop_callback) = self.drop_callback.read().unwrap().0.as_ref() {
