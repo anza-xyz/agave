@@ -72,6 +72,7 @@ use {
         broadcast_stage::BroadcastStageType,
         xdp::{set_cpu_affinity, XdpConfig},
     },
+    solana_validator_exit::Exit,
     std::{
         collections::HashSet,
         fs::{self, File},
@@ -740,6 +741,12 @@ pub fn execute(
         ),
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
+        validator_exit: Arc::new(RwLock::new(Exit::default())),
+        validator_exit_backpressure: [(
+            SnapshotPackagerService::NAME.to_string(),
+            Arc::new(AtomicBool::new(false)),
+        )]
+        .into(),
     };
 
     let reserved = validator_config
@@ -809,13 +816,6 @@ pub fn execute(
                 .to_string())?;
         }
     }
-
-    let validator_exit_backpressure = [(
-        SnapshotPackagerService::NAME.to_string(),
-        Arc::new(AtomicBool::new(false)),
-    )]
-    .into();
-    validator_config.validator_exit_backpressure = validator_exit_backpressure;
 
     let mut ledger_lock = ledger_lockfile(&ledger_path);
     let _ledger_write_guard = lock_ledger(&ledger_path, &mut ledger_lock);
