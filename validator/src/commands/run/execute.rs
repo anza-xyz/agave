@@ -68,7 +68,10 @@ use {
         socket::SocketAddrSpace,
     },
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
-    solana_turbine::xdp::{set_cpu_affinity, XdpConfig},
+    solana_turbine::{
+        broadcast_stage::BroadcastStageType,
+        xdp::{set_cpu_affinity, XdpConfig},
+    },
     std::{
         collections::HashSet,
         fs::{self, File},
@@ -714,6 +717,7 @@ pub fn execute(
         wen_restart_proto_path: value_t!(matches, "wen_restart", PathBuf).ok(),
         wen_restart_coordinator: value_t!(matches, "wen_restart_coordinator", Pubkey).ok(),
         retransmit_xdp,
+        broadcast_stage_type: BroadcastStageType::Standard,
         use_tpu_client_next: !matches.is_present("use_connection_cache"),
         block_verification_method: value_t_or_exit!(
             matches,
