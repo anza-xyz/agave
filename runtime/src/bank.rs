@@ -1109,8 +1109,7 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
-        let accounts_data_size_initial = bank.get_total_accounts_stats().unwrap().data_len as u64;
-        bank.accounts_data_size_initial = accounts_data_size_initial;
+        bank.accounts_data_size_initial = bank.get_total_accounts_data_len().unwrap();
 
         bank
     }
@@ -5507,27 +5506,13 @@ impl Bank {
     }
 
     /// Get all the accounts for this bank and calculate stats
-    pub fn get_total_accounts_stats(&self) -> ScanResult<TotalAccountsStats> {
+    pub fn get_total_accounts_data_len(&self) -> ScanResult<u64> {
         let accounts = self.get_all_accounts(false)?;
-        Ok(self.calculate_total_accounts_stats(
-            accounts
-                .iter()
-                .map(|(pubkey, account, _slot)| (pubkey, account)),
-        ))
-    }
-
-    /// Given all the accounts for a bank, calculate stats
-    pub fn calculate_total_accounts_stats<'a>(
-        &self,
-        accounts: impl Iterator<Item = (&'a Pubkey, &'a AccountSharedData)>,
-    ) -> TotalAccountsStats {
-        let rent_collector = self.rent_collector();
-        let mut total_accounts_stats = TotalAccountsStats::default();
-        accounts.for_each(|(pubkey, account)| {
-            total_accounts_stats.accumulate_account(pubkey, account, rent_collector);
+        let mut data_len = 0_u64;
+        accounts.iter().for_each(|(_, account, _)| {
+            data_len = data_len.saturating_add(account.data().len() as u64);
         });
-
-        total_accounts_stats
+        Ok(data_len)
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {
