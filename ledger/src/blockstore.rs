@@ -5366,7 +5366,7 @@ pub mod tests {
         solana_transaction_status::{
             InnerInstruction, InnerInstructions, Reward, Rewards, TransactionTokenBalance,
         },
-        std::{cmp::Ordering, thread::Builder, time::Duration},
+        std::{cmp::Ordering, time::Duration},
         test_case::test_case,
     };
 
@@ -10975,79 +10975,63 @@ pub mod tests {
             let (shred_sender, shred_receiver) = unbounded::<Vec<Shred>>();
             let (signal_sender, signal_receiver) = unbounded();
 
-            let t_entry_getter = {
-                let blockstore = blockstore.clone();
-                let signal_sender = signal_sender.clone();
-                Builder::new()
-                    .spawn(move || {
-                        while let Ok(slot) = slot_receiver.recv() {
-                            match blockstore.get_slot_entries_with_shred_info(slot, 0, false) {
-                                Ok((_entries, _num_shreds, is_full)) => {
-                                    if is_full {
-                                        signal_sender
-                                            .send(Err(IoError::other(
-                                                "got full slot entries for dead slot",
-                                            )))
-                                            .unwrap();
-                                    }
-                                }
-                                Err(err) => {
-                                    assert_matches!(err, BlockstoreError::DeadSlot);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    while let Ok(slot) = slot_receiver.recv() {
+                        match blockstore.get_slot_entries_with_shred_info(slot, 0, false) {
+                            Ok((_entries, _num_shreds, is_full)) => {
+                                if is_full {
+                                    signal_sender
+                                        .send(Err(IoError::other(
+                                            "got full slot entries for dead slot",
+                                        )))
+                                        .unwrap();
                                 }
                             }
-                            signal_sender.send(Ok(())).unwrap();
+                            Err(err) => {
+                                assert_matches!(err, BlockstoreError::DeadSlot);
+                            }
                         }
-                    })
-                    .unwrap()
-            };
+                        signal_sender.send(Ok(())).unwrap();
+                    }
+                });
 
-            let t_shred_inserter = {
-                let blockstore = blockstore.clone();
-                Builder::new()
-                    .spawn(move || {
-                        while let Ok(shreds) = shred_receiver.recv() {
-                            let slot = shreds[0].slot();
-                            // Grab this lock to block `get_slot_entries` before it fetches completed datasets
-                            // and then mark the slot as dead, but full, by inserting carefully crafted shreds.
+                scope.spawn(|| {
+                    while let Ok(shreds) = shred_receiver.recv() {
+                        let slot = shreds[0].slot();
+                        // Grab this lock to block `get_slot_entries` before it fetches completed datasets
+                        // and then mark the slot as dead, but full, by inserting carefully crafted shreds.
 
-                            #[allow(clippy::readonly_write_lock)]
-                            // Possible clippy bug, the lock is unused so clippy shouldn't care
-                            // about read vs. write lock
-                            let _lowest_cleanup_slot =
-                                blockstore.lowest_cleanup_slot.write().unwrap();
-                            blockstore.insert_shreds(shreds, None, false).unwrap();
-                            assert!(blockstore.get_duplicate_slot(slot).is_some());
-                            assert!(!blockstore.is_dead(slot));
-                            assert!(blockstore.meta(slot).unwrap().unwrap().is_full());
-                            signal_sender.send(Ok(())).unwrap();
-                        }
-                    })
-                    .unwrap()
-            };
+                        #[allow(clippy::readonly_write_lock)]
+                        // Possible clippy bug, the lock is unused so clippy shouldn't care
+                        // about read vs. write lock
+                        let _lowest_cleanup_slot = blockstore.lowest_cleanup_slot.write().unwrap();
+                        blockstore.insert_shreds(shreds, None, false).unwrap();
+                        assert!(blockstore.get_duplicate_slot(slot).is_some());
+                        assert!(blockstore.is_dead(slot));
+                        signal_sender.send(Ok(())).unwrap();
+                    }
+                });
 
-            for slot in 0..100 {
-                let ((mut shreds1, _), (mut shreds2, _)) = setup_duplicate_last_in_slot(slot);
-                shreds1.append(&mut shreds2);
-                // Start a task on each thread to trigger a race condition
-                slot_sender.send(slot).unwrap();
-                shred_sender.send(shreds1).unwrap();
+                for slot in 0..100 {
+                    let ((mut shreds1, _), (mut shreds2, _)) = setup_duplicate_last_in_slot(slot);
+                    // compose shreds in reverse order of FEC sets to
+                    // make sure slot is marked dead
+                    shreds2.append(&mut shreds1);
+                    // Start a task on each thread to trigger a race condition
+                    slot_sender.send(slot).unwrap();
+                    shred_sender.send(shreds2).unwrap();
 
-                // Check that each thread processed their task before continuing
-                for _ in 1..=2 {
-                    let res = signal_receiver.recv().unwrap();
-                    assert!(res.is_ok(), "race condition: {res:?}");
+                    // Check that each thread processed their task before continuing
+                    for _ in 1..=2 {
+                        let res = signal_receiver.recv().unwrap();
+                        assert!(res.is_ok(), "race condition: {res:?}");
+                    }
                 }
-            }
 
-            drop(slot_sender);
-            drop(shred_sender);
-
-            let handles = vec![t_entry_getter, t_shred_inserter];
-            for handle in handles {
-                assert!(handle.join().is_ok());
-            }
-
-            assert!(Arc::strong_count(&blockstore) == 1);
+                drop(slot_sender);
+                drop(shred_sender);
+            });
         }
     }
 
