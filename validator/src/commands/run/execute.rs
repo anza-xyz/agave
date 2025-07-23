@@ -718,6 +718,12 @@ pub fn execute(
             "block_verification_method",
             BlockVerificationMethod
         ),
+        unified_scheduler_handler_threads: value_t!(
+            matches,
+            "unified_scheduler_handler_threads",
+            usize
+        )
+        .ok(),
         block_production_method: value_t_or_exit!(
             matches,
             "block_production_method",
@@ -781,8 +787,6 @@ pub fn execute(
         TransactionStructure
     );
     validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
-    validator_config.unified_scheduler_handler_threads =
-        value_t!(matches, "unified_scheduler_handler_threads", usize).ok();
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
