@@ -1279,26 +1279,6 @@ pub struct AccountsHash(pub Hash);
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct IncrementalAccountsHash(pub Hash);
 
-/// Hash of accounts written in a single slot
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct AccountsDeltaHash(pub Hash);
-
-/// Snapshot serde-safe accounts delta hash
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SerdeAccountsDeltaHash(pub Hash);
-
-impl From<SerdeAccountsDeltaHash> for AccountsDeltaHash {
-    fn from(accounts_delta_hash: SerdeAccountsDeltaHash) -> Self {
-        Self(accounts_delta_hash.0)
-    }
-}
-impl From<AccountsDeltaHash> for SerdeAccountsDeltaHash {
-    fn from(accounts_delta_hash: AccountsDeltaHash) -> Self {
-        Self(accounts_delta_hash.0)
-    }
-}
-
 /// Snapshot serde-safe accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]

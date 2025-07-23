@@ -22,7 +22,7 @@ mod serde_snapshot_tests {
                 AccountsDb, AtomicAccountsFileId,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-            accounts_hash::{AccountsDeltaHash, AccountsHash},
+            accounts_hash::AccountsHash,
             ancestors::Ancestors,
         },
         solana_clock::Slot,
@@ -103,7 +103,6 @@ mod serde_snapshot_tests {
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
         let accounts_hash = AccountsHash(Hash::default()); // obsolete, any value works
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         serialize_into(
@@ -112,7 +111,6 @@ mod serde_snapshot_tests {
                 slot,
                 account_storage_entries,
                 bank_hash_stats,
-                accounts_delta_hash,
                 accounts_hash,
                 write_version,
             },

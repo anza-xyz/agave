@@ -19,7 +19,7 @@ use {
             AtomicAccountsFileId, DuplicatesLtHash, IndexGenerationInfo,
         },
         accounts_file::{AccountsFile, StorageAccess},
-        accounts_hash::{AccountsDeltaHash, AccountsHash, AccountsLtHash},
+        accounts_hash::{AccountsHash, AccountsLtHash},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::AncestorsForSerialization,
         blockhash_queue::BlockhashQueue,
@@ -61,9 +61,7 @@ mod types;
 mod utils;
 
 pub(crate) use {
-    solana_accounts_db::accounts_hash::{
-        SerdeAccountsDeltaHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
-    },
+    solana_accounts_db::accounts_hash::{SerdeAccountsHash, SerdeIncrementalAccountsHash},
     storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
 };
 
@@ -110,7 +108,7 @@ pub struct BankIncrementalSnapshotPersistence {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BankHashInfo {
-    accounts_delta_hash: SerdeAccountsDeltaHash,
+    obsolete_accounts_delta_hash: [u8; 32],
     accounts_hash: SerdeAccountsHash,
     stats: BankHashStats,
 }
@@ -635,7 +633,6 @@ pub fn serialize_bank_snapshot_into<W>(
     stream: &mut BufWriter<W>,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
@@ -652,7 +649,6 @@ where
         &mut serializer,
         bank_fields,
         bank_hash_stats,
-        accounts_delta_hash,
         accounts_hash,
         account_storage_entries,
         extra_fields,
@@ -665,7 +661,6 @@ pub fn serialize_bank_snapshot_with<S>(
     serializer: S,
     bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash,
     accounts_hash: AccountsHash,
     account_storage_entries: &[Vec<Arc<AccountStorageEntry>>],
     extra_fields: ExtraFieldsToSerialize,
@@ -680,7 +675,6 @@ where
         slot,
         account_storage_entries,
         bank_hash_stats,
-        accounts_delta_hash,
         accounts_hash,
         write_version,
     };
@@ -703,7 +697,6 @@ impl Serialize for SerializableBankAndStorage<'_> {
         let mut bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
@@ -715,7 +708,6 @@ impl Serialize for SerializableBankAndStorage<'_> {
                 slot,
                 account_storage_entries: self.snapshot_storages,
                 bank_hash_stats,
-                accounts_delta_hash,
                 accounts_hash,
                 write_version,
             },
@@ -747,7 +739,6 @@ impl Serialize for SerializableBankAndStorageNoExtra<'_> {
         let bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         (
@@ -756,7 +747,6 @@ impl Serialize for SerializableBankAndStorageNoExtra<'_> {
                 slot,
                 account_storage_entries: self.snapshot_storages,
                 bank_hash_stats,
-                accounts_delta_hash,
                 accounts_hash,
                 write_version,
             },
@@ -783,8 +773,7 @@ struct SerializableAccountsDb<'a> {
     slot: Slot,
     account_storage_entries: &'a [Vec<Arc<AccountStorageEntry>>],
     bank_hash_stats: BankHashStats,
-    accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
-    accounts_hash: AccountsHash,            // obsolete, will be removed next
+    accounts_hash: AccountsHash, // obsolete, will be removed next
     write_version: u64,
 }
 
@@ -806,7 +795,7 @@ impl Serialize for SerializableAccountsDb<'_> {
             )
         }));
         let bank_hash_info = BankHashInfo {
-            accounts_delta_hash: self.accounts_delta_hash.into(),
+            obsolete_accounts_delta_hash: [0; 32],
             accounts_hash: self.accounts_hash.into(),
             stats: self.bank_hash_stats.clone(),
         };

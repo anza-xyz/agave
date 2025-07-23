@@ -5,9 +5,7 @@ use {
     },
     log::*,
     solana_accounts_db::{
-        accounts::Accounts,
-        accounts_db::AccountStorageEntry,
-        accounts_hash::{AccountsDeltaHash, AccountsHash},
+        accounts::Accounts, accounts_db::AccountStorageEntry, accounts_hash::AccountsHash,
     },
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
@@ -67,14 +65,12 @@ impl AccountsPackage {
         let snapshot_info = {
             let accounts_db = &bank.rc.accounts.accounts_db;
             let write_version = accounts_db.write_version.load(Ordering::Acquire);
-            let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
             let bank_hash_stats = bank.get_bank_hash_stats();
             let bank_fields_to_serialize = bank.get_fields_to_serialize();
             SupplementalSnapshotInfo {
                 status_cache_slot_deltas,
                 bank_fields_to_serialize,
                 bank_hash_stats,
-                accounts_delta_hash,
                 write_version,
             }
         };
@@ -122,7 +118,6 @@ impl AccountsPackage {
                 status_cache_slot_deltas: Vec::default(),
                 bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
                 bank_hash_stats: BankHashStats::default(),
-                accounts_delta_hash: AccountsDeltaHash(Hash::default()),
                 write_version: u64::default(),
             }),
             enqueued: Instant::now(),
@@ -145,7 +140,6 @@ pub struct SupplementalSnapshotInfo {
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
-    pub accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
     pub write_version: u64,
 }
 
@@ -167,7 +161,6 @@ pub struct SnapshotPackage {
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
-    pub accounts_delta_hash: AccountsDeltaHash, // obsolete, will be removed next
     pub accounts_hash: AccountsHash,
     pub write_version: u64,
 
@@ -199,7 +192,6 @@ impl SnapshotPackage {
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
             bank_fields_to_serialize: snapshot_info.bank_fields_to_serialize,
-            accounts_delta_hash: snapshot_info.accounts_delta_hash,
             bank_hash_stats: snapshot_info.bank_hash_stats,
             accounts_hash: AccountsHash(Hash::default()), // obsolete, will be removed next
             write_version: snapshot_info.write_version,
@@ -221,7 +213,6 @@ impl SnapshotPackage {
             snapshot_storages: Vec::default(),
             status_cache_slot_deltas: Vec::default(),
             bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
-            accounts_delta_hash: AccountsDeltaHash(Hash::default()),
             bank_hash_stats: BankHashStats::default(),
             accounts_hash: AccountsHash(Hash::default()),
             write_version: u64::default(),

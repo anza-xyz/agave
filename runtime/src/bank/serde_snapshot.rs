@@ -25,7 +25,7 @@ mod tests {
                 ACCOUNTS_DB_CONFIG_FOR_TESTING,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-            accounts_hash::{AccountsDeltaHash, AccountsHash},
+            accounts_hash::AccountsHash,
         },
         solana_epoch_schedule::EpochSchedule,
         solana_genesis_config::create_genesis_config,
@@ -143,7 +143,6 @@ mod tests {
                 &mut writer,
                 bank_fields,
                 bank2.get_bank_hash_stats(),
-                AccountsDeltaHash(Hash::default()), // obsolete, will be removed next
                 expected_accounts_hash,
                 &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
                 ExtraFieldsToSerialize {
@@ -393,7 +392,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "7F6xtBno4tS6QaD3wP8kQxa9BiRtvmCu8TzFNprFjM7A")
+            frozen_abi(digest = "RHixw67oBUdJQn9TLES55Nb4Sr1wuAfo7NTJH56oRxb")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
@@ -424,7 +423,6 @@ mod tests {
                 serializer,
                 bank_fields,
                 BankHashStats::default(),
-                AccountsDeltaHash(Hash::new_unique()),
                 AccountsHash(Hash::new_unique()),
                 &get_storages_to_serialize(&snapshot_storages),
                 ExtraFieldsToSerialize {
