@@ -4557,7 +4557,6 @@ pub(crate) mod tests {
             NUM_CONSECUTIVE_LEADER_SLOTS, // slot
             1,                            // parent_slot
             8,                            // num_entries
-            true,                         // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert!(bank_forks
@@ -4583,12 +4582,7 @@ pub(crate) mod tests {
 
         // Insert shreds for slot 2 * NUM_CONSECUTIVE_LEADER_SLOTS,
         // chaining to slot 1
-        let (shreds, _) = make_slot_entries(
-            2 * NUM_CONSECUTIVE_LEADER_SLOTS,
-            1,
-            8,
-            true, // merkle_variant
-        );
+        let (shreds, _) = make_slot_entries(2 * NUM_CONSECUTIVE_LEADER_SLOTS, 1, 8);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         assert!(bank_forks
             .read()
@@ -6472,17 +6466,15 @@ pub(crate) mod tests {
 
         // Simulate repair fixing slot 3 and 5
         let (shreds, _) = make_slot_entries(
-            3,    // slot
-            1,    // parent_slot
-            8,    // num_entries
-            true, // merkle_variant
+            3, // slot
+            1, // parent_slot
+            8, // num_entries
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
         let (shreds, _) = make_slot_entries(
-            5,    // slot
-            3,    // parent_slot
-            8,    // num_entries
-            true, // merkle_variant
+            5, // slot
+            3, // parent_slot
+            8, // num_entries
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -9267,8 +9259,7 @@ pub(crate) mod tests {
         let dummy_slot = working_bank.slot() + 2;
         let initial_slot = working_bank.slot();
         let num_entries = 10;
-        let merkle_variant = true;
-        let (shreds, _) = make_slot_entries(dummy_slot, initial_slot, num_entries, merkle_variant);
+        let (shreds, _) = make_slot_entries(dummy_slot, initial_slot, num_entries);
         blockstore.insert_shreds(shreds, None, false).unwrap();
 
         // Reset PoH recorder to the completed bank to ensure consistent state

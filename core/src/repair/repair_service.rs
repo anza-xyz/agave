@@ -1354,8 +1354,8 @@ mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Create some orphan slots
-        let (mut shreds, _) = make_slot_entries(1, 0, 1, /*merkle_variant:*/ true);
-        let (shreds2, _) = make_slot_entries(5, 2, 1, /*merkle_variant:*/ true);
+        let (mut shreds, _) = make_slot_entries(1, 0, 1);
+        let (shreds2, _) = make_slot_entries(5, 2, 1);
         shreds.extend(shreds2);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         let mut repair_weight = RepairWeight::new(0);
@@ -1383,7 +1383,7 @@ mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let (shreds, _) = make_slot_entries(2, 0, 1, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(2, 0, 1);
 
         // Write this shred to slot 2, should chain to slot 0, which we haven't received
         // any shreds for
@@ -1491,7 +1491,6 @@ mod test {
             0, // slot
             0, // parent_slot
             num_entries_per_slot as u64,
-            true, // merkle_variant
         );
         let num_shreds_per_slot = shreds.len() as u64;
 
@@ -1585,7 +1584,6 @@ mod test {
                 i, // slot
                 parent,
                 num_entries_per_slot as u64,
-                true, // merkle_variant
             );
 
             blockstore.insert_shreds(shreds, None, false).unwrap();
@@ -1623,7 +1621,6 @@ mod test {
             dead_slot,     // slot
             dead_slot - 1, // parent_slot
             num_entries_per_slot,
-            true, // merkle_variant
         );
         blockstore
             .insert_shreds(shreds[..shreds.len() - 1].to_vec(), None, false)
@@ -1670,12 +1667,7 @@ mod test {
 
         // Insert some shreds to create a SlotMeta,
         let num_entries_per_slot = max_ticks_per_n_shreds(1, None) + 1;
-        let (mut shreds, _) = make_slot_entries(
-            dead_slot,
-            dead_slot - 1,
-            num_entries_per_slot,
-            true, // merkle_variant
-        );
+        let (mut shreds, _) = make_slot_entries(dead_slot, dead_slot - 1, num_entries_per_slot);
         blockstore
             .insert_shreds(shreds[..shreds.len() - 1].to_vec(), None, false)
             .unwrap();
