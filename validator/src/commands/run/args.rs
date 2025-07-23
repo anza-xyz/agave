@@ -1730,6 +1730,7 @@ mod tests {
                         num_flush_threads: Some(
                             solana_accounts_db::accounts_index::default_num_flush_threads(),
                         ),
+                        drives: Some(vec![]),
                         ..AccountsIndexConfig::default()
                     }),
                     ..AccountsDbConfig::default()
