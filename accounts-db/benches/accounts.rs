@@ -11,10 +11,7 @@ use {
     solana_accounts_db::{
         account_info::{AccountInfo, StorageLocation},
         accounts::{AccountAddressFilter, Accounts},
-        accounts_db::{
-            test_utils::create_test_accounts, AccountFromStorage, AccountsDb,
-            ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS,
-        },
+        accounts_db::{AccountFromStorage, AccountsDb, ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS},
         accounts_index::ScanConfig,
         ancestors::Ancestors,
     },
@@ -40,19 +37,6 @@ fn new_accounts_db(account_paths: Vec<PathBuf>) -> AccountsDb {
         None,
         Arc::default(),
     )
-}
-
-#[bench]
-fn bench_accounts_delta_hash(bencher: &mut Bencher) {
-    solana_logger::setup();
-    let accounts_db = new_accounts_db(vec![PathBuf::from("accounts_delta_hash")]);
-    let accounts = Accounts::new(Arc::new(accounts_db));
-    let mut pubkeys: Vec<Pubkey> = vec![];
-    create_test_accounts(&accounts, &mut pubkeys, 100_000, 0);
-    accounts.accounts_db.add_root_and_flush_write_cache(0);
-    bencher.iter(|| {
-        accounts.accounts_db.calculate_accounts_delta_hash(0);
-    });
 }
 
 #[bench]

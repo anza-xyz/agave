@@ -67,7 +67,7 @@ impl AccountsPackage {
         let snapshot_info = {
             let accounts_db = &bank.rc.accounts.accounts_db;
             let write_version = accounts_db.write_version.load(Ordering::Acquire);
-            let accounts_delta_hash = AccountsDeltaHash(Hash::default());
+            let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
             let bank_hash_stats = bank.get_bank_hash_stats();
             let bank_fields_to_serialize = bank.get_fields_to_serialize();
             SupplementalSnapshotInfo {

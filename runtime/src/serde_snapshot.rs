@@ -703,7 +703,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
         let mut bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
+        let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         let lamports_per_signature = bank_fields.fee_rate_governor.lamports_per_signature;
@@ -747,7 +747,7 @@ impl Serialize for SerializableBankAndStorageNoExtra<'_> {
         let bank_fields = self.bank.get_fields_to_serialize();
         let accounts_db = &self.bank.rc.accounts.accounts_db;
         let bank_hash_stats = self.bank.get_bank_hash_stats();
-        let accounts_delta_hash = accounts_db.get_accounts_delta_hash(slot).unwrap();
+        let accounts_delta_hash = AccountsDeltaHash(Hash::default()); // obsolete, any value works
         let accounts_hash = accounts_db.get_accounts_hash(slot).unwrap().0;
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         (

@@ -6555,36 +6555,6 @@ impl AccountsDb {
         }
     }
 
-    /// Calculate accounts delta hash for `slot`
-    pub fn calculate_accounts_delta_hash_internal(
-        &self,
-        slot: Slot,
-        ignore: Option<Pubkey>,
-    ) -> AccountsDeltaHash {
-        let (mut hashes, scan_us, mut accumulate) = self.get_pubkey_hash_for_slot(slot);
-
-        if let Some(ignore) = ignore {
-            hashes.retain(|k| k.0 != ignore);
-        }
-
-        let accounts_delta_hash = self
-            .thread_pool
-            .install(|| AccountsDeltaHash(AccountsHasher::accumulate_account_hashes(hashes)));
-        accumulate.stop();
-
-        self.set_accounts_delta_hash(slot, accounts_delta_hash);
-
-        self.stats
-            .delta_hash_scan_time_total_us
-            .fetch_add(scan_us, Ordering::Relaxed);
-        self.stats
-            .delta_hash_accumulate_time_total_us
-            .fetch_add(accumulate.as_us(), Ordering::Relaxed);
-        self.stats.delta_hash_num.fetch_add(1, Ordering::Relaxed);
-
-        accounts_delta_hash
-    }
-
     /// Set the accounts delta hash for `slot` in the `accounts_delta_hashes` map
     ///
     /// returns the previous accounts delta hash for `slot`
@@ -8190,11 +8160,6 @@ impl AccountsDb {
         self.flush_root_write_cache(slot);
     }
 
-    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
-    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
-        self.calculate_accounts_delta_hash_internal(slot, None)
-    }
-
     pub fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
@@ -8208,10 +8173,6 @@ impl AccountsDb {
             // callers of this expect zero lamport accounts that exist in the index to be returned as Some(empty)
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
         )
-    }
-
-    pub fn accounts_delta_hashes(&self) -> &Mutex<HashMap<Slot, AccountsDeltaHash>> {
-        &self.accounts_delta_hashes
     }
 
     pub fn accounts_hashes(&self) -> &Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>> {
