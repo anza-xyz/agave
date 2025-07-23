@@ -729,6 +729,7 @@ pub fn execute(
             "block_production_method",
             BlockProductionMethod
         ),
+        enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
     };
 
     let reserved = validator_config
@@ -786,7 +787,6 @@ pub fn execute(
         "transaction_struct",
         TransactionStructure
     );
-    validator_config.enable_block_production_forwarding = staked_nodes_overrides_path.is_some();
 
     let public_rpc_addr = matches
         .value_of("public_rpc_addr")
