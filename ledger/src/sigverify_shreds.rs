@@ -748,14 +748,14 @@ mod tests {
             .flat_map(|(&slot, keypair)| {
                 let parent_slot = slot - rng.gen::<u16>().max(1) as Slot;
                 let num_entries = rng.gen_range(64..128);
-                let (data_shreds, coding_shreds) = Shredder::new(
+                Shredder::new(
                     slot,
                     parent_slot,
                     rng.gen_range(0..0x40), // reference_tick
                     rng.gen(),              // version
                 )
                 .unwrap()
-                .entries_to_merkle_shreds_for_tests(
+                .make_merkle_shreds_from_entries(
                     keypair,
                     &make_entries(rng, num_entries),
                     is_last_in_slot,
@@ -765,10 +765,8 @@ mod tests {
                     rng.gen_range(0..2781), // next_code_index
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
-                );
-                [data_shreds, coding_shreds]
+                )
             })
-            .flatten()
             .collect();
         shreds.shuffle(rng);
         // Assert that all shreds verfiy and sanitize.

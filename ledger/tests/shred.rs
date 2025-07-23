@@ -225,7 +225,6 @@ fn setup_different_sized_fec_blocks(
     let reed_solomon_cache = ReedSolomonCache::default();
     for i in 0..2 {
         let is_last = i == 1;
-        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,

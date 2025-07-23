@@ -136,7 +136,6 @@ impl Shredder {
 
     // For legacy tests and benchmarks.
     #[allow(clippy::too_many_arguments)]
-    #[deprecated(since = "2.3.1", note = "Allows creation of non-merkle shreds")]
     pub fn entries_to_shreds(
         &self,
         keypair: &Keypair,
@@ -903,7 +902,6 @@ mod tests {
 
         let reed_solomon_cache = ReedSolomonCache::default();
         let serialized_entries = bincode::serialize(&entries).unwrap();
-        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
@@ -1048,7 +1046,6 @@ mod tests {
         // Test5: Try recovery/reassembly with non zero index full slot with 3 missing data shreds
         // and 2 missing coding shreds. Hint: should work
         let serialized_entries = bincode::serialize(&entries).unwrap();
-        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &entries,
@@ -1149,7 +1146,6 @@ mod tests {
         .unwrap();
         let next_shred_index = rng.gen_range(1..1024);
         let reed_solomon_cache = ReedSolomonCache::default();
-        #[allow(deprecated)]
         let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
             &keypair,
             &[entry],
