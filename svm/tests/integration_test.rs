@@ -276,21 +276,22 @@ impl SvmTestEnvironment<'_> {
     }
 
     pub fn is_program_blocked(&self, program_id: &Pubkey) -> bool {
-        let program_cache_entries = self
+        let (_, program_cache_entry) = self
             .batch_processor
             .program_cache
             .read()
             .unwrap()
-            .get_flattened_entries_for_tests();
+            .get_flattened_entries_for_tests()
+            .into_iter()
+            .rev()
+            .find(|(key, _)| key == program_id)
+            .unwrap();
 
-        // in the same entry, a new valid loaderv3 program may have a Loaded entry with a later execution slot
-        // in a later entry, the same loaderv3 program will have a DelayedVisibility tombstone
+        // in the same batch, a new valid loaderv3 program may have a Loaded entry with a later execution slot
+        // in a later batch, the same loaderv3 program will have a DelayedVisibility tombstone
         // a new loaderv1/v2 account will have a FailedVerification tombstone
         // and a closed loaderv3 program or any loaderv3 buffer will have a Closed tombstone
-        // we must search because entries are unsorted and old entries persist
-        program_cache_entries.iter().any(|(key, entry)| {
-            key == program_id && (entry.effective_slot > EXECUTION_SLOT || entry.is_tombstone())
-        })
+        program_cache_entry.effective_slot > EXECUTION_SLOT || program_cache_entry.is_tombstone()
     }
 }
 
