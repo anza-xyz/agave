@@ -24,7 +24,7 @@ arc-swap = { workspace = true }
 async-channel = { workspace = true }
 bytes = { workspace = true }
 crossbeam-channel = { workspace = true }
-dashmap = { workspace = true, features = ["raw-api"] }
+dashmap = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 governor = { workspace = true }

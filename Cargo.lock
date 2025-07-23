@@ -9213,6 +9213,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytes",
+ "dashmap",
  "hxdmp",
  "itertools 0.12.1",
  "log",
