@@ -835,7 +835,7 @@ mod tests {
         for storage in &storages {
             storage
                 .accounts
-                .scan_accounts(|_offset, account| {
+                .scan_accounts_stored_meta(|account| {
                     let pubkey = account.pubkey();
                     let account_lt_hash = AccountsDb::lt_hash_account(&account, pubkey);
                     stored_accounts_map
