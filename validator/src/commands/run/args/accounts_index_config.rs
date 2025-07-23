@@ -40,7 +40,7 @@ impl FromClapArgMatches for AccountsIndexConfig {
             index_limit_mb,
             drives: Some(accounts_index_paths),
             scan_results_limit_bytes,
-            ..AccountsIndexConfig::default()
+            ages_to_stay_in_cache: None,
         })
     }
 }
