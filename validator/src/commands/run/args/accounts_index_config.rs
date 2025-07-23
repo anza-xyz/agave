@@ -3,9 +3,9 @@ use {
         cli::thread_args::{AccountsIndexFlushThreadsArg, ThreadArg},
         commands::{FromClapArgMatches, Result},
     },
-    clap::{value_t, ArgMatches},
+    clap::{value_t, values_t, ArgMatches},
     solana_accounts_db::accounts_index::{AccountsIndexConfig, IndexLimitMb},
-    std::num::NonZeroUsize,
+    std::{num::NonZeroUsize, path::PathBuf},
 };
 
 impl FromClapArgMatches for AccountsIndexConfig {
@@ -19,10 +19,20 @@ impl FromClapArgMatches for AccountsIndexConfig {
             IndexLimitMb::Minimal
         };
 
+        let accounts_index_paths = if matches.is_present("accounts_index_path") {
+            values_t!(matches, "accounts_index_path", String)?
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        } else {
+            vec![]
+        };
+
         Ok(AccountsIndexConfig {
             num_flush_threads: Some(num_flush_threads),
             bins: value_t!(matches, "accounts_index_bins", usize).ok(),
             index_limit_mb,
+            drives: Some(accounts_index_paths),
             ..AccountsIndexConfig::default()
         })
     }
@@ -116,5 +126,66 @@ mod tests {
             vec!["--enable-accounts-disk-index"],
             expected_args,
         );
+    }
+
+    #[test]
+    fn verify_args_struct_by_command_run_with_accounts_index_path() {
+        // single path
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![PathBuf::from("accounts_index_path_1")]),
+                        index_limit_mb: IndexLimitMb::Minimal,
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    ..default_run_args.accounts_db_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--accounts-index-path",
+                    "accounts_index_path_1",
+                    "--enable-accounts-disk-index", // required by --accounts-index-path
+                ],
+                expected_args,
+            );
+        }
+
+        // multiple paths
+        {
+            let default_run_args = crate::commands::run::args::RunArgs::default();
+            let expected_args = RunArgs {
+                accounts_db_config: AccountsDbConfig {
+                    index: Some(AccountsIndexConfig {
+                        drives: Some(vec![
+                            PathBuf::from("accounts_index_path_1"),
+                            PathBuf::from("accounts_index_path_2"),
+                            PathBuf::from("accounts_index_path_3"),
+                        ]),
+                        index_limit_mb: IndexLimitMb::Minimal,
+                        ..default_run_args.accounts_db_config.clone().index.unwrap()
+                    }),
+                    ..default_run_args.accounts_db_config.clone()
+                },
+                ..default_run_args.clone()
+            };
+            verify_args_struct_by_command_run_with_identity_setup(
+                default_run_args,
+                vec![
+                    "--accounts-index-path",
+                    "accounts_index_path_1",
+                    "--accounts-index-path",
+                    "accounts_index_path_2",
+                    "--accounts-index-path",
+                    "accounts_index_path_3",
+                    "--enable-accounts-disk-index", // required by --accounts-index-path
+                ],
+                expected_args,
+            );
+        }
     }
 }

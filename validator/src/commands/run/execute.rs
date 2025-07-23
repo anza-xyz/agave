@@ -294,20 +294,8 @@ pub fn execute(
         Arc::new(tower_storage::FileTowerStorage::new(tower_path));
 
     let mut accounts_index_config = AccountsIndexConfig::from_clap_arg_match(matches)?;
-
-    {
-        let mut accounts_index_paths: Vec<PathBuf> = if matches.is_present("accounts_index_path") {
-            values_t_or_exit!(matches, "accounts_index_path", String)
-                .into_iter()
-                .map(PathBuf::from)
-                .collect()
-        } else {
-            vec![]
-        };
-        if accounts_index_paths.is_empty() {
-            accounts_index_paths = vec![ledger_path.join("accounts_index")];
-        }
-        accounts_index_config.drives = Some(accounts_index_paths);
+    if accounts_index_config.drives.as_ref().unwrap().is_empty() {
+        accounts_index_config.drives = Some(vec![ledger_path.join("accounts_index")]);
     }
 
     const MB: usize = 1_024 * 1_024;
