@@ -39,7 +39,7 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, Node, NodeConfig},
+        cluster_info::{BindIpAddrs, Node, NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
         contact_info::ContactInfo,
     },
     solana_hash::Hash,
@@ -656,6 +656,7 @@ pub fn execute(
         run_verification: !matches.is_present("skip_startup_ledger_verification"),
         debug_keys,
         contact_debug_interval,
+        contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
         send_transaction_service_config: send_transaction_service::Config {
             retry_rate_ms: rpc_send_retry_rate_ms,
             leader_forward_count,
