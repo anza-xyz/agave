@@ -746,6 +746,7 @@ pub fn execute(
         ),
         transaction_struct: value_t_or_exit!(matches, "transaction_struct", TransactionStructure),
         enable_block_production_forwarding: staked_nodes_overrides_path.is_some(),
+        banking_trace_dir_byte_limit: parse_banking_trace_dir_byte_limit(matches),
         validator_exit: Arc::new(RwLock::new(Exit::default())),
         validator_exit_backpressure: [(
             SnapshotPackagerService::NAME.to_string(),
@@ -789,8 +790,6 @@ pub fn execute(
         value_t_or_exit!(matches, "minimal_snapshot_download_speed", f32);
     let maximum_snapshot_download_abort =
         value_t_or_exit!(matches, "maximum_snapshot_download_abort", u64);
-
-    configure_banking_trace_dir_byte_limit(&mut validator_config, matches);
 
     match validator_config.block_verification_method {
         BlockVerificationMethod::BlockstoreProcessor => {
@@ -1179,11 +1178,8 @@ fn get_cluster_shred_version(entrypoints: &[SocketAddr], bind_address: IpAddr) -
     None
 }
 
-fn configure_banking_trace_dir_byte_limit(
-    validator_config: &mut ValidatorConfig,
-    matches: &ArgMatches,
-) {
-    validator_config.banking_trace_dir_byte_limit = if matches.is_present("disable_banking_trace") {
+fn parse_banking_trace_dir_byte_limit(matches: &ArgMatches) -> u64 {
+    if matches.is_present("disable_banking_trace") {
         // disable with an explicit flag; This effectively becomes `opt-out` by resetting to
         // DISABLED_BAKING_TRACE_DIR, while allowing us to specify a default sensible limit in clap
         // configuration for cli help.
@@ -1192,7 +1188,7 @@ fn configure_banking_trace_dir_byte_limit(
         // a default value in clap configuration (BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT) or
         // explicit user-supplied override value
         value_t_or_exit!(matches, "banking_trace_dir_byte_limit", u64)
-    };
+    }
 }
 
 fn new_snapshot_config(
