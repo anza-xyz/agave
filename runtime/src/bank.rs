@@ -5952,65 +5952,6 @@ enum ApplyFeatureActivationsCaller {
     WarpFromParent,
 }
 
-/// Struct to collect stats when scanning all accounts in `get_total_accounts_stats()`
-#[derive(Debug, Default, Copy, Clone, Serialize)]
-pub struct TotalAccountsStats {
-    /// Total number of accounts
-    pub num_accounts: usize,
-    /// Total data size of all accounts
-    pub data_len: usize,
-
-    /// Total number of executable accounts
-    pub num_executable_accounts: usize,
-    /// Total data size of executable accounts
-    pub executable_data_len: usize,
-
-    /// Total number of rent exempt accounts
-    pub num_rent_exempt_accounts: usize,
-    /// Total number of rent paying accounts
-    pub num_rent_paying_accounts: usize,
-    /// Total number of rent paying accounts without data
-    pub num_rent_paying_accounts_without_data: usize,
-    /// Total amount of lamports in rent paying accounts
-    pub lamports_in_rent_paying_accounts: u64,
-}
-
-impl TotalAccountsStats {
-    pub fn accumulate_account(
-        &mut self,
-        address: &Pubkey,
-        account: &AccountSharedData,
-        rent_collector: &RentCollector,
-    ) {
-        let data_len = account.data().len();
-        self.num_accounts += 1;
-        self.data_len += data_len;
-
-        if account.executable() {
-            self.num_executable_accounts += 1;
-            self.executable_data_len += data_len;
-        }
-
-        if !rent_collector.should_collect_rent(address, account.executable())
-            || rent_collector
-                .get_rent_due(
-                    account.lamports(),
-                    account.data().len(),
-                    account.rent_epoch(),
-                )
-                .is_exempt()
-        {
-            self.num_rent_exempt_accounts += 1;
-        } else {
-            self.num_rent_paying_accounts += 1;
-            self.lamports_in_rent_paying_accounts += account.lamports();
-            if data_len == 0 {
-                self.num_rent_paying_accounts_without_data += 1;
-            }
-        }
-    }
-}
-
 impl Drop for Bank {
     fn drop(&mut self) {
         if let Some(drop_callback) = self.drop_callback.read().unwrap().0.as_ref() {
