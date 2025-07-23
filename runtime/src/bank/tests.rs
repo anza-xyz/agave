@@ -92,7 +92,7 @@ use {
     },
     solana_stake_program::stake_state,
     solana_svm::{
-        account_loader::{FeesOnlyTransaction, LoadedTransaction},
+        account_loader::{FeesOnlyTransaction, LoadedTransaction, TRANSACTION_ACCOUNT_BASE_SIZE},
         rollback_accounts::RollbackAccounts,
         transaction_commit_result::TransactionCommitResultExtensions,
         transaction_execution_result::ExecutedTransaction,
@@ -1872,19 +1872,25 @@ fn test_interleaving_locks() {
         .is_ok());
 }
 
-#[test]
-fn test_load_and_execute_commit_transactions_fees_only() {
+#[test_case(false; "informal_loaded_size")]
+#[test_case(true; "simd186_loaded_size")]
+fn test_load_and_execute_commit_transactions_fees_only(
+    formalize_loaded_transaction_data_size: bool,
+) {
     let GenesisConfigInfo {
         mut genesis_config, ..
     } = genesis_utils::create_genesis_config(100 * LAMPORTS_PER_SOL);
     genesis_config.rent = Rent::default();
     genesis_config.fee_rate_governor = FeeRateGovernor::new(5000, 0);
     let (bank, _bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
-    let bank = Bank::new_from_parent(
+    let mut bank = Bank::new_from_parent(
         bank,
         &Pubkey::new_unique(),
         genesis_config.epoch_schedule.get_first_slot_in_epoch(1),
     );
+    if !formalize_loaded_transaction_data_size {
+        bank.deactivate_feature(&feature_set::formalize_loaded_transaction_data_size::id());
+    }
 
     // Use rent-paying fee payer to show that rent is not collected for fees
     // only transactions even when they use a rent-paying account.
@@ -1937,6 +1943,13 @@ fn test_load_and_execute_commit_transactions_fees_only() {
         )
         .0;
 
+    // Loaded account size is correctly calculated via RollbackAccounts
+    let loaded_accounts_data_size = if formalize_loaded_transaction_data_size {
+        TRANSACTION_ACCOUNT_BASE_SIZE * 2 + nonce_size
+    } else {
+        nonce_size
+    } as u32;
+
     assert_eq!(
         commit_results,
         vec![Ok(CommittedTransaction {
@@ -1948,7 +1961,7 @@ fn test_load_and_execute_commit_transactions_fees_only() {
             fee_details: FeeDetails::new(5000, 0),
             loaded_account_stats: TransactionLoadedAccountsStats {
                 loaded_accounts_count: 2,
-                loaded_accounts_data_size: nonce_size as u32,
+                loaded_accounts_data_size,
             },
         })]
     );

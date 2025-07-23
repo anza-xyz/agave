@@ -317,6 +317,7 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::FeePayerOnly {
                 fee_payer: (from_address, from_account_pre.clone()),
+                formalize_loaded_transaction_data_size: false,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
@@ -409,6 +410,7 @@ mod tests {
             rollback_accounts: RollbackAccounts::SeparateNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
                 fee_payer: (from_address, from_account_pre.clone()),
+                formalize_loaded_transaction_data_size: false,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
@@ -514,6 +516,7 @@ mod tests {
             fee_details: FeeDetails::default(),
             rollback_accounts: RollbackAccounts::SameNonceAndFeePayer {
                 nonce: (nonce_address, nonce_account_pre.clone()),
+                formalize_loaded_transaction_data_size: false,
             },
             compute_budget: SVMTransactionExecutionBudget::default(),
             loaded_accounts_data_size: 0,
@@ -580,6 +583,7 @@ mod tests {
                 fee_details: FeeDetails::default(),
                 rollback_accounts: RollbackAccounts::FeePayerOnly {
                     fee_payer: (from_address, from_account_pre.clone()),
+                    formalize_loaded_transaction_data_size: false,
                 },
             },
         )))];
