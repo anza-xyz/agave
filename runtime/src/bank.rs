@@ -5505,7 +5505,14 @@ impl Bank {
         }
     }
 
-    /// Get all the accounts for this bank and calculate total data_len
+    /// Calculates the accounts data size of all accounts
+    ///
+    /// Panics if total overflows a u64.
+    ///
+    /// Note, this may be *very* expensive, as *all* accounts are collected
+    /// into a Vec before summming each account's data size.
+    ///
+    /// Only intended to be called by tests or when the number of accounts is small.
     pub fn get_total_accounts_data_len(&self) -> ScanResult<u64> {
         let accounts = self.get_all_accounts(false)?;
         let mut data_len = 0_u64;
