@@ -1357,7 +1357,8 @@ mod test {
     impl ManageAncestorHashesState {
         fn new(bank_forks: Arc<RwLock<BankForks>>) -> Self {
             let ancestor_hashes_request_statuses = Arc::new(DashMap::new());
-            let ancestor_hashes_request_socket = Arc::new(bind_to_localhost_unique().expect("should bind"));
+            let ancestor_hashes_request_socket =
+                Arc::new(bind_to_localhost_unique().expect("should bind"));
             let epoch_schedule = bank_forks
                 .read()
                 .unwrap()

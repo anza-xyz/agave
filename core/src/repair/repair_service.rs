@@ -1280,9 +1280,7 @@ mod test {
         solana_signer::Signer,
         solana_streamer::socket::SocketAddrSpace,
         solana_time_utils::timestamp,
-        std::{
-            collections::HashSet,
-        },
+        std::collections::HashSet,
     };
 
     fn new_test_cluster_info() -> ClusterInfo {
@@ -1737,7 +1735,10 @@ mod test {
         let bank_forks = BankForks::new_rw_arc(bank);
         let dummy_addr = Some((
             Pubkey::default(),
-            bind_to_localhost_unique().expect("should bind - dummy socket").local_addr().unwrap(),
+            bind_to_localhost_unique()
+                .expect("should bind - dummy socket")
+                .local_addr()
+                .unwrap(),
         ));
         let cluster_info = Arc::new(new_test_cluster_info());
         let ledger_path = get_tmp_ledger_path_auto_delete!();
