@@ -1123,9 +1123,10 @@ fn archive_snapshot(
             let mut sorted_storage_indices = (0..snapshot_storages.len()).collect::<Vec<_>>();
             sorted_storage_indices.sort_by_key(|&i| snapshot_storages[i].accounts.len());
             for i in 0..sorted_storage_indices.len() {
-                // Balance large and small files with bias towards small (1 large + 2 small), such
-                // that during unpacking large writes and mixed with file metadata operations.
-                let index = get_from_start_or_end_index_by_ratio(&sorted_storage_indices, i, 3);
+                // Balance large and small files with bias towards small (1 large + 4 small), such
+                // that during unpacking large writes and mixed with file metadata operations
+                // and towards the end of archive (sizes equalize) writes are >256KiB / file.
+                let index = get_from_start_or_end_index_by_ratio(&sorted_storage_indices, i, 5);
                 let storage = &snapshot_storages[index];
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
