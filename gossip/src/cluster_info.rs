@@ -87,7 +87,7 @@ use {
         collections::{HashMap, HashSet},
         fmt::Debug,
         fs::{self, File},
-        io::{BufReader, BufWriter, Write},
+        io::{self, BufReader, BufWriter, Write},
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
         num::{NonZero, NonZeroUsize},
@@ -2523,18 +2523,32 @@ impl Node {
 
         let socket_config = SocketConfig::default();
 
-        let (tvu_port, tvu_sockets) = multi_bind_in_range_with_config(
+        let (tvu_port, mut tvu_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
             port_range,
             socket_config,
             num_tvu_receive_sockets.get(),
         )
         .expect("tvu multi_bind");
+
+        // multihoming RX for TVU UDP
+        tvu_sockets.append(
+            &mut Self::bind_to_extra_ip(
+                bind_ip_addr,
+                &bind_ip_addrs,
+                tvu_port,
+                num_tvu_receive_sockets.get(),
+                socket_config,
+            )
+            .expect("Secondary bind TVU"),
+        );
+
+        // no multihoming for TVU quic
         let (tvu_quic_port, tvu_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tvu_quic bind");
 
-        let ((tpu_port, tpu_socket), (_tpu_port_quic, tpu_quic)) =
+        let ((tpu_port, tpu_socket), (tpu_port_quic, tpu_quic)) =
             bind_two_in_range_with_offset_and_config(
                 bind_ip_addr,
                 port_range,
@@ -2546,10 +2560,22 @@ impl Node {
         let tpu_sockets =
             bind_more_with_config(tpu_socket, 32, socket_config).expect("tpu_sockets multi_bind");
 
-        let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
+        let mut tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
             .expect("tpu_quic bind");
 
-        let ((tpu_forwards_port, tpu_forwards_socket), (_, tpu_forwards_quic)) =
+        // multihoming RX for TPU
+        tpu_quic.append(
+            &mut Self::bind_to_extra_ip(
+                bind_ip_addr,
+                &bind_ip_addrs,
+                tpu_port_quic,
+                32,
+                socket_config,
+            )
+            .expect("Secondary bind TPU QUIC"),
+        );
+
+        let ((tpu_forwards_port, tpu_forwards_socket), (tpu_forwards_quic_port, tpu_forwards_quic)) =
             bind_two_in_range_with_offset_and_config(
                 bind_ip_addr,
                 port_range,
@@ -2560,9 +2586,19 @@ impl Node {
             .expect("tpu_forwards primary bind");
         let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_socket, 8, socket_config)
             .expect("tpu_forwards multi_bind");
-        let tpu_forwards_quic =
+        let mut tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints.get(), socket_config)
                 .expect("tpu_forwards_quic multi_bind");
+        tpu_forwards_quic.append(
+            &mut Self::bind_to_extra_ip(
+                bind_ip_addr,
+                &bind_ip_addrs,
+                tpu_forwards_quic_port,
+                num_quic_endpoints.get(),
+                socket_config,
+            )
+            .expect("Secondary bind TPU forwards"),
+        );
 
         let (tpu_vote_port, tpu_vote_sockets) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 1)
@@ -2571,9 +2607,19 @@ impl Node {
         let (tpu_vote_quic_port, tpu_vote_quic) =
             bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
                 .expect("tpu_vote_quic");
-        let tpu_vote_quic =
+        let mut tpu_vote_quic =
             bind_more_with_config(tpu_vote_quic, num_quic_endpoints.get(), socket_config)
                 .expect("tpu_vote_quic multi_bind");
+        tpu_vote_quic.append(
+            &mut Self::bind_to_extra_ip(
+                bind_ip_addr,
+                &bind_ip_addrs,
+                tpu_vote_port,
+                num_quic_endpoints.get(),
+                socket_config,
+            )
+            .expect("Secondary bind TPU vote"),
+        );
 
         let (_, retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -2684,6 +2730,25 @@ impl Node {
         };
         info!("Bound all network sockets as follows: {:#?}", &sockets);
         Node { info, sockets }
+    }
+
+    fn bind_to_extra_ip(
+        bind_ip_addr: IpAddr,
+        bind_ip_addrs: &BindIpAddrs,
+        port: u16,
+        num: usize,
+        socket_config: SocketConfig,
+    ) -> io::Result<Vec<UdpSocket>> {
+        let mut sockets = vec![];
+        for ip_addr in bind_ip_addrs
+            .iter()
+            .cloned()
+            .filter(|&ip| ip != bind_ip_addr)
+        {
+            let socket = bind_to_with_config(ip_addr, port, socket_config)?;
+            sockets.append(&mut bind_more_with_config(socket, num, socket_config)?);
+        }
+        Ok(sockets)
     }
 }
 
