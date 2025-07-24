@@ -87,6 +87,9 @@ Operate a configured testnet
                                         in genesis config for external nodes
    --no-snapshot-fetch
                                       - If set, disables booting validators from a snapshot
+   --copy-program URL_OR_MONIKER PUBKEY
+                                      - Copies a program PUBKEY from URL_OR_MONIKER.
+                                      For example, --copy-program t recr1L3PCGKLbckBqMNcJhuuyU1zgo8nBhfLVsJNwr5
    --skip-poh-verify
                                       - If set, validators will skip verifying
                                         the ledger they already have saved to disk at
@@ -624,6 +627,13 @@ deploy() {
   echo "Deployment started at $(date)"
   $metricsWriteDatapoint "testnet-deploy net-start-begin=1"
 
+  if [[ -n "$copyProgramPubkey" ]]; then
+      echo "Copying program from ${copyProgramUrl}"
+      solana -u "${copyProgramUrl}" program dump "${copyProgramPubkey}" "${copyProgramPubkey}".so || exit 1
+
+      genesisOptions="${genesisOptions} --bpf-program ${copyProgramPubkey} BPFLoader2111111111111111111111111111111111 /home/solana/solana/net/${copyProgramPubkey}.so"
+  fi
+
   declare bootstrapLeader=true
   for nodeAddress in "${validatorIpList[@]}" "${blockstreamerIpList[@]}"; do
     nodeType=
@@ -815,6 +825,8 @@ externalPrimordialAccountsFile=
 remoteExternalPrimordialAccountsFile=
 internalNodesStakeLamports=
 internalNodesLamports=
+copyProgramUrl=""
+copyProgramPubkey=""
 maybeNoSnapshot=""
 maybeLimitLedgerSize=""
 maybeSkipLedgerVerify=""
@@ -905,6 +917,10 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --internal-nodes-lamports ]]; then
       internalNodesLamports="$2"
       shift 2
+    elif [[ $1 = --copy-program ]]; then
+      copyProgramUrl="$2"
+      copyProgramPubkey="$3"
+      shift 3
     elif [[ $1 = --external-accounts-file ]]; then
       externalPrimordialAccountsFile="$2"
       remoteExternalPrimordialAccountsFile=/tmp/external-primordial-accounts.yml
