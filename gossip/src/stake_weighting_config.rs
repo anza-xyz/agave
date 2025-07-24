@@ -1,16 +1,20 @@
-use {
-    serde::{Deserialize, Serialize},
-    solana_account::ReadableAccount,
-    solana_runtime::bank::Bank,
-};
+use {serde::Deserialize, solana_account::ReadableAccount, solana_runtime::bank::Bank};
 
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum TimeConstant {
+    /// IIR time-constant (ms)
+    Value(u64),
+    /// Use the default time constant.
+    Default,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type")]
 #[repr(C)]
-pub struct WeightingConfig {
-    /// 0 = Static, 1 = Dynamic
-    pub weighting_mode: u8,
-    // IIR time-constant (ms)
-    pub tc_ms: u64,
+pub enum WeightingConfig {
+    Static,
+    Dynamic { tc: TimeConstant },
 }
 
 mod weighting_config_control_pubkey {
