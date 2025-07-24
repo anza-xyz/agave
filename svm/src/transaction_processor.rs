@@ -1290,7 +1290,7 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[], &[], &[index_in_trace as u8]);
+                    .configure(vec![], vec![], &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }

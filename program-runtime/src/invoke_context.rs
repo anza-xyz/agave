@@ -477,7 +477,11 @@ impl<'a> InvokeContext<'a> {
         *compute_units_consumed = 0;
         self.transaction_context
             .get_next_instruction_context()?
-            .configure(program_indices, instruction_accounts, instruction_data);
+            .configure(
+                program_indices.to_vec(),
+                instruction_accounts.to_vec(),
+                instruction_data,
+            );
         self.push()?;
         self.process_executable_chain(compute_units_consumed, timings)
             // MUST pop if and only if `push` succeeded, independent of `result`.
@@ -496,7 +500,11 @@ impl<'a> InvokeContext<'a> {
     ) -> Result<(), InstructionError> {
         self.transaction_context
             .get_next_instruction_context()?
-            .configure(program_indices, instruction_accounts, instruction_data);
+            .configure(
+                program_indices.to_vec(),
+                instruction_accounts.to_vec(),
+                instruction_data,
+            );
         self.push()?;
 
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
@@ -1040,7 +1048,7 @@ mod tests {
                             .transaction_context
                             .get_next_instruction_context()
                             .unwrap()
-                            .configure(&[3], &instruction_accounts, &[]);
+                            .configure(vec![3], instruction_accounts, &[]);
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
@@ -1116,8 +1124,8 @@ mod tests {
                 .get_next_instruction_context()
                 .unwrap()
                 .configure(
-                    &[one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
-                    &instruction_accounts,
+                    vec![one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
+                    instruction_accounts.clone(),
                     &[],
                 );
             if Err(InstructionError::CallDepth) == invoke_context.push() {
@@ -1198,7 +1206,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(vec![4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
@@ -1257,7 +1265,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(vec![4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
             callee_program_id,
@@ -1308,7 +1316,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0], &[], &[]);
+            .configure(vec![0], vec![], &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();
