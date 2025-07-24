@@ -1,17 +1,16 @@
+#[cfg(feature = "agave-unstable-api")]
+use solana_low_pass_filter::api as lpf;
 use {
     crate::{
         cluster_info::REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS,
-        low_pass_filter as lpf,
-        stake_weighting_config::{get_gossip_config_from_account, WeightingConfig},
+        stake_weighting_config::{TimeConstant, WeightingConfig},
         weighted_shuffle::WeightedShuffle,
     },
     indexmap::IndexMap,
-    log::error,
     rand::Rng,
     solana_bloom::bloom::{Bloom, ConcurrentBloom},
     solana_native_token::LAMPORTS_PER_SOL,
     solana_pubkey::Pubkey,
-    solana_runtime::bank::Bank,
     std::collections::HashMap,
 };
 
@@ -26,8 +25,32 @@ const DEFAULT_TC_MS: u64 = 30_000;
 pub enum WeightingMode {
     // alpha = 2.0 -> Quadratic
     Static,
-    // alpha in [1.0, 2.0], smoothed over time, scaled up by 1000 to avoid floating-point math
-    Dynamic,
+    // alpha in [1.0, 2.0], smoothed over time, scaled up by 1,000,000 to avoid floating-point math
+    Dynamic {
+        alpha: u64,    // current alpha (fixed-point, 1,000,000–2,000,000)
+        filter_k: u64, // default: 611,000
+        tc_ms: u64,    // IIR time-constant (ms)
+    },
+}
+
+impl From<&WeightingConfig> for WeightingMode {
+    fn from(cfg: &WeightingConfig) -> Self {
+        match cfg {
+            WeightingConfig::Static => WeightingMode::Static,
+            WeightingConfig::Dynamic { tc } => {
+                let tc_ms = match tc {
+                    TimeConstant::Value(tc_ms) => *tc_ms,
+                    TimeConstant::Default => DEFAULT_TC_MS,
+                };
+                let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, tc_ms);
+                WeightingMode::Dynamic {
+                    alpha: DEFAULT_ALPHA,
+                    filter_k,
+                    tc_ms,
+                }
+            }
+        }
+    }
 }
 
 #[inline]
@@ -43,71 +66,78 @@ fn get_weight(bucket: u64, alpha: u64) -> u64 {
 // push to for crds values belonging to the bucket.
 pub(crate) struct PushActiveSet {
     entries: [PushActiveSetEntry; NUM_PUSH_ACTIVE_SET_ENTRIES],
-    alpha: u64, // current alpha (fixed-point, 1000–2000)
     mode: WeightingMode,
-    filter_k: u64,
-    tc_ms: u64,
-}
-
-impl Default for PushActiveSet {
-    fn default() -> Self {
-        let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS);
-        Self {
-            entries: Default::default(),
-            alpha: DEFAULT_ALPHA,
-            mode: WeightingMode::Dynamic,
-            filter_k, // default: 611
-            tc_ms: DEFAULT_TC_MS,
-        }
-    }
 }
 
 impl PushActiveSet {
-    #[cfg(test)]
-    fn new_static() -> Self {
+    #[cfg(any(test, not(feature = "agave-unstable-api")))]
+    pub(crate) fn new_static() -> Self {
         Self {
             entries: Default::default(),
-            alpha: DEFAULT_ALPHA,
             mode: WeightingMode::Static,
-            filter_k: lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS),
-            tc_ms: DEFAULT_TC_MS,
         }
     }
 
-    fn apply_cfg(&mut self, cfg: WeightingConfig) {
-        match cfg.weighting_mode {
-            0 => {
+    #[cfg(feature = "agave-unstable-api")]
+    pub(crate) fn new_dynamic() -> Self {
+        let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS);
+        Self {
+            entries: Default::default(),
+            mode: WeightingMode::Dynamic {
+                alpha: DEFAULT_ALPHA,
+                filter_k,
+                tc_ms: DEFAULT_TC_MS,
+            },
+        }
+    }
+
+    pub(crate) fn apply_cfg(&mut self, cfg: &WeightingConfig) {
+        match cfg {
+            WeightingConfig::Static => {
                 if self.mode != WeightingMode::Static {
                     info!("Switching mode: {:?} -> Static", self.mode);
                     self.mode = WeightingMode::Static;
                 }
-                return;
             }
-            1 => {
-                if self.mode != WeightingMode::Dynamic {
-                    info!("Switching mode: {:?} -> Dynamic", self.mode);
-                    self.mode = WeightingMode::Dynamic;
+            WeightingConfig::Dynamic { tc } => {
+                let new_tc_ms = match tc {
+                    TimeConstant::Value(tc_ms) => *tc_ms,
+                    TimeConstant::Default => DEFAULT_TC_MS,
+                };
+
+                let should_update_filter = match self.mode {
+                    WeightingMode::Dynamic { tc_ms, .. } => tc_ms != new_tc_ms,
+                    WeightingMode::Static => true,
+                };
+
+                if should_update_filter {
+                    let new_filter_k =
+                        lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms);
+
+                    match self.mode {
+                        WeightingMode::Dynamic {
+                            ref mut filter_k,
+                            ref mut tc_ms,
+                            ..
+                        } => {
+                            *filter_k = new_filter_k;
+                            *tc_ms = new_tc_ms;
+                            info!("Recomputed filter K = {} (tc_ms = {})", *filter_k, *tc_ms);
+                        }
+                        WeightingMode::Static => {
+                            info!("Switching mode: Static -> Dynamic");
+                            // Use From implementation for clean conversion
+                            self.mode = WeightingMode::from(cfg);
+                            if let WeightingMode::Dynamic {
+                                filter_k, tc_ms, ..
+                            } = self.mode
+                            {
+                                info!("Initialized filter K = {} (tc_ms = {})", filter_k, tc_ms);
+                            }
+                        }
+                    }
                 }
             }
-            _ => {
-                error!("Invalid weighting mode: {}", cfg.weighting_mode);
-                return;
-            }
-        }
-
-        // Only recompute K if tc_ms changed
-        let new_tc_ms = if cfg.tc_ms != 0 {
-            cfg.tc_ms
-        } else {
-            DEFAULT_TC_MS
-        };
-        if new_tc_ms != self.tc_ms {
-            self.filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, new_tc_ms);
-            self.tc_ms = new_tc_ms;
-            info!(
-                "Recomputed filter K = {} (tc_ms = {})",
-                self.filter_k, new_tc_ms
-            );
         }
     }
 }
@@ -163,15 +193,10 @@ impl PushActiveSet {
         // Gossip nodes to be sampled for each push active set.
         nodes: &[Pubkey],
         stakes: &HashMap<Pubkey, u64>,
-        maybe_bank_ref: Option<&Bank>,
+        self_pubkey: &Pubkey,
     ) {
         if nodes.is_empty() {
             return;
-        }
-        if let Some(bank) = maybe_bank_ref {
-            if let Some(cfg) = get_gossip_config_from_account(bank) {
-                self.apply_cfg(cfg);
-            }
         }
         let num_bloom_filter_items = cluster_size.max(Self::MIN_NUM_BLOOM_ITEMS);
         // Active set of nodes to push to are sampled from these gossip nodes,
@@ -181,6 +206,7 @@ impl PushActiveSet {
             .iter()
             .map(|node| get_stake_bucket(stakes.get(node)))
             .collect();
+        info!("greg: buckets: {:?}", buckets);
 
         match self.mode {
             WeightingMode::Static => {
@@ -208,25 +234,40 @@ impl PushActiveSet {
                     entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
                 }
             }
-            WeightingMode::Dynamic => {
-                let num_unstaked = buckets.iter().filter(|&&b| b == 0).count();
-                let f_scaled =
-                    ((num_unstaked * lpf::SCALE.get() as usize) + nodes.len() / 2) / nodes.len();
+            WeightingMode::Dynamic {
+                ref mut alpha,
+                filter_k,
+                tc_ms: _,
+            } => {
+                // Need to take into account this node's stake bucket when calculating fraction of unstaked nodes.
+                let self_bucket = get_stake_bucket(stakes.get(self_pubkey));
+                let num_unstaked = buckets
+                    .iter()
+                    .filter(|&&b| b == 0)
+                    .count()
+                    .saturating_add(if self_bucket == 0 { 1 } else { 0 });
+                let total_nodes = nodes.len().saturating_add(1);
+
+                let f_scaled = ((num_unstaked.saturating_mul(lpf::SCALE.get() as usize))
+                    .saturating_add(total_nodes.saturating_div(2)))
+                .saturating_div(total_nodes);
                 let alpha_target = ALPHA_MIN.saturating_add(f_scaled as u64);
-                self.alpha = lpf::filter_alpha(
-                    self.alpha,
+                *alpha = lpf::filter_alpha(
+                    *alpha,
                     alpha_target,
-                    self.filter_k,
-                    ALPHA_MIN,
-                    ALPHA_MAX,
+                    lpf::FilterConfig {
+                        output_range: ALPHA_MIN..ALPHA_MAX,
+                        k: filter_k,
+                    },
                 );
+                info!("greg: alpha = {}", *alpha);
 
                 for (k, entry) in self.entries.iter_mut().enumerate() {
                     let weights: Vec<u64> = buckets
                         .iter()
                         .map(|&bucket| {
                             let bucket = bucket.min(k) as u64;
-                            get_weight(bucket, self.alpha)
+                            get_weight(bucket, *alpha)
                         })
                         .collect();
                     entry.rotate(rng, size, num_bloom_filter_items, nodes, &weights);
@@ -237,6 +278,28 @@ impl PushActiveSet {
 
     fn get_entry(&self, stake: Option<&u64>) -> &PushActiveSetEntry {
         &self.entries[get_stake_bucket(stake)]
+    }
+}
+
+#[cfg(not(feature = "agave-unstable-api"))]
+mod lpf {
+    pub const SCALE: std::num::NonZeroU64 = std::num::NonZeroU64::new(1000000).unwrap();
+    pub struct FilterConfig {
+        pub output_range: std::ops::Range<u64>,
+        #[allow(dead_code)]
+        pub k: u64,
+    }
+    pub fn compute_k(_: u64, _: u64) -> u64 {
+        0
+    }
+    pub fn filter_alpha(alpha: u64, _: u64, filter_config: FilterConfig) -> u64 {
+        alpha.clamp(
+            filter_config.output_range.start,
+            filter_config.output_range.end,
+        )
+    }
+    pub fn interpolate(_: u64, _: u64) -> u64 {
+        0
     }
 }
 
@@ -325,6 +388,7 @@ mod tests {
     const MAX_STAKE: u64 = (1 << 20) * LAMPORTS_PER_SOL;
 
     // Helper to generate a stake map given unstaked count
+    #[cfg(feature = "agave-unstable-api")]
     fn make_stakes(
         nodes: &[Pubkey],
         num_unstaked: usize,
@@ -378,7 +442,7 @@ mod tests {
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
         let mut active_set = PushActiveSet::new_static();
         assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
         for entry in &active_set.entries {
@@ -403,7 +467,7 @@ mod tests {
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([13, 18, 16, 0].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, None);
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
@@ -423,6 +487,7 @@ mod tests {
             .eq([16, 7, 11].into_iter().map(|k| &nodes[k])));
     }
 
+    #[cfg(feature = "agave-unstable-api")]
     #[test]
     fn test_push_active_set_dynamic_weighting() {
         const CLUSTER_SIZE: usize = 117;
@@ -432,9 +497,9 @@ mod tests {
         let stakes = repeat_with(|| rng.gen_range(1..MAX_STAKE));
         let mut stakes: HashMap<_, _> = nodes.iter().copied().zip(stakes).collect();
         stakes.insert(pubkey, rng.gen_range(1..MAX_STAKE));
-        let mut active_set = PushActiveSet::default();
+        let mut active_set = PushActiveSet::new_dynamic();
         assert!(active_set.entries.iter().all(|entry| entry.0.is_empty()));
-        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+        active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 5));
         // Assert that for all entries, each filter already prunes the key.
         for entry in &active_set.entries {
@@ -460,24 +525,24 @@ mod tests {
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
             .eq([7, 2, 4, 12].into_iter().map(|k| &nodes[k])));
-        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, None);
+        active_set.rotate(&mut rng, 7, CLUSTER_SIZE, &nodes, &stakes, &pubkey);
         assert!(active_set.entries.iter().all(|entry| entry.0.len() == 7));
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([2, 12, 16, 9, 14].into_iter().map(|k| &nodes[k])));
+            .eq([2, 12, 15, 14, 16].into_iter().map(|k| &nodes[k])));
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([2, 4, 12, 16, 9, 14].into_iter().map(|k| &nodes[k])));
+            .eq([2, 4, 12, 15, 14, 16].into_iter().map(|k| &nodes[k])));
         let origins = [*origin, *other];
         active_set.prune(&pubkey, &nodes[2], &origins, &stakes);
         active_set.prune(&pubkey, &nodes[12], &origins, &stakes);
-        active_set.prune(&pubkey, &nodes[9], &origins, &stakes);
+        active_set.prune(&pubkey, &nodes[14], &origins, &stakes);
         assert!(active_set
             .get_nodes(&pubkey, origin, |_| false, &stakes)
-            .eq([16, 14].into_iter().map(|k| &nodes[k])));
+            .eq([15, 16].into_iter().map(|k| &nodes[k])));
         assert!(active_set
             .get_nodes(&pubkey, other, |_| false, &stakes)
-            .eq([4, 16, 14].into_iter().map(|k| &nodes[k])));
+            .eq([4, 15, 16].into_iter().map(|k| &nodes[k])));
     }
 
     #[test]
@@ -542,30 +607,41 @@ mod tests {
         assert!(entry.0.keys().eq(keys));
     }
 
+    #[cfg(feature = "agave-unstable-api")]
+    fn alpha_of(pas: &PushActiveSet) -> u64 {
+        match pas.mode {
+            WeightingMode::Dynamic { alpha, .. } => alpha,
+            WeightingMode::Static => panic!("test assumed Dynamic mode but found Static"),
+        }
+    }
+
+    #[cfg(feature = "agave-unstable-api")]
     #[test]
     fn test_alpha_converges_to_expected_target() {
         const CLUSTER_SIZE: usize = 415;
-        const TOLERANCE_MILLI: u16 = 10; // ±1% of alpha
+        const TOLERANCE_MILLI: u64 = 10_000; // ±1% of alpha
 
         let mut rng = ChaChaRng::from_seed([77u8; 32]);
-        let nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
+        let mut nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
 
-        // 39% unstaked → alpha_target = 1000 + 39 * 10 = 1390
+        // 39% unstaked → alpha_target = 1,000,000 + 39 * 10000 = 1,390,000
         let percent_unstaked = 39;
         let num_unstaked = (CLUSTER_SIZE * percent_unstaked + 50) / 100;
-        let expected_alpha_milli = 1000 + (percent_unstaked as u16 * 10);
+        let expected_alpha_milli = 1_000_000 + (percent_unstaked as u64 * 10_000);
 
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
-        let mut active_set = PushActiveSet::default();
+        let my_pubkey = nodes.pop().unwrap();
+
+        let mut active_set = PushActiveSet::new_dynamic();
 
         // Simulate repeated calls to `rotate()` (as would happen every 7.5s)
         // 8 calls (60s) should be enough to converge to the expected target alpha.
         // We converge in about 4 calls (30s).
         for _ in 0..8 {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &my_pubkey);
         }
 
-        let actual_alpha = active_set.alpha;
+        let actual_alpha = alpha_of(&active_set);
         assert!(
             (actual_alpha as i32 - expected_alpha_milli as i32).abs() <= TOLERANCE_MILLI as i32,
             "alpha={} did not converge to expected alpha={}",
@@ -573,17 +649,17 @@ mod tests {
             expected_alpha_milli
         );
 
-        // 93% unstaked → alpha_target = 1000 + 93 * 10 = 1930
+        // 93% unstaked → alpha_target = 1,000,000 + 93 * 10000 = 1,930,000
         let percent_unstaked = 93;
         let num_unstaked = (CLUSTER_SIZE * percent_unstaked + 50) / 100;
-        let expected_alpha_milli = 1000 + (percent_unstaked as u16 * 10);
+        let expected_alpha_milli = 1_000_000 + (percent_unstaked as u64 * 10_000);
 
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..8 {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &my_pubkey);
         }
 
-        let actual_alpha = active_set.alpha;
+        let actual_alpha = alpha_of(&active_set);
         assert!(
             (actual_alpha as i32 - expected_alpha_milli as i32).abs() <= TOLERANCE_MILLI as i32,
             "alpha={} did not reconverge to expected alpha={}",
@@ -592,25 +668,28 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "agave-unstable-api")]
     #[test]
     fn test_alpha_converges_up_and_down() {
         const CLUSTER_SIZE: usize = 415;
-        const TOLERANCE_MILLI: u16 = 10; // ±1% of alpha
+        const TOLERANCE_MILLI: u64 = 10_000; // ±1% of alpha
         const ROTATE_CALLS: usize = 8;
 
         let mut rng = ChaChaRng::from_seed([99u8; 32]);
-        let nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
+        let mut nodes: Vec<Pubkey> = repeat_with(Pubkey::new_unique).take(CLUSTER_SIZE).collect();
 
-        let mut active_set = PushActiveSet::default();
+        let mut active_set = PushActiveSet::new_dynamic();
 
-        // 0% unstaked → alpha_target = 1000
+        // 0% unstaked → alpha_target = 1,000,000
         let num_unstaked = 0;
-        let expected_alpha_0 = 1000;
+        let expected_alpha_0 = 1_000_000;
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
+        let my_pubkey = nodes.pop().unwrap();
+
         for _ in 0..ROTATE_CALLS {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &my_pubkey);
         }
-        let alpha = active_set.alpha;
+        let alpha = alpha_of(&active_set);
         assert!(
             (alpha as i32 - expected_alpha_0).abs() <= TOLERANCE_MILLI as i32,
             "alpha={} did not converge to alpha_0={}",
@@ -618,14 +697,14 @@ mod tests {
             expected_alpha_0
         );
 
-        // 100% unstaked → alpha_target = 2000
+        // 100% unstaked → alpha_target = 2,000,000
         let num_unstaked = CLUSTER_SIZE;
-        let expected_alpha_100 = 2000;
+        let expected_alpha_100 = 2_000_000;
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..ROTATE_CALLS {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &my_pubkey);
         }
-        let alpha = active_set.alpha;
+        let alpha = alpha_of(&active_set);
         assert!(
             (alpha as i32 - expected_alpha_100).abs() <= TOLERANCE_MILLI as i32,
             "alpha={} did not converge to alpha_100={}",
@@ -633,13 +712,13 @@ mod tests {
             expected_alpha_100
         );
 
-        // back to 0% unstaked → alpha_target = 1000
+        // back to 0% unstaked → alpha_target = 1,000,000
         let num_unstaked = 0;
         let stakes = make_stakes(&nodes, num_unstaked, &mut rng);
         for _ in 0..ROTATE_CALLS {
-            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, None);
+            active_set.rotate(&mut rng, 5, CLUSTER_SIZE, &nodes, &stakes, &my_pubkey);
         }
-        let alpha = active_set.alpha;
+        let alpha = alpha_of(&active_set);
         assert!(
             (alpha as i32 - expected_alpha_0).abs() <= TOLERANCE_MILLI as i32,
             "alpha={} did not reconverge to alpha_0={}",
@@ -648,6 +727,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "agave-unstable-api")]
     #[test]
     fn test_alpha_progression_matches_expected() {
         let mut alpha = ALPHA_MAX;
@@ -655,11 +735,20 @@ mod tests {
         let target_up = ALPHA_MAX;
         let filter_k = lpf::compute_k(REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS, DEFAULT_TC_MS);
 
-        // Expected values from rotating to 1000 from 2000
-        let expected_down = [1389, 1151, 1058, 1022, 1008, 1003, 1001, 1000];
+        // Expected values from rotating to 1,000,000 from 2,000,000
+        let expected_down = [
+            1_388_985, 1_151_309, 1_058_856, 1_022_894, 1_008_905, 1_003_463, 1_001_347, 1_000_523,
+        ];
 
         for (i, expected) in expected_down.iter().enumerate() {
-            alpha = lpf::filter_alpha(alpha, target_down, filter_k, ALPHA_MIN, ALPHA_MAX);
+            alpha = lpf::filter_alpha(
+                alpha,
+                target_down,
+                lpf::FilterConfig {
+                    output_range: ALPHA_MIN..ALPHA_MAX,
+                    k: filter_k,
+                },
+            );
             assert_eq!(
                 alpha, *expected as u64,
                 "step {}: alpha did not match expected during convergence down",
@@ -667,10 +756,19 @@ mod tests {
             );
         }
 
-        // Rotate upward from current alpha (1000) to 2000
-        let expected_up = [1611, 1848, 1940, 1976, 1990, 1996, 1998, 1999];
+        // Rotate upward from current alpha (1,000,000) to 2,000,000
+        let expected_up = [
+            1_611_218, 1_848_769, 1_941_173, 1_977_117, 1_991_098, 1_996_537, 1_998_652, 1_999_475,
+        ];
         for (i, expected) in expected_up.iter().enumerate() {
-            alpha = lpf::filter_alpha(alpha, target_up, filter_k, ALPHA_MIN, ALPHA_MAX);
+            alpha = lpf::filter_alpha(
+                alpha,
+                target_up,
+                lpf::FilterConfig {
+                    output_range: ALPHA_MIN..ALPHA_MAX,
+                    k: filter_k,
+                },
+            );
             assert_eq!(
                 alpha, *expected as u64,
                 "step {}: alpha did not match expected during convergence up",
@@ -678,10 +776,19 @@ mod tests {
             );
         }
 
-        // Rotate downward again from current alpha (1999) to 1000
-        let expected_down2 = [1388, 1150, 1058, 1022, 1008, 1003, 1001, 1000];
+        // Rotate downward again from current alpha (1,999,000) to 1,000,000
+        let expected_down2 = [
+            1_388_780, 1_151_229, 1_058_825, 1_022_882, 1_008_900, 1_003_461, 1_001_346, 1_000_523,
+        ];
         for (i, expected) in expected_down2.iter().enumerate() {
-            alpha = lpf::filter_alpha(alpha, target_down, filter_k, ALPHA_MIN, ALPHA_MAX);
+            alpha = lpf::filter_alpha(
+                alpha,
+                target_down,
+                lpf::FilterConfig {
+                    output_range: ALPHA_MIN..ALPHA_MAX,
+                    k: filter_k,
+                },
+            );
             assert_eq!(
                 alpha, *expected as u64,
                 "step {}: alpha did not match expected during final convergence down",

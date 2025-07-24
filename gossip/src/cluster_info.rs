@@ -1509,12 +1509,16 @@ impl ClusterInfo {
                     //TODO: possibly tune this parameter
                     //we saw a deadlock passing an self.read().unwrap().timeout into sleep
                     if start - last_push > REFRESH_PUSH_ACTIVE_SET_INTERVAL_MS {
+                        #[cfg(feature = "agave-unstable-api")]
                         let maybe_bank = bank_forks
                             .as_ref()
                             .and_then(|bf| bf.read().ok())
                             .map(|forks| forks.root_bank());
+                        #[cfg(not(feature = "agave-unstable-api"))]
+                        let maybe_bank: Option<Arc<Bank>> = None;
                         let maybe_bank_ref = maybe_bank.as_deref();
                         self.refresh_my_gossip_contact_info();
+                        info!("greg: stakes: {:?}", stakes);
                         self.refresh_push_active_set(
                             &recycler,
                             &stakes,

@@ -1,0 +1,11 @@
+[package]
+name = "solana-low-pass-filter"
+version = "3.0.0"
+edition = "2021"
+
+[features]
+default = []
+agave-unstable-api = []
+
+[lib]
+path = "src/lib.rs"

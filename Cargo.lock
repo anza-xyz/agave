@@ -8689,6 +8689,7 @@ dependencies = [
  "solana-keypair",
  "solana-ledger",
  "solana-logger 3.0.0",
+ "solana-low-pass-filter",
  "solana-measure",
  "solana-metrics",
  "solana-native-token",
@@ -9163,6 +9164,10 @@ dependencies = [
  "log",
  "signal-hook",
 ]
+
+[[package]]
+name = "solana-low-pass-filter"
+version = "3.0.0"
 
 [[package]]
 name = "solana-measure"
