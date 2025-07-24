@@ -5095,7 +5095,7 @@ pub fn entries_to_test_shreds(
     is_full_slot: bool,
     version: u16,
 ) -> Vec<Shred> {
-    let (data_shreds, _coding_shreds) = Shredder::new(slot, parent_slot, 0, version)
+    Shredder::new(slot, parent_slot, 0, version)
         .unwrap()
         .make_merkle_shreds_from_entries(
             &Keypair::new(),
@@ -5108,8 +5108,8 @@ pub fn entries_to_test_shreds(
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         )
-        .partition(Shred::is_data);
-    data_shreds
+        .filter(Shred::is_data)
+        .collect()
 }
 
 // used for tests only
