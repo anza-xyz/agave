@@ -865,7 +865,7 @@ mod tests {
         let rsc = ReedSolomonCache::default();
         let make_shreds_for_slot = |slot, parent, code_index| {
             let shredder = Shredder::new(slot, parent, 1, 0).unwrap();
-            shredder.entries_to_shreds(
+            shredder.entries_to_merkle_shreds_for_tests(
                 &keypair,
                 &entries,
                 true,
@@ -873,7 +873,6 @@ mod tests {
                 Some(Hash::new_from_array(rand::thread_rng().gen())),
                 0,
                 code_index,
-                true,
                 &rsc,
                 &mut ProcessShredsStats::default(),
             )

@@ -4427,14 +4427,8 @@ pub fn populate_blockstore_for_tests(
 ) {
     let slot = bank.slot();
     let parent_slot = bank.parent_slot();
-    let shreds = solana_ledger::blockstore::entries_to_test_shreds(
-        &entries,
-        slot,
-        parent_slot,
-        true,
-        0,
-        true, // merkle_variant
-    );
+    let shreds =
+        solana_ledger::blockstore::entries_to_test_shreds(&entries, slot, parent_slot, true, 0);
     blockstore.insert_shreds(shreds, None, false).unwrap();
     blockstore.set_roots(std::iter::once(&slot)).unwrap();
 

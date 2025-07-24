@@ -6,11 +6,8 @@ use {
     solana_clock::DEFAULT_MS_PER_SLOT,
     solana_measure::measure_us,
     solana_runtime::{
-        snapshot_config::SnapshotConfig,
         snapshot_controller::SnapshotController,
-        snapshot_package::{
-            self, AccountsPackage, AccountsPackageKind, SnapshotKind, SnapshotPackage,
-        },
+        snapshot_package::{self, AccountsPackage, AccountsPackageKind, SnapshotPackage},
     },
     std::{
         io,
@@ -33,7 +30,7 @@ impl AccountsHashVerifier {
         accounts_package_receiver: Receiver<AccountsPackage>,
         pending_snapshot_packages: Arc<Mutex<PendingSnapshotPackages>>,
         exit: Arc<AtomicBool>,
-        snapshot_controller: Arc<SnapshotController>,
+        _snapshot_controller: Arc<SnapshotController>,
     ) -> Self {
         // If there are no accounts packages to process, limit how often we re-check
         const LOOP_LIMITER: Duration = Duration::from_millis(DEFAULT_MS_PER_SLOT);
@@ -61,11 +58,9 @@ impl AccountsHashVerifier {
                     info!("handling accounts package: {accounts_package:?}");
                     let enqueued_time = accounts_package.enqueued.elapsed();
 
-                    let snapshot_config = snapshot_controller.snapshot_config();
                     let (result, handling_time_us) = measure_us!(Self::process_accounts_package(
                         accounts_package,
                         &pending_snapshot_packages,
-                        snapshot_config,
                     ));
                     if let Err(err) = result {
                         error!(
@@ -172,44 +167,10 @@ impl AccountsHashVerifier {
     fn process_accounts_package(
         accounts_package: AccountsPackage,
         pending_snapshot_packages: &Mutex<PendingSnapshotPackages>,
-        snapshot_config: &SnapshotConfig,
     ) -> io::Result<()> {
-        Self::purge_old_accounts_hashes(&accounts_package, snapshot_config);
-
         Self::submit_for_packaging(accounts_package, pending_snapshot_packages);
 
         Ok(())
-    }
-
-    fn purge_old_accounts_hashes(
-        accounts_package: &AccountsPackage,
-        snapshot_config: &SnapshotConfig,
-    ) {
-        let should_purge = match (
-            snapshot_config.should_generate_snapshots(),
-            accounts_package.package_kind,
-        ) {
-            (false, _) => {
-                // If we are *not* generating snapshots, then it is safe to purge every time.
-                true
-            }
-            (true, AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot)) => {
-                // If we *are* generating snapshots, then only purge old accounts hashes after
-                // handling full snapshot packages.  This is because handling incremental snapshot
-                // packages requires the accounts hash from the latest full snapshot, and if we
-                // purged after every package, we'd remove the accounts hash needed by the next
-                // incremental snapshot.
-                true
-            }
-            (true, _) => false,
-        };
-
-        if should_purge {
-            accounts_package
-                .accounts
-                .accounts_db
-                .purge_old_accounts_hashes(accounts_package.slot);
-        }
     }
 
     fn submit_for_packaging(

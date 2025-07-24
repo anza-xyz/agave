@@ -608,7 +608,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -649,7 +648,6 @@ pub mod tests {
                 x.saturating_sub(1), // parent_slot
                 true,                // is_full_slot
                 0,                   // version
-                true,                // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
             let signature = entries
@@ -691,7 +689,6 @@ pub mod tests {
                 slot.saturating_sub(1),
                 true, // is_full_slot
                 0,    // version
-                true, // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, false).unwrap();
 
@@ -941,7 +938,6 @@ pub mod tests {
             slot - 1, // parent_slot
             true,     // is_full_slot
             0,        // version
-            true,     // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
 

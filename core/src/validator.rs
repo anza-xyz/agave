@@ -2918,7 +2918,6 @@ mod tests {
                 i - 1, // parent_slot
                 true,  // is_full_slot
                 1,     // version
-                true,  // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, true).unwrap();
         }
@@ -3008,7 +3007,6 @@ mod tests {
                 i - 1, // parent_slot
                 true,  // is_full_slot
                 1,     // version
-                true,  // merkle_variant
             );
             blockstore.insert_shreds(shreds, None, true).unwrap();
         }

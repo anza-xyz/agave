@@ -25,7 +25,6 @@ use {
         account_storage_reader::AccountStorageReader,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-        accounts_hash::AccountsHash,
         hardened_unpack::{self, ArchiveChunker, BytesChannelReader, MultiBytes, UnpackError},
         utils::{move_and_async_delete_path, ACCOUNTS_RUN_DIR, ACCOUNTS_SNAPSHOT_DIR},
     },
@@ -828,7 +827,6 @@ pub fn serialize_and_archive_snapshot_package(
         status_cache_slot_deltas,
         bank_fields_to_serialize,
         bank_hash_stats,
-        accounts_hash,
         write_version,
         enqueued: _,
     } = snapshot_package;
@@ -840,7 +838,6 @@ pub fn serialize_and_archive_snapshot_package(
         status_cache_slot_deltas.as_slice(),
         bank_fields_to_serialize,
         bank_hash_stats,
-        accounts_hash,
         write_version,
         should_flush_and_hard_link_storages,
     )?;
@@ -900,7 +897,6 @@ fn serialize_snapshot(
     slot_deltas: &[BankSlotDelta],
     mut bank_fields: BankFieldsToSerialize,
     bank_hash_stats: BankHashStats,
-    accounts_hash: AccountsHash,
     write_version: u64,
     should_flush_and_hard_link_storages: bool,
 ) -> Result<BankSnapshotInfo> {
@@ -962,7 +958,6 @@ fn serialize_snapshot(
                 stream,
                 bank_fields,
                 bank_hash_stats,
-                accounts_hash,
                 &get_storages_to_serialize(snapshot_storages),
                 extra_fields,
                 write_version,

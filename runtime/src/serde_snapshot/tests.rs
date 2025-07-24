@@ -22,12 +22,10 @@ mod serde_snapshot_tests {
                 AccountsDb, AtomicAccountsFileId,
             },
             accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
-            accounts_hash::AccountsHash,
             ancestors::Ancestors,
         },
         solana_clock::Slot,
         solana_epoch_schedule::EpochSchedule,
-        solana_hash::Hash,
         solana_nohash_hasher::BuildNoHashHasher,
         solana_pubkey::Pubkey,
         std::{
@@ -75,8 +73,6 @@ mod serde_snapshot_tests {
             Some(solana_accounts_db::accounts_db::ACCOUNTS_DB_CONFIG_FOR_TESTING),
             None,
             Arc::default(),
-            (u64::default(), None),
-            None,
             true,
         )
         .map(|(accounts_db, _)| accounts_db)
@@ -103,7 +99,6 @@ mod serde_snapshot_tests {
         W: Write,
     {
         let bank_hash_stats = BankHashStats::default();
-        let accounts_hash = AccountsHash(Hash::default()); // obsolete, any value works
         let write_version = accounts_db.write_version.load(Ordering::Acquire);
         serialize_into(
             stream,
@@ -111,7 +106,6 @@ mod serde_snapshot_tests {
                 slot,
                 account_storage_entries,
                 bank_hash_stats,
-                accounts_hash,
                 write_version,
             },
         )
