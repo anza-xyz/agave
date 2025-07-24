@@ -46,7 +46,6 @@ use {
         installed_scheduler_pool::{BankWithScheduler, InstalledSchedulerRwLock},
         rent_collector::RentCollectorWithMetrics,
         runtime_config::RuntimeConfig,
-        serde_snapshot::BankIncrementalSnapshotPersistence,
         snapshot_hash::SnapshotHash,
         stake_account::StakeAccount,
         stake_weighted_timestamp::{
@@ -77,7 +76,7 @@ use {
         accounts_db::{
             AccountStorageEntry, AccountsDb, AccountsDbConfig, DuplicatesLtHash, PubkeyHashAccount,
         },
-        accounts_hash::{AccountsHash, AccountsLtHash, IncrementalAccountsHash},
+        accounts_hash::AccountsLtHash,
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         ancestors::{Ancestors, AncestorsForSerialization},
@@ -434,7 +433,6 @@ pub struct BankFieldsToDeserialize {
     pub(crate) versioned_epoch_stakes: HashMap<Epoch, VersionedEpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
-    pub(crate) incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>,
     pub(crate) accounts_lt_hash: AccountsLtHash,
     pub(crate) bank_hash_stats: BankHashStats,
 }
@@ -4757,30 +4755,6 @@ impl Bank {
     /// (cannot be made DCOU due to solana-program-test)
     pub fn set_capitalization_for_tests(&self, capitalization: u64) {
         self.capitalization.store(capitalization, Relaxed);
-    }
-
-    /// Returns the `AccountsHash` that was calculated for this bank's slot
-    ///
-    /// This fn is used when creating a snapshot with ledger-tool, or when
-    /// packaging a snapshot into an archive (used to get the `SnapshotHash`).
-    pub fn get_accounts_hash(&self) -> Option<AccountsHash> {
-        self.rc
-            .accounts
-            .accounts_db
-            .get_accounts_hash(self.slot())
-            .map(|(accounts_hash, _)| accounts_hash)
-    }
-
-    /// Returns the `IncrementalAccountsHash` that was calculated for this bank's slot
-    ///
-    /// This fn is used when creating an incremental snapshot with ledger-tool, or when
-    /// packaging a snapshot into an archive (used to get the `SnapshotHash`).
-    pub fn get_incremental_accounts_hash(&self) -> Option<IncrementalAccountsHash> {
-        self.rc
-            .accounts
-            .accounts_db
-            .get_incremental_accounts_hash(self.slot())
-            .map(|(incremental_accounts_hash, _)| incremental_accounts_hash)
     }
 
     /// Returns the `SnapshotHash` for this bank's slot

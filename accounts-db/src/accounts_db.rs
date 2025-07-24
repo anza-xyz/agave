@@ -46,8 +46,8 @@ use {
         accounts_hash::{
             AccountHash, AccountLtHash, AccountsHash, AccountsHashKind, AccountsHasher,
             AccountsLtHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
-            IncrementalAccountsHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
-            ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH, ZERO_LAMPORT_ACCOUNT_LT_HASH,
+            IncrementalAccountsHash, ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH,
+            ZERO_LAMPORT_ACCOUNT_LT_HASH,
         },
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
@@ -1340,10 +1340,6 @@ pub struct AccountsDb {
     /// Thread pool for AccountsHashVerifier
     pub thread_pool_hash: ThreadPool,
 
-    accounts_hashes: Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>>,
-    incremental_accounts_hashes:
-        Mutex<HashMap<Slot, (IncrementalAccountsHash, /*capitalization*/ u64)>>,
-
     pub stats: AccountsStats,
 
     clean_accounts_stats: CleanAccountsStats,
@@ -1837,8 +1833,6 @@ impl AccountsDb {
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
             file_size: DEFAULT_FILE_SIZE,
-            accounts_hashes: Mutex::new(HashMap::new()),
-            incremental_accounts_hashes: Mutex::new(HashMap::new()),
             external_purge_slots_stats: PurgeStats::default(),
             clean_accounts_stats: CleanAccountsStats::default(),
             shrink_stats: ShrinkStats::default(),
@@ -6139,99 +6133,6 @@ impl AccountsDb {
         true
     }
 
-    /// Set the accounts hash for `slot`
-    ///
-    /// returns the previous accounts hash for `slot`
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn set_accounts_hash(
-        &self,
-        slot: Slot,
-        accounts_hash: (AccountsHash, /*capitalization*/ u64),
-    ) -> Option<(AccountsHash, /*capitalization*/ u64)> {
-        self.accounts_hashes
-            .lock()
-            .unwrap()
-            .insert(slot, accounts_hash)
-    }
-
-    /// After deserializing a snapshot, set the accounts hash for the new AccountsDb
-    pub fn set_accounts_hash_from_snapshot(
-        &mut self,
-        slot: Slot,
-        accounts_hash: SerdeAccountsHash,
-        capitalization: u64,
-    ) -> Option<(AccountsHash, /*capitalization*/ u64)> {
-        self.set_accounts_hash(slot, (accounts_hash.into(), capitalization))
-    }
-
-    /// Get the accounts hash for `slot`
-    pub fn get_accounts_hash(&self, slot: Slot) -> Option<(AccountsHash, /*capitalization*/ u64)> {
-        self.accounts_hashes.lock().unwrap().get(&slot).cloned()
-    }
-
-    /// Get all accounts hashes
-    pub fn get_accounts_hashes(&self) -> HashMap<Slot, (AccountsHash, /*capitalization*/ u64)> {
-        self.accounts_hashes.lock().unwrap().clone()
-    }
-
-    /// Set the incremental accounts hash for `slot`
-    ///
-    /// returns the previous incremental accounts hash for `slot`
-    pub fn set_incremental_accounts_hash(
-        &self,
-        slot: Slot,
-        incremental_accounts_hash: (IncrementalAccountsHash, /*capitalization*/ u64),
-    ) -> Option<(IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.incremental_accounts_hashes
-            .lock()
-            .unwrap()
-            .insert(slot, incremental_accounts_hash)
-    }
-
-    /// After deserializing a snapshot, set the incremental accounts hash for the new AccountsDb
-    pub fn set_incremental_accounts_hash_from_snapshot(
-        &mut self,
-        slot: Slot,
-        incremental_accounts_hash: SerdeIncrementalAccountsHash,
-        capitalization: u64,
-    ) -> Option<(IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.set_incremental_accounts_hash(slot, (incremental_accounts_hash.into(), capitalization))
-    }
-
-    /// Get the incremental accounts hash for `slot`
-    pub fn get_incremental_accounts_hash(
-        &self,
-        slot: Slot,
-    ) -> Option<(IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.incremental_accounts_hashes
-            .lock()
-            .unwrap()
-            .get(&slot)
-            .cloned()
-    }
-
-    /// Get all incremental accounts hashes
-    pub fn get_incremental_accounts_hashes(
-        &self,
-    ) -> HashMap<Slot, (IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.incremental_accounts_hashes.lock().unwrap().clone()
-    }
-
-    /// Purge accounts hashes that are older than `latest_full_snapshot_slot`
-    ///
-    /// Should only be called by AccountsHashVerifier, since it consumes the accounts hashes and
-    /// knows which ones are still needed.
-    pub fn purge_old_accounts_hashes(&self, latest_full_snapshot_slot: Slot) {
-        self.accounts_hashes
-            .lock()
-            .unwrap()
-            .retain(|&slot, _| slot >= latest_full_snapshot_slot);
-        self.incremental_accounts_hashes
-            .lock()
-            .unwrap()
-            .retain(|&slot, _| slot >= latest_full_snapshot_slot);
-    }
-
     fn sort_slot_storage_scan(accum: &mut BinnedHashData) -> u64 {
         let (_, sort_time) = measure_us!(accum.iter_mut().for_each(|items| {
             // sort_by vs unstable because slot and write_version are already in order
@@ -8127,10 +8028,6 @@ impl AccountsDb {
             // callers of this expect zero lamport accounts that exist in the index to be returned as Some(empty)
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
         )
-    }
-
-    pub fn accounts_hashes(&self) -> &Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>> {
-        &self.accounts_hashes
     }
 
     pub fn assert_load_account(&self, slot: Slot, pubkey: Pubkey, expected_lamports: u64) {
