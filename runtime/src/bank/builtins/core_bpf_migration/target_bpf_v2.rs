@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use {
     super::error::CoreBpfMigrationError,
-    crate::bank::{builtins::core_bpf_migration::Target, Bank},
+    crate::bank::Bank,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_loader_v3_interface::get_program_data_address,
     solana_pubkey::Pubkey,
@@ -59,12 +59,6 @@ impl TargetBpfV2 {
             program_account,
             program_data_address,
         })
-    }
-}
-
-impl Target for TargetBpfV2 {
-    fn program_data_address(&self) -> &Pubkey {
-        &self.program_data_address
     }
 }
 

@@ -13,7 +13,7 @@ use {
     solana_compute_budget::compute_budget::ComputeBudget,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
-    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
@@ -39,22 +39,16 @@ fn checked_sub<T: CheckedSub>(a: T, b: T) -> Result<T, CoreBpfMigrationError> {
         .ok_or(CoreBpfMigrationError::ArithmeticOverflow)
 }
 
-/// A trait for the target program account being migrated.
-pub(crate) trait Target {
-    /// The target program data address.
-    fn program_data_address(&self) -> &Pubkey;
-}
-
 impl Bank {
     /// Create an `AccountSharedData` with data initialized to
     /// `UpgradeableLoaderState::Program` populated with the target's new data
     /// account address.
     fn new_target_program_account(
         &self,
-        target: &dyn Target,
+        program_id: &Pubkey,
     ) -> Result<AccountSharedData, CoreBpfMigrationError> {
         let state = UpgradeableLoaderState::Program {
-            programdata_address: *target.program_data_address(),
+            programdata_address: get_program_data_address(program_id),
         };
         let lamports =
             self.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
@@ -236,7 +230,7 @@ impl Bank {
         };
 
         // Attempt serialization first before modifying the bank.
-        let new_target_program_account = self.new_target_program_account(&target)?;
+        let new_target_program_account = self.new_target_program_account(&builtin_program_id)?;
         let new_target_program_data_account =
             self.new_target_program_data_account(&source, config.upgrade_authority_address)?;
 
@@ -400,7 +394,8 @@ impl Bank {
         let source = SourceBuffer::new_checked(self, source_buffer_address)?;
 
         // Attempt serialization first before modifying the bank.
-        let new_target_program_account = self.new_target_program_account(&target)?;
+        let new_target_program_account =
+            self.new_target_program_account(&loader_v2_bpf_program_address)?;
         // Loader v2 programs do not have an upgrade authority, so pass `None` when
         // creating the new program data account.
         let new_target_program_data_account =
