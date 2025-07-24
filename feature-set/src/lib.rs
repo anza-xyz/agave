@@ -1116,7 +1116,7 @@ pub mod raise_block_limits_to_100m {
 }
 
 pub mod raise_account_cu_limit {
-    solana_pubkey::declare_id!("ToBeMade21111111111111111111111111111111111");
+    solana_pubkey::declare_id!("htsptAwi2yRoZH83SKaUXykeZGtZHgxkS2QwW1pssR8");
 }
 
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
