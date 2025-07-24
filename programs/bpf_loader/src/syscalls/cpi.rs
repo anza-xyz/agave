@@ -338,7 +338,6 @@ trait SyscallInvokeSigned {
         signers_seeds_addr: u64,
         signers_seeds_len: u64,
         memory_mapping: &MemoryMapping,
-        invoke_context: &InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<Pubkey>, Error>;
 }
@@ -456,7 +455,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         signers_seeds_addr: u64,
         signers_seeds_len: u64,
         memory_mapping: &MemoryMapping,
-        invoke_context: &InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<Pubkey>, Error> {
         let mut signers = Vec::new();
@@ -666,7 +664,6 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         signers_seeds_addr: u64,
         signers_seeds_len: u64,
         memory_mapping: &MemoryMapping,
-        invoke_context: &InvokeContext,
         check_aligned: bool,
     ) -> Result<Vec<Pubkey>, Error> {
         if signers_seeds_len > 0 {
@@ -1022,7 +1019,6 @@ fn cpi_common<S: SyscallInvokeSigned>(
         signers_seeds_addr,
         signers_seeds_len,
         memory_mapping,
-        invoke_context,
         check_aligned,
     )?;
     let is_loader_deprecated = *instruction_context
@@ -1441,7 +1437,6 @@ mod tests {
             vm_addr,
             1,
             &memory_mapping,
-            &invoke_context,
             true, // check_aligned
         )
         .unwrap();
