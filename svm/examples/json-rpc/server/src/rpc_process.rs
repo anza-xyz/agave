@@ -60,7 +60,7 @@ use {
     solana_transaction_error::TransactionError,
     solana_transaction_status::{
         map_inner_instructions, parse_ui_inner_instructions, TransactionBinaryEncoding,
-        UiTransactionEncoding,
+        UiLoadedAddresses, UiTransactionEncoding,
     },
     solana_validator_exit::Exit,
     spl_token_2022::{
@@ -664,8 +664,6 @@ impl JsonRpcRequestProcessor {
 
 /// RPC interface that an API node is expected to provide
 pub mod rpc {
-    use solana_transaction_status::UiLoadedAddresses;
-
     use super::*;
     #[rpc]
     pub trait Rpc {
