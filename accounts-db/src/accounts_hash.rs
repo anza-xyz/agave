@@ -813,47 +813,64 @@ impl AccountsHasher<'_> {
         }
 
         let mut zeros = Measure::start("eliminate zeros");
-        let DedupResult {
-            hashes_files: hashes,
-            hashes_count: hash_total,
-            lamports_sum: lamports_total,
-        } = (0..max_bin)
-            .into_par_iter()
-            .fold(DedupResult::default, |mut accum, bin| {
-                let (hashes_file, lamports_bin) =
-                    self.de_dup_accounts_in_parallel(sorted_data_by_pubkey, bin, max_bin, stats);
+        
+        // Process bins in chunks to avoid creating too many temporary files at once
+        // This prevents "too many open files" errors on systems with many accounts
+        const MAX_CONCURRENT_FILES: usize = 1024; // Configurable limit for concurrent temp files
+        let chunk_size = max_bin.min(MAX_CONCURRENT_FILES);
+        
+        let mut final_result = DedupResult::default();
+        
+        for chunk_start in (0..max_bin).step_by(chunk_size) {
+            let chunk_end = chunk_start + chunk_size;
+            
+            let chunk_result = (chunk_start..chunk_end)
+                .into_par_iter()
+                .fold(DedupResult::default, |mut accum, bin| {
+                    let (hashes_file, lamports_bin) =
+                        self.de_dup_accounts_in_parallel(sorted_data_by_pubkey, bin, max_bin, stats);
 
-                accum.lamports_sum = accum
-                    .lamports_sum
-                    .checked_add(lamports_bin)
-                    .expect("summing capitalization cannot overflow");
-                accum.hashes_count += hashes_file.count();
-                accum.hashes_files.push(hashes_file);
-                accum
-            })
-            .reduce(
-                || {
-                    DedupResult {
-                        // Allocate with Vec::new() so that no allocation actually happens. See
-                        // https://github.com/anza-xyz/agave/pull/1308.
-                        hashes_files: Vec::new(),
-                        ..Default::default()
-                    }
-                },
-                |mut a, mut b| {
-                    a.lamports_sum = a
+                    accum.lamports_sum = accum
                         .lamports_sum
-                        .checked_add(b.lamports_sum)
+                        .checked_add(lamports_bin)
                         .expect("summing capitalization cannot overflow");
-                    a.hashes_count += b.hashes_count;
-                    a.hashes_files.append(&mut b.hashes_files);
-                    a
-                },
-            );
+                    accum.hashes_count += hashes_file.count();
+                    accum.hashes_files.push(hashes_file);
+                    accum
+                })
+                .reduce(
+                    || {
+                        DedupResult {
+                            // Allocate with Vec::new() so that no allocation actually happens. See
+                            // https://github.com/anza-xyz/agave/pull/1308.
+                            hashes_files: Vec::new(),
+                            ..Default::default()
+                        }
+                    },
+                    |mut a, mut b| {
+                        a.lamports_sum = a
+                            .lamports_sum
+                            .checked_add(b.lamports_sum)
+                            .expect("summing capitalization cannot overflow");
+                        a.hashes_count += b.hashes_count;
+                        a.hashes_files.append(&mut b.hashes_files);
+                        a
+                    },
+                );
+            
+            // Merge chunk result into final result
+            final_result.lamports_sum = final_result
+                .lamports_sum
+                .checked_add(chunk_result.lamports_sum)
+                .expect("summing capitalization cannot overflow");
+            final_result.hashes_count += chunk_result.hashes_count;
+            final_result.hashes_files.extend(chunk_result.hashes_files);
+        }
+        
         zeros.stop();
         stats.zeros_time_total_us += zeros.as_us();
-        stats.hash_total += hash_total;
-        (hashes, lamports_total)
+        stats.hash_total += final_result.hashes_count;
+        (final_result.hashes_files, final_result.lamports_sum)
     }
 
     /// Given the item location, return the item in the `CalculatedHashIntermediate` slices and the next item location in the same bin.
