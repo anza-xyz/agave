@@ -835,7 +835,7 @@ pub struct TotalAccountsStats {
 }
 
 impl TotalAccountsStats {
-    pub fn accumulate_account(&mut self, address: &Pubkey, account: &AccountSharedData) {
+    pub fn accumulate_account(&mut self, account: &AccountSharedData) {
         let data_len = account.data().len();
         self.num_accounts += 1;
         self.data_len += data_len;
@@ -894,13 +894,12 @@ impl AccountsScanner {
         S: SerializeSeq,
     {
         let mut total_accounts_stats = self.total_accounts_stats.borrow_mut();
-        let rent_collector = self.bank.rent_collector();
 
         let scan_func = |account_tuple: Option<(&Pubkey, AccountSharedData, Slot)>| {
             if let Some((pubkey, account, _slot)) =
                 account_tuple.filter(|(_, account, _)| self.should_process_account(account))
             {
-                total_accounts_stats.accumulate_account(pubkey, &account, rent_collector);
+                total_accounts_stats.accumulate_account(&account);
                 self.maybe_output_account(seq_serializer, pubkey, &account);
             }
         };
@@ -915,7 +914,7 @@ impl AccountsScanner {
                     .get_account_modified_slot_with_fixed_root(pubkey)
                     .filter(|(account, _)| self.should_process_account(account))
                 {
-                    total_accounts_stats.accumulate_account(pubkey, &account, rent_collector);
+                    total_accounts_stats.accumulate_account(&account);
                     self.maybe_output_account(seq_serializer, pubkey, &account);
                 }
             }),
@@ -926,7 +925,7 @@ impl AccountsScanner {
                 .iter()
                 .filter(|(_, account)| self.should_process_account(account))
                 .for_each(|(pubkey, account)| {
-                    total_accounts_stats.accumulate_account(pubkey, account, rent_collector);
+                    total_accounts_stats.accumulate_account(account);
                     self.maybe_output_account(seq_serializer, pubkey, account);
                 }),
         }
