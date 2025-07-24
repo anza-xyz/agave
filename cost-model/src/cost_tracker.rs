@@ -131,9 +131,19 @@ impl CostTracker {
         self.in_flight_transaction_count = Saturating(0);
     }
 
+    /// Get the overall account limit.
+    pub fn get_account_limit(&self) -> u64 {
+        self.account_cost_limit
+    }
+
     /// Get the overall block limit.
     pub fn get_block_limit(&self) -> u64 {
         self.block_cost_limit
+    }
+
+    /// Get the overall vote limit.
+    pub fn get_vote_limit(&self) -> u64 {
+        self.vote_cost_limit
     }
 
     /// allows to adjust limits initiated during construction

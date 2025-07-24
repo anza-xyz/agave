@@ -4052,12 +4052,11 @@ impl Bank {
             .feature_set
             .is_active(&feature_set::raise_block_limits_to_100m::id())
         {
-            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0286_block_limits();
-            self.write_cost_tracker().unwrap().set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-            );
+            let block_cost_limit = simd_0286_block_limits();
+            let mut cost_tracker = self.write_cost_tracker().unwrap();
+            let account_cost_limit = cost_tracker.get_account_limit();
+            let vote_cost_limit = cost_tracker.get_vote_limit();
+            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
         }
 
         if !debug_do_not_add_builtins {
@@ -5339,12 +5338,11 @@ impl Bank {
         }
 
         if new_feature_activations.contains(&feature_set::raise_block_limits_to_100m::id()) {
-            let (account_cost_limit, block_cost_limit, vote_cost_limit) = simd_0286_block_limits();
-            self.write_cost_tracker().unwrap().set_limits(
-                account_cost_limit,
-                block_cost_limit,
-                vote_cost_limit,
-            );
+            let block_cost_limit = simd_0286_block_limits();
+            let mut cost_tracker = self.write_cost_tracker().unwrap();
+            let account_cost_limit = cost_tracker.get_account_limit();
+            let vote_cost_limit = cost_tracker.get_vote_limit();
+            cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
         }
     }
 
