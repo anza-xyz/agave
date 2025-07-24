@@ -160,41 +160,6 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .help("WebSocket URL for the solana cluster"),
         )
         .arg(
-            Arg::with_name("rpc_addr")
-                .long("rpc-addr")
-                .value_name("HOST:PORT")
-                .takes_value(true)
-                .conflicts_with("rpc_client")
-                .requires("tpu_addr")
-                .hidden(hidden_unless_forced())
-                .help("Specify custom rpc_addr to create thin_client. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
-        )
-        .arg(
-            Arg::with_name("tpu_addr")
-                .long("tpu-addr")
-                .value_name("HOST:PORT")
-                .conflicts_with("rpc_client")
-                .takes_value(true)
-                .requires("rpc_addr")
-                .hidden(hidden_unless_forced())
-                .help("Specify custom tpu_addr to create thin_client. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
-        )
-        .arg(
-            Arg::with_name("entrypoint")
-                .short("n")
-                .long("entrypoint")
-                .value_name("HOST:PORT")
-                .takes_value(true)
-                .hidden(hidden_unless_forced())
-                .help("Rendezvous with the cluster at this entry point; defaults to 127.0.0.1:8001. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
-        )
-        .arg(
             Arg::with_name("faucet")
                 .short("d")
                 .long("faucet")
@@ -222,17 +187,6 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
                 .help("File containing a client authority (keypair) to fund participating accounts"),
         )
         .arg(
-            Arg::with_name("num-nodes")
-                .short("N")
-                .long("num-nodes")
-                .value_name("NUM")
-                .takes_value(true)
-                .hidden(hidden_unless_forced())
-                .help("Wait for NUM nodes to converge. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
-        )
-        .arg(
             Arg::with_name("threads")
                 .short("t")
                 .long("threads")
@@ -251,25 +205,6 @@ pub fn build_args<'a>(version: &'_ str) -> App<'a, '_> {
             Arg::with_name("sustained")
                 .long("sustained")
                 .help("Use sustained performance mode vs. peak mode. This overlaps the tx generation with transfers."),
-        )
-        .arg(
-            Arg::with_name("no-multi-client")
-                .long("no-multi-client")
-                .hidden(hidden_unless_forced())
-                .help("Disable multi-client support, only transact with the entrypoint. \
-                    Note: ThinClient is deprecated. Flag will not be used. \
-                    Use tpc_client or rpc_client instead"),
-        )
-        .arg(
-            Arg::with_name("target_node")
-                .long("target-node")
-                .requires("no-multi-client")
-                .takes_value(true)
-                .value_name("PUBKEY")
-                .hidden(hidden_unless_forced())
-                .help("Specify an exact node to send transactions to. \
-                    Note: ThinClient is deprecated. Argument will not be used. \
-                    Use tpc_client or rpc_client instead"),
         )
         .arg(
             Arg::with_name("tx_count")
