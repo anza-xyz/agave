@@ -65,7 +65,7 @@ impl<'a> Shred<'a> for ShredData {
     where
         Payload: From<T>,
     {
-        let mut payload = Payload::from(payload);
+        let mut payload = Payload::from(payload).into_bytes_mut();
         let mut cursor = Cursor::new(&payload[..]);
         let common_header: ShredCommonHeader = deserialize_from_with_limit(&mut cursor)?;
         if common_header.shred_variant != ShredVariant::LegacyData {
@@ -83,7 +83,7 @@ impl<'a> Shred<'a> for ShredData {
         let shred = Self {
             common_header,
             data_header,
-            payload,
+            payload: payload.into(),
         };
         shred.sanitize().map(|_| shred)
     }
@@ -273,7 +273,7 @@ impl ShredData {
     // Only for tests.
     pub(crate) fn set_last_in_slot(&mut self) {
         self.data_header.flags |= ShredFlags::LAST_SHRED_IN_SLOT;
-        let buffer = &mut self.payload[SIZE_OF_COMMON_SHRED_HEADER..];
+        let buffer = &mut self.payload.as_mut()[SIZE_OF_COMMON_SHRED_HEADER..];
         bincode::serialize_into(buffer, &self.data_header).unwrap();
     }
 }

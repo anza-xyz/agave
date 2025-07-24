@@ -1007,13 +1007,11 @@ impl Blockstore {
                 match shred.shred_type() {
                     ShredType::Code => {
                         // Don't need Arc overhead here!
-                        debug_assert_matches!(shred.payload(), shred::Payload::Unique(_));
                         recovered_shreds.push(shred.into_payload());
                         None
                     }
                     ShredType::Data => {
                         // Verify that the cloning is cheap here.
-                        debug_assert_matches!(shred.payload(), shred::Payload::Shared(_));
                         recovered_shreds.push(shred.payload().clone());
                         Some(shred)
                     }
@@ -10868,7 +10866,7 @@ pub mod tests {
         let even_smaller_last_shred_duplicate = {
             let mut payload = shreds[smaller_last_shred_index - 1].payload().clone();
             // Flip a byte to create a duplicate shred
-            payload[0] = u8::MAX - payload[0];
+            payload.as_mut()[0] = u8::MAX - payload[0];
             let mut shred = Shred::new_from_serialized_shred(payload).unwrap();
             shred.set_last_in_slot();
             shred
