@@ -1109,7 +1109,7 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
-        bank.accounts_data_size_initial = bank.get_total_accounts_data_len().unwrap();
+        bank.accounts_data_size_initial = bank.calculate_accounts_data_size().unwrap();
 
         bank
     }
@@ -5510,16 +5510,17 @@ impl Bank {
     /// Panics if total overflows a u64.
     ///
     /// Note, this may be *very* expensive, as *all* accounts are collected
-    /// into a Vec before summming each account's data size.
+    /// into a Vec before summing each account's data size.
     ///
     /// Only intended to be called by tests or when the number of accounts is small.
-    pub fn get_total_accounts_data_len(&self) -> ScanResult<u64> {
+    pub fn calculate_accounts_data_size(&self) -> ScanResult<u64> {
         let accounts = self.get_all_accounts(false)?;
-        let mut data_len = 0_u64;
-        accounts.iter().for_each(|(_, account, _)| {
-            data_len = data_len.saturating_add(account.data().len() as u64);
-        });
-        Ok(data_len)
+        let accounts_data_size = accounts
+            .into_iter()
+            .map(|(_pubkey, account, _slot)| account.data().len() as u64)
+            .try_fold(0, u64::checked_add)
+            .expect("accounts data size cannot overflow");
+        Ok(accounts_data_size)
     }
 
     pub fn is_in_slot_hashes_history(&self, slot: &Slot) -> bool {

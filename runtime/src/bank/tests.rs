@@ -10346,7 +10346,7 @@ fn test_accounts_data_size_with_default_bank() {
     let bank = Bank::default_for_tests();
     assert_eq!(
         bank.load_accounts_data_size(),
-        bank.get_total_accounts_data_len().unwrap()
+        bank.calculate_accounts_data_size().unwrap()
     );
 }
 
@@ -10367,7 +10367,7 @@ fn test_accounts_data_size_from_genesis() {
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
     assert_eq!(
         bank.load_accounts_data_size(),
-        bank.get_total_accounts_data_len().unwrap()
+        bank.calculate_accounts_data_size().unwrap()
     );
 
     // Create accounts over a number of banks and ensure the accounts data size remains correct
@@ -10395,7 +10395,7 @@ fn test_accounts_data_size_from_genesis() {
 
         assert_eq!(
             bank.load_accounts_data_size(),
-            bank.get_total_accounts_data_len().unwrap(),
+            bank.calculate_accounts_data_size().unwrap(),
         );
     }
 }
