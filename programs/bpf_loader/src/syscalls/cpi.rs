@@ -1080,9 +1080,9 @@ fn cpi_common<S: SyscallInvokeSigned>(
             if translate_account.update_caller_account_region {
                 update_caller_account_region(
                     memory_mapping,
+                    check_aligned,
                     &translate_account.caller_account,
                     &mut callee_account,
-                    is_loader_deprecated,
                 )?;
             }
         }
@@ -1156,11 +1156,12 @@ fn update_callee_account(
 
 fn update_caller_account_region(
     memory_mapping: &mut MemoryMapping,
+    check_aligned: bool,
     caller_account: &CallerAccount,
     callee_account: &mut BorrowedAccount<'_>,
-    is_loader_deprecated: bool,
 ) -> Result<(), Error> {
-    let address_space_reserved_for_account = if is_loader_deprecated {
+    let is_caller_loader_deprecated = !check_aligned;
+    let address_space_reserved_for_account = if is_caller_loader_deprecated {
         caller_account.original_data_len
     } else {
         caller_account
