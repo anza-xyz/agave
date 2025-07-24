@@ -6,6 +6,8 @@ use {
     crossbeam_channel::{bounded, Receiver, Sender},
     dashmap::DashMap,
     futures::future::err,
+    serde::de::DeserializeOwned,
+    serde_bytes::Deserialize,
     solana_clock::Slot,
     solana_gossip::{
         cluster_info::ClusterInfo,
@@ -33,12 +35,34 @@ use {
     },
 };
 
+/// This is a placeholder that is only used for load-testing.
+/// This is not representative of the actual alpenglow implementation.
+pub(crate) struct MockAlpenglowConsensus {
+    sender_thread: JoinHandle<()>,
+    listener_thread: JoinHandle<()>,
+    state: Arc<[Mutex<SharedState>; 3]>, // internal state of the test
+    highest_slot: Slot,                  // highest slot we have observed so far
+    safety_latch_engaged: bool, // will be set to true if root bank is too far behind the slot we are voting for
+    should_exit: Arc<AtomicBool>,
+    verify_signatures: Arc<AtomicBool>,
+    packet_size: Arc<AtomicU16>,
+    // external state
+    epoch_specs: EpochSpecs,
+    cluster_info: Arc<ClusterInfo>,
+    // control of internal threadpool that handles test timings
+    slot_sender: Option<Sender<Slot>>,
+    thread_pool: [JoinHandle<()>; 3],
+}
+
+/// Information we hold for individual peers in the test
 struct PeerData {
     stake: Stake,
     address: SocketAddr,
     relative_toa: [Option<Duration>; 4],
 }
 
+/// State machine internal state for the mock alpenglow
+/// This roughly approximates the actual certificate pool behavior
 #[derive(Default, Debug)]
 struct AgStateMachine {
     block_notarized: bool,
@@ -80,27 +104,11 @@ impl SharedState {
     }
 }
 
-/// This is a placeholder that is only used for load-testing.
-/// This is not representative of the actual alpenglow implementation.
-pub(crate) struct MockAlpenglowConsensus {
-    sender_thread: JoinHandle<()>,
-    listener_thread: JoinHandle<()>,
-    state: Arc<[Mutex<SharedState>; 3]>, // internal state of the test
-    command_sender: Sender<Command>,
-    highest_slot: Slot,         // highest slot we have observed so far
-    safety_latch_engaged: bool, // will be set to true if root bank is too far behind the slot we are voting for
-    should_exit: Arc<AtomicBool>,
-    verify_signatures: Arc<AtomicBool>,
-    packet_size: Arc<AtomicU16>,
-    // external state
-    epoch_specs: EpochSpecs,
-    cluster_info: Arc<ClusterInfo>,
-}
-
 fn get_state_for_slot(states: &[Mutex<SharedState>], slot: Slot) -> &Mutex<SharedState> {
     &states[(slot % 3) as usize]
 }
 
+/// This is just for test, and does not represent actual alpenglow
 #[derive(Copy, Clone, Debug)]
 #[repr(u64)]
 enum VotorMessageType {
@@ -124,8 +132,10 @@ impl TryFrom<u64> for VotorMessageType {
         }
     }
 }
+
 /// Header of the mock vote packet.
-/// Actual frames on the wire are `MOCK_VOTE_PACKET_SIZE` in length
+/// Actual frames on the wire may be longer as
+/// configured by the sender. Only the header is signed.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 struct MockVotePacketHeader {
@@ -149,11 +159,10 @@ impl MockVotePacketHeader {
         bytemuck::from_bytes::<MockVotePacketHeader>(&buf[..MOCK_VOTE_HEADER_SIZE])
     }
 }
-const EXIT_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Max number of slots we can be ahead of the root bank
 /// before triggering safety latching
-const MAX_TOWER_HEIGHT: Slot = 32 + 8;
+const MAX_TOWER_HEIGHT: Slot = 32 + 100;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Command {
@@ -172,14 +181,21 @@ impl MockAlpenglowConsensus {
         info!("Mock Alpenglow consensus is enabled");
         let socket = Arc::new(alpenglow_socket);
         let (command_sender, vote_command_receiver) = bounded(4);
-        let shared_state = Arc::new([
-            Mutex::new(SharedState::new(0)),
-            Mutex::new(SharedState::new(0)),
-            Mutex::new(SharedState::new(0)),
-        ]);
+        let shared_state = Arc::new(std::array::from_fn(|_| Mutex::new(SharedState::new(0))));
         let should_exit = Arc::new(AtomicBool::new(false));
         let verify_signatures = Arc::new(AtomicBool::new(false));
         let packet_size = Arc::new(AtomicU16::new(512));
+
+        let (slot_sender, slot_receiver) = bounded(4);
+        let thread_pool = std::array::from_fn(|_| {
+            let slot_receiver = slot_receiver.clone();
+            let command_sender = command_sender.clone();
+            let state = shared_state.clone();
+            thread::spawn(move || {
+                Self::runner(slot_receiver, command_sender, state);
+            })
+        });
+
         Self {
             state: shared_state.clone(),
             listener_thread: thread::spawn({
@@ -189,7 +205,6 @@ impl MockAlpenglowConsensus {
                 let socket = socket.clone();
                 let cluster_info = cluster_info.clone();
                 let epoch_specs = epoch_specs.clone();
-                let command_sender = command_sender.clone();
                 move || {
                     Self::listener_thread(
                         shared_state,
@@ -204,13 +219,11 @@ impl MockAlpenglowConsensus {
             }),
             sender_thread: thread::spawn({
                 let epoch_specs = epoch_specs.clone();
-                let should_exit = should_exit.clone();
                 let cluster_info = cluster_info.clone();
                 let packet_size = packet_size.clone();
                 move || {
                     Self::sender_thread(
                         shared_state,
-                        should_exit,
                         packet_size,
                         cluster_info,
                         epoch_specs,
@@ -222,11 +235,12 @@ impl MockAlpenglowConsensus {
             should_exit,
             packet_size,
             epoch_specs,
-            command_sender,
             cluster_info,
             verify_signatures,
             highest_slot: 0,
             safety_latch_engaged: false,
+            slot_sender: Some(slot_sender),
+            thread_pool,
         }
     }
 
@@ -294,6 +308,10 @@ impl MockAlpenglowConsensus {
             for p in packets.iter_mut() {
                 *p.meta_mut() = Meta::default();
             }
+
+            if should_exit.load(Ordering::Relaxed) {
+                return;
+            }
             // recv_mmsg should timeout in 1 second
             let n = match recv_mmsg(&socket, &mut packets) {
                 // we may have received no packets, in this case we can safely skip the rest
@@ -311,9 +329,6 @@ impl MockAlpenglowConsensus {
                     }
                 }
             };
-            if should_exit.load(Ordering::Relaxed) {
-                return;
-            }
 
             let verify_signatures = verify_signatures.load(Ordering::Relaxed);
             for pkt in packets.iter().take(n) {
@@ -451,7 +466,6 @@ impl MockAlpenglowConsensus {
     /// Sends mock packets to everyone in the cluster
     fn sender_thread(
         state: Arc<[Mutex<SharedState>; 3]>,
-        should_exit: Arc<AtomicBool>,
         packet_size: Arc<AtomicU16>,
         cluster_info: Arc<ClusterInfo>,
         mut epoch_specs: EpochSpecs,
@@ -460,13 +474,7 @@ impl MockAlpenglowConsensus {
     ) {
         let mut packet_buf = vec![0u8; MOCK_VOTE_PACKET_MAX_SIZE];
         let id = cluster_info.id();
-        loop {
-            let Ok(command) = command.recv_timeout(EXIT_CHECK_INTERVAL) else {
-                if should_exit.load(Ordering::Relaxed) {
-                    return;
-                }
-                continue;
-            };
+        for command in command.iter() {
             let (slot, votor_msg) = match command {
                 Command::SendNotarize(slot) => (slot, VotorMessageType::Notarize),
                 Command::SendNotarizeCertificate(slot) => {
@@ -510,10 +518,9 @@ impl MockAlpenglowConsensus {
         }
     }
 
-    pub(crate) fn signal_new_slot(&mut self, slot: Slot, bank: &Bank) {
-        let Some(config) = get_test_config_from_account(bank) else {
-            debug!("Alpenglow votes disabled by on-chain config");
-            return;
+    pub(crate) fn signal_new_slot(&mut self, slot: Slot, root_bank: &Bank) {
+        let Some(config) = get_test_config_from_account::<TestConfig>(root_bank) else {
+            return; // no config is available => test can not run
         };
         // copy basic parameters from the config
         self.packet_size
@@ -521,8 +528,15 @@ impl MockAlpenglowConsensus {
         self.verify_signatures
             .store(config.verify_signatures, Ordering::Relaxed);
         let interval = config.test_interval_slots as u64;
+        if interval > 0 {
+            debug!("Alpenglow test interval set to {} slots", interval);
+        } else {
+            self.safety_latch_engaged = false;
+            debug!("Alpenglow test disabled by on-chain config");
+            return;
+        }
 
-        // ensure we do not start process to early
+        // ensure we do not start process at inappropriate time
         if slot < self.highest_slot || slot < 3 {
             trace!(
                 "Skipping AG logic for slot {slot}, current highest slot is {}",
@@ -532,7 +546,8 @@ impl MockAlpenglowConsensus {
         }
 
         // If we fall too far behind and can not root banks, engage safety latch to stop the test
-        if interval > 0 && bank.slot() < slot - MAX_TOWER_HEIGHT {
+        // and keep it stopped no matter what the config says
+        if root_bank.slot() < slot - MAX_TOWER_HEIGHT {
             error!(
                 "root bank is too far behind ({} vs {slot}). safety latch triggered, test is disabled",
                 self.highest_slot
@@ -553,134 +568,64 @@ impl MockAlpenglowConsensus {
         // concurrent processes at once to ensure we are voting every slot.
         // Generally we'd be trigering some phase of the test for a slot
         // that divides by interval.
-
-        match interval {
-            0 => {
-                // If test is explicitly disabled, deactivate the safety latch
-                // and do nothing else
-                self.safety_latch_engaged = false;
-            }
-            n => {
-                if slot % interval == 0 {
-                    // prep to receive next slot's votes
-                    match self.prepare_to_receive(slot + 1) {
-                        Ok(_) => {
-                            std::thread::spawn({
-                                let command_sender = self.command_sender.clone();
-                                let state = self.state.clone();
-                                move || Self::runner(slot, command_sender, state)
-                            });
-                        }
-                        Err(slot) => {
-                            error!("Can not initiate mock voting, all slots are busy");
+        debug_assert_ne!(interval, 0, "we should have checked for this earlier");
+        if slot % interval == 0 {
+            // prep to receive next slot's votes
+            match self.prepare_to_receive(slot) {
+                Ok(_) => {
+                    if let Some(slot_sender) = self.slot_sender.as_ref() {
+                        if slot_sender.try_send(slot).is_err() {
+                            error!("Can not initiate mock voting, all workers are busy");
                             datapoint_info!("mock_alpenglow", ("runner_stuck", 1, i64),);
                         }
+                    } else {
+                        return;
                     }
+                }
+                Err(slot) => {
+                    error!("Can not initiate mock voting, all slots are busy");
+                    datapoint_info!("mock_alpenglow", ("runner_stuck", 1, i64),);
                 }
             }
         }
     }
 
-    /// Runs one test for 3 slots
-    fn runner(slot: Slot, command_sender: Sender<Command>, state: Arc<[Mutex<SharedState>; 3]>) {
-        std::thread::sleep(Duration::from_millis(400));
-        trace!("Starting voting in slot {slot}");
-        command_sender.send(Command::SendNotarize(slot));
-        // collect stuff from previous slot
-        std::thread::sleep(Duration::from_millis(400));
-        let (peers, total_staked) = {
-            let mut lockguard = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
-            // check if tasks have been aborted and do not report garbage
-            if lockguard.current_slot == 0 {
-                return;
-            }
-            let total_staked = lockguard.total_staked;
-            let peers = lockguard.reset();
-            (peers, total_staked)
-        };
-        Self::report_collected_votes(peers, total_staked, slot);
+    /// Runs one test for 3 slots when new slot index
+    /// is sent over slot_receiver channel
+    fn runner(
+        slot_receiver: Receiver<Slot>,
+        command_sender: Sender<Command>,
+        state: Arc<[Mutex<SharedState>; 3]>,
+    ) {
+        for slot in slot_receiver.iter() {
+            std::thread::sleep(Duration::from_millis(400));
+            trace!("Starting voting in slot {slot}");
+            command_sender.send(Command::SendNotarize(slot));
+            // collect stuff from previous slot
+            std::thread::sleep(Duration::from_millis(400));
+            let (peers, total_staked) = {
+                let mut lockguard = get_state_for_slot(state.as_slice(), slot).lock().unwrap();
+                // check if tasks have been aborted and do not report garbage
+                if lockguard.current_slot == 0 {
+                    return;
+                }
+                let total_staked = lockguard.total_staked;
+                let peers = lockguard.reset();
+                (peers, total_staked)
+            };
+            report_collected_votes(peers, total_staked, slot);
+        }
     }
 
-    fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake, slot: Slot) {
-        trace!("Reporting statistics for slot {}", slot);
-
-        let mut total_voted_stake: [Stake; 4] = [0; 4];
-        let mut total_voted_nodes: [usize; 4] = [0; 4];
-        let mut total_delay_ms = [0u128; 4];
-        for (pubkey, peer_data) in peers.iter() {
-            for i in 0..4 {
-                let Some(rel_toa) = peer_data.relative_toa[i] else {
-                    continue;
-                };
-                total_voted_stake[i] += peer_data.stake;
-                total_voted_nodes[i] += 1;
-                total_delay_ms[i] +=
-                    (rel_toa.as_millis().clamp(0, 800) as u128) * peer_data.stake as u128;
-            }
-        }
-
-        let mut stake_weighted_delay = [0f64; 4];
-        let mut percent_collected = [0f64; 4];
-
-        for i in 0..4 {
-            if total_voted_stake[i] > 0 {
-                stake_weighted_delay[i] = total_delay_ms[i] as f64 / total_voted_stake[i] as f64;
-            }
-            percent_collected[i] = 100.0 * total_voted_stake[i] as f64 / total_staked as f64;
-
-            info!(
-                "{:?}: got {} % of total stake collected, stake-weighted delay is {}ms",
-                VotorMessageType::try_from(i as u64).unwrap(), // this unwrap is ok since i is in static range
-                percent_collected[i],
-                stake_weighted_delay[i]
-            );
-        }
-        datapoint_info!(
-            "mock_alpenglow",
-            ("total_peers", peers.len(), f64),
-            ("packets_collected_notarize", total_voted_nodes[0], f64),
-            (
-                "percent_stake_collected_notarize",
-                percent_collected[0],
-                f64
-            ),
-            ("weighted_delay_ms_notarize", stake_weighted_delay[0], f64),
-            ("packets_collected_notarize_cert", total_voted_nodes[1], f64),
-            (
-                "percent_stake_collected_notarize_cert",
-                percent_collected[1],
-                f64
-            ),
-            (
-                "weighted_delay_ms_notarize_cert",
-                stake_weighted_delay[1],
-                f64
-            ),
-            ("packets_collected_finalize", total_voted_nodes[2], f64),
-            (
-                "percent_stake_collected_finalize",
-                percent_collected[2],
-                f64
-            ),
-            ("weighted_delay_ms_finalize", stake_weighted_delay[2], f64),
-            ("packets_collected_finalize_cert", total_voted_nodes[3], f64),
-            (
-                "percent_stake_collected_finalize_cert",
-                percent_collected[3],
-                f64
-            ),
-            (
-                "weighted_delay_ms_finalize_cert",
-                stake_weighted_delay[3],
-                f64
-            ),
-        );
-    }
-
-    pub(crate) fn join(self) -> thread::Result<()> {
+    pub(crate) fn join(mut self) -> thread::Result<()> {
         self.should_exit.store(true, Ordering::Relaxed);
-        self.sender_thread.join()?;
-        self.listener_thread.join()
+        drop(self.slot_sender.take()); // drop slot_sender to cause runners to terminate
+        self.listener_thread.join()?; // this exits because of the should_exit flag we have set
+
+        for jh in self.thread_pool {
+            jh.join()?; // these exit because slot_sender is dropped
+        }
+        self.sender_thread.join()
     }
 }
 
@@ -706,36 +651,104 @@ fn prep_and_sign_packet(
     }
 }
 
+// Pubkey for the account that is used to control the test via on-chain state
 mod control_pubkey {
     solana_pubkey::declare_id!("9PsiyXopc2M9DMEmsEeafNHHHAUmPKe9mHYgrk6fHPyx");
 }
 
+/// Actual on-chain state that controls the mock alpenglow test
 #[derive(Deserialize, Debug)]
 #[repr(C)]
 pub(crate) struct TestConfig {
-    _version: u8,         // This is part of Record program header
-    _authority: [u8; 32], // This is part of Record program header
-    test_interval_slots: u8,
+    _version: u8,            // This is part of Record program header
+    _authority: [u8; 32],    // This is part of Record program header
+    test_interval_slots: u8, // 0 here means test is disabled
     verify_signatures: bool,
-    packet_size: u16, // packet size
+    packet_size: u16,
     _future_use: [u8; 16],
 }
 
-// Returns the current test periodicity
-pub(crate) fn get_test_config_from_account(bank: &Bank) -> Option<TestConfig> {
+///Parse an account's content, keeping it in cache.
+pub(crate) fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> Option<T> {
     let data = bank
         .accounts()
         .accounts_db
         .load_account_with(&bank.ancestors, &control_pubkey::ID, |_| true)?
         .0;
-    let x: TestConfig = data.deserialize_data().ok()?;
-    if x.test_interval_slots > 0 {
-        debug!(
-            "Alpenglow test interval set to {} slots",
-            x.test_interval_slots
-        );
-        Some(x)
-    } else {
-        None
+    data.deserialize_data().ok()
+}
+
+fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake, slot: Slot) {
+    trace!("Reporting statistics for slot {}", slot);
+    let mut total_voted_stake: [Stake; 4] = [0; 4];
+    let mut total_voted_nodes: [usize; 4] = [0; 4];
+    let mut total_delay_ms = [0u128; 4];
+    for (pubkey, peer_data) in peers.iter() {
+        for i in 0..4 {
+            let Some(rel_toa) = peer_data.relative_toa[i] else {
+                continue;
+            };
+            total_voted_stake[i] += peer_data.stake;
+            total_voted_nodes[i] += 1;
+            total_delay_ms[i] +=
+                (rel_toa.as_millis().clamp(0, 800) as u128) * peer_data.stake as u128;
+        }
     }
+
+    let mut stake_weighted_delay = [0f64; 4];
+    let mut percent_collected = [0f64; 4];
+
+    for i in 0..4 {
+        if total_voted_stake[i] > 0 {
+            stake_weighted_delay[i] = total_delay_ms[i] as f64 / total_voted_stake[i] as f64;
+        }
+        percent_collected[i] = 100.0 * total_voted_stake[i] as f64 / total_staked as f64;
+
+        info!(
+            "{:?}: got {} % of total stake collected, stake-weighted delay is {}ms",
+            VotorMessageType::try_from(i as u64).unwrap(), // this unwrap is ok since i is in static range
+            percent_collected[i],
+            stake_weighted_delay[i]
+        );
+    }
+    datapoint_info!(
+        "mock_alpenglow",
+        ("total_peers", peers.len(), f64),
+        ("packets_collected_notarize", total_voted_nodes[0], f64),
+        (
+            "percent_stake_collected_notarize",
+            percent_collected[0],
+            f64
+        ),
+        ("weighted_delay_ms_notarize", stake_weighted_delay[0], f64),
+        ("packets_collected_notarize_cert", total_voted_nodes[1], f64),
+        (
+            "percent_stake_collected_notarize_cert",
+            percent_collected[1],
+            f64
+        ),
+        (
+            "weighted_delay_ms_notarize_cert",
+            stake_weighted_delay[1],
+            f64
+        ),
+        ("packets_collected_finalize", total_voted_nodes[2], f64),
+        (
+            "percent_stake_collected_finalize",
+            percent_collected[2],
+            f64
+        ),
+        ("weighted_delay_ms_finalize", stake_weighted_delay[2], f64),
+        ("packets_collected_finalize_cert", total_voted_nodes[3], f64),
+        (
+            "percent_stake_collected_finalize_cert",
+            percent_collected[3],
+            f64
+        ),
+        (
+            "weighted_delay_ms_finalize_cert",
+            stake_weighted_delay[3],
+            f64
+        ),
+    );
 }
