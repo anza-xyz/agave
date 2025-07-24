@@ -239,7 +239,7 @@ impl Bank {
         };
 
         // Attempt serialization first before modifying the bank.
-        let new_target_program_account = self.new_target_program_account(&builtin_program_id)?;
+        let new_target_program_account = self.new_target_program_account(builtin_program_id)?;
         let new_target_program_data_account =
             self.new_target_program_data_account(&source, config.upgrade_authority_address)?;
 
@@ -404,7 +404,7 @@ impl Bank {
 
         // Attempt serialization first before modifying the bank.
         let new_target_program_account =
-            self.new_target_program_account(&loader_v2_bpf_program_address)?;
+            self.new_target_program_account(loader_v2_bpf_program_address)?;
         // Loader v2 programs do not have an upgrade authority, so pass `None` when
         // creating the new program data account.
         let new_target_program_data_account =
