@@ -21,7 +21,7 @@ use {
     solana_core::{banking_stage::BankingStage, banking_trace::BankingTracer},
     solana_entry::entry::{next_hash, Entry},
     solana_genesis_config::GenesisConfig,
-    solana_gossip::cluster_info::{ClusterInfo, Node},
+    solana_gossip::{cluster_info::ClusterInfo, node::Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{

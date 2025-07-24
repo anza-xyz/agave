@@ -2078,6 +2078,92 @@ impl Blockstore {
             || chained_merkle_root == merkle_root
     }
 
+    /// Refactored function name resolution for issue #5923: Blockstore function naming conventions
+    ///
+    /// The original `should_insert_data_shred` function was confusing because its name and types
+    /// implied it was a pure query function, but it actually mutated the blockstore by calling
+    /// `store_duplicate_slot`. This refactoring splits the functionality into two functions:
+    ///
+    /// 1. `should_insert_data_shred_pure` - A pure query function that performs validation checks
+    ///    without any mutations. This can be used safely in contexts where mutations are not desired.
+    ///
+    /// 2. `should_insert_data_shred` - The mutating function that handles duplicate detection and
+    ///    storage. This function explicitly documents that it may mutate the blockstore.
+    ///
+    /// This separation provides clearer semantics and prevents confusion about function behavior.
+
+    /// Checks if a data shred should be inserted without performing any mutations.
+    /// Returns true if the shred passes all validation checks and should be inserted.
+    fn should_insert_data_shred_pure(
+        &self,
+        shred: &Shred,
+        slot_meta: &SlotMeta,
+        max_root: Slot,
+        leader_schedule: Option<&LeaderScheduleCache>,
+        shred_source: ShredSource,
+    ) -> bool {
+        let shred_index = u64::from(shred.index());
+        let slot = shred.slot();
+        let last_in_slot = if shred.last_in_slot() {
+            debug!("got last in slot");
+            true
+        } else {
+            false
+        };
+        debug_assert_matches!(shred.sanitize(), Ok(()));
+
+        // Check that we do not receive shred_index >= than the last_index
+        // for the slot
+        let last_index = slot_meta.last_index;
+        if last_index.map(|ix| shred_index >= ix).unwrap_or_default() {
+            let leader_pubkey = leader_schedule
+                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
+
+            datapoint_error!(
+                "blockstore_error",
+                (
+                    "error",
+                    format!(
+                        "Leader {leader_pubkey:?}, slot {slot}: received index {shred_index} >= \
+                         slot.last_index {last_index:?}, shred_source: {shred_source:?}"
+                    ),
+                    String
+                )
+            );
+            return false;
+        }
+
+        // Check that we do not receive a shred with "last_index" true, but shred_index
+        // less than our current received
+        if last_in_slot && shred_index < slot_meta.received {
+            let leader_pubkey = leader_schedule
+                .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
+
+            datapoint_error!(
+                "blockstore_error",
+                (
+                    "error",
+                    format!(
+                        "Leader {:?}, slot {}: received shred_index {} < slot.received {}, \
+                         shred_source: {:?}",
+                        leader_pubkey, slot, shred_index, slot_meta.received, shred_source
+                    ),
+                    String
+                )
+            );
+            return false;
+        }
+
+        // TODO Shouldn't this use shred.parent() instead and update
+        // slot_meta.parent_slot accordingly?
+        slot_meta
+            .parent_slot
+            .map(|parent_slot| verify_shred_slots(slot, parent_slot, max_root))
+            .unwrap_or_default()
+    }
+
+    /// Checks if a data shred should be inserted and handles duplicate detection with mutations.
+    /// This function may mutate the blockstore by storing duplicate slot information.
     fn should_insert_data_shred(
         &self,
         shred: &Shred,
@@ -2090,15 +2176,9 @@ impl Blockstore {
     ) -> bool {
         let shred_index = u64::from(shred.index());
         let slot = shred.slot();
-        let last_in_slot = if shred.last_in_slot() {
-            debug!("got last in slot");
-            true
-        } else {
-            false
-        };
-        debug_assert_matches!(shred.sanitize(), Ok(()));
-        // Check that we do not receive shred_index >= than the last_index
-        // for the slot
+        let last_in_slot = shred.last_in_slot();
+
+        // Handle duplicate detection and storage for shred_index >= last_index case
         let last_index = slot_meta.last_index;
         if last_index.map(|ix| shred_index >= ix).unwrap_or_default() {
             let leader_pubkey = leader_schedule
@@ -2148,8 +2228,8 @@ impl Blockstore {
             );
             return false;
         }
-        // Check that we do not receive a shred with "last_index" true, but shred_index
-        // less than our current received
+
+        // Handle duplicate detection and storage for last_in_slot && shred_index < received case
         if last_in_slot && shred_index < slot_meta.received {
             let leader_pubkey = leader_schedule
                 .and_then(|leader_schedule| leader_schedule.slot_leader_at(slot, None));
@@ -2200,12 +2280,14 @@ impl Blockstore {
             return false;
         }
 
-        // TODO Shouldn't this use shred.parent() instead and update
-        // slot_meta.parent_slot accordingly?
-        slot_meta
-            .parent_slot
-            .map(|parent_slot| verify_shred_slots(slot, parent_slot, max_root))
-            .unwrap_or_default()
+        // Use the pure function for the final validation check
+        self.should_insert_data_shred_pure(
+            shred,
+            slot_meta,
+            max_root,
+            leader_schedule,
+            shred_source,
+        )
     }
 
     fn insert_data_shred<'a>(

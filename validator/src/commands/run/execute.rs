@@ -40,7 +40,8 @@ use {
         },
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, Node, NodeConfig, DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS},
+        cluster_info::DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
+        node::{BindIpAddrs, Node, NodeConfig},
         contact_info::ContactInfo,
     },
     solana_hash::Hash,

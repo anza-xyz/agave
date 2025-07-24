@@ -25,7 +25,8 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
+        cluster_info::ClusterInfo,
+        node::{BindIpAddrs, Node, NodeConfig},
         contact_info::Protocol,
     },
     solana_inflation::Inflation,

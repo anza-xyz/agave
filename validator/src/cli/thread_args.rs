@@ -4,6 +4,10 @@ use {
     clap::{value_t_or_exit, Arg, ArgMatches},
     solana_accounts_db::{accounts_db, accounts_index},
     solana_clap_utils::{hidden_unless_forced, input_validators::is_within_range},
+    solana_gossip::cluster_info::{
+        DEFAULT_NUM_TVU_RECEIVE_SOCKETS, DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS,
+        MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS,
+    },
     solana_rayon_threadlimit::get_thread_count,
     std::{num::NonZeroUsize, ops::RangeInclusive},
 };
@@ -368,10 +372,10 @@ impl ThreadArg for TvuReceiveThreadsArg {
         "Number of threads (and sockets) to use for receiving shreds on the TVU port";
 
     fn default() -> usize {
-        solana_gossip::cluster_info::DEFAULT_NUM_TVU_RECEIVE_SOCKETS.get()
+        DEFAULT_NUM_TVU_RECEIVE_SOCKETS.get()
     }
     fn min() -> usize {
-        solana_gossip::cluster_info::MINIMUM_NUM_TVU_RECEIVE_SOCKETS.get()
+        1
     }
 }
 
@@ -382,11 +386,11 @@ impl ThreadArg for TvuRetransmitThreadsArg {
     const HELP: &'static str = "Number of threads (and sockets) to use for retransmitting shreds";
 
     fn default() -> usize {
-        solana_gossip::cluster_info::DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS.get()
+        DEFAULT_NUM_TVU_RETRANSMIT_SOCKETS.get()
     }
 
     fn min() -> usize {
-        solana_gossip::cluster_info::MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS.get()
+        MINIMUM_NUM_TVU_RETRANSMIT_SOCKETS.get()
     }
 }
 

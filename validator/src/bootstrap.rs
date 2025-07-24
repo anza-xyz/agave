@@ -9,7 +9,8 @@ use {
     solana_download_utils::{download_snapshot_archive, DownloadProgressRecord},
     solana_genesis_utils::download_then_check_genesis_hash,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
+        node::Node,
         contact_info::{ContactInfo, Protocol},
         crds_data,
         gossip_service::GossipService,

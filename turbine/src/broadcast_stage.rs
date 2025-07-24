@@ -584,7 +584,7 @@ pub mod test {
         crossbeam_channel::unbounded,
         rand::Rng,
         solana_entry::entry::create_ticks,
-        solana_gossip::cluster_info::{ClusterInfo, Node},
+        solana_gossip::{cluster_info::ClusterInfo, node::Node},
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{

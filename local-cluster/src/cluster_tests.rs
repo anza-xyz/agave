@@ -13,7 +13,7 @@ use {
     solana_entry::entry::{self, Entry, EntrySlice},
     solana_epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
     solana_gossip::{
-        cluster_info::{self, ClusterInfo},
+        cluster_info::{push_messages_to_peer_for_tests, ClusterInfo},
         contact_info::ContactInfo,
         crds::Cursor,
         crds_data::{self, CrdsData},
@@ -665,7 +665,7 @@ pub fn submit_vote_to_cluster_gossip(
         None,
     );
 
-    cluster_info::push_messages_to_peer_for_tests(
+    push_messages_to_peer_for_tests(
         vec![CrdsValue::new(
             CrdsData::Vote(
                 0,

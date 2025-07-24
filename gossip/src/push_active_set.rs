@@ -26,7 +26,7 @@ impl PushActiveSet {
     #[cfg(debug_assertions)]
     const MIN_NUM_BLOOM_ITEMS: usize = 512;
     #[cfg(not(debug_assertions))]
-    const MIN_NUM_BLOOM_ITEMS: usize = crate::cluster_info::CRDS_UNIQUE_PUBKEY_CAPACITY;
+    const MIN_NUM_BLOOM_ITEMS: usize = crate::node::CRDS_UNIQUE_PUBKEY_CAPACITY;
 
     pub(crate) fn get_nodes<'a>(
         &'a self,

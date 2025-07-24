@@ -13,7 +13,7 @@ use {
         banking_trace::{BankingTracer, Channels, BANKING_TRACE_DIR_DEFAULT_BYTE_LIMIT},
         validator::{BlockProductionMethod, TransactionStructure},
     },
-    solana_gossip::cluster_info::{ClusterInfo, Node},
+    solana_gossip::{cluster_info::ClusterInfo, node::Node},
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::{

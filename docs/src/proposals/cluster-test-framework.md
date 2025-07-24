@@ -86,7 +86,7 @@ pub fn test_large_invalid_gossip_nodes(
     let client = create_client(entry_point_info.client_facing_addr(), VALIDATOR_PORT_RANGE);
     for _ in 0..(num_nodes * 100) {
         client.gossip_push(
-            cluster_info::invalid_contact_info()
+            node::invalid_contact_info()
         );
     }
     sleep(Durration::from_millis(1000));

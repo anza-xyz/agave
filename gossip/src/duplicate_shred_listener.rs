@@ -69,7 +69,7 @@ mod tests {
     use {
         super::*,
         crate::{
-            cluster_info::Node, duplicate_shred::tests::new_rand_shred,
+            node::Node, duplicate_shred::tests::new_rand_shred,
             duplicate_shred_listener::DuplicateShredHandlerTrait,
         },
         solana_keypair::Keypair,

@@ -3,7 +3,8 @@ use {
     rand::{thread_rng, Rng},
     solana_entry::entry::Entry,
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::ClusterInfo,
+        node::Node,
         contact_info::ContactInfo,
     },
     solana_hash::Hash,

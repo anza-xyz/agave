@@ -2,7 +2,7 @@
 
 use {
     crate::{
-        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY},
+        cluster_info::{ClusterInfo, GOSSIP_CHANNEL_CAPACITY, GOSSIP_SLEEP_MILLIS},
         cluster_info_metrics::submit_gossip_stats,
         contact_info::ContactInfo,
         epoch_specs::EpochSpecs,
@@ -344,9 +344,7 @@ fn spy(
         if i % 20 == 0 {
             info!("discovering...\n{}", spy_ref.contact_info_trace());
         }
-        sleep(Duration::from_millis(
-            crate::cluster_info::GOSSIP_SLEEP_MILLIS,
-        ));
+        sleep(Duration::from_millis(GOSSIP_SLEEP_MILLIS));
         i += 1;
     }
     (met_criteria, now.elapsed(), all_peers, tvu_peers)
@@ -390,10 +388,7 @@ pub fn make_gossip_node(
 mod tests {
     use {
         super::*,
-        crate::{
-            cluster_info::{ClusterInfo, Node},
-            contact_info::ContactInfo,
-        },
+        crate::{cluster_info::ClusterInfo, contact_info::ContactInfo, node::Node},
         std::sync::{atomic::AtomicBool, Arc},
     };
 
