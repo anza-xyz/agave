@@ -19,7 +19,6 @@
 //! commit for each slot entry would be indexed.
 
 mod geyser_plugin_utils;
-mod scan_account_storage;
 pub mod stats;
 pub mod tests;
 
@@ -44,9 +43,7 @@ use {
             StorageAccess,
         },
         accounts_hash::{
-            AccountHash, AccountLtHash, AccountsHash, AccountsHashKind, AccountsHasher,
-            AccountsLtHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
-            IncrementalAccountsHash, ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH,
+            AccountHash, AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_HASH,
             ZERO_LAMPORT_ACCOUNT_LT_HASH,
         },
         accounts_index::{
@@ -59,16 +56,13 @@ use {
         accounts_update_notifier_interface::AccountsUpdateNotifier,
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
-        ancient_append_vecs::get_ancient_append_vec_capacity,
         append_vec::{aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
-        cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
             PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
         },
         read_only_accounts_cache::ReadOnlyAccountsCache,
-        sorted_storages::SortedStorages,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
         u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
@@ -93,11 +87,9 @@ use {
         borrow::Cow,
         boxed::Box,
         collections::{BTreeSet, HashMap, HashSet, VecDeque},
-        fs,
-        hash::{Hash as StdHash, Hasher as StdHasher},
         io, iter, mem,
         num::{NonZeroUsize, Saturating},
-        ops::{Range, RangeBounds},
+        ops::RangeBounds,
         path::{Path, PathBuf},
         sync::{
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
@@ -122,14 +114,6 @@ const DEFAULT_NUM_DIRS: u32 = 4;
 // When calculating hashes, it is helpful to break the pubkeys found into bins based on the pubkey value.
 // More bins means smaller vectors to sort, copy, etc.
 pub const DEFAULT_HASH_CALCULATION_PUBKEY_BINS: usize = 65536;
-
-// Without chunks, we end up with 1 output vec for each outer snapshot storage.
-// This results in too many vectors to be efficient.
-// Chunks when scanning storages to calculate hashes.
-// If this is too big, we don't get enough parallelism of scanning storages.
-// If this is too small, then we produce too many output vectors to iterate.
-// Metrics indicate a sweet spot in the 2.5k-5k range for mnb.
-const MAX_ITEMS_PER_CHUNK: Slot = 2_500;
 
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.
@@ -310,7 +294,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
     account_indexes: None,
     base_working_path: None,
-    accounts_hash_cache_path: None,
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
@@ -334,7 +317,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
     account_indexes: None,
     base_working_path: None,
-    accounts_hash_cache_path: None,
     shrink_paths: None,
     shrink_ratio: DEFAULT_ACCOUNTS_SHRINK_THRESHOLD_OPTION,
     read_cache_limit_bytes: None,
@@ -354,8 +336,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_hash_threads: None,
     hash_calculation_pubkey_bins: None,
 };
-
-pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
 
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
     /// all alive accounts
@@ -455,7 +435,6 @@ pub struct AccountsDbConfig {
     pub account_indexes: Option<AccountSecondaryIndexes>,
     /// Base directory for various necessary files
     pub base_working_path: Option<PathBuf>,
-    pub accounts_hash_cache_path: Option<PathBuf>,
     pub shrink_paths: Option<Vec<PathBuf>>,
     pub shrink_ratio: AccountShrinkThreshold,
     /// The low and high watermark sizes for the read cache, in bytes.
@@ -1343,8 +1322,6 @@ pub struct AccountsDb {
     #[allow(dead_code)]
     base_working_temp_dir: Option<TempDir>,
 
-    accounts_hash_cache_path: PathBuf,
-
     shrink_paths: Vec<PathBuf>,
 
     /// Directory of paths this accounts_db needs to hold/remove
@@ -1448,194 +1425,6 @@ pub struct AccountsDb {
     pub mark_obsolete_accounts: bool,
 }
 
-/// results from 'split_storages_ancient'
-#[derive(Debug, Default, PartialEq)]
-struct SplitAncientStorages {
-    /// # ancient slots
-    ancient_slot_count: usize,
-    /// the specific ancient slots
-    ancient_slots: Vec<Slot>,
-    /// lowest slot that is not an ancient append vec
-    first_non_ancient_slot: Slot,
-    /// slot # of beginning of first aligned chunk starting from the first non ancient slot
-    first_chunk_start: Slot,
-    /// # non-ancient slots to scan
-    non_ancient_slot_count: usize,
-    /// # chunks to use to iterate the storages
-    /// all ancient chunks, the special 0 and last chunks for non-full chunks, and all the 'full' chunks of normal slots
-    chunk_count: usize,
-    /// start and end(exclusive) of normal (non-ancient) slots to be scanned
-    normal_slot_range: Range<Slot>,
-}
-
-impl SplitAncientStorages {
-    /// When calculating accounts hash, we break the slots/storages into chunks that remain the same during an entire epoch.
-    /// a slot is in this chunk of slots:
-    /// start:         (slot / MAX_ITEMS_PER_CHUNK) * MAX_ITEMS_PER_CHUNK
-    /// end_exclusive: start + MAX_ITEMS_PER_CHUNK
-    /// So a slot remains in the same chunk whenever it is included in the accounts hash.
-    /// When the slot gets deleted or gets consumed in an ancient append vec, it will no longer be in its chunk.
-    /// The results of scanning a chunk of appendvecs can be cached to avoid scanning large amounts of data over and over.
-    fn new(oldest_non_ancient_slot: Option<Slot>, snapshot_storages: &SortedStorages) -> Self {
-        let range = snapshot_storages.range();
-
-        let (ancient_slots, first_non_ancient_slot) = if let Some(oldest_non_ancient_slot) =
-            oldest_non_ancient_slot
-        {
-            // any ancient append vecs should definitely be cached
-            // We need to break the ranges into:
-            // 1. individual ancient append vecs (may be empty)
-            // 2. first unevenly divided chunk starting at 1 epoch old slot (may be empty)
-            // 3. evenly divided full chunks in the middle
-            // 4. unevenly divided chunk of most recent slots (may be empty)
-            let ancient_slots =
-                Self::get_ancient_slots(oldest_non_ancient_slot, snapshot_storages, |storage| {
-                    storage.capacity() > get_ancient_append_vec_capacity() * 50 / 100
-                });
-
-            let first_non_ancient_slot = ancient_slots
-                .last()
-                .map(|last_ancient_slot| last_ancient_slot.saturating_add(1))
-                .unwrap_or(range.start);
-
-            (ancient_slots, first_non_ancient_slot)
-        } else {
-            (vec![], range.start)
-        };
-
-        Self::new_with_ancient_info(range, ancient_slots, first_non_ancient_slot)
-    }
-
-    /// return all ancient append vec slots from the early slots referenced by 'snapshot_storages'
-    /// `treat_as_ancient` returns true if the storage at this slot is large and should be treated individually by accounts hash calculation.
-    /// `treat_as_ancient` is a fn so that we can test this well. Otherwise, we have to generate large append vecs to pass the intended checks.
-    fn get_ancient_slots(
-        oldest_non_ancient_slot: Slot,
-        snapshot_storages: &SortedStorages,
-        treat_as_ancient: impl Fn(&AccountStorageEntry) -> bool,
-    ) -> Vec<Slot> {
-        let range = snapshot_storages.range();
-        let mut i = 0;
-        let mut len_truncate = 0;
-        let mut possible_ancient_slots = snapshot_storages
-            .iter_range(&(range.start..oldest_non_ancient_slot))
-            .filter_map(|(slot, storage)| {
-                storage.map(|storage| {
-                    i += 1;
-                    if treat_as_ancient(storage) {
-                        // even though the slot is in range of being an ancient append vec, if it isn't actually a large append vec,
-                        // then we are better off treating all these slots as normally cacheable to reduce work in dedup.
-                        // Since this one is large, for the moment, this one becomes the highest slot where we want to individually cache files.
-                        len_truncate = i;
-                    }
-                    slot
-                })
-            })
-            .collect::<Vec<_>>();
-        possible_ancient_slots.truncate(len_truncate);
-        possible_ancient_slots
-    }
-
-    /// create once ancient slots have been identified
-    /// This is easier to test, removing SortedStorages as a type to deal with here.
-    fn new_with_ancient_info(
-        range: &Range<Slot>,
-        ancient_slots: Vec<Slot>,
-        first_non_ancient_slot: Slot,
-    ) -> Self {
-        if range.is_empty() {
-            // Corner case mainly for tests, but gives us a consistent base case. Makes more sense to return default here than anything else.
-            // caller is asking to split for empty set of slots
-            return SplitAncientStorages::default();
-        }
-
-        let max_slot_inclusive = range.end.saturating_sub(1);
-        let ancient_slot_count = ancient_slots.len();
-        let first_chunk_start = ((first_non_ancient_slot + MAX_ITEMS_PER_CHUNK)
-            / MAX_ITEMS_PER_CHUNK)
-            * MAX_ITEMS_PER_CHUNK;
-
-        let non_ancient_slot_count = (max_slot_inclusive - first_non_ancient_slot + 1) as usize;
-
-        let normal_slot_range = Range {
-            start: first_non_ancient_slot,
-            end: range.end,
-        };
-
-        // 2 is for 2 special chunks - unaligned slots at the beginning and end
-        let chunk_count =
-            ancient_slot_count + 2 + non_ancient_slot_count / (MAX_ITEMS_PER_CHUNK as usize);
-
-        SplitAncientStorages {
-            ancient_slot_count,
-            ancient_slots,
-            first_non_ancient_slot,
-            first_chunk_start,
-            non_ancient_slot_count,
-            chunk_count,
-            normal_slot_range,
-        }
-    }
-
-    /// given 'normal_chunk', return the starting slot of that chunk in the normal/non-ancient range
-    /// a normal_chunk is 0<=normal_chunk<=non_ancient_chunk_count
-    /// non_ancient_chunk_count is chunk_count-ancient_slot_count
-    fn get_starting_slot_from_normal_chunk(&self, normal_chunk: usize) -> Slot {
-        if normal_chunk == 0 {
-            self.normal_slot_range.start
-        } else {
-            assert!(
-                normal_chunk.saturating_add(self.ancient_slot_count) < self.chunk_count,
-                "out of bounds: {}, {}",
-                normal_chunk,
-                self.chunk_count
-            );
-
-            let normal_chunk = normal_chunk.saturating_sub(1);
-            (self.first_chunk_start + MAX_ITEMS_PER_CHUNK * (normal_chunk as Slot))
-                .max(self.normal_slot_range.start)
-        }
-    }
-
-    /// ancient slots are the first chunks
-    fn is_chunk_ancient(&self, chunk: usize) -> bool {
-        chunk < self.ancient_slot_count
-    }
-
-    /// given chunk in 0<=chunk<self.chunk_count
-    /// return the range of slots in that chunk
-    /// None indicates the range is empty for that chunk.
-    fn get_slot_range(&self, chunk: usize) -> Option<Range<Slot>> {
-        let range = if self.is_chunk_ancient(chunk) {
-            // ancient append vecs are handled individually
-            let slot = self.ancient_slots[chunk];
-            Range {
-                start: slot,
-                end: slot + 1,
-            }
-        } else {
-            // normal chunks are after ancient chunks
-            let normal_chunk = chunk - self.ancient_slot_count;
-            if normal_chunk == 0 {
-                // first slot
-                Range {
-                    start: self.normal_slot_range.start,
-                    end: self.first_chunk_start.min(self.normal_slot_range.end),
-                }
-            } else {
-                // normal full chunk or the last chunk
-                let first_slot = self.get_starting_slot_from_normal_chunk(normal_chunk);
-                Range {
-                    start: first_slot,
-                    end: (first_slot + MAX_ITEMS_PER_CHUNK).min(self.normal_slot_range.end),
-                }
-            }
-        };
-        // return empty range as None
-        (!range.is_empty()).then_some(range)
-    }
-}
-
 pub fn quarter_thread_count() -> usize {
     std::cmp::max(2, num_cpus::get() / 4)
 }
@@ -1692,8 +1481,6 @@ pub struct PubkeyHashAccount {
 }
 
 impl AccountsDb {
-    pub const DEFAULT_ACCOUNTS_HASH_CACHE_DIR: &'static str = "accounts_hash_cache";
-
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
@@ -1769,16 +1556,6 @@ impl AccountsDb {
             .clone()
             .unwrap_or_else(|| paths.clone());
 
-        let accounts_hash_cache_path = accounts_db_config.accounts_hash_cache_path.clone();
-        let accounts_hash_cache_path = accounts_hash_cache_path.unwrap_or_else(|| {
-            let accounts_hash_cache_path =
-                base_working_path.join(Self::DEFAULT_ACCOUNTS_HASH_CACHE_DIR);
-            if !accounts_hash_cache_path.exists() {
-                fs::create_dir(&accounts_hash_cache_path).expect("create accounts hash cache dir");
-            }
-            accounts_hash_cache_path
-        });
-
         let read_cache_size = accounts_db_config.read_cache_limit_bytes.unwrap_or((
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_LO,
             Self::DEFAULT_MAX_READ_ONLY_CACHE_DATA_SIZE_HI,
@@ -1818,7 +1595,6 @@ impl AccountsDb {
             paths,
             base_working_path,
             base_working_temp_dir,
-            accounts_hash_cache_path,
             temp_paths,
             shrink_paths,
             skip_initial_hash_calc: accounts_db_config.skip_initial_hash_calc,
@@ -5941,10 +5717,6 @@ impl AccountsDb {
         );
     }
 
-    pub fn checked_sum_for_capitalization<T: Iterator<Item = u64>>(balances: T) -> u64 {
-        AccountsHasher::checked_cast_for_capitalization(balances.map(|b| b as u128).sum::<u128>())
-    }
-
     /// Calculates the accounts lt hash
     ///
     /// Only intended to be called at startup (or by tests).
@@ -6103,20 +5875,6 @@ impl AccountsDb {
             .expect("capitalization cannot overflow")
     }
 
-    fn update_old_slot_stats(&self, stats: &HashStats, storage: Option<&Arc<AccountStorageEntry>>) {
-        if let Some(storage) = storage {
-            stats.roots_older_than_epoch.fetch_add(1, Ordering::Relaxed);
-            let num_accounts = storage.count();
-            let sizes = storage.capacity();
-            stats
-                .append_vec_sizes_older_than_epoch
-                .fetch_add(sizes as usize, Ordering::Relaxed);
-            stats
-                .accounts_in_roots_older_than_epoch
-                .fetch_add(num_accounts, Ordering::Relaxed);
-        }
-    }
-
     /// return slot + offset, where offset can be +/-
     fn apply_offset_to_slot(slot: Slot, offset: i64) -> Slot {
         if offset > 0 {
@@ -6124,237 +5882,6 @@ impl AccountsDb {
         } else {
             slot.saturating_sub(offset.unsigned_abs())
         }
-    }
-
-    /// Hash information about `storage` into `hasher`.
-    ///
-    /// # Parameters
-    /// - `storage`: The storage to hash.
-    /// - `slot`: The slot of the storage.
-    /// - `hash_slot`: The slot at which the storage is being hashed.
-    ///   Obsolete account data is only relevant for the hash if `hash_slot` is greater than the slot that marked the account obsolete.
-    ///
-    /// # Returns
-    /// `true` if the storage is valid for loading from the cache.
-    fn hash_storage_info(
-        hasher: &mut impl StdHasher,
-        storage: &AccountStorageEntry,
-        slot: Slot,
-        hash_slot: Slot,
-    ) -> bool {
-        // hash info about this storage
-        storage.written_bytes().hash(hasher);
-
-        // Obsolete accounts change the hash as they may cause accounts to no longer be included in the hash
-        storage
-            .get_obsolete_accounts(Some(hash_slot))
-            .len()
-            .hash(hasher);
-
-        slot.hash(hasher);
-        let storage_file = storage.accounts.path();
-        storage_file.hash(hasher);
-        let Ok(metadata) = std::fs::metadata(storage_file) else {
-            return false;
-        };
-        let Ok(amod) = metadata.modified() else {
-            return false;
-        };
-        let amod = amod
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        amod.hash(hasher);
-
-        // if we made it here, we have hashed info and we should try to load from the cache
-        true
-    }
-
-    fn sort_slot_storage_scan(accum: &mut BinnedHashData) -> u64 {
-        let (_, sort_time) = measure_us!(accum.iter_mut().for_each(|items| {
-            // sort_by vs unstable because slot and write_version are already in order
-            items.sort_by(AccountsHasher::compare_two_hash_entries);
-        }));
-        sort_time
-    }
-
-    /// normal code path returns the common cache path
-    /// when called after a failure has been detected, redirect the cache storage to a separate folder for debugging later
-    fn get_cache_hash_data(
-        accounts_hash_cache_path: PathBuf,
-        config: &CalcAccountsHashConfig<'_>,
-        kind: CalcAccountsHashKind,
-        slot: Slot,
-        storages_start_slot: Slot,
-    ) -> CacheHashData {
-        let accounts_hash_cache_path = if !config.store_detailed_debug_info_on_failure {
-            accounts_hash_cache_path
-        } else {
-            // this path executes when we are failing with a hash mismatch
-            let failed_dir = accounts_hash_cache_path
-                .join("failed_calculate_accounts_hash_cache")
-                .join(slot.to_string());
-            _ = std::fs::remove_dir_all(&failed_dir);
-            failed_dir
-        };
-        let deletion_policy = match kind {
-            CalcAccountsHashKind::Full => CacheHashDeletionPolicy::AllUnused,
-            CalcAccountsHashKind::Incremental => {
-                CacheHashDeletionPolicy::UnusedAtLeast(storages_start_slot)
-            }
-        };
-        CacheHashData::new(accounts_hash_cache_path, deletion_policy)
-    }
-
-    /// Calculate the full accounts hash
-    ///
-    /// This is intended to be used by startup verification, and also AccountsHashVerifier.
-    /// Uses account storage files as the data source for the calculation.
-    // obsolete, will be removed next
-    pub fn calculate_accounts_hash(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        stats: HashStats,
-    ) -> (AccountsHash, u64) {
-        let (accounts_hash, capitalization) = self.calculate_accounts_hash_from_storages(
-            config,
-            storages,
-            stats,
-            CalcAccountsHashKind::Full,
-        );
-        let AccountsHashKind::Full(accounts_hash) = accounts_hash else {
-            panic!("calculate_accounts_hash_from_storages must return a FullAccountsHash");
-        };
-        (accounts_hash, capitalization)
-    }
-
-    /// Calculate the incremental accounts hash
-    ///
-    /// This calculation is intended to be used by incremental snapshots, and thus differs from a
-    /// "full" accounts hash in a few ways:
-    /// - Zero-lamport accounts are *included* in the hash because zero-lamport accounts are also
-    ///   included in the incremental snapshot.  This ensures reconstructing the AccountsDb is
-    ///   still correct when using this incremental accounts hash.
-    /// - `storages` must be the same as the ones going into the incremental snapshot.
-    // obsolete, will be removed next
-    pub fn calculate_incremental_accounts_hash(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        stats: HashStats,
-    ) -> (IncrementalAccountsHash, /* capitalization */ u64) {
-        let (accounts_hash, capitalization) = self.calculate_accounts_hash_from_storages(
-            config,
-            storages,
-            stats,
-            CalcAccountsHashKind::Incremental,
-        );
-        let AccountsHashKind::Incremental(incremental_accounts_hash) = accounts_hash else {
-            panic!("calculate_incremental_accounts_hash must return an IncrementalAccountsHash");
-        };
-        (incremental_accounts_hash, capitalization)
-    }
-
-    /// The shared code for calculating accounts hash from storages.
-    /// Used for both full accounts hash and incremental accounts hash calculation.
-    // obsolete, will be removed next
-    fn calculate_accounts_hash_from_storages(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        mut stats: HashStats,
-        kind: CalcAccountsHashKind,
-    ) -> (AccountsHashKind, u64) {
-        let total_time = Measure::start("");
-        let _guard = self.active_stats.activate(ActiveStatItem::Hash);
-        let storages_start_slot = storages.range().start;
-        stats.oldest_root = storages_start_slot;
-
-        let slot = storages.max_slot_inclusive();
-        let use_bg_thread_pool = config.use_bg_thread_pool;
-        let accounts_hash_cache_path = self.accounts_hash_cache_path.clone();
-        let transient_accounts_hash_cache_dir = TempDir::new_in(&accounts_hash_cache_path)
-            .expect("create transient accounts hash cache dir");
-        let transient_accounts_hash_cache_path =
-            transient_accounts_hash_cache_dir.path().to_path_buf();
-        let scan_and_hash = || {
-            let (cache_hash_data, cache_hash_data_us) = measure_us!(Self::get_cache_hash_data(
-                accounts_hash_cache_path,
-                config,
-                kind,
-                slot,
-                storages_start_slot,
-            ));
-            stats.cache_hash_data_us += cache_hash_data_us;
-
-            let bounds = Range {
-                start: 0,
-                end: self.hash_calculation_pubkey_bins,
-            };
-
-            let accounts_hasher = AccountsHasher {
-                zero_lamport_accounts: kind.zero_lamport_accounts(),
-                dir_for_temp_cache_files: transient_accounts_hash_cache_path,
-                active_stats: &self.active_stats,
-            };
-
-            // get raw data by scanning
-            let cache_hash_data_file_references = self.scan_snapshot_stores_with_cache(
-                &cache_hash_data,
-                storages,
-                &mut stats,
-                self.hash_calculation_pubkey_bins,
-                &bounds,
-                config,
-            );
-
-            let cache_hash_data_files = cache_hash_data_file_references
-                .iter()
-                .map(|d| d.map())
-                .collect::<Vec<_>>();
-
-            if let Some(err) = cache_hash_data_files
-                .iter()
-                .filter_map(|r| r.as_ref().err())
-                .next()
-            {
-                panic!("failed generating accounts hash files: {err:?}");
-            }
-
-            // convert mmapped cache files into slices of data
-            let cache_hash_intermediates = cache_hash_data_files
-                .iter()
-                .map(|d| d.as_ref().unwrap().get_cache_hash_data())
-                .collect::<Vec<_>>();
-
-            // turn raw data into merkle tree hashes and sum of lamports
-            let (accounts_hash, capitalization) = accounts_hasher.rest_of_hash_calculation(
-                &cache_hash_intermediates,
-                self.hash_calculation_pubkey_bins,
-                &mut stats,
-            );
-            let accounts_hash = match kind {
-                CalcAccountsHashKind::Full => AccountsHashKind::Full(AccountsHash(accounts_hash)),
-                CalcAccountsHashKind::Incremental => {
-                    AccountsHashKind::Incremental(IncrementalAccountsHash(accounts_hash))
-                }
-            };
-            info!(
-                "calculate_accounts_hash_from_storages: slot: {slot}, {accounts_hash:?}, \
-                 capitalization: {capitalization}"
-            );
-            (accounts_hash, capitalization)
-        };
-
-        let result = if use_bg_thread_pool {
-            self.thread_pool_hash.install(scan_and_hash)
-        } else {
-            scan_and_hash()
-        };
-        stats.total_us = total_time.end_as_us();
-        stats.log();
-        result
     }
 
     /// Returns all of the accounts' pubkeys for a given slot
@@ -8044,16 +7571,6 @@ enum RentEpochInAccountHash {
     Excluded,
 }
 
-/// Specify the source of the accounts data when calculating the accounts hash
-///
-/// Using the Index is meant for testing the hash calculation itself and debugging;
-/// not intended during normal validator operation.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum CalcAccountsHashDataSource {
-    IndexForTests,
-    Storages,
-}
-
 #[derive(Debug, Copy, Clone)]
 enum HandleReclaims<'a> {
     ProcessDeadSlots(&'a PurgeStats),
@@ -8068,23 +7585,6 @@ enum MarkAccountsObsolete {
     #[allow(dead_code)]
     Yes(Slot),
     No,
-}
-
-/// Which accounts hash calculation is being performed?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum CalcAccountsHashKind {
-    Full,
-    Incremental,
-}
-
-impl CalcAccountsHashKind {
-    /// How should zero-lamport accounts be handled by this accounts hash calculation?
-    fn zero_lamport_accounts(&self) -> ZeroLamportAccounts {
-        match self {
-            CalcAccountsHashKind::Full => ZeroLamportAccounts::Excluded,
-            CalcAccountsHashKind::Incremental => ZeroLamportAccounts::Included,
-        }
-    }
 }
 
 pub enum UpdateIndexThreadSelection {

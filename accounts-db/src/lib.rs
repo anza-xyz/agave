@@ -24,8 +24,6 @@ pub mod blockhash_queue;
 mod bucket_map_holder;
 mod bucket_map_holder_stats;
 mod buffered_reader;
-mod cache_hash_data;
-mod cache_hash_data_stats;
 pub mod contains;
 mod file_io;
 pub mod hardened_unpack;
@@ -48,14 +46,6 @@ mod verify_accounts_hash_in_background;
 pub mod waitable_condvar;
 
 pub use buffered_reader::large_file_buf_reader;
-// the accounts-hash-cache-tool needs access to these types
-pub use {
-    accounts_hash::CalculateHashIntermediate as CacheHashDataFileEntry,
-    cache_hash_data::{
-        parse_filename as parse_cache_hash_data_filename, Header as CacheHashDataFileHeader,
-        ParsedFilename as ParsedCacheHashDataFilename,
-    },
-};
 
 #[macro_use]
 extern crate solana_metrics;

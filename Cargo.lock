@@ -76,22 +76,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agave-accounts-hash-cache-tool"
-version = "3.0.0"
-dependencies = [
- "ahash 0.8.11",
- "anyhow",
- "bytemuck",
- "clap 2.33.3",
- "memmap2 0.9.7",
- "rayon",
- "solana-accounts-db",
- "solana-clap-utils",
- "solana-pubkey",
- "solana-version",
-]
-
-[[package]]
 name = "agave-banking-stage-ingress-types"
 version = "3.0.0"
 dependencies = [

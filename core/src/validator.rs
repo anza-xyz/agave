@@ -37,7 +37,7 @@ use {
         hardened_unpack::{
             open_genesis_config, OpenGenesisConfigError, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         },
-        utils::{move_and_async_delete_path, move_and_async_delete_path_contents},
+        utils::move_and_async_delete_path_contents,
     },
     solana_client::connection_cache::{ConnectionCache, Protocol},
     solana_clock::Slot,
@@ -694,25 +694,6 @@ impl Validator {
         .context("failed to clean orphaned account snapshot directories")?;
         timer.stop();
         info!("Cleaning orphaned account snapshot directories done. {timer}");
-
-        // The accounts hash cache dir was renamed, so cleanup any old dirs that exist.
-        let accounts_hash_cache_path = config
-            .accounts_db_config
-            .as_ref()
-            .and_then(|config| config.accounts_hash_cache_path.as_ref())
-            .map(PathBuf::as_path)
-            .unwrap_or(ledger_path);
-        let old_accounts_hash_cache_dirs = [
-            ledger_path.join("calculate_accounts_hash_cache"),
-            accounts_hash_cache_path.join("full"),
-            accounts_hash_cache_path.join("incremental"),
-            accounts_hash_cache_path.join("transient"),
-        ];
-        for old_accounts_hash_cache_dir in old_accounts_hash_cache_dirs {
-            if old_accounts_hash_cache_dir.exists() {
-                move_and_async_delete_path(old_accounts_hash_cache_dir);
-            }
-        }
 
         // token used to cancel tpu-client-next.
         let cancel_tpu_client_next = CancellationToken::new();

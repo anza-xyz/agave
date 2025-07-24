@@ -11,7 +11,7 @@ use {
     log::*,
     rand::{seq::SliceRandom, thread_rng},
     solana_accounts_db::{
-        accounts_db::{AccountShrinkThreshold, AccountsDb, AccountsDbConfig},
+        accounts_db::{AccountShrinkThreshold, AccountsDbConfig},
         accounts_file::StorageAccess,
         accounts_index::{
             AccountIndex, AccountSecondaryIndexes, AccountSecondaryIndexesIncludeExclude,
@@ -198,18 +198,6 @@ pub fn execute(
     } else {
         None
     };
-
-    let accounts_hash_cache_path = matches
-        .value_of("accounts_hash_cache_path")
-        .map(Into::into)
-        .unwrap_or_else(|| ledger_path.join(AccountsDb::DEFAULT_ACCOUNTS_HASH_CACHE_DIR));
-    let accounts_hash_cache_path = create_and_canonicalize_directory(&accounts_hash_cache_path)
-        .map_err(|err| {
-            format!(
-                "Unable to access accounts hash cache path '{}': {err}",
-                accounts_hash_cache_path.display(),
-            )
-        })?;
 
     let debug_keys: Option<Arc<HashSet<_>>> = if matches.is_present("debug_key") {
         Some(Arc::new(
@@ -413,7 +401,6 @@ pub fn execute(
         index: Some(accounts_index_config),
         account_indexes: Some(account_indexes.clone()),
         base_working_path: Some(ledger_path.clone()),
-        accounts_hash_cache_path: Some(accounts_hash_cache_path),
         shrink_paths: account_shrink_run_paths,
         shrink_ratio,
         read_cache_limit_bytes,
