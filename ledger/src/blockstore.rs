@@ -2,6 +2,8 @@
 //! Proof of History ledger as well as iterative read, append write, and random
 //! access read to a persistent file-based ledger.
 
+#[cfg(feature = "dev-context-only-utils")]
+use trees::{Tree, TreeWalk};
 use {
     crate::{
         ancestor_iterator::AncestorIterator,
@@ -16,8 +18,8 @@ use {
         leader_schedule_cache::LeaderScheduleCache,
         next_slots_iterator::NextSlotsIterator,
         shred::{
-            self, max_ticks_per_n_shreds, ErasureSetId, ProcessShredsStats, ReedSolomonCache,
-            Shred, ShredData, ShredId, ShredType, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+            self, ErasureSetId, ProcessShredsStats, ReedSolomonCache, Shred, ShredData, ShredId,
+            ShredType, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
         },
         slot_stats::{ShredSource, SlotsStats},
         transaction_address_lookup_table_scanner::scan_transaction,
@@ -81,8 +83,8 @@ use {
     tar,
     tempfile::{Builder, TempDir},
     thiserror::Error,
-    trees::{Tree, TreeWalk},
 };
+
 pub mod blockstore_purge;
 pub mod column;
 pub mod error;
@@ -483,6 +485,7 @@ impl Blockstore {
         })
     }
 
+    #[cfg(feature = "dev-context-only-utils")]
     pub fn add_tree(
         &self,
         forks: Tree<Slot>,
@@ -5084,6 +5087,7 @@ pub fn create_new_ledger_from_name_auto_delete(
     (ledger_path, blockhash)
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn entries_to_test_shreds(
     entries: &[Entry],
     slot: Slot,
@@ -5108,7 +5112,7 @@ pub fn entries_to_test_shreds(
         .collect()
 }
 
-// used for tests only
+#[cfg(feature = "dev-context-only-utils")]
 pub fn make_slot_entries(
     slot: Slot,
     parent_slot: Slot,
@@ -5119,7 +5123,7 @@ pub fn make_slot_entries(
     (shreds, entries)
 }
 
-// used for tests only
+#[cfg(feature = "dev-context-only-utils")]
 pub fn make_many_slot_entries(
     start_slot: Slot,
     num_slots: u64,
@@ -5138,7 +5142,7 @@ pub fn make_many_slot_entries(
     (shreds, entries)
 }
 
-// test-only: check that all columns are either empty or start at `min_slot`
+#[cfg(feature = "dev-context-only-utils")]
 pub fn test_all_empty_or_min(blockstore: &Blockstore, min_slot: Slot) {
     let condition_met = blockstore
         .meta_cf
@@ -5227,20 +5231,9 @@ pub fn test_all_empty_or_min(blockstore: &Blockstore, min_slot: Slot) {
     assert!(condition_met);
 }
 
-// used for tests only
-// Create `num_shreds` shreds for [start_slot, start_slot + num_slot) slots
-pub fn make_many_slot_shreds(
-    start_slot: u64,
-    num_slots: u64,
-    num_shreds_per_slot: u64,
-) -> (Vec<Shred>, Vec<Entry>) {
-    // Use `None` as shred_size so the default (full) value is used
-    let num_entries = max_ticks_per_n_shreds(num_shreds_per_slot, None);
-    make_many_slot_entries(start_slot, num_slots, num_entries)
-}
-
 // Create shreds for slots that have a parent-child relationship defined by the input `chain`
 // used for tests only
+#[cfg(feature = "dev-context-only-utils")]
 pub fn make_chaining_slot_entries(
     chain: &[u64],
     entries_per_slot: u64,
