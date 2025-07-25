@@ -7090,7 +7090,7 @@ impl AccountsDb {
                     // it is known that it was already obsolete at that time, it must hold true that it will
                     // still be obsolete if a newer snapshot is created, since a newer snapshot will always
                     // be performed on a slot greater than the current slot
-                    let slot_marked_obsolete = slots.last().copied().unwrap();
+                    let slot_marked_obsolete = storages.last().unwrap().slot();
                     let obsolete_account_stats = self.mark_obsolete_accounts_at_startup(
                         slot_marked_obsolete,
                         unique_pubkeys_by_bin,
