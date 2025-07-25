@@ -1222,7 +1222,7 @@ fn select_from_range_with_start_end_rates(
     start_rate: usize,
     end_rate: usize,
 ) -> usize {
-    let range_len = range.end - range.start;
+    let range_len = range.len();
     let cycle = start_rate + end_rate;
     let cycle_index = nth % cycle;
     let cycle_num = nth.checked_div(cycle).expect("rates sum must be positive");
