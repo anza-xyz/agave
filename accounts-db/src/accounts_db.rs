@@ -6604,8 +6604,8 @@ impl AccountsDb {
         *self.latest_full_snapshot_slot.lock_write() = Some(slot);
     }
 
-    fn generate_index_for_slot<'a, 'b: 'a>(
-        &'b self,
+    fn generate_index_for_slot<'a>(
+        &self,
         reader: &mut impl RequiredLenBufFileRead<'a>,
         storage: &'a AccountStorageEntry,
         slot: Slot,
