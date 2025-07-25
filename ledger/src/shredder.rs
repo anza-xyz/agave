@@ -19,6 +19,7 @@ use {
         borrow::Borrow,
         fmt::Debug,
         sync::{Arc, OnceLock, RwLock},
+        time::Instant,
     },
 };
 
@@ -89,14 +90,13 @@ impl Shredder {
         reed_solomon_cache: &ReedSolomonCache,
         stats: &mut ProcessShredsStats,
     ) -> impl Iterator<Item = Shred> {
-        shred::make_merkle_shreds_from_entries(
-            &PAR_THREAD_POOL,
+        let now = Instant::now();
+        let entries = bincode::serialize(entries).unwrap();
+        stats.serialize_elapsed += now.elapsed().as_micros() as u64;
+        Self::make_shreds_from_data_slice(
+            self,
             keypair,
-            entries,
-            self.slot,
-            self.parent_slot,
-            self.version,
-            self.reference_tick,
+            &entries,
             is_last_in_slot,
             chained_merkle_root,
             next_shred_index,
@@ -105,6 +105,37 @@ impl Shredder {
             stats,
         )
         .unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn make_shreds_from_data_slice(
+        &self,
+        keypair: &Keypair,
+        data: &[u8],
+        is_last_in_slot: bool,
+        chained_merkle_root: Option<Hash>,
+        next_shred_index: u32,
+        next_code_index: u32,
+        reed_solomon_cache: &ReedSolomonCache,
+        stats: &mut ProcessShredsStats,
+    ) -> Result<impl Iterator<Item = Shred>, Error> {
+        let thread_pool: &ThreadPool = &PAR_THREAD_POOL;
+        let shreds = shred::merkle::make_shreds_from_data(
+            thread_pool,
+            keypair,
+            chained_merkle_root,
+            data,
+            self.slot,
+            self.parent_slot,
+            self.version,
+            self.reference_tick,
+            is_last_in_slot,
+            next_shred_index,
+            next_code_index,
+            reed_solomon_cache,
+            stats,
+        )?;
+        Ok(shreds.into_iter().map(Shred::from))
     }
 
     pub fn entries_to_merkle_shreds_for_tests(

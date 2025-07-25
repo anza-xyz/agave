@@ -71,7 +71,6 @@ use {
     assert_matches::debug_assert_matches,
     bitflags::bitflags,
     num_enum::{IntoPrimitive, TryFromPrimitive},
-    rayon::ThreadPool,
     serde::{Deserialize, Serialize},
     solana_clock::Slot,
     solana_entry::entry::{create_ticks, Entry},
@@ -83,13 +82,13 @@ use {
     solana_signature::{Signature, SIGNATURE_BYTES},
     solana_signer::Signer,
     static_assertions::const_assert_eq,
-    std::{fmt::Debug, time::Instant},
+    std::fmt::Debug,
     thiserror::Error,
 };
 
 mod common;
 mod legacy;
-mod merkle;
+pub(crate) mod merkle;
 mod merkle_tree;
 mod payload;
 pub mod shred_code;
@@ -833,43 +832,6 @@ pub fn recover(
     // same Merkle root.
     let shreds = merkle::recover(shreds, reed_solomon_cache)?;
     Ok(shreds.map(|shred| shred.map(Shred::from)))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn make_merkle_shreds_from_entries(
-    thread_pool: &ThreadPool,
-    keypair: &Keypair,
-    entries: &[Entry],
-    slot: Slot,
-    parent_slot: Slot,
-    shred_version: u16,
-    reference_tick: u8,
-    is_last_in_slot: bool,
-    chained_merkle_root: Option<Hash>,
-    next_shred_index: u32,
-    next_code_index: u32,
-    reed_solomon_cache: &ReedSolomonCache,
-    stats: &mut ProcessShredsStats,
-) -> Result<impl Iterator<Item = Shred>, Error> {
-    let now = Instant::now();
-    let entries = bincode::serialize(entries)?;
-    stats.serialize_elapsed += now.elapsed().as_micros() as u64;
-    let shreds = merkle::make_shreds_from_data(
-        thread_pool,
-        keypair,
-        chained_merkle_root,
-        &entries[..],
-        slot,
-        parent_slot,
-        shred_version,
-        reference_tick,
-        is_last_in_slot,
-        next_shred_index,
-        next_code_index,
-        reed_solomon_cache,
-        stats,
-    )?;
-    Ok(shreds.into_iter().map(Shred::from))
 }
 
 // Accepts shreds in the slot range [root + 1, max_slot].
