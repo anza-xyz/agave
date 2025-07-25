@@ -5700,7 +5700,7 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .map_init(
-                append_vec::new_full_accounts_scan_buffer,
+                || Box::new(append_vec::new_full_accounts_scan_buffer()),
                 |reader, storage| {
                     let mut accum = LtHash::identity();
                     // Function is calculating the accounts_lt_hash from all accounts in the
@@ -5709,7 +5709,7 @@ impl AccountsDb {
                     let obsolete_accounts = storage.get_obsolete_accounts(Some(startup_slot));
                     storage
                         .accounts
-                        .scan_accounts(reader, |offset, account| {
+                        .scan_accounts(reader.as_mut(), |offset, account| {
                             // Obsolete accounts were not included in the original hash, so they should not be added here
                             if !obsolete_accounts.contains(&(offset, account.data.len())) {
                                 let account_lt_hash =
