@@ -313,57 +313,32 @@ impl<'a> InvokeContext<'a> {
         Ok(())
     }
 
-    fn prepare_next_instruction_inner(
+    /// Helper to prepare for process_instruction() when the instruction is not a top level one,
+    /// and depends on `AccountMeta`s
+    pub fn prepare_next_instruction(
         &mut self,
         instruction: &Instruction,
         signers: &[Pubkey],
-        instruction_accounts: &mut Vec<InstructionAccount>,
-    ) -> Result<IndexOfAccount, InstructionError> {
+    ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
         // On AArch64 in release mode, this function only consumes 640 bytes of stack.
         let mut transaction_callee_map: [u8; 256] = [u8::MAX; 256];
+        let mut instruction_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(instruction.accounts.len());
 
-        let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
+        // This code block is necessary to restrict the scope of the immutable borrow of
+        // transaction context (the `instruction_context` variable). At the end of this
+        // function, we must borrow it again as mutable.
+        let program_account_index = {
+            let instruction_context = self.transaction_context.get_current_instruction_context()?;
+            debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
 
-        for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
-            let index_in_transaction = self
-                .transaction_context
-                .find_index_of_account(&account_meta.pubkey)
-                .ok_or_else(|| {
-                    ic_msg!(
-                        self,
-                        "Instruction references an unknown account {}",
-                        account_meta.pubkey,
-                    );
-                    InstructionError::MissingAccount
-                })?;
-
-            debug_assert!((index_in_transaction as usize) < transaction_callee_map.len());
-            let index_in_callee = transaction_callee_map
-                .get_mut(index_in_transaction as usize)
-                .unwrap();
-
-            if (*index_in_callee as usize) < instruction_accounts.len() {
-                let cloned_account = {
-                    let instruction_account = instruction_accounts
-                        .get_mut(*index_in_callee as usize)
-                        .ok_or(InstructionError::NotEnoughAccountKeys)?;
-                    instruction_account
-                        .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
-                    instruction_account.set_is_writable(
-                        instruction_account.is_writable() || account_meta.is_writable,
-                    );
-                    instruction_account.clone()
-                };
-                instruction_accounts.push(cloned_account);
-            } else {
-                let index_in_caller = instruction_context
-                    .find_index_of_instruction_account(
-                        self.transaction_context,
-                        &account_meta.pubkey,
-                    )
+            for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate()
+            {
+                let index_in_transaction = self
+                    .transaction_context
+                    .find_index_of_account(&account_meta.pubkey)
                     .ok_or_else(|| {
                         ic_msg!(
                             self,
@@ -372,106 +347,124 @@ impl<'a> InvokeContext<'a> {
                         );
                         InstructionError::MissingAccount
                     })?;
-                *index_in_callee = instruction_accounts.len() as u8;
-                instruction_accounts.push(InstructionAccount::new(
-                    index_in_transaction,
-                    index_in_caller,
-                    instruction_account_index as IndexOfAccount,
-                    account_meta.is_signer,
-                    account_meta.is_writable,
-                ));
-            }
-        }
 
-        for current_index in 0..instruction_accounts.len() {
-            let instruction_account = instruction_accounts.get(current_index).unwrap();
+                debug_assert!((index_in_transaction as usize) < transaction_callee_map.len());
+                let index_in_callee = transaction_callee_map
+                    .get_mut(index_in_transaction as usize)
+                    .unwrap();
 
-            if current_index != instruction_account.index_in_callee as usize {
-                let (is_signer, is_writable) = {
-                    let reference_account = instruction_accounts
-                        .get(instruction_account.index_in_callee as usize)
-                        .ok_or(InstructionError::NotEnoughAccountKeys)?;
-                    (
-                        reference_account.is_signer(),
-                        reference_account.is_writable(),
-                    )
-                };
-
-                let current_account = instruction_accounts.get_mut(current_index).unwrap();
-                current_account.set_is_signer(current_account.is_signer() || is_signer);
-                current_account.set_is_writable(current_account.is_writable() || is_writable);
-                // This account is repeated, so there is no need to check for permissions
-                continue;
-            }
-
-            let borrowed_account = instruction_context.try_borrow_instruction_account(
-                self.transaction_context,
-                instruction_account.index_in_caller,
-            )?;
-
-            // Readonly in caller cannot become writable in callee
-            if instruction_account.is_writable() && !borrowed_account.is_writable() {
-                ic_msg!(
-                    self,
-                    "{}'s writable privilege escalated",
-                    borrowed_account.get_key(),
-                );
-                return Err(InstructionError::PrivilegeEscalation);
+                if (*index_in_callee as usize) < instruction_accounts.len() {
+                    let cloned_account = {
+                        let instruction_account = instruction_accounts
+                            .get_mut(*index_in_callee as usize)
+                            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                        instruction_account.set_is_signer(
+                            instruction_account.is_signer() || account_meta.is_signer,
+                        );
+                        instruction_account.set_is_writable(
+                            instruction_account.is_writable() || account_meta.is_writable,
+                        );
+                        instruction_account.clone()
+                    };
+                    instruction_accounts.push(cloned_account);
+                } else {
+                    let index_in_caller = instruction_context
+                        .find_index_of_instruction_account(
+                            self.transaction_context,
+                            &account_meta.pubkey,
+                        )
+                        .ok_or_else(|| {
+                            ic_msg!(
+                                self,
+                                "Instruction references an unknown account {}",
+                                account_meta.pubkey,
+                            );
+                            InstructionError::MissingAccount
+                        })?;
+                    *index_in_callee = instruction_accounts.len() as u8;
+                    instruction_accounts.push(InstructionAccount::new(
+                        index_in_transaction,
+                        index_in_caller,
+                        instruction_account_index as IndexOfAccount,
+                        account_meta.is_signer,
+                        account_meta.is_writable,
+                    ));
+                }
             }
 
-            // To be signed in the callee,
-            // it must be either signed in the caller or by the program
-            if instruction_account.is_signer()
-                && !(borrowed_account.is_signer() || signers.contains(borrowed_account.get_key()))
+            for current_index in 0..instruction_accounts.len() {
+                let instruction_account = instruction_accounts.get(current_index).unwrap();
+
+                if current_index != instruction_account.index_in_callee as usize {
+                    let (is_signer, is_writable) = {
+                        let reference_account = instruction_accounts
+                            .get(instruction_account.index_in_callee as usize)
+                            .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                        (
+                            reference_account.is_signer(),
+                            reference_account.is_writable(),
+                        )
+                    };
+
+                    let current_account = instruction_accounts.get_mut(current_index).unwrap();
+                    current_account.set_is_signer(current_account.is_signer() || is_signer);
+                    current_account.set_is_writable(current_account.is_writable() || is_writable);
+                    // This account is repeated, so there is no need to check for permissions
+                    continue;
+                }
+
+                let borrowed_account = instruction_context.try_borrow_instruction_account(
+                    self.transaction_context,
+                    instruction_account.index_in_caller,
+                )?;
+
+                // Readonly in caller cannot become writable in callee
+                if instruction_account.is_writable() && !borrowed_account.is_writable() {
+                    ic_msg!(
+                        self,
+                        "{}'s writable privilege escalated",
+                        borrowed_account.get_key(),
+                    );
+                    return Err(InstructionError::PrivilegeEscalation);
+                }
+
+                // To be signed in the callee,
+                // it must be either signed in the caller or by the program
+                if instruction_account.is_signer()
+                    && !(borrowed_account.is_signer()
+                        || signers.contains(borrowed_account.get_key()))
+                {
+                    ic_msg!(
+                        self,
+                        "{}'s signer privilege escalated",
+                        borrowed_account.get_key()
+                    );
+                    return Err(InstructionError::PrivilegeEscalation);
+                }
+            }
+
+            // Find and validate executables / program accounts
+            let callee_program_id = instruction.program_id;
+            let program_account_index = instruction_context
+                .find_index_of_instruction_account(self.transaction_context, &callee_program_id)
+                .ok_or_else(|| {
+                    ic_msg!(self, "Unknown program {}", callee_program_id);
+                    InstructionError::MissingAccount
+                })?;
+            let borrowed_program_account = instruction_context
+                .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
+            #[allow(deprecated)]
+            if !self
+                .get_feature_set()
+                .remove_accounts_executable_flag_checks
+                && !borrowed_program_account.is_executable()
             {
-                ic_msg!(
-                    self,
-                    "{}'s signer privilege escalated",
-                    borrowed_account.get_key()
-                );
-                return Err(InstructionError::PrivilegeEscalation);
+                ic_msg!(self, "Account {} is not executable", callee_program_id);
+                return Err(InstructionError::AccountNotExecutable);
             }
-        }
 
-        // Find and validate executables / program accounts
-        let callee_program_id = instruction.program_id;
-        let program_account_index = instruction_context
-            .find_index_of_instruction_account(self.transaction_context, &callee_program_id)
-            .ok_or_else(|| {
-                ic_msg!(self, "Unknown program {}", callee_program_id);
-                InstructionError::MissingAccount
-            })?;
-        let borrowed_program_account = instruction_context
-            .try_borrow_instruction_account(self.transaction_context, program_account_index)?;
-        #[allow(deprecated)]
-        if !self
-            .get_feature_set()
-            .remove_accounts_executable_flag_checks
-            && !borrowed_program_account.is_executable()
-        {
-            ic_msg!(self, "Account {} is not executable", callee_program_id);
-            return Err(InstructionError::AccountNotExecutable);
-        }
-
-        Ok(borrowed_program_account.get_index_in_transaction())
-    }
-
-    /// Helper to prepare for process_instruction() when the instruction is not a top level one,
-    /// and depends on `AccountMeta`s
-    pub fn prepare_next_instruction(
-        &mut self,
-        instruction: &Instruction,
-        signers: &[Pubkey],
-    ) -> Result<(), InstructionError> {
-        let mut instruction_accounts: Vec<InstructionAccount> =
-            Vec::with_capacity(instruction.accounts.len());
-
-        // The point of creating an inner function for the logic is to appease the borrow checker,
-        // since we cannot borrow the current instruction context as immutable and borrow the next
-        // instruction context as mutable. An alternative would be to place everything inside a
-        // block, but I think that would hinder readability.
-        let program_account_index =
-            self.prepare_next_instruction_inner(instruction, signers, &mut instruction_accounts)?;
+            borrowed_program_account.get_index_in_transaction()
+        };
 
         self.transaction_context
             .get_next_instruction_context_mut()?
