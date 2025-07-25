@@ -59,7 +59,7 @@ use {
     solana_keypair::Keypair,
     solana_measure::measure::Measure,
     solana_message::{compiled_instruction::CompiledInstruction, Message},
-    solana_net_utils::bind_to_unspecified,
+    solana_net_utils::sockets::bind_to_localhost_unique,
     solana_pubkey::Pubkey,
     solana_rpc_client::rpc_client::RpcClient,
     solana_signature::Signature,
@@ -726,7 +726,7 @@ fn run_dos<T: 'static + TpsClient + Send + Sync>(
             _ => panic!("Unsupported data_type detected"),
         };
 
-        let socket = bind_to_unspecified().unwrap();
+        let socket = bind_to_localhost_unique().expect("should bind");
         let mut last_log = Instant::now();
         let mut total_count: usize = 0;
         let mut count: usize = 0;
