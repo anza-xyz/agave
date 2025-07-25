@@ -1,10 +1,7 @@
 //! Deserializes packets from sigverify stage. Owned by banking stage.
 
 use {
-    super::{
-        immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
-        packet_filter::PacketFilterFailure,
-    },
+    super::immutable_deserialized_packet::{DeserializedPacketError, ImmutableDeserializedPacket},
     agave_banking_stage_ingress_types::{BankingPacketBatch, BankingPacketReceiver},
     crossbeam_channel::RecvTimeoutError,
     solana_perf::packet::PacketBatch,
@@ -40,8 +37,6 @@ pub struct PacketReceiverStats {
     pub failed_prioritization_count: Saturating<u64>,
     /// Number of vote packets dropped
     pub invalid_vote_count: Saturating<u64>,
-    /// Number of packets dropped due to insufficient compute limit
-    pub insufficient_compute_limit_count: Saturating<u64>,
 }
 
 impl PacketReceiverStats {
@@ -59,11 +54,6 @@ impl PacketReceiverStats {
             DeserializedPacketError::VoteTransactionError => {
                 self.invalid_vote_count += 1;
             }
-            DeserializedPacketError::FailedFilter(
-                PacketFilterFailure::InsufficientComputeLimit,
-            ) => {
-                self.insufficient_compute_limit_count += 1;
-            }
         }
     }
 }
@@ -80,16 +70,12 @@ impl PacketDeserializer {
         &self,
         recv_timeout: Duration,
         capacity: usize,
-        packet_filter: impl Fn(
-            ImmutableDeserializedPacket,
-        ) -> Result<ImmutableDeserializedPacket, PacketFilterFailure>,
     ) -> Result<ReceivePacketResults, RecvTimeoutError> {
         let (packet_count, packet_batches) = self.receive_until(recv_timeout, capacity)?;
 
         Ok(Self::deserialize_and_collect_packets(
             packet_count,
             &packet_batches,
-            packet_filter,
         ))
     }
 
@@ -98,9 +84,6 @@ impl PacketDeserializer {
     fn deserialize_and_collect_packets(
         packet_count: usize,
         banking_batches: &[BankingPacketBatch],
-        packet_filter: impl Fn(
-            ImmutableDeserializedPacket,
-        ) -> Result<ImmutableDeserializedPacket, PacketFilterFailure>,
     ) -> ReceivePacketResults {
         let mut packet_stats = PacketReceiverStats::default();
         let mut errors = Saturating::<usize>(0);
@@ -109,16 +92,12 @@ impl PacketDeserializer {
             .flat_map(|banking_batch| banking_batch.iter())
             .flat_map(|batch| batch.iter())
             .filter(|pkt| !pkt.meta().discard())
-            .filter_map(|pkt| {
-                match ImmutableDeserializedPacket::new(pkt)
-                    .and_then(|pkt| packet_filter(pkt).map_err(Into::into))
-                {
-                    Ok(pkt) => Some(pkt),
-                    Err(err) => {
-                        errors += 1;
-                        packet_stats.increment_error_count(&err);
-                        None
-                    }
+            .filter_map(|pkt| match ImmutableDeserializedPacket::new(pkt) {
+                Ok(pkt) => Some(pkt),
+                Err(err) => {
+                    errors += 1;
+                    packet_stats.increment_error_count(&err);
+                    None
                 }
             })
             .collect();
@@ -194,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_and_collect_packets_empty() {
-        let results = PacketDeserializer::deserialize_and_collect_packets(0, &[], Ok);
+        let results = PacketDeserializer::deserialize_and_collect_packets(0, &[]);
         assert_eq!(results.deserialized_packets.len(), 0);
         assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(0));
         assert_eq!(results.packet_stats.failed_sigverify_count, Saturating(0));
@@ -210,7 +189,6 @@ mod tests {
         let results = PacketDeserializer::deserialize_and_collect_packets(
             packet_count,
             &[BankingPacketBatch::new(packet_batches)],
-            Ok,
         );
         assert_eq!(results.deserialized_packets.len(), 2);
         assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(2));
@@ -232,7 +210,6 @@ mod tests {
         let results = PacketDeserializer::deserialize_and_collect_packets(
             packet_count,
             &[BankingPacketBatch::new(packet_batches)],
-            Ok,
         );
         assert_eq!(results.deserialized_packets.len(), 1);
         assert_eq!(results.packet_stats.passed_sigverify_count, Saturating(1));

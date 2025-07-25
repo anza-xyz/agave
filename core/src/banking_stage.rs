@@ -70,7 +70,6 @@ mod immutable_deserialized_packet;
 mod latest_validator_vote_packet;
 mod leader_slot_timing_metrics;
 conditional_vis_mod!(packet_deserializer, feature = "dev-context-only-utils", pub);
-mod packet_filter;
 mod packet_receiver;
 mod read_write_account_set;
 conditional_vis_mod!(scheduler_messages, feature = "dev-context-only-utils", pub);

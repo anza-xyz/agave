@@ -1,5 +1,4 @@
 use {
-    super::packet_filter::PacketFilterFailure,
     agave_feature_set::FeatureSet,
     solana_clock::Slot,
     solana_compute_budget::compute_budget_limits::ComputeBudgetLimits,
@@ -39,8 +38,6 @@ pub enum DeserializedPacketError {
     PrioritizationFailure,
     #[error("vote transaction failure")]
     VoteTransactionError,
-    #[error("Packet filter failure: {0}")]
-    FailedFilter(#[from] PacketFilterFailure),
 }
 
 // Make a dummy feature_set with all features enabled to
@@ -207,11 +204,8 @@ fn packet_message(packet: PacketRef) -> Result<&[u8], DeserializedPacketError> {
 #[cfg(test)]
 mod tests {
     use {
-        super::*, solana_compute_budget_interface as compute_budget,
-        solana_instruction::Instruction, solana_keypair::Keypair, solana_perf::packet::BytesPacket,
-        solana_pubkey::Pubkey, solana_signer::Signer,
-        solana_system_interface::instruction as system_instruction,
-        solana_system_transaction as system_transaction, solana_transaction::Transaction,
+        super::*, solana_keypair::Keypair, solana_perf::packet::BytesPacket,
+        solana_system_transaction as system_transaction,
     };
 
     #[test]
@@ -226,38 +220,5 @@ mod tests {
         let deserialized_packet = ImmutableDeserializedPacket::new(packet.as_ref());
 
         assert!(deserialized_packet.is_ok());
-    }
-
-    #[test]
-    fn compute_unit_limit_above_static_builtins() {
-        // Cases:
-        // 1. compute_unit_limit under static builtins
-        // 2. compute_unit_limit equal to static builtins
-        // 3. compute_unit_limit above static builtins
-        for (cu_limit, expectation) in [
-            (250, Err(PacketFilterFailure::InsufficientComputeLimit)),
-            (300, Ok(())),
-            (350, Ok(())),
-        ] {
-            let keypair = Keypair::new();
-            let bpf_program_id = Pubkey::new_unique();
-            let ixs = vec![
-                system_instruction::transfer(&keypair.pubkey(), &Pubkey::new_unique(), 1),
-                compute_budget::ComputeBudgetInstruction::set_compute_unit_limit(cu_limit),
-                Instruction::new_with_bytes(bpf_program_id, &[], vec![]), // non-builtin - not counted in filter
-            ];
-            let tx = Transaction::new_signed_with_payer(
-                &ixs,
-                Some(&keypair.pubkey()),
-                &[&keypair],
-                Hash::new_unique(),
-            );
-            let packet = BytesPacket::from_data(None, tx).unwrap();
-            let deserialized_packet = ImmutableDeserializedPacket::new(packet.as_ref()).unwrap();
-            assert_eq!(
-                deserialized_packet.check_insufficent_compute_unit_limit(),
-                expectation
-            );
-        }
     }
 }

@@ -101,7 +101,7 @@ impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
 
         let (received_packet_results, receive_time_us) = measure_us!(self
             .packet_receiver
-            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS, |packet| { Ok(packet) }));
+            .receive_packets(recv_timeout, MAX_RECEIVE_PACKETS));
 
         timing_metrics.update(|timing_metrics| {
             timing_metrics.receive_time_us += receive_time_us;
