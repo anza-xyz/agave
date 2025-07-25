@@ -11,9 +11,9 @@ use {
 
 #[test]
 pub fn test_recv_mmsg_batch_size() {
-    let reader_socket = bind_to_localhost_unique().expect("should bind - reader");
-    let addr = reader_socket.local_addr().unwrap();
-    let sender_socket = bind_to_localhost_unique().expect("should bind - sender");
+    let reader = bind_to_localhost_unique().expect("should bind - reader");
+    let addr = reader.local_addr().unwrap();
+    let sender = bind_to_localhost_unique().expect("should bind - sender");
 
     const TEST_BATCH_SIZE: usize = 64;
     let sent = TEST_BATCH_SIZE;
@@ -23,11 +23,11 @@ pub fn test_recv_mmsg_batch_size() {
     (0..1000).for_each(|_| {
         for _ in 0..sent {
             let data = [0; PACKET_DATA_SIZE];
-            sender_socket.send_to(&data[..], addr).unwrap();
+            sender.send_to(&data[..], addr).unwrap();
         }
         let mut packets = vec![Packet::default(); TEST_BATCH_SIZE];
         let now = Instant::now();
-        let recv = recv_mmsg(&reader_socket, &mut packets[..]).unwrap();
+        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap();
         elapsed_in_max_batch += now.elapsed().as_nanos();
         if recv == TEST_BATCH_SIZE {
             num_max_batches += 1;
@@ -39,12 +39,12 @@ pub fn test_recv_mmsg_batch_size() {
     (0..1000).for_each(|_| {
         for _ in 0..sent {
             let data = [0; PACKET_DATA_SIZE];
-            sender_socket.send_to(&data[..], addr).unwrap();
+            sender.send_to(&data[..], addr).unwrap();
         }
         let mut packets = vec![Packet::default(); 4];
         let mut recv = 0;
         let now = Instant::now();
-        while let Ok(num) = recv_mmsg(&reader_socket, &mut packets[..]) {
+        while let Ok(num) = recv_mmsg(&reader, &mut packets[..]) {
             recv += num;
             if recv >= TEST_BATCH_SIZE {
                 break;

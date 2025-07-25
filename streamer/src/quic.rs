@@ -694,10 +694,8 @@ mod test {
         super::*,
         crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
         crossbeam_channel::unbounded,
-        solana_net_utils::sockets::{
-            bind_to, bind_to_localhost_unique, localhost_port_range_for_tests,
-        },
-        std::net::{IpAddr, Ipv4Addr, SocketAddr},
+        solana_net_utils::sockets::bind_to_localhost_unique,
+        std::net::SocketAddr,
     };
 
     fn rt_for_test() -> Runtime {
@@ -713,11 +711,7 @@ mod test {
         crossbeam_channel::Receiver<PacketBatch>,
         SocketAddr,
     ) {
-        let port_range = localhost_port_range_for_tests();
-        let mut port_range = port_range.0..port_range.1;
-
-        let s = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
-            .expect("should bind");
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -772,10 +766,7 @@ mod test {
     #[test]
     fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let port_range = localhost_port_range_for_tests();
-        let mut port_range = port_range.0..port_range.1;
-        let s = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
-            .expect("should bind");
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
@@ -820,10 +811,7 @@ mod test {
     #[test]
     fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let port_range = localhost_port_range_for_tests();
-        let mut port_range = port_range.0..port_range.1;
-        let s = bind_to(IpAddr::V4(Ipv4Addr::LOCALHOST), port_range.next().unwrap())
-            .expect("should bind");
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();

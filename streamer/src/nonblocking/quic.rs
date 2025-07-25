@@ -1993,11 +1993,11 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_unstaked_node_connect_failure() {
         solana_logger::setup();
-        let socket = bind_to_localhost_unique().expect("should bind");
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, _) = unbounded();
         let keypair = Keypair::new();
-        let server_address = socket.local_addr().unwrap();
+        let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -2006,7 +2006,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_server(
             "quic_streamer_test",
-            socket,
+            s,
             &keypair,
             sender,
             exit.clone(),
@@ -2026,11 +2026,11 @@ pub mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_quic_server_multiple_streams() {
         solana_logger::setup();
-        let socket = bind_to_localhost_unique().expect("should bind");
+        let s = bind_to_localhost_unique().expect("should bind");
         let exit = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = unbounded();
         let keypair = Keypair::new();
-        let server_address = socket.local_addr().unwrap();
+        let server_address = s.local_addr().unwrap();
         let staked_nodes = Arc::new(RwLock::new(StakedNodes::default()));
         let SpawnNonBlockingServerResult {
             endpoints: _,
@@ -2039,7 +2039,7 @@ pub mod test {
             max_concurrent_connections: _,
         } = spawn_server(
             "quic_streamer_test",
-            socket,
+            s,
             &keypair,
             sender,
             exit.clone(),

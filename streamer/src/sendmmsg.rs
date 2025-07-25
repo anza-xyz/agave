@@ -247,10 +247,7 @@ mod tests {
             sendmmsg::{batch_send, multi_target_send, SendPktsError},
         },
         assert_matches::assert_matches,
-        solana_net_utils::{
-            bind_to_localhost, bind_to_unspecified,
-            sockets::{bind_to_localhost_async, bind_to_localhost_unique},
-        },
+        solana_net_utils::sockets::bind_to_localhost_unique,
         solana_packet::PACKET_DATA_SIZE,
         std::{
             io::ErrorKind,
@@ -260,9 +257,9 @@ mod tests {
 
     #[test]
     pub fn test_send_mmsg_one_dest() {
-        let reader = bind_to_localhost_async().expect("should bind - reader");
+        let reader = bind_to_localhost_unique().expect("should bind - reader");
         let addr = reader.local_addr().unwrap();
-        let sender = bind_to_localhost_async().expect("should bind - sender");
+        let sender = bind_to_localhost_unique().expect("should bind - sender");
 
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets.iter().map(|p| (&p[..], &addr)).collect();
@@ -277,13 +274,13 @@ mod tests {
 
     #[test]
     pub fn test_send_mmsg_multi_dest() {
-        let reader = bind_to_localhost_async().expect("should bind - reader 1");
+        let reader = bind_to_localhost_unique().expect("should bind - reader 1");
         let addr = reader.local_addr().unwrap();
 
-        let reader2 = bind_to_localhost_async().expect("should bind - reader 2");
+        let reader2 = bind_to_localhost_unique().expect("should bind - reader 2");
         let addr2 = reader2.local_addr().unwrap();
 
-        let sender = bind_to_localhost_async().expect("should bind - sender");
+        let sender = bind_to_localhost_unique().expect("should bind - sender");
 
         let packets: Vec<_> = (0..32).map(|_| vec![0u8; PACKET_DATA_SIZE]).collect();
         let packet_refs: Vec<_> = packets
@@ -312,19 +309,19 @@ mod tests {
 
     #[test]
     pub fn test_multicast_msg() {
-        let reader = bind_to_localhost_async().expect("should bind - reader 1");
+        let reader = bind_to_localhost_unique().expect("should bind - reader 1");
         let addr = reader.local_addr().unwrap();
 
-        let reader2 = bind_to_localhost_async().expect("should bind - reader 2");
+        let reader2 = bind_to_localhost_unique().expect("should bind - reader 2");
         let addr2 = reader2.local_addr().unwrap();
 
-        let reader3 = bind_to_localhost_async().expect("should bind - reader 3");
+        let reader3 = bind_to_localhost_unique().expect("should bind - reader 3");
         let addr3 = reader3.local_addr().unwrap();
 
-        let reader4 = bind_to_localhost_async().expect("should bind - reader 4");
+        let reader4 = bind_to_localhost_unique().expect("should bind - reader 4");
         let addr4 = reader4.local_addr().unwrap();
 
-        let sender = bind_to_localhost_async().expect("should bind - reader 5");
+        let sender = bind_to_localhost_unique().expect("should bind - reader 5");
 
         let packet = Packet::default();
 
