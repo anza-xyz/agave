@@ -210,7 +210,8 @@ const PAGE_SIZE: usize = 4 * 1024;
 // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
 const BUFFER_SIZE: usize = PAGE_SIZE * 4;
 
-pub(crate) fn new_scan_full_accounts_buffer<'a>() -> impl RequiredLenBufFileRead<'a> {
+/// Create a reusable buffer tuned for full accounts' storage scan.
+pub(crate) fn new_full_accounts_scan_buffer<'a>() -> impl RequiredLenBufFileRead<'a> {
     // 128KiB covers a reasonably large distribution of typical account sizes.
     // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
     const MIN_CAPACITY: usize = 1024 * 128;
@@ -1062,7 +1063,7 @@ impl AppendVec {
                 {}
             }
             AppendVecFileBacking::File(file) => {
-                reader.set_file(file, self.len());
+                reader.set_file(file, self.len())?;
 
                 let mut min_buf_len = STORE_META_OVERHEAD;
                 loop {
@@ -1709,7 +1710,7 @@ pub mod tests {
         let av_file = AppendVec::new_from_file(&path.path, av_mmap.len(), StorageAccess::File)
             .unwrap()
             .0;
-        let mut reader = new_scan_full_accounts_buffer();
+        let mut reader = new_full_accounts_scan_buffer();
         for av in [&av_mmap, &av_file] {
             let mut index = 0;
             av.scan_accounts_stored_meta(&mut reader, |v| {
@@ -1759,7 +1760,7 @@ pub mod tests {
         assert_eq!(indexes[0], 0);
         assert_eq!(av.accounts_count(), size);
 
-        let mut reader = new_scan_full_accounts_buffer();
+        let mut reader = new_full_accounts_scan_buffer();
 
         let mut sample = 0;
         let now = Instant::now();

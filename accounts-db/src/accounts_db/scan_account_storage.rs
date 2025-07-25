@@ -331,7 +331,7 @@ impl AccountsDb {
                     )) => {
                         let mut scanner = scanner.clone();
                         let mut init_accum = true;
-                        let mut reader = append_vec::new_scan_full_accounts_buffer();
+                        let mut reader = append_vec::new_full_accounts_scan_buffer();
                         // load from cache failed, so create the cache file for this chunk
                         for (slot, storage) in snapshot_storages.iter_range(&range_this_chunk) {
                             let ancient = slot < oldest_non_ancient_slot_for_identification;
@@ -642,7 +642,7 @@ mod tests {
             accum: Vec::default(),
             calls: calls.clone(),
         };
-        let mut reader = append_vec::new_scan_full_accounts_buffer();
+        let mut reader = append_vec::new_full_accounts_scan_buffer();
         AccountsDb::scan_single_account_storage(&mut reader, &storage, &mut scanner).unwrap();
         let accum = scanner.scanning_complete();
         assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -689,7 +689,7 @@ mod tests {
                 value_to_use_for_lamports: expected,
             };
 
-            let mut reader = append_vec::new_scan_full_accounts_buffer();
+            let mut reader = append_vec::new_full_accounts_scan_buffer();
             AccountsDb::scan_single_account_storage(&mut reader, &storage, &mut test_scan).unwrap();
             let accum = test_scan.scanning_complete();
             assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -711,7 +711,7 @@ mod tests {
             storages.iter().for_each(|storage| {
                 accounts_db.storage.remove(&storage.slot(), false);
             });
-            let mut reader = append_vec::new_scan_full_accounts_buffer();
+            let mut reader = append_vec::new_full_accounts_scan_buffer();
 
             // replace the sample storages, storing default hash values so that we rehash during scan
             let storages = storages
@@ -749,7 +749,7 @@ mod tests {
         let accounts_db = AccountsDb::new_single_for_tests();
         let (storages, _raw_expected) = sample_storages_and_accounts(&accounts_db);
         let max_slot = storages.iter().map(|storage| storage.slot()).max().unwrap();
-        let mut reader = append_vec::new_scan_full_accounts_buffer();
+        let mut reader = append_vec::new_full_accounts_scan_buffer();
 
         // replace the sample storages, storing default hash values so that we rehash during scan
         let storages = storages
@@ -1142,7 +1142,7 @@ mod tests {
         for (i, offsets) in offsets.unwrap().offsets.iter().enumerate() {
             storage.mark_accounts_obsolete(vec![(*offsets, 0)].into_iter(), i as Slot);
         }
-        let mut reader = append_vec::new_scan_full_accounts_buffer();
+        let mut reader = append_vec::new_full_accounts_scan_buffer();
 
         // Perform scans of the storage assuming a different slot and verify the number of accounts found matches
         for max_slot in 0..num_accounts {

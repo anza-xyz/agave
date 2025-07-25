@@ -68,7 +68,13 @@ impl<const N: usize> Backing for Stack<N> {
 /// An extension of the `BufRead` trait for file readers that allow tracking file
 /// read position offset.
 pub(crate) trait FileBufRead<'a>: BufRead {
-    fn set_file(&mut self, file: &'a File, read_limit: usize);
+    /// Activate the given `file` as source of reads of this reader.
+    ///
+    /// Resets the internal buffer to an empty state and sets the file offset to 0.
+    ///
+    /// `read_limit` provides a pre-defined limit on the number of bytes that can be read
+    /// from the file (unless EOF is reached).
+    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()>;
 
     /// Returns the current file offset corresponding to the start of the buffer
     /// that will be returned by the next call to `fill_buf`.
@@ -131,18 +137,19 @@ impl<'a, T: Backing> BufferedReader<'a, T> {
     }
 
     pub fn with_file(mut self, file: &'a File, read_limit: usize) -> Self {
-        self.set_file(file, read_limit);
+        self.set_file(file, read_limit).unwrap();
         self
     }
 }
 
 impl<'a, T: Backing> FileBufRead<'a> for BufferedReader<'a, T> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) {
+    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.file = Some(file);
         self.file_len_valid = read_limit;
         self.file_last_offset = 0;
         self.file_offset_of_next_read = 0;
         self.buf_valid_bytes = 0..0;
+        Ok(())
     }
 
     #[inline(always)]
@@ -339,9 +346,9 @@ impl<R: BufRead> BufRead for BufReaderWithOverflow<R> {
 }
 
 impl<'a, R: FileBufRead<'a>> FileBufRead<'a> for BufReaderWithOverflow<R> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) {
-        self.reader.set_file(file, read_limit);
+    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
         self.overflow_buf.clear();
+        self.reader.set_file(file, read_limit)
     }
 
     fn get_file_offset(&self) -> usize {
