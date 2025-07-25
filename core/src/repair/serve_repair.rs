@@ -1347,8 +1347,7 @@ mod tests {
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
             shred::{
-                max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags,
-                Shredder,
+                max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, Shredder,
             },
         },
         solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
@@ -2277,7 +2276,20 @@ mod tests {
     #[test]
     fn test_verify_shred_response() {
         fn new_test_data_shred(slot: Slot, index: u32) -> Shred {
-            Shred::new_from_data(slot, index, 1, &[], ShredFlags::empty(), 0, 0, 0)
+            let shredder = Shredder::new(slot, slot - 1, 0, 0).unwrap();
+            let keypair = Keypair::new();
+            let reed_solomon_cache = ReedSolomonCache::default();
+            let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+                &keypair,
+                &[],
+                true,
+                Some(Hash::default()),
+                0,
+                0,
+                &reed_solomon_cache,
+                &mut ProcessShredsStats::default(),
+            );
+            shreds.remove(index as usize)
         }
         let repair = ShredRepairType::Orphan(9);
         // Ensure new options are added to this test
