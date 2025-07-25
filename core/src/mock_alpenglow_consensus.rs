@@ -539,6 +539,10 @@ impl MockAlpenglowConsensus {
             .store(config.verify_signatures, Ordering::Relaxed);
         let interval = config.test_interval_slots as u64;
         if interval > 0 {
+            if self.safety_latch_engaged {
+                debug!("Alpenglow test disabled due to safety latch");
+                return;
+            }
             debug!("Alpenglow test interval set to {} slots", interval);
         } else {
             self.safety_latch_engaged = false;
@@ -564,7 +568,11 @@ impl MockAlpenglowConsensus {
             );
             self.safety_latch_engaged = true;
             self.lockdown();
-            datapoint_info!("mock_alpenglow", ("forking_backoff", 1, i64),);
+            datapoint_info!(
+                "mock_alpenglow",
+                ("forking_backoff", 1, i64),
+                ("slot", slot, i64),
+            );
             return;
         }
         self.highest_slot = slot;
@@ -586,7 +594,11 @@ impl MockAlpenglowConsensus {
                     if let Some(slot_sender) = self.slot_sender.as_ref() {
                         if slot_sender.try_send(slot).is_err() {
                             error!("Can not initiate mock voting, all workers are busy");
-                            datapoint_info!("mock_alpenglow", ("runner_stuck", 1, i64),);
+                            datapoint_info!(
+                                "mock_alpenglow",
+                                ("runner_stuck", 1, i64),
+                                ("slot", slot, i64)
+                            );
                         }
                     } else {
                         return;
@@ -594,7 +606,11 @@ impl MockAlpenglowConsensus {
                 }
                 Err(slot) => {
                     error!("Can not initiate mock voting, all slots are busy");
-                    datapoint_info!("mock_alpenglow", ("runner_stuck", 1, i64),);
+                    datapoint_info!(
+                        "mock_alpenglow",
+                        ("runner_stuck", 1, i64),
+                        ("slot", slot, i64)
+                    );
                 }
             }
         }
@@ -723,6 +739,7 @@ fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake,
     datapoint_info!(
         "mock_alpenglow",
         ("total_peers", peers.len(), f64),
+        ("slot", slot, i64),
         ("packets_collected_notarize", total_voted_nodes[0], f64),
         (
             "percent_stake_collected_notarize",
