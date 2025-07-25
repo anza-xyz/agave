@@ -5,7 +5,7 @@ use {
     solana_hash::Hash,
     solana_keypair::Keypair,
     solana_ledger::shred::{
-        max_entries_per_n_shred, recover, verify_test_data_shred, ProcessShredsStats,
+        self, max_entries_per_n_shred, recover, verify_test_data_shred, ProcessShredsStats,
         ReedSolomonCache, Shred, ShredData, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_signer::Signer,
@@ -135,13 +135,19 @@ fn test_multi_fec_block_different_size_coding() {
             .chain(fec_coding_shreds.iter().step_by(2))
             .cloned()
             .collect();
-        let recovered_data = Shredder::try_recovery(all_shreds, &reed_solomon_cache).unwrap();
+        let recovered_data: Vec<Shred> = shred::recover(all_shreds, &reed_solomon_cache)
+            .unwrap()
+            .map(|s| s.unwrap())
+            .collect();
         // Necessary in order to ensure the last shred in the slot
         // is part of the recovered set, and that the below `index`
         // calculation in the loop is correct
         assert!(fec_data_shreds.len() % 2 == 0);
         for (i, recovered_shred) in recovered_data.into_iter().enumerate() {
             let index = first_data_index + (i * 2) + 1;
+            if recovered_shred.is_code() {
+                continue;
+            }
             verify_test_data_shred(
                 &recovered_shred,
                 index.try_into().unwrap(),

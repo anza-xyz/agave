@@ -192,7 +192,10 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
         .partition(Shred::is_data);
 
     bencher.iter(|| {
-        let result = Shredder::try_recovery(coding_shreds.clone(), &reed_solomon_cache).unwrap();
-        black_box(result);
+        for shred in
+            solana_ledger::shred::recover(coding_shreds.clone(), &reed_solomon_cache).unwrap()
+        {
+            black_box(shred.unwrap());
+        }
     })
 }

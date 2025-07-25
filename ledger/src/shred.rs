@@ -402,10 +402,6 @@ impl Shred {
     dispatch!(fn signed_data(&self) -> Result<SignedData, Error>);
 
     dispatch!(pub fn chained_merkle_root(&self) -> Result<Hash, Error>);
-    // Returns the portion of the shred's payload which is erasure coded.
-    dispatch!(pub(crate) fn erasure_shard(&self) -> Result<&[u8], Error>);
-    // Returns the shard index within the erasure coding set.
-    dispatch!(pub(crate) fn erasure_shard_index(&self) -> Result<usize, Error>);
     dispatch!(pub(crate) fn retransmitter_signature(&self) -> Result<Signature, Error>);
 
     dispatch!(pub fn into_payload(self) -> Payload);
