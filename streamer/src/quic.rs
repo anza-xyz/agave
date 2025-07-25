@@ -694,7 +694,9 @@ mod test {
         super::*,
         crate::nonblocking::{quic::test::*, testing_utilities::check_multiple_streams},
         crossbeam_channel::unbounded,
-        solana_net_utils::sockets::{bind_to, localhost_port_range_for_tests},
+        solana_net_utils::sockets::{
+            bind_to, bind_to_localhost_unique, localhost_port_range_for_tests,
+        },
         std::net::{IpAddr, Ipv4Addr, SocketAddr},
     };
 
