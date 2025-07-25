@@ -9,10 +9,8 @@ use {
         ser::{Serialize, SerializeSeq, Serializer},
     },
     solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_accounts_db::{accounts_db::PubkeyHashAccount, accounts_hash::AccountHash},
     solana_clock::{Epoch, Slot},
     solana_fee_structure::FeeDetails,
-    solana_hash::Hash,
     solana_message::inner_instruction::InnerInstructionsList,
     solana_pubkey::Pubkey,
     solana_svm::transaction_commit_result::CommittedTransaction,
@@ -161,7 +159,7 @@ impl SlotDetails {
 /// implementations.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct AccountsDetails {
-    pub accounts: Vec<PubkeyHashAccount>,
+    pub accounts: Vec<(Pubkey, AccountSharedData)>,
 }
 
 /// Used as an intermediate for serializing and deserializing account fields
@@ -169,7 +167,6 @@ pub struct AccountsDetails {
 #[derive(Deserialize, Serialize)]
 struct SerdeAccount {
     pubkey: String,
-    hash: String,
     owner: String,
     lamports: u64,
     rent_epoch: Epoch,
@@ -177,16 +174,11 @@ struct SerdeAccount {
     data: String,
 }
 
-impl From<&PubkeyHashAccount> for SerdeAccount {
-    fn from(pubkey_hash_account: &PubkeyHashAccount) -> Self {
-        let PubkeyHashAccount {
-            pubkey,
-            hash,
-            account,
-        } = pubkey_hash_account;
+impl From<&(Pubkey, AccountSharedData)> for SerdeAccount {
+    fn from(pubkey_account: &(Pubkey, AccountSharedData)) -> Self {
+        let (pubkey, account) = pubkey_account;
         Self {
             pubkey: pubkey.to_string(),
-            hash: hash.0.to_string(),
             owner: account.owner().to_string(),
             lamports: account.lamports(),
             rent_epoch: account.rent_epoch(),
@@ -196,12 +188,11 @@ impl From<&PubkeyHashAccount> for SerdeAccount {
     }
 }
 
-impl TryFrom<SerdeAccount> for PubkeyHashAccount {
+impl TryFrom<SerdeAccount> for (Pubkey, AccountSharedData) {
     type Error = String;
 
     fn try_from(temp_account: SerdeAccount) -> Result<Self, Self::Error> {
         let pubkey = Pubkey::from_str(&temp_account.pubkey).map_err(|err| err.to_string())?;
-        let hash = AccountHash(Hash::from_str(&temp_account.hash).map_err(|err| err.to_string())?);
 
         let account = AccountSharedData::from(Account {
             lamports: temp_account.lamports,
@@ -213,11 +204,7 @@ impl TryFrom<SerdeAccount> for PubkeyHashAccount {
             rent_epoch: temp_account.rent_epoch,
         });
 
-        Ok(Self {
-            pubkey,
-            hash,
-            account,
-        })
+        Ok((pubkey, account))
     }
 }
 
@@ -240,14 +227,16 @@ impl<'de> Deserialize<'de> for AccountsDetails {
     where
         D: Deserializer<'de>,
     {
+        type PubkeyAccount = (Pubkey, AccountSharedData);
+
         let temp_accounts: Vec<SerdeAccount> = Deserialize::deserialize(deserializer)?;
-        let pubkey_hash_accounts: Result<Vec<_>, _> = temp_accounts
+        let pubkey_accounts: Result<Vec<_>, _> = temp_accounts
             .into_iter()
-            .map(PubkeyHashAccount::try_from)
+            .map(PubkeyAccount::try_from)
             .collect();
-        let pubkey_hash_accounts = pubkey_hash_accounts.map_err(de::Error::custom)?;
+        let pubkey_accounts = pubkey_accounts.map_err(de::Error::custom)?;
         Ok(AccountsDetails {
-            accounts: pubkey_hash_accounts,
+            accounts: pubkey_accounts,
         })
     }
 }
@@ -303,13 +292,8 @@ pub mod tests {
                     rent_epoch: 123,
                 });
                 let account_pubkey = Pubkey::new_unique();
-                let account_hash = AccountHash(solana_sha256_hasher::hash("account".as_bytes()));
                 let accounts = AccountsDetails {
-                    accounts: vec![PubkeyHashAccount {
-                        pubkey: account_pubkey,
-                        hash: account_hash,
-                        account,
-                    }],
+                    accounts: vec![(account_pubkey, account)],
                 };
 
                 SlotDetails {
