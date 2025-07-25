@@ -38,7 +38,7 @@ use {
         io::{self, BufRead, BufReader, BufWriter, Error as IoError, Read, Seek, Write},
         mem,
         num::{NonZeroU64, NonZeroUsize},
-        ops::RangeInclusive,
+        ops::{Range, RangeInclusive},
         path::{Path, PathBuf},
         process::ExitStatus,
         str::FromStr,
@@ -1123,11 +1123,12 @@ fn archive_snapshot(
             let mut sorted_storage_indices = (0..snapshot_storages.len()).collect::<Vec<_>>();
             sorted_storage_indices.sort_by_key(|&i| snapshot_storages[i].accounts.len());
             for i in 0..sorted_storage_indices.len() {
-                // Balance large and small files with bias towards small (1 large + 4 small), such
-                // that during unpacking large writes and mixed with file metadata operations
+                // Balance large and small files with bias towards small (4 small + 1 large), such
+                // that during unpacking large writes are mixed with file metadata operations
                 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
-                let index = get_from_start_or_end_index_by_ratio(&sorted_storage_indices, i, 5);
-                let storage = &snapshot_storages[index];
+                let indices_range = 0..sorted_storage_indices.len();
+                let index = select_from_range_with_start_end_rates(indices_range, i, 4, 1);
+                let storage = &snapshot_storages[sorted_storage_indices[index]];
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
                     .join(AccountsFile::file_name(storage.slot(), storage.id()));
 
@@ -1209,19 +1210,30 @@ fn archive_snapshot(
     })
 }
 
-/// Get the `nth` element (0-based) from `values` selected from start or end with `ratio`.
+/// Select the `nth` (`0 <= nth < range.len()`) value from a `range`, choosing values alternately
+/// from its start or end according to a `start_rate : end_rate` ratio.
 ///
-/// 1:ratio elements are selected from the end and the rest from the start.
-/// This function calculates permutation of `values` balancing extreme elements.
-fn get_from_start_or_end_index_by_ratio(values: &[usize], nth: usize, ratio: usize) -> usize {
-    let nth_div = nth / ratio;
-    let nth_rem = nth % ratio;
-    let value_index = if nth_rem == 0 {
-        values.len() - 1 - nth_div
+/// For every `start_rate` values selected from the start, `end_rate` values are selected from the end.
+/// The resulting sequence alternates in a balanced and interleaved fashion between the range's start and end.
+/// ```
+fn select_from_range_with_start_end_rates(
+    range: Range<usize>,
+    nth: usize,
+    start_rate: usize,
+    end_rate: usize,
+) -> usize {
+    let range_len = range.end - range.start;
+    let cycle = start_rate + end_rate;
+    let cycle_index = nth % cycle;
+    let cycle_num = nth.checked_div(cycle).expect("rates sum must be positive");
+
+    let index = if cycle_index < start_rate {
+        cycle_num * start_rate + cycle_index
     } else {
-        nth_div * (ratio - 1) + nth_rem - 1
+        let end_index = cycle_num * end_rate + cycle_index - start_rate;
+        range_len - end_index - 1
     };
-    values[value_index]
+    range.start + index
 }
 
 /// Get the bank snapshots in a directory
@@ -3685,22 +3697,30 @@ mod tests {
     }
 
     #[test]
-    fn test_get_values_from_start_or_end_index_by_ratio() {
-        let values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-        let shuffled: Vec<_> = (0..values.len())
-            .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 3))
+    fn test_select_from_start_or_end_index_by_ratio() {
+        let interleaved: Vec<_> = (0..10)
+            .map(|i| select_from_range_with_start_end_rates(1..11, i, 2, 1))
             .collect();
-        assert_eq!(shuffled, vec![10, 1, 2, 9, 3, 4, 8, 5, 6, 7]);
+        assert_eq!(interleaved, vec![1, 2, 10, 3, 4, 9, 5, 6, 8, 7]);
 
-        let shuffled: Vec<_> = (0..values.len())
-            .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 2))
+        let interleaved: Vec<_> = (0..10)
+            .map(|i| select_from_range_with_start_end_rates(1..11, i, 1, 1))
             .collect();
-        assert_eq!(shuffled, vec![10, 1, 9, 2, 8, 3, 7, 4, 6, 5]);
+        assert_eq!(interleaved, vec![1, 10, 2, 9, 3, 8, 4, 7, 5, 6]);
 
-        let values = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-        let shuffled: Vec<_> = (0..values.len())
-            .map(|i| get_from_start_or_end_index_by_ratio(&values, i, 3))
+        let interleaved: Vec<_> = (0..9)
+            .map(|i| select_from_range_with_start_end_rates(1..10, i, 2, 1))
             .collect();
-        assert_eq!(shuffled, vec![9, 1, 2, 8, 3, 4, 7, 5, 6]);
+        assert_eq!(interleaved, vec![1, 2, 9, 3, 4, 8, 5, 6, 7]);
+
+        let interleaved: Vec<_> = (0..9)
+            .map(|i| select_from_range_with_start_end_rates(1..10, i, 1, 2))
+            .collect();
+        assert_eq!(interleaved, vec![1, 9, 8, 2, 7, 6, 3, 5, 4]);
+
+        let interleaved: Vec<_> = (0..13)
+            .map(|i| select_from_range_with_start_end_rates(1..14, i, 2, 3))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 13, 12, 11, 3, 4, 10, 9, 8, 5, 6, 7]);
     }
 }
