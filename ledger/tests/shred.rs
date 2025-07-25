@@ -50,14 +50,13 @@ fn test_multi_fec_block_coding(is_last_in_slot: bool) {
     let reed_solomon_cache = ReedSolomonCache::default();
     let serialized_entries = bincode::serialize(&entries).unwrap();
 
-    let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+    let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
         &keypair,
         &entries,
         is_last_in_slot,
         chained_merkle_root,
-        0,    // next_shred_index
-        0,    // next_code_index
-        true, // merkle_variant
+        0, // next_shred_index
+        0, // next_code_index
         &reed_solomon_cache,
         &mut ProcessShredsStats::default(),
     );
@@ -226,14 +225,14 @@ fn setup_different_sized_fec_blocks(
     let reed_solomon_cache = ReedSolomonCache::default();
     for i in 0..2 {
         let is_last = i == 1;
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             &keypair,
             &entries,
             is_last,
             chained_merkle_root,
             next_shred_index,
             next_code_index,
-            true, // merkle_variant
             &reed_solomon_cache,
             &mut ProcessShredsStats::default(),
         );

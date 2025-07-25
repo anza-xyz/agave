@@ -530,7 +530,7 @@ impl ServeRepair {
     fn report_time_spent(label: &str, time: &Duration, extra: &str) {
         let count = time.as_millis();
         if count > 5 {
-            info!("{} took: {} ms {}", label, count, extra);
+            info!("{label} took: {count} ms {extra}");
         }
     }
 
@@ -1256,7 +1256,8 @@ impl ServeRepair {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(err, num_failed)) => {
                     warn!(
-                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: {err:?}"
+                        "batch_send failed to send {num_failed}/{num_pkts} packets. First error: \
+                         {err:?}"
                     );
                 }
             }

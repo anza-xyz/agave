@@ -36,18 +36,17 @@ use {
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
-            AccountsStats, CleanAccountsStats, FlushStats, PurgeStats, ShrinkAncientStats,
-            ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
+            AccountsStats, CleanAccountsStats, FlushStats, ObsoleteAccountsStats, PurgeStats,
+            ShrinkAncientStats, ShrinkStats, ShrinkStatsSub, StoreAccountsTiming,
         },
         accounts_file::{
             AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
             StorageAccess,
         },
         accounts_hash::{
-            AccountHash, AccountLtHash, AccountsDeltaHash, AccountsHash, AccountsHashKind,
-            AccountsHasher, AccountsLtHash, CalcAccountsHashConfig, CalculateHashIntermediate,
-            HashStats, IncrementalAccountsHash, SerdeAccountsDeltaHash, SerdeAccountsHash,
-            SerdeIncrementalAccountsHash, ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH,
+            AccountHash, AccountLtHash, AccountsHash, AccountsHashKind, AccountsHasher,
+            AccountsLtHash, CalcAccountsHashConfig, CalculateHashIntermediate, HashStats,
+            IncrementalAccountsHash, ZeroLamportAccounts, ZERO_LAMPORT_ACCOUNT_HASH,
             ZERO_LAMPORT_ACCOUNT_LT_HASH,
         },
         accounts_index::{
@@ -64,7 +63,6 @@ use {
         append_vec::{aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
         cache_hash_data::{CacheHashData, DeletionPolicy as CacheHashDeletionPolicy},
         contains::Contains,
-        epoch_accounts_hash::EpochAccountsHashManager,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
             PartitionedEpochRewardsConfig, DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
@@ -75,7 +73,6 @@ use {
         u64_align, utils,
         verify_accounts_hash_in_background::VerifyAccountsHashInBackground,
     },
-    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     dashmap::{DashMap, DashSet},
     log::*,
     rand::{thread_rng, Rng},
@@ -106,7 +103,7 @@ use {
             atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Condvar, Mutex, RwLock,
         },
-        thread::{sleep, Builder},
+        thread::sleep,
         time::{Duration, Instant},
     },
     tempfile::TempDir,
@@ -173,23 +170,6 @@ pub(crate) struct ShrinkCollectAliveSeparatedByRefs<'a> {
     pub(crate) many_refs_this_is_newest_alive: AliveAccounts<'a>,
     /// account where ref_count > 1, and this slot is NOT the highest alive entry in the index for the pubkey
     pub(crate) many_refs_old_alive: AliveAccounts<'a>,
-}
-
-/// Configuration Parameters for running accounts hash and total lamports verification
-#[derive(Debug, Clone)]
-pub struct VerifyAccountsHashAndLamportsConfig<'a> {
-    /// bank ancestors
-    pub ancestors: &'a Ancestors,
-    /// epoch_schedule
-    pub epoch_schedule: &'a EpochSchedule,
-    /// epoch
-    pub epoch: Epoch,
-    /// true to ignore mismatches
-    pub ignore_mismatch: bool,
-    /// true to dump debug log if mismatch happens
-    pub store_detailed_debug_info: bool,
-    /// true to use dedicated background thread pool for verification
-    pub use_bg_thread_pool: bool,
 }
 
 pub(crate) trait ShrinkCollectRefs<'a>: Sync + Send {
@@ -344,9 +324,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormalTest,
-    enable_experimental_accumulator_hash: false,
-    verify_experimental_accumulator_hash: false,
-    snapshots_use_experimental_accumulator_hash: false,
+    mark_obsolete_accounts: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -370,9 +348,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     partitioned_epoch_rewards_config: DEFAULT_PARTITIONED_EPOCH_REWARDS_CONFIG,
     storage_access: StorageAccess::File,
     scan_filter_for_shrinking: ScanFilter::OnlyAbnormal,
-    enable_experimental_accumulator_hash: false,
-    verify_experimental_accumulator_hash: false,
-    snapshots_use_experimental_accumulator_hash: false,
+    mark_obsolete_accounts: false,
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
@@ -500,9 +476,7 @@ pub struct AccountsDbConfig {
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
     pub storage_access: StorageAccess,
     pub scan_filter_for_shrinking: ScanFilter,
-    pub enable_experimental_accumulator_hash: bool,
-    pub verify_experimental_accumulator_hash: bool,
-    pub snapshots_use_experimental_accumulator_hash: bool,
+    pub mark_obsolete_accounts: bool,
     /// Number of threads for background cleaning operations (`thread_pool_clean')
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
@@ -573,7 +547,7 @@ struct SlotIndexGenerationInfo {
 /// These accounts need to have their lt hashes mixed *out*.
 /// This is the final value, that when applied to all the storages at startup,
 /// will produce the correct accounts lt hash.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DuplicatesLtHash(pub LtHash);
 
 impl Default for DuplicatesLtHash {
@@ -601,6 +575,9 @@ struct GenerateIndexTimings {
     pub visit_zero_lamports_us: u64,
     pub num_zero_lamport_single_refs: u64,
     pub all_accounts_are_zero_lamports_slots: u64,
+    pub mark_obsolete_accounts_us: u64,
+    pub num_obsolete_accounts_marked: u64,
+    pub num_slots_removed_as_obsolete: u64,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -674,6 +651,21 @@ impl GenerateIndexTimings {
             (
                 "all_accounts_are_zero_lamports_slots",
                 self.all_accounts_are_zero_lamports_slots,
+                i64
+            ),
+            (
+                "mark_obsolete_accounts_us",
+                self.mark_obsolete_accounts_us,
+                i64
+            ),
+            (
+                "num_obsolete_accounts_marked",
+                self.num_obsolete_accounts_marked,
+                i64
+            ),
+            (
+                "num_slots_removed_as_obsolete",
+                self.num_slots_removed_as_obsolete,
                 i64
             ),
         );
@@ -984,13 +976,6 @@ impl ReadableAccount for LoadedAccount<'_> {
     fn to_account_shared_data(&self) -> AccountSharedData {
         self.take_account()
     }
-}
-
-#[derive(Debug)]
-pub enum AccountsHashVerificationError {
-    MissingAccountsHash,
-    MismatchedAccountsHash,
-    MismatchedTotalLamports(u64, u64),
 }
 
 #[derive(Default)]
@@ -1339,7 +1324,6 @@ pub struct AccountsDb {
 
     write_cache_limit_bytes: Option<u64>,
 
-    sender_bg_hasher: RwLock<Option<Sender<Vec<Arc<CachedAccount>>>>>,
     read_only_accounts_cache: ReadOnlyAccountsCache,
 
     /// distribute the accounts across storage lists
@@ -1376,11 +1360,6 @@ pub struct AccountsDb {
     pub thread_pool_clean: ThreadPool,
     /// Thread pool for AccountsHashVerifier
     pub thread_pool_hash: ThreadPool,
-
-    accounts_delta_hashes: Mutex<HashMap<Slot, AccountsDeltaHash>>,
-    accounts_hashes: Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>>,
-    incremental_accounts_hashes:
-        Mutex<HashMap<Slot, (IncrementalAccountsHash, /*capitalization*/ u64)>>,
 
     pub stats: AccountsStats,
 
@@ -1452,28 +1431,9 @@ pub struct AccountsDb {
     /// At that point, this and other code can be deleted.
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
 
-    /// the full accounts hash calculation as of a predetermined block height 'N'
-    /// to be included in the bank hash at a predetermined block height 'M'
-    /// The cadence is once per epoch, all nodes calculate a full accounts hash as of a known slot calculated using 'N'
-    /// Some time later (to allow for slow calculation time), the bank hash at a slot calculated using 'M' includes the full accounts hash.
-    /// Thus, the state of all accounts on a validator is known to be correct at least once per epoch.
-    pub epoch_accounts_hash_manager: EpochAccountsHashManager,
-
     /// The latest full snapshot slot dictates how to handle zero lamport accounts
     /// Note, this is None if we're told to *not* take snapshots
     latest_full_snapshot_slot: SeqLock<Option<Slot>>,
-
-    /// Flag to indicate if the experimental accounts lattice hash is enabled.
-    /// (For R&D only; a feature-gate also exists to turn this on and make it a part of consensus.)
-    pub is_experimental_accumulator_hash_enabled: AtomicBool,
-
-    /// Flag to indicate if the experimental accounts lattice hash should be verified.
-    /// (For R&D only)
-    pub verify_experimental_accumulator_hash: bool,
-
-    /// Flag to indicate if the experimental accounts lattice hash is used for snapshots.
-    /// (For R&D only; a feature-gate also exists to turn this on.)
-    pub snapshots_use_experimental_accumulator_hash: AtomicBool,
 
     /// These are the ancient storages that could be valuable to
     /// shrink, sorted by amount of dead bytes.  The elements
@@ -1481,6 +1441,11 @@ pub struct AccountsDb {
     /// Members are Slot and capacity. If capacity is smaller, then
     /// that means the storage was already shrunk.
     pub(crate) best_ancient_slots_to_shrink: RwLock<VecDeque<(Slot, u64)>>,
+
+    /// Flag to indicate if the experimental obsolete account tracking feature is enabled.
+    /// This feature tracks obsolete accounts in the account storage entry allowing
+    /// for earlier cleaning of obsolete accounts in the storages and index.
+    pub mark_obsolete_accounts: bool,
 }
 
 /// results from 'split_storages_ancient'
@@ -1882,14 +1847,6 @@ impl AccountsDb {
             exhaustively_verify_refcounts: accounts_db_config.exhaustively_verify_refcounts,
             storage_access: accounts_db_config.storage_access,
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
-            is_experimental_accumulator_hash_enabled: accounts_db_config
-                .enable_experimental_accumulator_hash
-                .into(),
-            verify_experimental_accumulator_hash: accounts_db_config
-                .verify_experimental_accumulator_hash,
-            snapshots_use_experimental_accumulator_hash: accounts_db_config
-                .snapshots_use_experimental_accumulator_hash
-                .into(),
             thread_pool,
             thread_pool_clean,
             thread_pool_hash,
@@ -1897,15 +1854,11 @@ impl AccountsDb {
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
-            sender_bg_hasher: RwLock::new(None),
             uncleaned_pubkeys: DashMap::default(),
             next_id: AtomicAccountsFileId::new(0),
             shrink_candidate_slots: Mutex::new(ShrinkCandidates::default()),
             write_version: AtomicU64::new(0),
             file_size: DEFAULT_FILE_SIZE,
-            accounts_delta_hashes: Mutex::new(HashMap::new()),
-            accounts_hashes: Mutex::new(HashMap::new()),
-            incremental_accounts_hashes: Mutex::new(HashMap::new()),
             external_purge_slots_stats: PurgeStats::default(),
             clean_accounts_stats: CleanAccountsStats::default(),
             shrink_stats: ShrinkStats::default(),
@@ -1921,9 +1874,9 @@ impl AccountsDb {
             zero_lamport_accounts_to_purge_after_full_snapshot: DashSet::default(),
             log_dead_slots: AtomicBool::new(true),
             accounts_file_provider: AccountsFileProvider::default(),
-            epoch_accounts_hash_manager: EpochAccountsHashManager::new_invalid(),
             latest_full_snapshot_slot: SeqLock::new(None),
             best_ancient_slots_to_shrink: RwLock::default(),
+            mark_obsolete_accounts: accounts_db_config.mark_obsolete_accounts,
         };
 
         {
@@ -1965,30 +1918,6 @@ impl AccountsDb {
             size,
             self.accounts_file_provider,
         )
-    }
-
-    /// Returns if the experimental accounts lattice hash is enabled
-    pub fn is_experimental_accumulator_hash_enabled(&self) -> bool {
-        self.is_experimental_accumulator_hash_enabled
-            .load(Ordering::Acquire)
-    }
-
-    /// Sets if the experimental accounts lattice hash is enabled
-    pub fn set_is_experimental_accumulator_hash_enabled(&self, is_enabled: bool) {
-        self.is_experimental_accumulator_hash_enabled
-            .store(is_enabled, Ordering::Release);
-    }
-
-    /// Returns if snapshots use the experimental accounts lattice hash
-    pub fn snapshots_use_experimental_accumulator_hash(&self) -> bool {
-        self.snapshots_use_experimental_accumulator_hash
-            .load(Ordering::Acquire)
-    }
-
-    /// Sets if snapshots use the experimental accounts lattice hash
-    pub fn set_snapshots_use_experimental_accumulator_hash(&self, is_enabled: bool) {
-        self.snapshots_use_experimental_accumulator_hash
-            .store(is_enabled, Ordering::Release);
     }
 
     /// While scanning cleaning candidates obtain slots that can be
@@ -2049,7 +1978,7 @@ impl AccountsDb {
             MarkAccountsObsolete::No,
         );
         measure.stop();
-        debug!("{}", measure);
+        debug!("{measure}");
         self.clean_accounts_stats
             .clean_old_root_reclaim_us
             .fetch_add(measure.as_us(), Ordering::Relaxed);
@@ -2158,55 +2087,6 @@ impl AccountsDb {
                 }
             }
         }
-    }
-
-    fn background_hasher(receiver: Receiver<Vec<Arc<CachedAccount>>>) {
-        info!("Background account hasher has started");
-        loop {
-            let result = receiver.try_recv();
-            match result {
-                Ok(accounts) => {
-                    for account in accounts {
-                        // if we hold the only ref, then this account doesn't need to be hashed, we ignore this account and it will disappear
-                        if Arc::strong_count(&account) > 1 {
-                            // this will cause the hash to be calculated and store inside account if it needs to be calculated
-                            let _ = (*account).hash();
-                        };
-                    }
-                }
-                Err(TryRecvError::Empty) => {
-                    sleep(Duration::from_millis(5));
-                }
-                Err(err @ TryRecvError::Disconnected) => {
-                    info!("Background account hasher is stopping because: {err}");
-                    break;
-                }
-            }
-        }
-        info!("Background account hasher has stopped");
-    }
-
-    pub fn start_background_hasher(&self) {
-        if self.is_background_hasher_running() {
-            return;
-        }
-
-        let (sender, receiver) = unbounded();
-        Builder::new()
-            .name("solDbStoreHashr".to_string())
-            .spawn(move || {
-                Self::background_hasher(receiver);
-            })
-            .unwrap();
-        *self.sender_bg_hasher.write().unwrap() = Some(sender);
-    }
-
-    pub fn stop_background_hasher(&self) {
-        drop(self.sender_bg_hasher.write().unwrap().take())
-    }
-
-    pub fn is_background_hasher_running(&self) -> bool {
-        self.sender_bg_hasher.read().unwrap().is_some()
     }
 
     #[must_use]
@@ -3758,7 +3638,7 @@ impl AccountsDb {
         }
         let mut unique_accounts =
             self.get_unique_accounts_from_storage_for_shrink(&store, &self.shrink_stats);
-        debug!("do_shrink_slot_store: slot: {}", slot);
+        debug!("do_shrink_slot_store: slot: {slot}");
         let shrink_collect = self.shrink_collect::<AliveAccounts<'_>>(
             &store,
             &mut unique_accounts,
@@ -3815,8 +3695,11 @@ impl AccountsDb {
         // mutating rooted slots; There should be no writers to them.
         let accounts = [(slot, &shrink_collect.alive_accounts.alive_accounts()[..])];
         let storable_accounts = StorableAccountsBySlot::new(slot, &accounts, self);
-        stats_sub.store_accounts_timing =
-            self.store_accounts_frozen(storable_accounts, shrink_in_progress.new_storage());
+        stats_sub.store_accounts_timing = self.store_accounts_frozen(
+            storable_accounts,
+            shrink_in_progress.new_storage(),
+            UpdateIndexThreadSelection::PoolWithThreshold,
+        );
 
         rewrite_elapsed.stop();
         stats_sub.rewrite_elapsed_us = Saturating(rewrite_elapsed.as_us());
@@ -3940,7 +3823,7 @@ impl AccountsDb {
     // Reads all accounts in given slot's AppendVecs and filter only to alive,
     // then create a minimum AppendVec filled with the alive.
     fn shrink_slot_forced(&self, slot: Slot) {
-        debug!("shrink_slot_forced: slot: {}", slot);
+        debug!("shrink_slot_forced: slot: {slot}");
 
         if let Some(store) = self
             .storage
@@ -4073,11 +3956,8 @@ impl AccountsDb {
         &self,
         dropped_roots: impl Iterator<Item = Slot>,
     ) {
-        let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
-
         dropped_roots.for_each(|slot| {
             self.accounts_index.clean_dead_slot(slot);
-            accounts_delta_hashes.remove(&slot);
             // the storage has been removed from this slot and recycled or dropped
             assert!(self.storage.remove(&slot, false).is_none());
             debug_assert!(
@@ -4944,6 +4824,8 @@ impl AccountsDb {
         #[cfg(not(test))]
         assert!(max_root.is_none());
 
+        let starting_max_root = self.accounts_index.max_root_inclusive();
+
         let (slot, storage_location, _maybe_account_accesor) =
             self.read_index_for_accessor_or_load_slow(ancestors, pubkey, max_root, false)?;
         // Notice the subtle `?` at previous line, we bail out pretty early if missing.
@@ -5004,6 +4886,19 @@ impl AccountsDb {
             */
             self.read_only_accounts_cache
                 .store(*pubkey, slot, account.clone());
+        }
+        if load_hint == LoadHint::FixedMaxRoot
+            || load_hint == LoadHint::FixedMaxRootDoNotPopulateReadCache
+        {
+            // If the load hint is that the max root is fixed, the max root should be fixed.
+            let ending_max_root = self.accounts_index.max_root_inclusive();
+            if starting_max_root != ending_max_root {
+                warn!(
+                    "do_load_with_populate_read_cache() scanning pubkey {pubkey} called with \
+                    fixed max root, but max root changed from {starting_max_root} to \
+                    {ending_max_root} during function call"
+                );
+            }
         }
         Some((account, slot))
     }
@@ -5865,8 +5760,12 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) =
-                measure_us!(self.store_accounts_frozen((slot, &accounts[..]), &flushed_store,));
+            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
+                .store_accounts_frozen(
+                    (slot, &accounts[..]),
+                    &flushed_store,
+                    UpdateIndexThreadSelection::PoolWithThreshold,
+                ));
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
             flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
 
@@ -5961,14 +5860,13 @@ impl AccountsDb {
             0
         };
 
-        let (account_infos, cached_accounts) = (0..accounts_and_meta_to_store.len())
+        (0..accounts_and_meta_to_store.len())
             .map(|index| {
                 let txn = txs.map(|txs| *txs.get(index).expect("txs must be present if provided"));
-                let mut account_info = AccountInfo::default();
                 accounts_and_meta_to_store.account_default_if_zero_lamport(index, |account| {
                     let account_shared_data = account.to_account_shared_data();
                     let pubkey = account.pubkey();
-                    account_info =
+                    let account_info =
                         AccountInfo::new(StorageLocation::Cached, account.is_zero_lamport());
 
                     self.notify_account_at_accounts_update(
@@ -5980,19 +5878,11 @@ impl AccountsDb {
                     );
                     current_write_version = current_write_version.saturating_add(1);
 
-                    let cached_account =
-                        self.accounts_cache.store(slot, pubkey, account_shared_data);
-                    (account_info, cached_account)
+                    self.accounts_cache.store(slot, pubkey, account_shared_data);
+                    account_info
                 })
             })
-            .unzip();
-
-        // hash this accounts in bg
-        if let Some(sender) = self.sender_bg_hasher.read().unwrap().as_ref() {
-            let _ = sender.send(cached_accounts);
-        };
-
-        account_infos
+            .collect()
     }
 
     fn report_store_stats(&self) {
@@ -6053,100 +5943,6 @@ impl AccountsDb {
 
     pub fn checked_sum_for_capitalization<T: Iterator<Item = u64>>(balances: T) -> u64 {
         AccountsHasher::checked_cast_for_capitalization(balances.map(|b| b as u128).sum::<u128>())
-    }
-
-    pub fn calculate_accounts_hash_from_index(
-        &self,
-        max_slot: Slot,
-        config: &CalcAccountsHashConfig<'_>,
-    ) -> (AccountsHash, u64) {
-        let mut collect = Measure::start("collect");
-        let keys: Vec<_> = self
-            .accounts_index
-            .account_maps
-            .iter()
-            .flat_map(|map| {
-                let mut keys = map.keys();
-                keys.sort_unstable(); // hashmap is not ordered, but bins are relative to each other
-                keys
-            })
-            .collect();
-        collect.stop();
-
-        // Pick a chunk size big enough to allow us to produce output vectors that are smaller than the overall size.
-        // We'll also accumulate the lamports within each chunk and fewer chunks results in less contention to accumulate the sum.
-        let chunks = crate::accounts_hash::MERKLE_FANOUT.pow(4);
-        let total_lamports = Mutex::<u64>::new(0);
-
-        let get_account_hashes = || {
-            keys.par_chunks(chunks)
-                .map(|pubkeys| {
-                    let mut sum = 0u128;
-                    let account_hashes: Vec<Hash> = pubkeys
-                        .iter()
-                        .filter_map(|pubkey| {
-                            let index_entry = self.accounts_index.get_cloned(pubkey)?;
-                            self.accounts_index
-                                .get_account_info_with_and_then(
-                                    &index_entry,
-                                    config.ancestors,
-                                    Some(max_slot),
-                                    |(slot, account_info)| {
-                                        if account_info.is_zero_lamport() {
-                                            return None;
-                                        }
-                                        self.get_account_accessor(
-                                            slot,
-                                            pubkey,
-                                            &account_info.storage_location(),
-                                        )
-                                        .get_loaded_account(|loaded_account| {
-                                            let mut loaded_hash = loaded_account.loaded_hash();
-                                            let balance = loaded_account.lamports();
-                                            let hash_is_missing =
-                                                loaded_hash == AccountHash(Hash::default());
-                                            if hash_is_missing {
-                                                let computed_hash = Self::hash_account(
-                                                    &loaded_account,
-                                                    loaded_account.pubkey(),
-                                                );
-                                                loaded_hash = computed_hash;
-                                            }
-                                            sum += balance as u128;
-                                            loaded_hash.0
-                                        })
-                                    },
-                                )
-                                .flatten()
-                        })
-                        .collect();
-                    let mut total = total_lamports.lock().unwrap();
-                    *total = AccountsHasher::checked_cast_for_capitalization(*total as u128 + sum);
-                    account_hashes
-                })
-                .collect()
-        };
-
-        let mut scan = Measure::start("scan");
-        let account_hashes: Vec<Vec<Hash>> = self.thread_pool_clean.install(get_account_hashes);
-        scan.stop();
-
-        let total_lamports = *total_lamports.lock().unwrap();
-
-        let mut hash_time = Measure::start("hash");
-        let (accumulated_hash, hash_total) = AccountsHasher::calculate_hash(account_hashes);
-        hash_time.stop();
-
-        datapoint_info!(
-            "calculate_accounts_hash_from_index",
-            ("accounts_scan", scan.as_us(), i64),
-            ("hash", hash_time.as_us(), i64),
-            ("hash_total", hash_total, i64),
-            ("collect", collect.as_us(), i64),
-        );
-
-        let accounts_hash = AccountsHash(accumulated_hash);
-        (accounts_hash, total_lamports)
     }
 
     /// Calculates the accounts lt hash
@@ -6226,11 +6022,15 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
+                let obsolete_accounts = storage.get_obsolete_accounts(None);
                 storage
                     .accounts
-                    .scan_accounts(|_offset, account| {
-                        let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
-                        accum.mix_in(&account_lt_hash.0);
+                    .scan_accounts(|offset, account| {
+                        // Obsolete accounts were not included in the original hash, so they should not be added here
+                        if !obsolete_accounts.contains(&(offset, account.data.len())) {
+                            let account_lt_hash = Self::lt_hash_account(&account, account.pubkey());
+                            accum.mix_in(&account_lt_hash.0);
+                        }
                     })
                     .expect("must scan accounts storage");
                 accum
@@ -6240,6 +6040,12 @@ impl AccountsDb {
                 accum
             });
 
+        if self.mark_obsolete_accounts {
+            // If `mark_obsolete_accounts` is true, then none if the duplicate accounts were
+            // included in the lt_hash, and do not need to be mixed out.
+            // The duplicates_lt_hash should be the default value.
+            assert_eq!(*duplicates_lt_hash, DuplicatesLtHash::default());
+        }
         lt_hash.mix_out(&duplicates_lt_hash.0);
 
         AccountsLtHash(lt_hash)
@@ -6295,26 +6101,6 @@ impl AccountsDb {
             })
             .try_reduce(|| 0, u64::checked_add)
             .expect("capitalization cannot overflow")
-    }
-
-    /// This is only valid to call from tests.
-    /// run the accounts hash calculation and store the results
-    pub fn update_accounts_hash_for_tests(
-        &self,
-        slot: Slot,
-        ancestors: &Ancestors,
-        debug_verify: bool,
-        is_startup: bool,
-    ) -> (AccountsHash, u64) {
-        self.update_accounts_hash_with_verify_from(
-            CalcAccountsHashDataSource::IndexForTests,
-            debug_verify,
-            slot,
-            ancestors,
-            None,
-            &EpochSchedule::default(),
-            is_startup,
-        )
     }
 
     fn update_old_slot_stats(&self, stats: &HashStats, storage: Option<&Arc<AccountStorageEntry>>) {
@@ -6384,248 +6170,6 @@ impl AccountsDb {
         true
     }
 
-    pub fn calculate_accounts_hash_from(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        slot: Slot,
-        config: &CalcAccountsHashConfig<'_>,
-    ) -> (AccountsHash, u64) {
-        match data_source {
-            CalcAccountsHashDataSource::Storages => {
-                if self.accounts_cache.contains_any_slots(slot) {
-                    // this indicates a race condition
-                    inc_new_counter_info!("accounts_hash_items_in_write_cache", 1);
-                }
-
-                let mut collect_time = Measure::start("collect");
-                let (combined_maps, slots) = self.get_storages(..=slot);
-                collect_time.stop();
-
-                let mut sort_time = Measure::start("sort_storages");
-                let min_root = self.accounts_index.min_alive_root();
-                let storages = SortedStorages::new_with_slots(
-                    combined_maps.iter().zip(slots),
-                    min_root,
-                    Some(slot),
-                );
-                sort_time.stop();
-
-                let mut timings = HashStats {
-                    collect_snapshots_us: collect_time.as_us(),
-                    storage_sort_us: sort_time.as_us(),
-                    ..HashStats::default()
-                };
-                timings.calc_storage_size_quartiles(&combined_maps);
-
-                self.calculate_accounts_hash(config, &storages, timings)
-            }
-            CalcAccountsHashDataSource::IndexForTests => {
-                self.calculate_accounts_hash_from_index(slot, config)
-            }
-        }
-    }
-
-    fn calculate_accounts_hash_with_verify_from(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        debug_verify: bool,
-        slot: Slot,
-        config: CalcAccountsHashConfig<'_>,
-        expected_capitalization: Option<u64>,
-    ) -> (AccountsHash, u64) {
-        let (accounts_hash, total_lamports) =
-            self.calculate_accounts_hash_from(data_source, slot, &config);
-        if debug_verify {
-            // calculate the other way (store or non-store) and verify results match.
-            let data_source_other = match data_source {
-                CalcAccountsHashDataSource::IndexForTests => CalcAccountsHashDataSource::Storages,
-                CalcAccountsHashDataSource::Storages => CalcAccountsHashDataSource::IndexForTests,
-            };
-            let (accounts_hash_other, total_lamports_other) =
-                self.calculate_accounts_hash_from(data_source_other, slot, &config);
-
-            let success = accounts_hash == accounts_hash_other
-                && total_lamports == total_lamports_other
-                && total_lamports == expected_capitalization.unwrap_or(total_lamports);
-            assert!(
-                success,
-                "calculate_accounts_hash_with_verify mismatch. hashes: {}, {}; lamports: {}, {}; \
-                 expected lamports: {:?}, data source: {:?}, slot: {}",
-                accounts_hash.0,
-                accounts_hash_other.0,
-                total_lamports,
-                total_lamports_other,
-                expected_capitalization,
-                data_source,
-                slot
-            );
-        }
-        (accounts_hash, total_lamports)
-    }
-
-    /// run the accounts hash calculation and store the results
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_accounts_hash_with_verify_from(
-        &self,
-        data_source: CalcAccountsHashDataSource,
-        debug_verify: bool,
-        slot: Slot,
-        ancestors: &Ancestors,
-        expected_capitalization: Option<u64>,
-        epoch_schedule: &EpochSchedule,
-        is_startup: bool,
-    ) -> (AccountsHash, u64) {
-        let epoch = epoch_schedule.get_epoch(slot);
-        let (accounts_hash, total_lamports) = self.calculate_accounts_hash_with_verify_from(
-            data_source,
-            debug_verify,
-            slot,
-            CalcAccountsHashConfig {
-                use_bg_thread_pool: !is_startup,
-                ancestors: Some(ancestors),
-                epoch_schedule,
-                epoch,
-                store_detailed_debug_info_on_failure: false,
-            },
-            expected_capitalization,
-        );
-        self.set_accounts_hash(slot, (accounts_hash, total_lamports));
-        (accounts_hash, total_lamports)
-    }
-
-    /// Calculate the full accounts hash for `storages` and save the results at `slot`
-    pub fn update_accounts_hash(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        slot: Slot,
-        stats: HashStats,
-    ) -> (AccountsHash, /*capitalization*/ u64) {
-        let accounts_hash = self.calculate_accounts_hash(config, storages, stats);
-        let old_accounts_hash = self.set_accounts_hash(slot, accounts_hash);
-        if let Some(old_accounts_hash) = old_accounts_hash {
-            warn!(
-                "Accounts hash was already set for slot {slot}! old: {old_accounts_hash:?}, new: \
-                 {accounts_hash:?}"
-            );
-        }
-        accounts_hash
-    }
-
-    /// Calculate the incremental accounts hash for `storages` and save the results at `slot`
-    pub fn update_incremental_accounts_hash(
-        &self,
-        config: &CalcAccountsHashConfig<'_>,
-        storages: &SortedStorages<'_>,
-        slot: Slot,
-        stats: HashStats,
-    ) -> (IncrementalAccountsHash, /*capitalization*/ u64) {
-        let incremental_accounts_hash =
-            self.calculate_incremental_accounts_hash(config, storages, stats);
-        let old_incremental_accounts_hash =
-            self.set_incremental_accounts_hash(slot, incremental_accounts_hash);
-        if let Some(old_incremental_accounts_hash) = old_incremental_accounts_hash {
-            warn!(
-                "Incremental accounts hash was already set for slot {slot}! old: \
-                 {old_incremental_accounts_hash:?}, new: {incremental_accounts_hash:?}"
-            );
-        }
-        incremental_accounts_hash
-    }
-
-    /// Set the accounts hash for `slot`
-    ///
-    /// returns the previous accounts hash for `slot`
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn set_accounts_hash(
-        &self,
-        slot: Slot,
-        accounts_hash: (AccountsHash, /*capitalization*/ u64),
-    ) -> Option<(AccountsHash, /*capitalization*/ u64)> {
-        self.accounts_hashes
-            .lock()
-            .unwrap()
-            .insert(slot, accounts_hash)
-    }
-
-    /// After deserializing a snapshot, set the accounts hash for the new AccountsDb
-    pub fn set_accounts_hash_from_snapshot(
-        &mut self,
-        slot: Slot,
-        accounts_hash: SerdeAccountsHash,
-        capitalization: u64,
-    ) -> Option<(AccountsHash, /*capitalization*/ u64)> {
-        self.set_accounts_hash(slot, (accounts_hash.into(), capitalization))
-    }
-
-    /// Get the accounts hash for `slot`
-    pub fn get_accounts_hash(&self, slot: Slot) -> Option<(AccountsHash, /*capitalization*/ u64)> {
-        self.accounts_hashes.lock().unwrap().get(&slot).cloned()
-    }
-
-    /// Get all accounts hashes
-    pub fn get_accounts_hashes(&self) -> HashMap<Slot, (AccountsHash, /*capitalization*/ u64)> {
-        self.accounts_hashes.lock().unwrap().clone()
-    }
-
-    /// Set the incremental accounts hash for `slot`
-    ///
-    /// returns the previous incremental accounts hash for `slot`
-    pub fn set_incremental_accounts_hash(
-        &self,
-        slot: Slot,
-        incremental_accounts_hash: (IncrementalAccountsHash, /*capitalization*/ u64),
-    ) -> Option<(IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.incremental_accounts_hashes
-            .lock()
-            .unwrap()
-            .insert(slot, incremental_accounts_hash)
-    }
-
-    /// After deserializing a snapshot, set the incremental accounts hash for the new AccountsDb
-    pub fn set_incremental_accounts_hash_from_snapshot(
-        &mut self,
-        slot: Slot,
-        incremental_accounts_hash: SerdeIncrementalAccountsHash,
-        capitalization: u64,
-    ) -> Option<(IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.set_incremental_accounts_hash(slot, (incremental_accounts_hash.into(), capitalization))
-    }
-
-    /// Get the incremental accounts hash for `slot`
-    pub fn get_incremental_accounts_hash(
-        &self,
-        slot: Slot,
-    ) -> Option<(IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.incremental_accounts_hashes
-            .lock()
-            .unwrap()
-            .get(&slot)
-            .cloned()
-    }
-
-    /// Get all incremental accounts hashes
-    pub fn get_incremental_accounts_hashes(
-        &self,
-    ) -> HashMap<Slot, (IncrementalAccountsHash, /*capitalization*/ u64)> {
-        self.incremental_accounts_hashes.lock().unwrap().clone()
-    }
-
-    /// Purge accounts hashes that are older than `latest_full_snapshot_slot`
-    ///
-    /// Should only be called by AccountsHashVerifier, since it consumes the accounts hashes and
-    /// knows which ones are still needed.
-    pub fn purge_old_accounts_hashes(&self, latest_full_snapshot_slot: Slot) {
-        self.accounts_hashes
-            .lock()
-            .unwrap()
-            .retain(|&slot, _| slot >= latest_full_snapshot_slot);
-        self.incremental_accounts_hashes
-            .lock()
-            .unwrap()
-            .retain(|&slot, _| slot >= latest_full_snapshot_slot);
-    }
-
     fn sort_slot_storage_scan(accum: &mut BinnedHashData) -> u64 {
         let (_, sort_time) = measure_us!(accum.iter_mut().for_each(|items| {
             // sort_by vs unstable because slot and write_version are already in order
@@ -6666,6 +6210,7 @@ impl AccountsDb {
     ///
     /// This is intended to be used by startup verification, and also AccountsHashVerifier.
     /// Uses account storage files as the data source for the calculation.
+    // obsolete, will be removed next
     pub fn calculate_accounts_hash(
         &self,
         config: &CalcAccountsHashConfig<'_>,
@@ -6692,6 +6237,7 @@ impl AccountsDb {
     ///   included in the incremental snapshot.  This ensures reconstructing the AccountsDb is
     ///   still correct when using this incremental accounts hash.
     /// - `storages` must be the same as the ones going into the incremental snapshot.
+    // obsolete, will be removed next
     pub fn calculate_incremental_accounts_hash(
         &self,
         config: &CalcAccountsHashConfig<'_>,
@@ -6712,6 +6258,7 @@ impl AccountsDb {
 
     /// The shared code for calculating accounts hash from storages.
     /// Used for both full accounts hash and incremental accounts hash calculation.
+    // obsolete, will be removed next
     fn calculate_accounts_hash_from_storages(
         &self,
         config: &CalcAccountsHashConfig<'_>,
@@ -6772,7 +6319,7 @@ impl AccountsDb {
                 .filter_map(|r| r.as_ref().err())
                 .next()
             {
-                panic!("failed generating accounts hash files: {:?}", err);
+                panic!("failed generating accounts hash files: {err:?}");
             }
 
             // convert mmapped cache files into slices of data
@@ -6808,100 +6355,6 @@ impl AccountsDb {
         stats.total_us = total_time.end_as_us();
         stats.log();
         result
-    }
-
-    /// Verify accounts hash at startup (or tests)
-    ///
-    /// Calculate accounts hash(es) and compare them to the values set at startup.
-    /// If `base` is `None`, only calculates the full accounts hash for `[0, slot]`.
-    /// If `base` is `Some`, calculate the full accounts hash for `[0, base slot]`
-    /// and then calculate the incremental accounts hash for `(base slot, slot]`.
-    pub fn verify_accounts_hash_and_lamports(
-        &self,
-        snapshot_storages_and_slots: (&[Arc<AccountStorageEntry>], &[Slot]),
-        slot: Slot,
-        total_lamports: u64,
-        base: Option<(Slot, /*capitalization*/ u64)>,
-        config: VerifyAccountsHashAndLamportsConfig,
-    ) -> Result<(), AccountsHashVerificationError> {
-        let calc_config = CalcAccountsHashConfig {
-            use_bg_thread_pool: config.use_bg_thread_pool,
-            ancestors: Some(config.ancestors),
-            epoch_schedule: config.epoch_schedule,
-            epoch: config.epoch,
-            store_detailed_debug_info_on_failure: config.store_detailed_debug_info,
-        };
-        let hash_mismatch_is_error = !config.ignore_mismatch;
-
-        if let Some((base_slot, base_capitalization)) = base {
-            self.verify_accounts_hash_and_lamports(
-                snapshot_storages_and_slots,
-                base_slot,
-                base_capitalization,
-                None,
-                config,
-            )?;
-
-            let storages_and_slots = snapshot_storages_and_slots
-                .0
-                .iter()
-                .zip(snapshot_storages_and_slots.1.iter())
-                .filter(|storage_and_slot| *storage_and_slot.1 > base_slot)
-                .map(|(storage, slot)| (storage, *slot));
-            let sorted_storages = SortedStorages::new_with_slots(storages_and_slots, None, None);
-            let calculated_incremental_accounts_hash = self.calculate_incremental_accounts_hash(
-                &calc_config,
-                &sorted_storages,
-                HashStats::default(),
-            );
-            let found_incremental_accounts_hash = self
-                .get_incremental_accounts_hash(slot)
-                .ok_or(AccountsHashVerificationError::MissingAccountsHash)?;
-            if calculated_incremental_accounts_hash != found_incremental_accounts_hash {
-                warn!(
-                    "mismatched incremental accounts hash for slot {slot}: \
-                     {calculated_incremental_accounts_hash:?} (calculated) != \
-                     {found_incremental_accounts_hash:?} (expected)"
-                );
-                if hash_mismatch_is_error {
-                    return Err(AccountsHashVerificationError::MismatchedAccountsHash);
-                }
-            }
-        } else {
-            let storages_and_slots = snapshot_storages_and_slots
-                .0
-                .iter()
-                .zip(snapshot_storages_and_slots.1.iter())
-                .filter(|storage_and_slot| *storage_and_slot.1 <= slot)
-                .map(|(storage, slot)| (storage, *slot));
-            let sorted_storages = SortedStorages::new_with_slots(storages_and_slots, None, None);
-            let (calculated_accounts_hash, calculated_lamports) =
-                self.calculate_accounts_hash(&calc_config, &sorted_storages, HashStats::default());
-            if calculated_lamports != total_lamports {
-                warn!(
-                    "Mismatched total lamports: {} calculated: {}",
-                    total_lamports, calculated_lamports
-                );
-                return Err(AccountsHashVerificationError::MismatchedTotalLamports(
-                    calculated_lamports,
-                    total_lamports,
-                ));
-            }
-            let (found_accounts_hash, _) = self
-                .get_accounts_hash(slot)
-                .ok_or(AccountsHashVerificationError::MissingAccountsHash)?;
-            if calculated_accounts_hash != found_accounts_hash {
-                warn!(
-                    "Mismatched accounts hash for slot {slot}: {calculated_accounts_hash:?} \
-                     (calculated) != {found_accounts_hash:?} (expected)"
-                );
-                if hash_mismatch_is_error {
-                    return Err(AccountsHashVerificationError::MismatchedAccountsHash);
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Returns all of the accounts' pubkeys for a given slot
@@ -7032,69 +6485,6 @@ impl AccountsDb {
                 })
                 .collect(),
         }
-    }
-
-    /// Calculate accounts delta hash for `slot`
-    pub fn calculate_accounts_delta_hash_internal(
-        &self,
-        slot: Slot,
-        ignore: Option<Pubkey>,
-    ) -> AccountsDeltaHash {
-        let (mut hashes, scan_us, mut accumulate) = self.get_pubkey_hash_for_slot(slot);
-
-        if let Some(ignore) = ignore {
-            hashes.retain(|k| k.0 != ignore);
-        }
-
-        let accounts_delta_hash = self
-            .thread_pool
-            .install(|| AccountsDeltaHash(AccountsHasher::accumulate_account_hashes(hashes)));
-        accumulate.stop();
-
-        self.set_accounts_delta_hash(slot, accounts_delta_hash);
-
-        self.stats
-            .delta_hash_scan_time_total_us
-            .fetch_add(scan_us, Ordering::Relaxed);
-        self.stats
-            .delta_hash_accumulate_time_total_us
-            .fetch_add(accumulate.as_us(), Ordering::Relaxed);
-        self.stats.delta_hash_num.fetch_add(1, Ordering::Relaxed);
-
-        accounts_delta_hash
-    }
-
-    /// Set the accounts delta hash for `slot` in the `accounts_delta_hashes` map
-    ///
-    /// returns the previous accounts delta hash for `slot`
-    #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
-    fn set_accounts_delta_hash(
-        &self,
-        slot: Slot,
-        accounts_delta_hash: AccountsDeltaHash,
-    ) -> Option<AccountsDeltaHash> {
-        self.accounts_delta_hashes
-            .lock()
-            .unwrap()
-            .insert(slot, accounts_delta_hash)
-    }
-
-    /// After deserializing a snapshot, set the accounts delta hash for the new AccountsDb
-    pub fn set_accounts_delta_hash_from_snapshot(
-        &mut self,
-        slot: Slot,
-        accounts_delta_hash: SerdeAccountsDeltaHash,
-    ) -> Option<AccountsDeltaHash> {
-        self.set_accounts_delta_hash(slot, accounts_delta_hash.into())
-    }
-
-    /// Get the accounts delta hash for `slot` in the `accounts_delta_hashes` map
-    pub fn get_accounts_delta_hash(&self, slot: Slot) -> Option<AccountsDeltaHash> {
-        self.accounts_delta_hashes
-            .lock()
-            .unwrap()
-            .get(&slot)
-            .cloned()
     }
 
     fn update_index<'a>(
@@ -7238,14 +6628,13 @@ impl AccountsDb {
                     store.slot(),
                     *slot
                 );
-                if offsets.len() == store.count() {
+
+                let remaining_accounts = if offsets.len() == store.count() {
                     // all remaining alive accounts in the storage are being removed, so the entire storage/slot is dead
-                    store.remove_accounts(store.alive_bytes(), offsets.len());
-                    self.dirty_stores.insert(*slot, store);
-                    dead_slots.insert(*slot);
+                    store.remove_accounts(store.alive_bytes(), offsets.len())
                 } else {
                     // not all accounts are being removed, so figure out sizes of accounts we are removing and update the alive bytes and alive account count
-                    let (_, us) = measure_us!({
+                    let (remaining_accounts, us) = measure_us!({
                         let mut offsets = offsets.iter().cloned().collect::<Vec<_>>();
                         // sort so offsets are in order. This improves efficiency of loading the accounts.
                         offsets.sort_unstable();
@@ -7254,7 +6643,7 @@ impl AccountsDb {
                             .iter()
                             .map(|len| store.accounts.calculate_stored_size(*len))
                             .sum();
-                        store.remove_accounts(dead_bytes, offsets.len());
+                        let remaining_accounts = store.remove_accounts(dead_bytes, offsets.len());
 
                         if let MarkAccountsObsolete::Yes(slot_marked_obsolete) =
                             mark_accounts_obsolete
@@ -7264,21 +6653,29 @@ impl AccountsDb {
                                 slot_marked_obsolete,
                             );
                         }
-
-                        if Self::is_shrinking_productive(&store)
-                            && self.is_candidate_for_shrink(&store)
-                        {
-                            // Checking that this single storage entry is ready for shrinking,
-                            // should be a sufficient indication that the slot is ready to be shrunk
-                            // because slots should only have one storage entry, namely the one that was
-                            // created by `flush_slot_cache()`.
-                            new_shrink_candidates.insert(*slot);
-                        }
+                        remaining_accounts
                     });
                     self.clean_accounts_stats
                         .get_account_sizes_us
                         .fetch_add(us, Ordering::Relaxed);
-                }
+                    remaining_accounts
+                };
+
+                // Check if we have removed all accounts from the storage
+                // This may be different from the check above as this
+                // can be multithreaded
+                if remaining_accounts == 0 {
+                    self.dirty_stores.insert(*slot, store);
+                    dead_slots.insert(*slot);
+                } else if Self::is_shrinking_productive(&store)
+                    && self.is_candidate_for_shrink(&store)
+                {
+                    // Checking that this single storage entry is ready for shrinking,
+                    // should be a sufficient indication that the slot is ready to be shrunk
+                    // because slots should only have one storage entry, namely the one that was
+                    // created by `flush_slot_cache()`.
+                    new_shrink_candidates.insert(*slot);
+                };
             }
         });
         measure.stop();
@@ -7315,13 +6712,6 @@ impl AccountsDb {
     ) {
         let mut measure = Measure::start("remove_dead_slots_metadata-ms");
         self.clean_dead_slots_from_accounts_index(dead_slots_iter.clone());
-
-        let mut accounts_delta_hashes = self.accounts_delta_hashes.lock().unwrap();
-        for slot in dead_slots_iter {
-            accounts_delta_hashes.remove(slot);
-        }
-        drop(accounts_delta_hashes);
-
         measure.stop();
         inc_new_counter_info!("remove_dead_slots_metadata-ms", measure.as_ms() as usize);
     }
@@ -7421,7 +6811,7 @@ impl AccountsDb {
                 "remove_dead_slots_metadata: {} dead slots",
                 dead_slots.len()
             );
-            trace!("remove_dead_slots_metadata: dead_slots: {:?}", dead_slots);
+            trace!("remove_dead_slots_metadata: dead_slots: {dead_slots:?}");
         }
         self.accounts_index
             .update_roots_stats(&mut accounts_index_root_stats);
@@ -7457,10 +6847,15 @@ impl AccountsDb {
                     .map(|store| {
                         let slot = store.slot();
                         let mut pubkeys = Vec::with_capacity(store.count());
+                        // Obsolete accounts are already unreffed before this point, so do not add
+                        // them to the pubkeys list.
+                        let obsolete_accounts = store.get_obsolete_accounts(None);
                         store
                             .accounts
-                            .scan_pubkeys(|pubkey| {
-                                pubkeys.push((slot, *pubkey));
+                            .scan_accounts_without_data(|offset, account| {
+                                if !obsolete_accounts.contains(&(offset, account.data_len)) {
+                                    pubkeys.push((slot, *account.pubkey));
+                                }
                             })
                             .expect("must scan accounts storage");
                         pubkeys
@@ -7716,6 +7111,7 @@ impl AccountsDb {
         &self,
         accounts: impl StorableAccounts<'a>,
         storage: &Arc<AccountStorageEntry>,
+        update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
         let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
@@ -7752,7 +7148,7 @@ impl AccountsDb {
             infos,
             &accounts,
             UpsertReclaim::IgnoreReclaims,
-            UpdateIndexThreadSelection::PoolWithThreshold,
+            update_index_thread_selection,
             &self.thread_pool_clean,
         );
 
@@ -8282,7 +7678,13 @@ impl AccountsDb {
                                     ) = self.visit_duplicate_pubkeys_during_startup(
                                         pubkeys,
                                         &timings,
-                                        should_calculate_duplicates_lt_hash,
+                                        // With obsolete accounts, the duplicates lt_hash should
+                                        // NOT be created, but hash generation from storages
+                                        // requires a duplicates_lt_hash. Skip calculating the
+                                        // duplicates hash from accounts if obsolete accounts
+                                        // are being marked.
+                                        should_calculate_duplicates_lt_hash
+                                            && !self.mark_obsolete_accounts,
                                     );
                                     let intermediate = DuplicatePubkeysVisitedInfo {
                                         accounts_data_len_from_duplicates,
@@ -8334,6 +7736,27 @@ impl AccountsDb {
                 }
 
                 self.set_storage_count_and_alive_bytes(storage_info, &mut timings);
+
+                if self.mark_obsolete_accounts {
+                    let mut mark_obsolete_accounts_time =
+                        Measure::start("mark_obsolete_accounts_time");
+                    // Mark all reclaims at max_slot. This is safe because only the snapshot paths care about
+                    // this information. Since this account was just restored from the previous snapshot and
+                    // it is known that it was already obsolete at that time, it must hold true that it will
+                    // still be obsolete if a newer snapshot is created, since a newer snapshot will always
+                    // be performed on a slot greater than the current slot
+                    let slot_marked_obsolete = slots.last().copied().unwrap();
+                    let obsolete_account_stats = self.mark_obsolete_accounts_at_startup(
+                        slot_marked_obsolete,
+                        unique_pubkeys_by_bin,
+                    );
+
+                    mark_obsolete_accounts_time.stop();
+                    timings.mark_obsolete_accounts_us = mark_obsolete_accounts_time.as_us();
+                    timings.num_obsolete_accounts_marked =
+                        obsolete_account_stats.accounts_marked_obsolete;
+                    timings.num_slots_removed_as_obsolete = obsolete_account_stats.slots_removed;
+                }
             }
             total_time.stop();
             timings.total_time_us = total_time.as_us();
@@ -8342,9 +7765,10 @@ impl AccountsDb {
 
         self.accounts_index.log_secondary_indexes();
 
-        // The duplicates lt hash must be Some if should_calculate_duplicates_lt_hash is true.
-        // But, if there were no duplicates, then we'd never set outer_duplicates_lt_hash to Some!
-        // So do one last check here to ensure outer_duplicates_lt_hash is Some if we're supposed
+        // The duplicates lt hash must be Some if populate_duplicates_lt_hash is true.
+        // But, if there were no duplicates or obsolete accounts marking removed all
+        // duplicates, then we'd never set outer_duplicates_lt_hash to Some! So do one
+        // last check here to ensure outer_duplicates_lt_hash is Some if we're supposed
         // to calculate the duplicates lt hash.
         if should_calculate_duplicates_lt_hash && outer_duplicates_lt_hash.is_none() {
             outer_duplicates_lt_hash = Some(Box::new(DuplicatesLtHash::default()));
@@ -8354,6 +7778,50 @@ impl AccountsDb {
             accounts_data_len: accounts_data_len.load(Ordering::Relaxed),
             duplicates_lt_hash: outer_duplicates_lt_hash,
         }
+    }
+
+    /// Use the duplicated pubkeys to mark all older version of the pubkeys as obsolete
+    /// This will unref the accounts and then reclaim the accounts
+    fn mark_obsolete_accounts_at_startup(
+        &self,
+        slot_marked_obsolete: Slot,
+        pubkeys_with_duplicates_by_bin: Vec<Vec<Pubkey>>,
+    ) -> ObsoleteAccountsStats {
+        let stats: ObsoleteAccountsStats = pubkeys_with_duplicates_by_bin
+            .par_iter()
+            .map(|pubkeys_by_bin| {
+                let reclaims = self.accounts_index.clean_and_unref_rooted_entries_by_bin(
+                    pubkeys_by_bin,
+                    |slot, account_info| {
+                        // Since the unref makes every account a single ref account, all
+                        // zero lamport accounts should be tracked as zero_lamport_single_ref
+                        if account_info.is_zero_lamport() {
+                            self.zero_lamport_single_ref_found(slot, account_info.offset());
+                        }
+                    },
+                );
+                let stats = PurgeStats::default();
+
+                // Convert from a vector to a hashset for use in reclaims
+                let pubkeys_removed_from_accounts_index: PubkeysRemovedFromAccountsIndex =
+                    pubkeys_by_bin.iter().cloned().collect();
+
+                // Mark all the entries as obsolete, and remove any empty storages
+                self.handle_reclaims(
+                    (!reclaims.is_empty()).then(|| reclaims.iter()),
+                    None,
+                    &pubkeys_removed_from_accounts_index,
+                    HandleReclaims::ProcessDeadSlots(&stats),
+                    MarkAccountsObsolete::Yes(slot_marked_obsolete),
+                );
+                ObsoleteAccountsStats {
+                    accounts_marked_obsolete: reclaims.len() as u64,
+                    slots_removed: stats.total_removed_storage_entries.load(Ordering::Relaxed)
+                        as u64,
+                }
+            })
+            .sum();
+        stats
     }
 
     /// Startup processes can consume large amounts of memory while inserting accounts into the index as fast as possible.
@@ -8515,7 +7983,7 @@ impl AccountsDb {
                     .alive_bytes
                     .store(entry.stored_size, Ordering::Release);
             } else {
-                trace!("id: {} clearing count", id);
+                trace!("id: {id} clearing count");
                 store.count_and_status.lock_write().0 = 0;
             }
         }
@@ -8532,14 +8000,14 @@ impl AccountsDb {
         let mut alive_roots: Vec<_> = self.accounts_index.all_alive_roots();
         #[allow(clippy::stable_sort_primitive)]
         alive_roots.sort();
-        info!("{}: accounts_index alive_roots: {:?}", label, alive_roots,);
+        info!("{label}: accounts_index alive_roots: {alive_roots:?}");
         self.accounts_index.account_maps.iter().for_each(|map| {
             for pubkey in map.keys() {
                 self.accounts_index.get_and_then(&pubkey, |account_entry| {
                     if let Some(account_entry) = account_entry {
                         let list_r = &account_entry.slot_list.read().unwrap();
                         info!(" key: {} ref_count: {}", pubkey, account_entry.ref_count(),);
-                        info!("      slots: {:?}", list_r);
+                        info!("      slots: {list_r:?}");
                     }
                     let add_to_in_mem_cache = false;
                     (add_to_in_mem_cache, ())
@@ -8619,7 +8087,7 @@ impl CalcAccountsHashKind {
     }
 }
 
-pub(crate) enum UpdateIndexThreadSelection {
+pub enum UpdateIndexThreadSelection {
     /// Use current thread only
     Inline,
     /// Use a thread-pool if the number of updates exceeds a threshold
@@ -8656,11 +8124,6 @@ impl AccountsDb {
         self.flush_root_write_cache(slot);
     }
 
-    /// Wrapper function to calculate accounts delta hash for `slot` (only used for testing and benchmarking.)
-    pub fn calculate_accounts_delta_hash(&self, slot: Slot) -> AccountsDeltaHash {
-        self.calculate_accounts_delta_hash_internal(slot, None)
-    }
-
     pub fn load_without_fixed_root(
         &self,
         ancestors: &Ancestors,
@@ -8674,14 +8137,6 @@ impl AccountsDb {
             // callers of this expect zero lamport accounts that exist in the index to be returned as Some(empty)
             LoadZeroLamports::SomeWithZeroLamportAccountForTests,
         )
-    }
-
-    pub fn accounts_delta_hashes(&self) -> &Mutex<HashMap<Slot, AccountsDeltaHash>> {
-        &self.accounts_delta_hashes
-    }
-
-    pub fn accounts_hashes(&self) -> &Mutex<HashMap<Slot, (AccountsHash, /*capitalization*/ u64)>> {
-        &self.accounts_hashes
     }
 
     pub fn assert_load_account(&self, slot: Slot, pubkey: Pubkey, expected_lamports: u64) {
@@ -8823,47 +8278,8 @@ impl AccountsDb {
         }
     }
 
-    pub fn verify_accounts_hash_and_lamports_for_tests(
-        &self,
-        slot: Slot,
-        total_lamports: u64,
-        config: VerifyAccountsHashAndLamportsConfig,
-    ) -> Result<(), AccountsHashVerificationError> {
-        let snapshot_storages = self.get_storages(..);
-        let snapshot_storages_and_slots = (
-            snapshot_storages.0.as_slice(),
-            snapshot_storages.1.as_slice(),
-        );
-        self.verify_accounts_hash_and_lamports(
-            snapshot_storages_and_slots,
-            slot,
-            total_lamports,
-            None,
-            config,
-        )
-    }
-
     pub fn uncleaned_pubkeys(&self) -> &DashMap<Slot, Vec<Pubkey>, BuildNoHashHasher<Slot>> {
         &self.uncleaned_pubkeys
-    }
-}
-
-// These functions/fields are only usable from a dev context (i.e. tests and benches)
-#[cfg(feature = "dev-context-only-utils")]
-impl<'a> VerifyAccountsHashAndLamportsConfig<'a> {
-    pub fn new_for_test(
-        ancestors: &'a Ancestors,
-        epoch_schedule: &'a EpochSchedule,
-        epoch: Epoch,
-    ) -> Self {
-        Self {
-            ancestors,
-            epoch_schedule,
-            epoch,
-            ignore_mismatch: false,
-            store_detailed_debug_info: false,
-            use_bg_thread_pool: false,
-        }
     }
 }
 

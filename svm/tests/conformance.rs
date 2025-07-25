@@ -112,9 +112,30 @@ fn execute_fixtures() {
     run_from_folder(&base_dir);
     base_dir.pop();
 
+    // bpf-loader-v2 tests
+    base_dir.push("bpf-loader-v2");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // bpf-loader-v3 tests
+    base_dir.push("bpf-loader-v3");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // bpf-loader-v3 tests
+    base_dir.push("bpf-loader-v3-programs");
+    run_from_folder(&base_dir);
+    base_dir.pop();
+
     // System program tests
     base_dir.push("system");
     run_from_folder(&base_dir);
+    base_dir.pop();
+
+    // non-builtin-programs tests
+    base_dir.push("unknown");
+    run_from_folder(&base_dir);
+    base_dir.pop();
 
     cleanup();
 }
@@ -405,14 +426,12 @@ fn execute_fixture_as_instr(
     if output.result == 0 {
         assert!(
             result.is_ok(),
-            "Instruction execution was NOT successful, but should have been: {:?}",
-            filename
+            "Instruction execution was NOT successful, but should have been: {filename:?}"
         );
     } else {
         assert!(
             result.is_err(),
-            "Instruction execution was successful, but should NOT have been: {:?}",
-            filename
+            "Instruction execution was successful, but should NOT have been: {filename:?}"
         );
         return;
     }
@@ -484,8 +503,7 @@ fn verify_accounts_and_data(
     assert_eq!(
         consumed_units,
         cu_avail.saturating_sub(output.cu_avail),
-        "Execution units differs in case: {:?}",
-        filename
+        "Execution units differs in case: {filename:?}"
     );
 
     if return_data.is_empty() {
@@ -508,14 +526,14 @@ fn check_account(
 
     if received.lamports() != expected.lamports {
         return Some(
-            format!("Lamports differ in case: {:?}\n", filename)
+            format!("Lamports differ in case: {filename:?}\n")
                 + format_args!(received.lamports(), expected.lamports),
         );
     }
 
     if received.data() != expected.data.as_slice() {
         return Some(
-            format!("Account data differs in case: {:?}\n", filename)
+            format!("Account data differs in case: {filename:?}\n")
                 + format_args!(received.data(), expected.data.as_slice()),
         );
     }
@@ -523,14 +541,14 @@ fn check_account(
     let expected_owner = Pubkey::new_from_array(expected.owner.clone().try_into().unwrap());
     if received.owner() != &expected_owner {
         return Some(
-            format!("Account owner differs in case: {:?}\n", filename)
+            format!("Account owner differs in case: {filename:?}\n")
                 + format_args!(received.owner(), expected_owner),
         );
     }
 
     if received.executable() != expected.executable {
         return Some(
-            format!("Executable boolean differs in case: {:?}\n", filename)
+            format!("Executable boolean differs in case: {filename:?}\n")
                 + format_args!(received.executable(), expected.executable),
         );
     }
@@ -541,7 +559,7 @@ fn check_account(
         && received.rent_epoch() != expected.rent_epoch
     {
         return Some(
-            format!("Rent epoch differs in case: {:?}\n", filename)
+            format!("Rent epoch differs in case: {filename:?}\n")
                 + format_args!(received.rent_epoch(), expected.rent_epoch),
         );
     }

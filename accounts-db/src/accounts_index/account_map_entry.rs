@@ -43,15 +43,21 @@ impl<T: IndexValue> AccountMapEntry<T> {
         self.set_dirty(true);
     }
 
-    /// decrement the ref count
+    /// decrement the ref count by one
     /// return the refcount prior to subtracting 1
     /// 0 indicates an under refcounting error in the system.
     pub fn unref(&self) -> RefCount {
-        let previous = self.ref_count.fetch_sub(1, Ordering::Release);
+        self.unref_by_count(1)
+    }
+
+    /// decrement the ref count by the passed in amount
+    /// return the refcount prior to the ref count change
+    pub fn unref_by_count(&self, count: u64) -> RefCount {
+        let previous = self.ref_count.fetch_sub(count, Ordering::Release);
         self.set_dirty(true);
-        assert_ne!(
-            previous, 0,
-            "decremented ref count when already zero: {self:?}"
+        assert!(
+            previous >= count,
+            "decremented ref count below zero: {self:?}"
         );
         previous
     }

@@ -627,8 +627,8 @@ impl InstructionContext {
     #[cfg(not(target_os = "solana"))]
     pub fn configure(
         &mut self,
-        program_accounts: &[IndexOfAccount],
-        instruction_accounts: &[InstructionAccount],
+        program_accounts: Vec<IndexOfAccount>,
+        instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
         self.program_accounts = program_accounts.to_vec();

@@ -11,7 +11,6 @@ use {
     log::*,
     solana_account::{create_account_shared_data_for_test, Account, AccountSharedData},
     solana_account_info::AccountInfo,
-    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_banks_client::start_client,
     solana_banks_server::banks_server::start_local_server,
     solana_clock::{Epoch, Slot},
@@ -36,21 +35,17 @@ use {
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_runtime::{
-        accounts_background_service::SnapshotRequestKind,
         bank::Bank,
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
         genesis_utils::{create_genesis_config_with_leader_ex, GenesisConfigInfo},
         runtime_config::RuntimeConfig,
-        snapshot_config::SnapshotConfig,
-        snapshot_controller::SnapshotController,
     },
     solana_signer::Signer,
-    solana_stable_layout::stable_instruction::StableInstruction,
     solana_sysvar::Sysvar,
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
-    solana_vote_program::vote_state::{self, VoteState, VoteStateVersions},
+    solana_vote_program::vote_state::{self, VoteStateV3, VoteStateVersions},
     std::{
         cell::RefCell,
         collections::{HashMap, HashSet},
@@ -138,7 +133,7 @@ pub fn invoke_builtin_function(
     let (mut parameter_bytes, _regions, _account_lengths) = serialize_parameters(
         transaction_context,
         instruction_context,
-        true, // copy_account_data // There is no VM so direct mapping can not be implemented here
+        false, // direct_mapping // There is no VM so direct mapping can not be implemented here
         mask_out_rent_epoch_in_vm_serialization,
     )?;
 
@@ -254,7 +249,6 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         account_infos: &[AccountInfo],
         signers_seeds: &[&[&[u8]]],
     ) -> ProgramResult {
-        let instruction = StableInstruction::from(instruction.clone());
         let invoke_context = get_invoke_context();
         let log_collector = invoke_context.get_log_collector();
         let transaction_context = &invoke_context.transaction_context;
@@ -277,7 +271,7 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
             .collect::<Vec<_>>();
 
         let (instruction_accounts, program_indices) = invoke_context
-            .prepare_instruction(&instruction, &signers)
+            .prepare_instruction(instruction, &signers)
             .unwrap();
 
         // Copy caller's account_info modifications into invoke_context accounts
@@ -462,7 +456,7 @@ fn default_shared_object_dirs() -> Vec<PathBuf> {
     if let Ok(dir) = std::env::current_dir() {
         search_path.push(dir);
     }
-    trace!("SBF .so search path: {:?}", search_path);
+    trace!("SBF .so search path: {search_path:?}");
     search_path
 }
 
@@ -502,10 +496,8 @@ impl Default for ProgramTest {
     ///
     fn default() -> Self {
         solana_logger::setup_with_default(
-            "solana_sbpf::vm=debug,\
-             solana_runtime::message_processor=debug,\
-             solana_runtime::system_instruction_processor=trace,\
-             solana_program_test=info",
+            "solana_sbpf::vm=debug,solana_runtime::message_processor=debug,\
+             solana_runtime::system_instruction_processor=trace,solana_program_test=info",
         );
         let prefer_bpf =
             std::env::var("BPF_OUT_DIR").is_ok() || std::env::var("SBF_OUT_DIR").is_ok();
@@ -723,9 +715,8 @@ impl ProgramTest {
             }
 
             warn!(
-                "Possible bogus program name. Ensure the program name ({}) \
-                matches one of the following recognizable program names:",
-                program_name,
+                "Possible bogus program name. Ensure the program name ({program_name}) matches \
+                 one of the following recognizable program names:",
             );
             for name in valid_program_names {
                 warn!(" - {}", name.to_str().unwrap());
@@ -766,7 +757,7 @@ impl ProgramTest {
         program_id: Pubkey,
         builtin_function: BuiltinFunctionWithContext,
     ) {
-        info!("\"{}\" builtin program", program_name);
+        info!("\"{program_name}\" builtin program");
         self.builtin_programs.push((
             program_id,
             program_name,
@@ -806,7 +797,7 @@ impl ProgramTest {
         };
         let bootstrap_validator_pubkey = Pubkey::new_unique();
         let bootstrap_validator_stake_lamports =
-            rent.minimum_balance(VoteState::size_of()) + sol_to_lamports(1_000_000.0);
+            rent.minimum_balance(VoteStateV3::size_of()) + sol_to_lamports(1_000_000.0);
 
         let mint_keypair = Keypair::new();
         let voting_keypair = Keypair::new();
@@ -829,16 +820,16 @@ impl ProgramTest {
         for deactivate_feature_pk in &self.deactivate_feature_set {
             if FEATURE_NAMES.contains_key(deactivate_feature_pk) {
                 match genesis_config.accounts.remove(deactivate_feature_pk) {
-                    Some(_) => debug!("Feature for {:?} deactivated", deactivate_feature_pk),
+                    Some(_) => debug!("Feature for {deactivate_feature_pk:?} deactivated"),
                     None => warn!(
-                        "Feature {:?} set for deactivation not found in genesis_config account list, ignored.",
-                        deactivate_feature_pk
+                        "Feature {deactivate_feature_pk:?} set for deactivation not found in \
+                         genesis_config account list, ignored."
                     ),
                 }
             } else {
                 warn!(
-                    "Feature {:?} set for deactivation is not a known Feature public key",
-                    deactivate_feature_pk
+                    "Feature {deactivate_feature_pk:?} set for deactivation is not a known \
+                     Feature public key"
                 );
             }
         }
@@ -846,7 +837,7 @@ impl ProgramTest {
         let target_tick_duration = Duration::from_micros(100);
         genesis_config.poh_config = PohConfig::new_sleep(target_tick_duration);
         debug!("Payer address: {}", mint_keypair.pubkey());
-        debug!("Genesis config: {}", genesis_config);
+        debug!("Genesis config: {genesis_config}");
 
         let bank = Bank::new_with_paths(
             &genesis_config,
@@ -893,7 +884,7 @@ impl ProgramTest {
 
         for (address, account) in self.accounts.iter() {
             if bank.get_account(address).is_some() {
-                info!("Overriding account at {}", address);
+                info!("Overriding account at {address}");
             }
             bank.store_account(address, account);
         }
@@ -1000,7 +991,7 @@ impl ProgramTestBanksClientExt for BanksClient {
             if new_blockhash != *blockhash {
                 return Ok(new_blockhash);
             }
-            debug!("Got same blockhash ({:?}), will retry...", blockhash);
+            debug!("Got same blockhash ({blockhash:?}), will retry...");
 
             tokio::time::sleep(Duration::from_millis(200)).await;
             num_retries += 1;
@@ -1166,47 +1157,17 @@ impl ProgramTestContext {
                     bank,
                     &Pubkey::default(),
                     pre_warp_slot,
-                    // some warping tests cannot use the append vecs because of the sequence of adding roots and flushing
-                    solana_accounts_db::accounts_db::CalcAccountsHashDataSource::IndexForTests,
                 ))
                 .clone_without_scheduler()
         };
 
-        let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-        let snapshot_controller = SnapshotController::new(
-            snapshot_request_sender,
-            SnapshotConfig::new_disabled(),
-            bank_forks.root(),
-        );
-
         bank_forks
             .set_root(
                 pre_warp_slot,
-                Some(&snapshot_controller),
+                None, // snapshots are disabled
                 Some(pre_warp_slot),
             )
             .unwrap();
-
-        // The call to `set_root()` above will send an EAH request.  Need to intercept and handle
-        // all EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze()
-        // waiting for an in-flight EAH calculation to complete.
-        snapshot_request_receiver
-            .try_iter()
-            .filter(|snapshot_request| {
-                snapshot_request.request_kind == SnapshotRequestKind::EpochAccountsHash
-            })
-            .for_each(|snapshot_request| {
-                snapshot_request
-                    .snapshot_root_bank
-                    .rc
-                    .accounts
-                    .accounts_db
-                    .epoch_accounts_hash_manager
-                    .set_valid(
-                        EpochAccountsHash::new(Hash::new_unique()),
-                        snapshot_request.snapshot_root_bank.slot(),
-                    )
-            });
 
         // warp_bank is frozen so go forward to get unfrozen bank at warp_slot
         bank_forks.insert(Bank::new_from_parent(

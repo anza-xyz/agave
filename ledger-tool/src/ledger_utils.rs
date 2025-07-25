@@ -8,10 +8,7 @@ use {
         utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
     },
     solana_clock::Slot,
-    solana_core::{
-        accounts_hash_verifier::AccountsHashVerifier,
-        snapshot_packager_service::PendingSnapshotPackages, validator::BlockVerificationMethod,
-    },
+    solana_core::validator::BlockVerificationMethod,
     solana_genesis_config::GenesisConfig,
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
@@ -30,8 +27,8 @@ use {
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AccountsBackgroundService, PrunedBanksRequestHandler,
-            SnapshotRequestHandler,
+            AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
+            PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -382,18 +379,10 @@ pub fn load_and_process_ledger(
         bank_forks.read().unwrap().root(),
     ));
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-    let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();
-    let accounts_hash_verifier = AccountsHashVerifier::new(
-        accounts_package_sender.clone(),
-        accounts_package_receiver,
-        pending_snapshot_packages,
-        exit.clone(),
-        snapshot_controller.clone(),
-    );
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_controller: snapshot_controller.clone(),
         snapshot_request_receiver,
-        accounts_package_sender,
+        pending_snapshot_packages,
     };
     let pruned_banks_receiver =
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
@@ -424,7 +413,6 @@ pub fn load_and_process_ledger(
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
     exit.store(true, Ordering::Relaxed);
-    accounts_hash_verifier.join().unwrap();
     if let Some(service) = transaction_status_service {
         service.quiesce_and_join_for_tests(tss_exit);
     }

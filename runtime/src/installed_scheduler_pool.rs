@@ -67,6 +67,8 @@ pub trait InstalledSchedulerPool: Send + Sync + Debug {
     /// timing of scheduler returning to reduce latency of the normal block-verification code-path,
     /// relying on eventual stale listener clean-up by `solScCleaner`.
     fn register_timeout_listener(&self, timeout_listener: TimeoutListener);
+
+    fn uninstalled_from_bank_forks(self: Arc<Self>);
 }
 
 #[derive(Debug)]

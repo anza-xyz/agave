@@ -4,8 +4,8 @@ use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
     solana_clock::Slot,
-    solana_nohash_hasher::BuildNoHashHasher,
-    std::sync::Arc,
+    solana_nohash_hasher::{BuildNoHashHasher, IntMap},
+    std::sync::{Arc, RwLock},
 };
 
 pub mod stored_account_info;
@@ -19,7 +19,7 @@ pub struct AccountStorage {
     /// while shrink is operating on a slot, there can be 2 append vecs active for that slot
     /// Once the index has been updated to only refer to the new append vec, the single entry for the slot in 'map' can be updated.
     /// Entries in 'shrink_in_progress_map' can be found by 'get_account_storage_entry'
-    shrink_in_progress_map: AccountStorageMap,
+    shrink_in_progress_map: RwLock<IntMap<Slot, Arc<AccountStorageEntry>>>,
 }
 
 impl AccountStorage {
@@ -54,16 +54,18 @@ impl AccountStorage {
 
         lookup_in_map()
             .or_else(|| {
-                self.shrink_in_progress_map.get(&slot).and_then(|entry| {
-                    (entry.value().id() == store_id).then(|| Arc::clone(entry.value()))
-                })
+                self.shrink_in_progress_map
+                    .read()
+                    .unwrap()
+                    .get(&slot)
+                    .and_then(|entry| (entry.id() == store_id).then(|| Arc::clone(entry)))
             })
             .or_else(lookup_in_map)
     }
 
     /// returns true if shrink in progress is NOT active
     pub(crate) fn no_shrink_in_progress(&self) -> bool {
-        self.shrink_in_progress_map.is_empty()
+        self.shrink_in_progress_map.read().unwrap().is_empty()
     }
 
     /// return the append vec for 'slot' if it exists
@@ -125,7 +127,7 @@ impl AccountStorage {
         slot: &Slot,
         shrink_can_be_active: bool,
     ) -> Option<Arc<AccountStorageEntry>> {
-        assert!(shrink_can_be_active || self.shrink_in_progress_map.is_empty());
+        assert!(shrink_can_be_active || self.shrink_in_progress_map.read().unwrap().is_empty());
         self.map.remove(slot).map(|(_, storage)| storage)
     }
 
@@ -164,6 +166,8 @@ impl AccountStorage {
         // insert 'new_store' into 'shrink_in_progress_map'
         assert!(
             self.shrink_in_progress_map
+                .write()
+                .unwrap()
                 .insert(slot, Arc::clone(&new_store))
                 .is_none(),
             "duplicate call"
@@ -259,6 +263,8 @@ impl Drop for ShrinkInProgress<'_> {
         assert!(self
             .storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .remove(&self.slot)
             .is_some());
     }
@@ -335,7 +341,11 @@ pub(crate) mod tests {
         );
 
         // look in shrink_in_progress_map
-        storage.shrink_in_progress_map.insert(slot, entry2);
+        storage
+            .shrink_in_progress_map
+            .write()
+            .unwrap()
+            .insert(slot, entry2);
 
         // look in map
         assert_eq!(
@@ -384,6 +394,8 @@ pub(crate) mod tests {
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(0, storage.get_test_storage());
         storage.get_slot_storage_entry(0);
     }
@@ -394,6 +406,8 @@ pub(crate) mod tests {
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(0, storage.get_test_storage());
         storage.all_slots();
     }
@@ -404,16 +418,22 @@ pub(crate) mod tests {
         let mut storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(0, storage.get_test_storage());
         storage.initialize(AccountStorageMap::default());
     }
 
     #[test]
-    #[should_panic(expected = "shrink_can_be_active || self.shrink_in_progress_map.is_empty()")]
+    #[should_panic(
+        expected = "shrink_can_be_active || self.shrink_in_progress_map.read().unwrap().is_empty()"
+    )]
     fn test_remove_fail() {
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(0, storage.get_test_storage());
         storage.remove(&0, false);
     }
@@ -424,6 +444,8 @@ pub(crate) mod tests {
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(0, storage.get_test_storage());
         storage.iter();
     }
@@ -433,7 +455,11 @@ pub(crate) mod tests {
     fn test_insert_fail() {
         let storage = AccountStorage::default();
         let sample = storage.get_test_storage();
-        storage.shrink_in_progress_map.insert(0, sample.clone());
+        storage
+            .shrink_in_progress_map
+            .write()
+            .unwrap()
+            .insert(0, sample.clone());
         storage.insert(0, sample);
     }
 
@@ -444,7 +470,11 @@ pub(crate) mod tests {
         let storage = AccountStorage::default();
         let sample = storage.get_test_storage();
         storage.map.insert(0, sample.clone());
-        storage.shrink_in_progress_map.insert(0, sample.clone());
+        storage
+            .shrink_in_progress_map
+            .write()
+            .unwrap()
+            .insert(0, sample.clone());
         storage.shrinking_in_progress(0, sample);
     }
 
@@ -478,15 +508,17 @@ pub(crate) mod tests {
             (slot, id_shrunk),
             storage
                 .shrink_in_progress_map
+                .read()
+                .unwrap()
                 .iter()
                 .next()
-                .map(|r| (*r.key(), r.value().id()))
+                .map(|r| (*r.0, r.1.id()))
                 .unwrap()
         );
         drop(shrinking_in_progress);
         assert!(storage.map.contains_key(&slot));
         assert_eq!(id_shrunk, storage.map.get(&slot).unwrap().id());
-        assert!(storage.shrink_in_progress_map.is_empty());
+        assert!(storage.shrink_in_progress_map.read().unwrap().is_empty());
         storage.shrinking_in_progress(slot, sample);
     }
 
@@ -531,6 +563,8 @@ pub(crate) mod tests {
             .is_none());
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(slot, Arc::clone(&sample));
         // id is found in map
         assert!(storage
@@ -583,6 +617,8 @@ pub(crate) mod tests {
         let storage = AccountStorage::default();
         storage
             .shrink_in_progress_map
+            .write()
+            .unwrap()
             .insert(0, storage.get_test_storage());
         storage.get_if(|_, _| true);
     }

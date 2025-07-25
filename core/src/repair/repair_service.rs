@@ -172,7 +172,7 @@ impl RepairStats {
             .chain(self.orphan.slot_pubkeys.iter())
             .map(|(slot, slot_repairs)| (slot, slot_repairs.pubkey_repairs.values().sum::<u64>()))
             .collect();
-        info!("repair_stats: {:?}", slot_to_count);
+        info!("repair_stats: {slot_to_count:?}");
         if repair_total > 0 {
             let nonzero_num = |x| if x == 0 { None } else { Some(x) };
             datapoint_info!(
@@ -609,10 +609,7 @@ impl RepairService {
             }
         });
         if !popular_pruned_forks.is_empty() {
-            warn!(
-                "Notifying repair of popular pruned forks {:?}",
-                popular_pruned_forks
-            );
+            warn!("Notifying repair of popular pruned forks {popular_pruned_forks:?}");
             popular_pruned_forks_sender
                 .send(popular_pruned_forks)
                 .unwrap_or_else(|err| error!("failed to send popular pruned forks {err}"));
@@ -665,7 +662,9 @@ impl RepairService {
                 Ok(()) => (),
                 Err(SendPktsError::IoError(err, num_failed)) => {
                     error!(
-                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error {err:?}", repair_info.cluster_info.id()
+                        "{} batch_send failed to send {num_failed}/{num_pkts} packets first error \
+                         {err:?}",
+                        repair_info.cluster_info.id()
                     );
                 }
             }
@@ -1067,7 +1066,7 @@ impl RepairService {
                 debug!("successfully sent repair request to {pubkey} / {address}!");
             }
             Err(SendPktsError::IoError(err, _num_failed)) => {
-                error!("batch_send failed to send packet - error = {:?}", err);
+                error!("batch_send failed to send packet - error = {err:?}");
             }
         }
     }
@@ -1183,8 +1182,8 @@ impl RepairService {
                             Ok(req) => {
                                 if let Err(e) = repair_socket.send_to(&req, repair_addr) {
                                     info!(
-                                        "repair req send_to {} ({}) error {:?}",
-                                        repair_pubkey, repair_addr, e
+                                        "repair req send_to {repair_pubkey} ({repair_addr}) error \
+                                         {e:?}"
                                     );
                                 }
                             }
@@ -1355,8 +1354,8 @@ mod test {
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
         // Create some orphan slots
-        let (mut shreds, _) = make_slot_entries(1, 0, 1, /*merkle_variant:*/ true);
-        let (shreds2, _) = make_slot_entries(5, 2, 1, /*merkle_variant:*/ true);
+        let (mut shreds, _) = make_slot_entries(1, 0, 1);
+        let (shreds2, _) = make_slot_entries(5, 2, 1);
         shreds.extend(shreds2);
         blockstore.insert_shreds(shreds, None, false).unwrap();
         let mut repair_weight = RepairWeight::new(0);
@@ -1384,7 +1383,7 @@ mod test {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
-        let (shreds, _) = make_slot_entries(2, 0, 1, /*merkle_variant:*/ true);
+        let (shreds, _) = make_slot_entries(2, 0, 1);
 
         // Write this shred to slot 2, should chain to slot 0, which we haven't received
         // any shreds for
@@ -1492,7 +1491,6 @@ mod test {
             0, // slot
             0, // parent_slot
             num_entries_per_slot as u64,
-            true, // merkle_variant
         );
         let num_shreds_per_slot = shreds.len() as u64;
 
@@ -1586,7 +1584,6 @@ mod test {
                 i, // slot
                 parent,
                 num_entries_per_slot as u64,
-                true, // merkle_variant
             );
 
             blockstore.insert_shreds(shreds, None, false).unwrap();
@@ -1624,7 +1621,6 @@ mod test {
             dead_slot,     // slot
             dead_slot - 1, // parent_slot
             num_entries_per_slot,
-            true, // merkle_variant
         );
         blockstore
             .insert_shreds(shreds[..shreds.len() - 1].to_vec(), None, false)
@@ -1671,12 +1667,7 @@ mod test {
 
         // Insert some shreds to create a SlotMeta,
         let num_entries_per_slot = max_ticks_per_n_shreds(1, None) + 1;
-        let (mut shreds, _) = make_slot_entries(
-            dead_slot,
-            dead_slot - 1,
-            num_entries_per_slot,
-            true, // merkle_variant
-        );
+        let (mut shreds, _) = make_slot_entries(dead_slot, dead_slot - 1, num_entries_per_slot);
         blockstore
             .insert_shreds(shreds[..shreds.len() - 1].to_vec(), None, false)
             .unwrap();

@@ -68,7 +68,7 @@ async fn process_connection(
     peer_addr: SocketAddr,
     shred_version: Option<u16>,
 ) -> io::Result<()> {
-    info!("connection from {:?}", peer_addr);
+    info!("connection from {peer_addr:?}");
 
     let mut data = vec![0u8; ip_echo_server_request_length()];
 
@@ -104,7 +104,7 @@ async fn process_connection(
             ))
         })?;
 
-    trace!("request: {:?}", msg);
+    trace!("request: {msg:?}");
 
     // Fire a datagram at each non-zero UDP port
     match bind_to_unspecified() {
@@ -114,21 +114,21 @@ async fn process_connection(
                     let result =
                         udp_socket.send_to(&[0], SocketAddr::from((peer_addr.ip(), *udp_port)));
                     match result {
-                        Ok(_) => debug!("Successful send_to udp/{}", udp_port),
-                        Err(err) => info!("Failed to send_to udp/{}: {}", udp_port, err),
+                        Ok(_) => debug!("Successful send_to udp/{udp_port}"),
+                        Err(err) => info!("Failed to send_to udp/{udp_port}: {err}"),
                     }
                 }
             }
         }
         Err(err) => {
-            warn!("Failed to bind local udp socket: {}", err);
+            warn!("Failed to bind local udp socket: {err}");
         }
     }
 
     // Try to connect to each non-zero TCP port
     for tcp_port in &msg.tcp_ports {
         if *tcp_port != 0 {
-            debug!("Connecting to tcp/{}", tcp_port);
+            debug!("Connecting to tcp/{tcp_port}");
 
             let mut tcp_stream = timeout(
                 IO_TIMEOUT,
@@ -148,7 +148,7 @@ async fn process_connection(
     // conflict with the first four bytes of a valid HTTP response.
     let mut bytes = vec![0u8; IP_ECHO_SERVER_RESPONSE_LENGTH];
     bincode::serialize_into(&mut bytes[HEADER_LENGTH..], &response).unwrap();
-    trace!("response: {:?}", bytes);
+    trace!("response: {bytes:?}");
     writer.write_all(&bytes).await
 }
 
@@ -163,11 +163,11 @@ async fn run_echo_server(tcp_listener: std::net::TcpListener, shred_version: Opt
             Ok((socket, peer_addr)) => {
                 runtime::Handle::current().spawn(async move {
                     if let Err(err) = process_connection(socket, peer_addr, shred_version).await {
-                        info!("session failed: {:?}", err);
+                        info!("session failed: {err:?}");
                     }
                 });
             }
-            Err(err) => warn!("listener accept failed: {:?}", err),
+            Err(err) => warn!("listener accept failed: {err:?}"),
         }
     }
 }

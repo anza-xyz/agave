@@ -70,7 +70,7 @@ macro_rules! with_mock_invoke_context {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0, 1], &instruction_accounts, &[]);
+            .configure(vec![0, 1], instruction_accounts, &[]);
         $invoke_context.push().unwrap();
     };
 }
@@ -243,8 +243,8 @@ fn bench_create_vm(bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        !direct_mapping, // copy_account_data
-        true,            // mask_out_rent_epoch_in_vm_serialization
+        direct_mapping,
+        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 
@@ -278,8 +278,8 @@ fn bench_instruction_count_tuner(_bencher: &mut Bencher) {
             .transaction_context
             .get_current_instruction_context()
             .unwrap(),
-        !direct_mapping, // copy_account_data
-        true,            // mask_out_rent_epoch_in_vm_serialization
+        direct_mapping,
+        true, // mask_out_rent_epoch_in_vm_serialization
     )
     .unwrap();
 

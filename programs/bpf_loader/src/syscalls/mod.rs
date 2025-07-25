@@ -110,7 +110,10 @@ pub enum SyscallError {
         num_accounts: u64,
         max_accounts: u64,
     },
-    #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})")]
+    #[error(
+        "Invoked an instruction with too many account info's ({num_account_infos} > \
+         {max_account_infos})"
+    )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
@@ -354,7 +357,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.bpf_account_data_direct_mapping,
+        enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -2233,7 +2236,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&[0, 1], &[], &[]);
+                .configure(vec![0, 1], vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -4438,7 +4441,7 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = [InstructionAccount::new(
+                let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
                     0, // This is incorrect / inconsistent but not required
                     0,
@@ -4449,7 +4452,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[0], &instruction_accounts, &[index_in_trace as u8]);
+                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

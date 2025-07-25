@@ -12,7 +12,7 @@ use {
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
     solana_hash::Hash,
-    solana_instruction::{error::InstructionError, AccountMeta},
+    solana_instruction::{error::InstructionError, AccountMeta, Instruction},
     solana_log_collector::{ic_msg, LogCollector},
     solana_measure::measure::Measure,
     solana_pubkey::Pubkey,
@@ -26,7 +26,6 @@ use {
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader, sysvar,
     },
-    solana_stable_layout::stable_instruction::StableInstruction,
     solana_svm_callback::InvokeContextCallback,
     solana_svm_feature_set::SVMFeatureSet,
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
@@ -304,7 +303,7 @@ impl<'a> InvokeContext<'a> {
     /// Entrypoint for a cross-program invocation from a builtin program
     pub fn native_invoke(
         &mut self,
-        instruction: StableInstruction,
+        instruction: Instruction,
         signers: &[Pubkey],
     ) -> Result<(), InstructionError> {
         let (instruction_accounts, program_indices) =
@@ -324,16 +323,18 @@ impl<'a> InvokeContext<'a> {
     #[allow(clippy::type_complexity)]
     pub fn prepare_instruction(
         &mut self,
-        instruction: &StableInstruction,
+        instruction: &Instruction,
         signers: &[Pubkey],
     ) -> Result<(Vec<InstructionAccount>, Vec<IndexOfAccount>), InstructionError> {
-        // Finds the index of each account in the instruction by its pubkey.
-        // Then normalizes / unifies the privileges of duplicate accounts.
-        // Note: This is an O(n^2) algorithm,
-        // but performed on a very small slice and requires no heap allocations.
+        // We reference accounts by an u8 index, so we have a total of 256 accounts.
+        // This algorithm allocates the array on the stack for speed.
+        // On AArch64 in release mode, this function only consumes 640 bytes of stack.
+        let mut transaction_callee_map: [u8; 256] = [u8::MAX; 256];
+        let mut instruction_accounts: Vec<InstructionAccount> =
+            Vec::with_capacity(instruction.accounts.len());
         let instruction_context = self.transaction_context.get_current_instruction_context()?;
-        let mut deduplicated_instruction_accounts: Vec<InstructionAccount> = Vec::new();
-        let mut duplicate_indicies = Vec::with_capacity(instruction.accounts.len() as usize);
+        debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
+
         for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate() {
             let index_in_transaction = self
                 .transaction_context
@@ -346,21 +347,25 @@ impl<'a> InvokeContext<'a> {
                     );
                     InstructionError::MissingAccount
                 })?;
-            if let Some(duplicate_index) =
-                deduplicated_instruction_accounts
-                    .iter()
-                    .position(|instruction_account| {
-                        instruction_account.index_in_transaction == index_in_transaction
-                    })
-            {
-                duplicate_indicies.push(duplicate_index);
-                let instruction_account = deduplicated_instruction_accounts
-                    .get_mut(duplicate_index)
-                    .ok_or(InstructionError::NotEnoughAccountKeys)?;
-                instruction_account
-                    .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
-                instruction_account
-                    .set_is_writable(instruction_account.is_writable() || account_meta.is_writable);
+
+            debug_assert!((index_in_transaction as usize) < transaction_callee_map.len());
+            let index_in_callee = transaction_callee_map
+                .get_mut(index_in_transaction as usize)
+                .unwrap();
+
+            if (*index_in_callee as usize) < instruction_accounts.len() {
+                let cloned_account = {
+                    let instruction_account = instruction_accounts
+                        .get_mut(*index_in_callee as usize)
+                        .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                    instruction_account
+                        .set_is_signer(instruction_account.is_signer() || account_meta.is_signer);
+                    instruction_account.set_is_writable(
+                        instruction_account.is_writable() || account_meta.is_writable,
+                    );
+                    instruction_account.clone()
+                };
+                instruction_accounts.push(cloned_account);
             } else {
                 let index_in_caller = instruction_context
                     .find_index_of_instruction_account(
@@ -375,8 +380,8 @@ impl<'a> InvokeContext<'a> {
                         );
                         InstructionError::MissingAccount
                     })?;
-                duplicate_indicies.push(deduplicated_instruction_accounts.len());
-                deduplicated_instruction_accounts.push(InstructionAccount::new(
+                *index_in_callee = instruction_accounts.len() as u8;
+                instruction_accounts.push(InstructionAccount::new(
                     index_in_transaction,
                     index_in_caller,
                     instruction_account_index as IndexOfAccount,
@@ -385,7 +390,28 @@ impl<'a> InvokeContext<'a> {
                 ));
             }
         }
-        for instruction_account in deduplicated_instruction_accounts.iter() {
+
+        for current_index in 0..instruction_accounts.len() {
+            let instruction_account = instruction_accounts.get(current_index).unwrap();
+
+            if current_index != instruction_account.index_in_callee as usize {
+                let (is_signer, is_writable) = {
+                    let reference_account = instruction_accounts
+                        .get(instruction_account.index_in_callee as usize)
+                        .ok_or(InstructionError::NotEnoughAccountKeys)?;
+                    (
+                        reference_account.is_signer(),
+                        reference_account.is_writable(),
+                    )
+                };
+
+                let current_account = instruction_accounts.get_mut(current_index).unwrap();
+                current_account.set_is_signer(current_account.is_signer() || is_signer);
+                current_account.set_is_writable(current_account.is_writable() || is_writable);
+                // This account is repeated, so there is no need to check for permissions
+                continue;
+            }
+
             let borrowed_account = instruction_context.try_borrow_instruction_account(
                 self.transaction_context,
                 instruction_account.index_in_caller,
@@ -414,15 +440,6 @@ impl<'a> InvokeContext<'a> {
                 return Err(InstructionError::PrivilegeEscalation);
             }
         }
-        let instruction_accounts = duplicate_indicies
-            .into_iter()
-            .map(|duplicate_index| {
-                deduplicated_instruction_accounts
-                    .get(duplicate_index)
-                    .cloned()
-                    .ok_or(InstructionError::NotEnoughAccountKeys)
-            })
-            .collect::<Result<Vec<InstructionAccount>, InstructionError>>()?;
 
         // Find and validate executables / program accounts
         let callee_program_id = instruction.program_id;
@@ -460,7 +477,11 @@ impl<'a> InvokeContext<'a> {
         *compute_units_consumed = 0;
         self.transaction_context
             .get_next_instruction_context()?
-            .configure(program_indices, instruction_accounts, instruction_data);
+            .configure(
+                program_indices.to_vec(),
+                instruction_accounts.to_vec(),
+                instruction_data,
+            );
         self.push()?;
         self.process_executable_chain(compute_units_consumed, timings)
             // MUST pop if and only if `push` succeeded, independent of `result`.
@@ -479,7 +500,11 @@ impl<'a> InvokeContext<'a> {
     ) -> Result<(), InstructionError> {
         self.transaction_context
             .get_next_instruction_context()?
-            .configure(program_indices, instruction_accounts, instruction_data);
+            .configure(
+                program_indices.to_vec(),
+                instruction_accounts.to_vec(),
+                instruction_data,
+            );
         self.push()?;
 
         let instruction_datas: Vec<_> = message_instruction_datas_iter.collect();
@@ -1023,12 +1048,12 @@ mod tests {
                             .transaction_context
                             .get_next_instruction_context()
                             .unwrap()
-                            .configure(&[3], &instruction_accounts, &[]);
+                            .configure(vec![3], instruction_accounts, &[]);
                         let result = invoke_context.push();
                         assert_eq!(result, Err(InstructionError::UnbalancedInstruction));
                         result?;
                         invoke_context
-                            .native_invoke(inner_instruction.into(), &[])
+                            .native_invoke(inner_instruction, &[])
                             .and(invoke_context.pop())?;
                     }
                     MockInstruction::UnbalancedPop => instruction_context
@@ -1099,8 +1124,8 @@ mod tests {
                 .get_next_instruction_context()
                 .unwrap()
                 .configure(
-                    &[one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
-                    &instruction_accounts,
+                    vec![one_more_than_max_depth.saturating_add(depth_reached) as IndexOfAccount],
+                    instruction_accounts.clone(),
                     &[],
                 );
             if Err(InstructionError::CallDepth) == invoke_context.push() {
@@ -1181,12 +1206,12 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(vec![4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction =
             Instruction::new_with_bincode(callee_program_id, &instruction, metas.clone());
         let result = invoke_context
-            .native_invoke(inner_instruction.into(), &[])
+            .native_invoke(inner_instruction, &[])
             .and(invoke_context.pop());
         assert_eq!(result, expected_result);
     }
@@ -1240,7 +1265,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[4], &instruction_accounts, &[]);
+            .configure(vec![4], instruction_accounts, &[]);
         invoke_context.push().unwrap();
         let inner_instruction = Instruction::new_with_bincode(
             callee_program_id,
@@ -1250,7 +1275,6 @@ mod tests {
             },
             metas.clone(),
         );
-        let inner_instruction = StableInstruction::from(inner_instruction);
         let (inner_instruction_accounts, program_indices) = invoke_context
             .prepare_instruction(&inner_instruction, &[])
             .unwrap();
@@ -1292,7 +1316,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context()
             .unwrap()
-            .configure(&[0], &[], &[]);
+            .configure(vec![0], vec![], &[]);
         invoke_context.push().unwrap();
         assert_eq!(*invoke_context.get_compute_budget(), execution_budget);
         invoke_context.pop().unwrap();

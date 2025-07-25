@@ -100,7 +100,7 @@ impl TokioRuntime {
             .event_interval(cfg.event_interval)
             .thread_name_fn(move || {
                 let id = atomic_id.fetch_add(1, Ordering::Relaxed);
-                format!("{}-{}", base_name, id)
+                format!("{base_name}-{id}")
             })
             .on_thread_park({
                 let counters = counters.clone();

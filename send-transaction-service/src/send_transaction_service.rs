@@ -9,13 +9,11 @@ pub use crate::{
 use {
     crate::{
         send_transaction_service_stats::SendTransactionServiceStatsReport,
-        tpu_info::TpuInfo,
-        transaction_client::{ConnectionCacheClient, TransactionClient},
+        transaction_client::TransactionClient,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::Itertools,
     log::*,
-    solana_client::connection_cache::ConnectionCache,
     solana_hash::Hash,
     solana_nonce_account as nonce_account,
     solana_pubkey::Pubkey,
@@ -162,55 +160,6 @@ impl Default for Config {
 pub const MAX_RETRY_SLEEP_MS: u64 = 1000;
 
 impl SendTransactionService {
-    #[deprecated(since = "2.2.0", note = "Please use `new_with_client` instead.")]
-    pub fn new<T: TpuInfo + std::marker::Send + 'static>(
-        tpu_address: SocketAddr,
-        bank_forks: &Arc<RwLock<BankForks>>,
-        leader_info: Option<T>,
-        receiver: Receiver<TransactionInfo>,
-        connection_cache: &Arc<ConnectionCache>,
-        retry_rate_ms: u64,
-        leader_forward_count: u64,
-        exit: Arc<AtomicBool>,
-    ) -> Self {
-        let config = Config {
-            retry_rate_ms,
-            leader_forward_count,
-            ..Config::default()
-        };
-        #[allow(deprecated)]
-        Self::new_with_config(
-            tpu_address,
-            bank_forks,
-            leader_info,
-            receiver,
-            connection_cache,
-            config,
-            exit,
-        )
-    }
-
-    #[deprecated(since = "2.2.0", note = "Please use `new_with_client` instead.")]
-    pub fn new_with_config<T: TpuInfo + std::marker::Send + 'static>(
-        tpu_address: SocketAddr,
-        bank_forks: &Arc<RwLock<BankForks>>,
-        leader_info: Option<T>,
-        receiver: Receiver<TransactionInfo>,
-        connection_cache: &Arc<ConnectionCache>,
-        config: Config,
-        exit: Arc<AtomicBool>,
-    ) -> Self {
-        let client = ConnectionCacheClient::new(
-            connection_cache.clone(),
-            tpu_address,
-            config.tpu_peers.clone(),
-            leader_info,
-            config.leader_forward_count,
-        );
-
-        Self::new_with_client(bank_forks, receiver, client, config, exit)
-    }
-
     pub fn new_with_client<Client: TransactionClient + Clone + std::marker::Send + 'static>(
         bank_forks: &Arc<RwLock<BankForks>>,
         receiver: Receiver<TransactionInfo>,
@@ -447,7 +396,7 @@ impl SendTransactionService {
                 )
                 .is_some()
             {
-                info!("Transaction is rooted: {}", signature);
+                info!("Transaction is rooted: {signature}");
                 result.rooted += 1;
                 stats.rooted_transactions.fetch_add(1, Ordering::Relaxed);
                 return false;
@@ -467,14 +416,14 @@ impl SendTransactionService {
                 let verify_nonce_account =
                     nonce_account::verify_nonce_account(&nonce_account, &durable_nonce);
                 if verify_nonce_account.is_none() && signature_status.is_none() && expired {
-                    info!("Dropping expired durable-nonce transaction: {}", signature);
+                    info!("Dropping expired durable-nonce transaction: {signature}");
                     result.expired += 1;
                     stats.expired_transactions.fetch_add(1, Ordering::Relaxed);
                     return false;
                 }
             }
             if transaction_info.last_valid_block_height < root_bank.block_height() {
-                info!("Dropping expired transaction: {}", signature);
+                info!("Dropping expired transaction: {signature}");
                 result.expired += 1;
                 stats.expired_transactions.fetch_add(1, Ordering::Relaxed);
                 return false;
@@ -485,7 +434,7 @@ impl SendTransactionService {
 
             if let Some(max_retries) = max_retries {
                 if transaction_info.retries >= max_retries {
-                    info!("Dropping transaction due to max retries: {}", signature);
+                    info!("Dropping transaction due to max retries: {signature}");
                     result.max_retries_elapsed += 1;
                     stats
                         .transactions_exceeding_max_retries
@@ -507,7 +456,7 @@ impl SendTransactionService {
                             // Transaction sent before is unknown to the working bank, it might have been
                             // dropped or landed in another fork. Re-send it.
 
-                            info!("Retrying transaction: {}", signature);
+                            info!("Retrying transaction: {signature}");
                             result.retried += 1;
                             transaction_info.retries += 1;
                         }
@@ -534,7 +483,7 @@ impl SendTransactionService {
                 }
                 Some((_slot, status)) => {
                     if !status {
-                        info!("Dropping failed transaction: {}", signature);
+                        info!("Dropping failed transaction: {signature}");
                         result.failed += 1;
                         stats.failed_transactions.fetch_add(1, Ordering::Relaxed);
                         false
@@ -585,8 +534,9 @@ mod test {
     use {
         super::*,
         crate::{
-            test_utils::ClientWithCreator, tpu_info::NullTpuInfo,
-            transaction_client::TpuClientNextClient,
+            test_utils::ClientWithCreator,
+            tpu_info::NullTpuInfo,
+            transaction_client::{ConnectionCacheClient, TpuClientNextClient},
         },
         crossbeam_channel::{bounded, unbounded},
         solana_account::AccountSharedData,

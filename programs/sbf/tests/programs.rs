@@ -3955,12 +3955,12 @@ fn test_cpi_account_data_updates() {
             let account = bank.get_account(&account_keypair.pubkey()).unwrap();
             // deprecated_callee is incapable of resizing accounts
             assert_eq!(account.data(), b"foobar");
-        } else if deprecated_caller && (deprecated_callee || !direct_mapping) {
+        } else if deprecated_caller {
             assert_eq!(
                 result.unwrap_err().unwrap(),
                 TransactionError::InstructionError(
                     0,
-                    if direct_mapping {
+                    if direct_mapping && deprecated_callee {
                         InstructionError::InvalidRealloc
                     } else {
                         InstructionError::AccountDataSizeChanged

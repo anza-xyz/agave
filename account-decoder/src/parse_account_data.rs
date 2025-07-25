@@ -73,30 +73,9 @@ pub enum ParsableAccount {
     Vote,
 }
 
-#[deprecated(since = "2.0.0", note = "Use `AccountAdditionalDataV3` instead")]
-#[derive(Clone, Copy, Default)]
-pub struct AccountAdditionalData {
-    pub spl_token_decimals: Option<u8>,
-}
-
-#[deprecated(since = "2.2.0", note = "Use `AccountAdditionalDataV3` instead")]
-#[derive(Clone, Copy, Default)]
-pub struct AccountAdditionalDataV2 {
-    pub spl_token_additional_data: Option<SplTokenAdditionalData>,
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct AccountAdditionalDataV3 {
     pub spl_token_additional_data: Option<SplTokenAdditionalDataV2>,
-}
-
-#[allow(deprecated)]
-impl From<AccountAdditionalDataV2> for AccountAdditionalDataV3 {
-    fn from(v: AccountAdditionalDataV2) -> Self {
-        Self {
-            spl_token_additional_data: v.spl_token_additional_data.map(Into::into),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -138,37 +117,6 @@ impl SplTokenAdditionalDataV2 {
             ..Default::default()
         }
     }
-}
-
-#[deprecated(since = "2.0.0", note = "Use `parse_account_data_v3` instead")]
-#[allow(deprecated)]
-pub fn parse_account_data(
-    pubkey: &Pubkey,
-    program_id: &Pubkey,
-    data: &[u8],
-    additional_data: Option<AccountAdditionalData>,
-) -> Result<ParsedAccount, ParseAccountError> {
-    parse_account_data_v3(
-        pubkey,
-        program_id,
-        data,
-        additional_data.map(|d| AccountAdditionalDataV3 {
-            spl_token_additional_data: d
-                .spl_token_decimals
-                .map(SplTokenAdditionalDataV2::with_decimals),
-        }),
-    )
-}
-
-#[deprecated(since = "2.2.0", note = "Use `parse_account_data_v3` instead")]
-#[allow(deprecated)]
-pub fn parse_account_data_v2(
-    pubkey: &Pubkey,
-    program_id: &Pubkey,
-    data: &[u8],
-    additional_data: Option<AccountAdditionalDataV2>,
-) -> Result<ParsedAccount, ParseAccountError> {
-    parse_account_data_v3(pubkey, program_id, data, additional_data.map(Into::into))
 }
 
 pub fn parse_account_data_v3(

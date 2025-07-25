@@ -412,11 +412,6 @@ impl Shred {
     dispatch!(pub fn payload(&self) -> &Payload);
     dispatch!(pub fn sanitize(&self) -> Result<(), Error>);
 
-    #[deprecated(since = "2.3.0")]
-    pub fn set_index(&mut self, _index: u32) {}
-    #[deprecated(since = "2.3.0")]
-    pub fn set_slot(&mut self, _slot: Slot) {}
-
     #[cfg(any(test, feature = "dev-context-only-utils"))]
     pub fn copy_to_packet(&self, packet: &mut Packet) {
         let payload = self.payload();

@@ -22,7 +22,6 @@ use {
         recycler::Recycler,
         sigverify,
     },
-    solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_transaction::{
         versioned::VersionedTransaction, Transaction, TransactionVerificationMode,
@@ -959,9 +958,10 @@ pub fn thread_pool_for_tests() -> ThreadPool {
         .expect("new rayon threadpool")
 }
 
+#[cfg(feature = "dev-context-only-utils")]
 pub fn thread_pool_for_benches() -> ThreadPool {
     rayon::ThreadPoolBuilder::new()
-        .num_threads(get_max_thread_count())
+        .num_threads(num_cpus::get())
         .thread_name(|i| format!("solEntryBnch{i:02}"))
         .build()
         .expect("new rayon threadpool")

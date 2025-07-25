@@ -16,7 +16,6 @@ use {
     scopeguard::defer,
     solana_accounts_db::{
         accounts_db::AccountsDbConfig, accounts_update_notifier_interface::AccountsUpdateNotifier,
-        epoch_accounts_hash::EpochAccountsHash,
     },
     solana_clock::{Slot, MAX_PROCESSING_AGE},
     solana_cost_model::{cost_model::CostModel, transaction_cost::TransactionCost},
@@ -29,9 +28,7 @@ use {
     solana_measure::{measure::Measure, measure_us},
     solana_metrics::datapoint_error,
     solana_pubkey::Pubkey,
-    solana_rayon_threadlimit::get_max_thread_count,
     solana_runtime::{
-        accounts_background_service::SnapshotRequestKind,
         bank::{Bank, PreCommitResult, TransactionBalancesSet},
         bank_forks::{BankForks, SetRootError},
         bank_utils,
@@ -69,10 +66,7 @@ use {
         ops::Index,
         path::PathBuf,
         result,
-        sync::{
-            atomic::{AtomicBool, Ordering::Relaxed},
-            Arc, Mutex, RwLock,
-        },
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         time::{Duration, Instant},
         vec::Drain,
     },
@@ -120,10 +114,7 @@ fn do_get_first_error<T, Tx: SVMTransaction>(
             if first_err.is_none() {
                 first_err = Some((Err(err.clone()), *transaction.signature()));
             }
-            warn!(
-                "Unexpected validator error: {:?}, transaction: {:?}",
-                err, transaction
-            );
+            warn!("Unexpected validator error: {err:?}, transaction: {transaction:?}");
             datapoint_error!(
                 "validator_process_entry_error",
                 (
@@ -644,7 +635,7 @@ pub fn process_entries_for_tests(
         &ignored_prioritization_fee_cache,
     );
 
-    debug!("process_entries: {:?}", batch_timing);
+    debug!("process_entries: {batch_timing:?}");
     result
 }
 
@@ -854,7 +845,6 @@ pub struct ProcessOptions {
     pub accounts_db_config: Option<AccountsDbConfig>,
     pub verify_index: bool,
     pub runtime_config: RuntimeConfig,
-    pub on_halt_store_hash_raw_data_for_debug: bool,
     /// true if after processing the contents of the blockstore at startup, we should run an accounts hash calc
     /// This is useful for debugging.
     pub run_final_accounts_hash_calc: bool,
@@ -871,12 +861,11 @@ pub fn test_process_blockstore(
     opts: &ProcessOptions,
     exit: Arc<AtomicBool>,
 ) -> (Arc<RwLock<BankForks>>, LeaderScheduleCache) {
-    let snapshot_config = SnapshotConfig::new_disabled();
     let (bank_forks, leader_schedule_cache, ..) = crate::bank_forks_utils::load_bank_forks(
         genesis_config,
         blockstore,
         Vec::new(),
-        &snapshot_config,
+        &SnapshotConfig::new_disabled(),
         opts,
         None,
         None,
@@ -885,42 +874,6 @@ pub fn test_process_blockstore(
     )
     .unwrap();
 
-    // Spin up a thread to be a fake Accounts Background Service.  Need to intercept and handle all
-    // EpochAccountsHash requests so future rooted banks do not hang in Bank::freeze() waiting for
-    // an in-flight EAH calculation to complete.
-    let (snapshot_request_sender, snapshot_request_receiver) = crossbeam_channel::unbounded();
-    let snapshot_controller = SnapshotController::new(
-        snapshot_request_sender,
-        snapshot_config,
-        bank_forks.read().unwrap().root(),
-    );
-    let bg_exit = Arc::new(AtomicBool::new(false));
-    let bg_thread = {
-        let exit = Arc::clone(&bg_exit);
-        std::thread::spawn(move || {
-            while !exit.load(Relaxed) {
-                snapshot_request_receiver
-                    .try_iter()
-                    .filter(|snapshot_request| {
-                        snapshot_request.request_kind == SnapshotRequestKind::EpochAccountsHash
-                    })
-                    .for_each(|snapshot_request| {
-                        snapshot_request
-                            .snapshot_root_bank
-                            .rc
-                            .accounts
-                            .accounts_db
-                            .epoch_accounts_hash_manager
-                            .set_valid(
-                                EpochAccountsHash::new(Hash::new_unique()),
-                                snapshot_request.snapshot_root_bank.slot(),
-                            )
-                    });
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        })
-    };
-
     process_blockstore_from_root(
         blockstore,
         &bank_forks,
@@ -928,12 +881,9 @@ pub fn test_process_blockstore(
         opts,
         None,
         None,
-        Some(&snapshot_controller),
+        None, // snapshots are disabled
     )
     .unwrap();
-
-    bg_exit.store(true, Relaxed);
-    bg_thread.join().unwrap();
 
     (bank_forks, leader_schedule_cache)
 }
@@ -967,7 +917,7 @@ pub(crate) fn process_blockstore_for_bank_0(
     let bank_forks = BankForks::new_rw_arc(bank0);
 
     info!("Processing ledger for slot 0...");
-    let replay_tx_thread_pool = create_thread_pool(get_max_thread_count());
+    let replay_tx_thread_pool = create_thread_pool(num_cpus::get());
     process_bank_0(
         &bank_forks
             .read()
@@ -1002,10 +952,7 @@ pub fn process_blockstore_from_root(
         let bank = bank_forks.read().unwrap().root_bank();
         #[cfg(feature = "dev-context-only-utils")]
         if let Some(hash_overrides) = &opts.hash_overrides {
-            info!(
-                "Will override following slots' hashes: {:#?}",
-                hash_overrides
-            );
+            info!("Will override following slots' hashes: {hash_overrides:#?}");
             bank.set_hash_overrides(hash_overrides.clone());
         }
         if opts.no_block_cost_limits {
@@ -1018,7 +965,7 @@ pub fn process_blockstore_from_root(
         (bank.slot(), bank.hash())
     };
 
-    info!("Processing ledger from slot {}...", start_slot);
+    info!("Processing ledger from slot {start_slot}...");
     let now = Instant::now();
 
     // Ensure start_slot is rooted for correct replay; also ensure start_slot and
@@ -1035,13 +982,13 @@ pub fn process_blockstore_from_root(
             .expect("Couldn't mark start_slot as connected during startup")
     } else {
         info!(
-            "Start slot {} isn't a root, and won't be updated due to secondary blockstore access",
-            start_slot
+            "Start slot {start_slot} isn't a root, and won't be updated due to secondary \
+             blockstore access"
         );
     }
 
     if let Ok(Some(highest_slot)) = blockstore.highest_slot() {
-        info!("ledger holds data through slot {}", highest_slot);
+        info!("ledger holds data through slot {highest_slot}");
     }
 
     let mut timing = ExecuteTimings::default();
@@ -1049,7 +996,7 @@ pub fn process_blockstore_from_root(
         .meta(start_slot)
         .unwrap_or_else(|_| panic!("Failed to get meta for slot {start_slot}"))
     {
-        let replay_tx_thread_pool = create_thread_pool(get_max_thread_count());
+        let replay_tx_thread_pool = create_thread_pool(num_cpus::get());
         load_frozen_forks(
             bank_forks,
             &start_slot_meta,
@@ -1068,10 +1015,7 @@ pub fn process_blockstore_from_root(
         //
         // If the ledger has any data at all, the snapshot was likely taken at
         // a slot that is not within the range of ledger min/max slot(s).
-        warn!(
-            "Starting slot {} is not in Blockstore, unable to process",
-            start_slot
-        );
+        warn!("Starting slot {start_slot} is not in Blockstore, unable to process");
         (0, 0)
     };
 
@@ -1087,7 +1031,7 @@ pub fn process_blockstore_from_root(
         ("forks", bank_forks.read().unwrap().banks().len(), i64),
     );
 
-    info!("ledger processing timing: {:?}", timing);
+    info!("ledger processing timing: {timing:?}");
     {
         let bank_forks = bank_forks.read().unwrap();
         let mut bank_slots = bank_forks.banks().keys().copied().collect::<Vec<_>>();
@@ -1604,8 +1548,8 @@ fn confirm_slot_entries(
                     starting_transaction_index: entry_tx_starting_index,
                 }) {
                     warn!(
-                        "Slot {}, entry {} entry_notification_sender send failed: {:?}",
-                        slot, entry_index, err
+                        "Slot {slot}, entry {entry_index} entry_notification_sender send failed: \
+                         {err:?}"
                     );
                 }
             }
@@ -1617,12 +1561,8 @@ fn confirm_slot_entries(
         })
         .sum::<usize>();
     trace!(
-        "Fetched entries for slot {}, num_entries: {}, num_shreds: {}, num_txs: {}, slot_full: {}",
-        slot,
-        num_entries,
-        num_shreds,
-        num_txs,
-        slot_full,
+        "Fetched entries for slot {slot}, num_entries: {num_entries}, num_shreds: {num_shreds}, \
+         num_txs: {num_txs}, slot_full: {slot_full}",
     );
 
     if !skip_verification {
@@ -1653,7 +1593,7 @@ fn confirm_slot_entries(
             recyclers.clone(),
         );
         if entry_state.status() == EntryVerificationStatus::Failure {
-            warn!("Ledger proof of history failed at slot: {}", slot);
+            warn!("Ledger proof of history failed at slot: {slot}");
             return Err(BlockError::InvalidEntryHash.into());
         }
         Some(entry_state)
@@ -1830,7 +1770,7 @@ fn process_next_slots(
         let next_meta = blockstore
             .meta(*next_slot)
             .map_err(|err| {
-                warn!("Failed to load meta for slot {}: {:?}", next_slot, err);
+                warn!("Failed to load meta for slot {next_slot}: {err:?}");
                 BlockstoreProcessorError::FailedToLoadMeta
             })?
             .unwrap();
@@ -1881,8 +1821,8 @@ fn load_frozen_forks(
     let mut root = bank_forks.read().unwrap().root();
     let max_root = std::cmp::max(root, blockstore_max_root);
     info!(
-        "load_frozen_forks() latest root from blockstore: {}, max_root: {}",
-        blockstore_max_root, max_root,
+        "load_frozen_forks() latest root from blockstore: {blockstore_max_root}, max_root: \
+         {max_root}",
     );
 
     // The total number of slots processed
@@ -1904,7 +1844,6 @@ fn load_frozen_forks(
         opts,
     )?;
 
-    let on_halt_store_hash_raw_data_for_debug = opts.on_halt_store_hash_raw_data_for_debug;
     if Some(bank_forks.read().unwrap().root()) != opts.halt_at_slot {
         let recyclers = VerifyRecyclers::default();
         let mut all_banks = HashMap::new();
@@ -2067,7 +2006,7 @@ fn load_frozen_forks(
                 .unwrap_or(false);
             if done_processing {
                 if opts.run_final_accounts_hash_calc {
-                    bank.run_final_hash_calc(on_halt_store_hash_raw_data_for_debug);
+                    bank.run_final_hash_calc();
                 }
                 break;
             }
@@ -2081,12 +2020,8 @@ fn load_frozen_forks(
                 opts,
             )?;
         }
-    } else if on_halt_store_hash_raw_data_for_debug {
-        bank_forks
-            .read()
-            .unwrap()
-            .root_bank()
-            .run_final_hash_calc(on_halt_store_hash_raw_data_for_debug);
+    } else if opts.run_final_accounts_hash_calc {
+        bank_forks.read().unwrap().root_bank().run_final_hash_calc();
     }
 
     Ok((total_slots_processed, total_rooted_slots))
@@ -2173,15 +2108,14 @@ pub fn process_single_slot(
         Ok(())
     })
     .map_err(|err| {
-        warn!("slot {} failed to verify: {}", slot, err);
+        warn!("slot {slot} failed to verify: {err}");
         if blockstore.is_primary_access() {
             blockstore
                 .set_dead_slot(slot)
                 .expect("Failed to mark slot as dead in blockstore");
         } else {
             info!(
-                "Failed slot {} won't be marked dead due to being secondary blockstore access",
-                slot
+                "Failed slot {slot} won't be marked dead due to being secondary blockstore access"
             );
         }
         err
@@ -2191,15 +2125,21 @@ pub fn process_single_slot(
         result?
     }
 
-    let block_id = blockstore.check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
+    let block_id = blockstore
+        .check_last_fec_set_and_get_block_id(slot, bank.hash(), &bank.feature_set)
         .inspect_err(|err| {
-            warn!("slot {} failed last fec set checks: {}", slot, err);
+            warn!("slot {slot} failed last fec set checks: {err}");
             if blockstore.is_primary_access() {
-                blockstore.set_dead_slot(slot).expect("Failed to mark slot as dead in blockstore");
+                blockstore
+                    .set_dead_slot(slot)
+                    .expect("Failed to mark slot as dead in blockstore");
             } else {
-                info!("Failed last fec set checks slot {slot} won't be marked dead due to being secondary blockstore access");
+                info!(
+                    "Failed last fec set checks slot {slot} won't be marked dead due to being \
+                     secondary blockstore access"
+                );
             }
-    })?;
+        })?;
     bank.set_block_id(block_id);
     bank.freeze(); // all banks handled by this routine are created from complete slots
 
@@ -2264,11 +2204,7 @@ impl TransactionStatusSender {
                 transaction_indexes,
             }))
         {
-            trace!(
-                "Slot {} transaction_status send batch failed: {:?}",
-                slot,
-                e
-            );
+            trace!("Slot {slot} transaction_status send batch failed: {e:?}");
         }
     }
 
@@ -2278,10 +2214,7 @@ impl TransactionStatusSender {
             .send(TransactionStatusMessage::Freeze(bank.clone()))
         {
             let slot = bank.slot();
-            warn!(
-                "Slot {slot} transaction_status send freeze message failed: {:?}",
-                e
-            );
+            warn!("Slot {slot} transaction_status send freeze message failed: {e:?}");
         }
     }
 }
@@ -2358,7 +2291,7 @@ pub mod tests {
         solana_vote::{vote_account::VoteAccount, vote_transaction},
         solana_vote_program::{
             self,
-            vote_state::{TowerSync, VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY},
+            vote_state::{TowerSync, VoteStateV3, VoteStateVersions, MAX_LOCKOUT_HISTORY},
         },
         std::{collections::BTreeSet, slice, sync::RwLock},
         test_case::{test_case, test_matrix},
@@ -2608,7 +2541,7 @@ pub mod tests {
 
         // Create a new ledger with slot 0 full of ticks
         let (ledger_path, mut blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
 
         let blockstore = Blockstore::open(ledger_path.path()).unwrap();
 
@@ -2681,7 +2614,7 @@ pub mod tests {
 
         // Create a new ledger with slot 0 full of ticks
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
         let mut last_entry_hash = blockhash;
 
         /*
@@ -2722,8 +2655,8 @@ pub mod tests {
             last_slot1_entry_hash,
         );
 
-        info!("last_fork1_entry.hash: {:?}", last_fork1_entry_hash);
-        info!("last_fork2_entry.hash: {:?}", last_fork2_entry_hash);
+        info!("last_fork1_entry.hash: {last_fork1_entry_hash:?}");
+        info!("last_fork2_entry.hash: {last_fork2_entry_hash:?}");
 
         blockstore.set_roots([0, 1, 4].iter()).unwrap();
 
@@ -2760,7 +2693,7 @@ pub mod tests {
 
         // Create a new ledger with slot 0 full of ticks
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
         let mut last_entry_hash = blockhash;
 
         /*
@@ -2801,8 +2734,8 @@ pub mod tests {
             last_slot1_entry_hash,
         );
 
-        info!("last_fork1_entry.hash: {:?}", last_fork1_entry_hash);
-        info!("last_fork2_entry.hash: {:?}", last_fork2_entry_hash);
+        info!("last_fork1_entry.hash: {last_fork1_entry_hash:?}");
+        info!("last_fork2_entry.hash: {last_fork2_entry_hash:?}");
 
         blockstore.set_roots([0, 1].iter()).unwrap();
 
@@ -2848,7 +2781,7 @@ pub mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
 
         /*
                    slot 0
@@ -2895,7 +2828,7 @@ pub mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
 
         /*
                    slot 0
@@ -2955,7 +2888,7 @@ pub mod tests {
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(10_000);
         let ticks_per_slot = genesis_config.ticks_per_slot;
         let (ledger_path, blockhash) = create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
 
         /*
                    slot 0
@@ -3116,7 +3049,7 @@ pub mod tests {
         genesis_config.poh_config.hashes_per_tick = Some(hashes_per_tick);
         let (ledger_path, mut last_entry_hash) =
             create_new_tmp_ledger_auto_delete!(&genesis_config);
-        debug!("ledger_path: {:?}", ledger_path);
+        debug!("ledger_path: {ledger_path:?}");
 
         let deducted_from_mint = 3;
         let mut entries = vec![];
@@ -4341,7 +4274,7 @@ pub mod tests {
                     })
                 })
                 .collect();
-            info!("paying iteration {}", i);
+            info!("paying iteration {i}");
             process_entries_for_tests_without_scheduler(&bank, entries).expect("paying failed");
 
             let entries: Vec<_> = (0..NUM_TRANSFERS)
@@ -4364,7 +4297,7 @@ pub mod tests {
                 })
                 .collect();
 
-            info!("refunding iteration {}", i);
+            info!("refunding iteration {i}");
             process_entries_for_tests_without_scheduler(&bank, entries).expect("refunding failed");
 
             // advance to next block
@@ -4804,12 +4737,15 @@ pub mod tests {
             roots_stakes
                 .into_iter()
                 .map(|(root, stake)| {
-                    let mut vote_state = VoteState::default();
+                    let mut vote_state = VoteStateV3::default();
                     vote_state.root_slot = Some(root);
-                    let mut vote_account =
-                        AccountSharedData::new(1, VoteState::size_of(), &solana_vote_program::id());
+                    let mut vote_account = AccountSharedData::new(
+                        1,
+                        VoteStateV3::size_of(),
+                        &solana_vote_program::id(),
+                    );
                     let versioned = VoteStateVersions::new_current(vote_state);
-                    VoteState::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
+                    VoteStateV3::serialize(&versioned, vote_account.data_as_mut_slice()).unwrap();
                     (
                         solana_pubkey::new_rand(),
                         (stake, VoteAccount::try_from(vote_account).unwrap()),

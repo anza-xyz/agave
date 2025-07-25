@@ -8,12 +8,12 @@ use {
         tx_loop::tx_loop,
     },
     crossbeam_channel::TryRecvError,
-    std::{sync::Arc, thread::Builder, time::Duration},
+    std::{thread::Builder, time::Duration},
 };
 use {
     crossbeam_channel::{Sender, TrySendError},
     solana_ledger::shred,
-    std::{error::Error, net::SocketAddr, thread},
+    std::{error::Error, net::SocketAddr, sync::Arc, thread},
 };
 
 #[derive(Clone, Debug)]
@@ -53,40 +53,67 @@ impl XdpConfig {
     }
 }
 
-pub(crate) struct XdpSender {
-    senders: Vec<Sender<(Vec<SocketAddr>, shred::Payload)>>,
+/// The shred payload variants of the Xdp channel.
+///
+/// This is currently meant to capture the constraints of both the retransmit
+/// and broadcast stages.
+pub(crate) enum XdpShredPayload {
+    /// The shreds, and thus their payloads, are owned by the caller.
+    ///
+    /// For example, retransmit has its own [`Vec`] of [`shred::Shred`], and can simply
+    /// pass along the payloads to the XDP thread(s) via the Xdp channel.
+    Owned(shred::Payload),
+    /// The shreds, and thus their payloads, are shared between disparate components in the validator.
+    ///
+    /// For example, broadcast deals with an `Arc<Vec<shred::Shred>>` due to those shreds being
+    /// shared with the blockstore (see [`StandardBroadcastRun::process_receive_results`](crate::broadcast_stage::standard_broadcast_run::StandardBroadcastRun::process_receive_results)).
+    /// To avoid cloning the payloads, we pass along the `Arc` reference and the index of the shred
+    /// in the `Vec` to the XDP thread(s).
+    Shared {
+        ptr: Arc<Vec<shred::Shred>>,
+        index: usize,
+    },
+}
+
+impl AsRef<[u8]> for XdpShredPayload {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            XdpShredPayload::Owned(payload) => payload.as_ref(),
+            XdpShredPayload::Shared { ptr, index } => ptr[*index].payload().as_ref(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct XdpSender {
+    senders: Vec<Sender<(Vec<SocketAddr>, XdpShredPayload)>>,
 }
 
 impl XdpSender {
     #[inline]
     pub(crate) fn try_send(
         &self,
-        sender_index: u32,
+        sender_index: usize,
         addr: Vec<SocketAddr>,
-        payload: shred::Payload,
-    ) -> Result<(), TrySendError<(Vec<SocketAddr>, shred::Payload)>> {
-        self.senders[sender_index as usize % self.senders.len()].try_send((addr.clone(), payload))
+        payload: XdpShredPayload,
+    ) -> Result<(), TrySendError<(Vec<SocketAddr>, XdpShredPayload)>> {
+        self.senders[sender_index % self.senders.len()].try_send((addr, payload))
     }
 }
 
-pub(crate) struct XdpRetransmitter {
+pub struct XdpRetransmitter {
     threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl XdpRetransmitter {
     #[cfg(not(target_os = "linux"))]
-    pub(crate) fn new(
-        _config: XdpConfig,
-        _src_port: u16,
-    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(_config: XdpConfig, _src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
         Err("XDP is only supported on Linux".into())
     }
 
     #[cfg(target_os = "linux")]
-    pub(crate) fn new(
-        config: XdpConfig,
-        src_port: u16,
-    ) -> Result<(Self, XdpSender), Box<dyn Error>> {
+    pub fn new(config: XdpConfig, src_port: u16) -> Result<(Self, XdpSender), Box<dyn Error>> {
         use caps::{
             CapSet,
             Capability::{CAP_BPF, CAP_NET_ADMIN, CAP_NET_RAW},

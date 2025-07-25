@@ -624,10 +624,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         // We must validate the account in case it was reopened, either as a normal system account,
         // or a fake nonce account. We must also check the signer in case the authority was changed.
         //
-        // We do not need to inspect the nonce account here, because by definition it is either the
-        // first account, inspected in `validate_transaction_fee_payer()`, or the second through nth
-        // account, inspected in `load_transaction()`.
-        //
         // Note these checks are *not* obviated by fee-only transactions.
         let nonce_is_valid = account_loader
             .load_transaction_account(nonce_info.address(), true)
@@ -1065,14 +1061,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         name: &str,
         builtin: ProgramCacheEntry,
     ) {
-        debug!("Adding program {} under {:?}", name, program_id);
+        debug!("Adding program {name} under {program_id:?}");
         callbacks.add_builtin_account(name, &program_id);
         self.builtin_program_ids.write().unwrap().insert(program_id);
         self.program_cache
             .write()
             .unwrap()
             .assign_program(program_id, Arc::new(builtin));
-        debug!("Added program {} under {:?}", name, program_id);
+        debug!("Added program {name} under {program_id:?}");
     }
 
     #[cfg(feature = "dev-context-only-utils")]
@@ -1294,7 +1290,7 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[], &[], &[index_in_trace as u8]);
+                    .configure(vec![], vec![], &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }

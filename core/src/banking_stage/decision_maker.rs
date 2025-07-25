@@ -7,7 +7,7 @@ use {
     solana_pubkey::Pubkey,
     solana_unified_scheduler_pool::{BankingStageMonitor, BankingStageStatus},
     std::{
-        sync::{Arc, RwLock},
+        sync::{atomic::{AtomicBool, Ordering::Relaxed}, Arc, RwLock},
         time::{Duration, Instant},
     },
 };
@@ -136,10 +136,30 @@ impl DecisionMaker {
     }
 }
 
-impl BankingStageMonitor for DecisionMaker {
+#[derive(Debug)]
+pub(crate) struct DecisionMakerWrapper {
+    is_exited: Arc<AtomicBool>,
+    decision_maker: DecisionMaker,
+}
+
+impl DecisionMakerWrapper {
+    pub(crate) fn new(decision_maker: DecisionMaker) -> Self {
+        // Clone-off before hand to avoid lock contentions.
+        let is_exited = decision_maker.poh_recorder.read().unwrap().is_exited.clone();
+
+        Self {
+            is_exited,
+            decision_maker,
+        }
+    }
+}
+
+impl BankingStageMonitor for DecisionMakerWrapper {
     fn status(&mut self) -> BankingStageStatus {
-        if matches!(
-            self.make_consume_or_forward_decision(),
+        if self.is_exited.load(Relaxed) {
+            BankingStageStatus::Exited
+        } else if matches!(
+            self.decision_maker.make_consume_or_forward_decision(),
             BufferedPacketsDecision::Forward,
         ) {
             BankingStageStatus::Inactive

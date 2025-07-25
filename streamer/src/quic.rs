@@ -37,8 +37,8 @@ pub const DEFAULT_MAX_STAKED_CONNECTIONS: usize = 2000;
 
 pub const DEFAULT_MAX_UNSTAKED_CONNECTIONS: usize = 500;
 
-/// Limit to 250K PPS
-pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 250;
+/// Limit to 500K PPS
+pub const DEFAULT_MAX_STREAMS_PER_MS: u64 = 500;
 
 /// The new connections per minute from a particular IP address.
 /// Heuristically set to the default maximum concurrent connections
@@ -51,15 +51,15 @@ pub const DEFAULT_QUIC_ENDPOINTS: usize = 1;
 pub const DEFAULT_TPU_COALESCE: Duration = Duration::from_millis(5);
 
 pub fn default_num_tpu_transaction_forward_receive_threads() -> usize {
-    num_cpus::get()
+    num_cpus::get().min(16)
 }
 
 pub fn default_num_tpu_transaction_receive_threads() -> usize {
-    num_cpus::get()
+    num_cpus::get().min(8)
 }
 
 pub fn default_num_tpu_vote_transaction_receive_threads() -> usize {
-    num_cpus::get()
+    num_cpus::get().min(8)
 }
 
 pub struct SpawnServerResult {
@@ -674,7 +674,7 @@ pub fn spawn_server_multi(
         .name(thread_name.into())
         .spawn(move || {
             if let Err(e) = runtime.block_on(result.thread) {
-                warn!("error from runtime.block_on: {:?}", e);
+                warn!("error from runtime.block_on: {e:?}");
             }
         })
         .unwrap();

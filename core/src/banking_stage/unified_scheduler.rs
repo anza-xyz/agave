@@ -30,7 +30,7 @@
 use qualifier_attr::qualifiers;
 use {
     super::{
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
+        decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
         packet_deserializer::PacketDeserializer,
         LikeClusterInfo,
     },
@@ -56,7 +56,7 @@ pub(crate) fn ensure_banking_stage_setup(
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
     let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-    let banking_stage_monitor = Box::new(decision_maker.clone());
+    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(decision_maker.clone()));
 
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {

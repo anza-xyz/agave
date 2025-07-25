@@ -1,6 +1,7 @@
 use {
     super::*,
     crate::{translate_inner, translate_slice_inner, translate_type_inner},
+    solana_instruction::Instruction,
     solana_loader_v3_interface::instruction as bpf_loader_upgradeable,
     solana_measure::measure::Measure,
     solana_program_runtime::{
@@ -326,7 +327,7 @@ trait SyscallInvokeSigned {
         addr: u64,
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
-    ) -> Result<StableInstruction, Error>;
+    ) -> Result<Instruction, Error>;
     fn translate_accounts<'a>(
         instruction_accounts: &[InstructionAccount],
         account_infos_addr: u64,
@@ -373,7 +374,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
         addr: u64,
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
-    ) -> Result<StableInstruction, Error> {
+    ) -> Result<Instruction, Error> {
         let ix = translate_type::<StableInstruction>(
             memory_mapping,
             addr,
@@ -419,9 +420,9 @@ impl SyscallInvokeSigned for SyscallInvokeSignedRust {
             accounts.push(account_meta.clone());
         }
 
-        Ok(StableInstruction {
-            accounts: accounts.into(),
-            data: data.into(),
+        Ok(Instruction {
+            accounts,
+            data,
             program_id: ix.program_id,
         })
     }
@@ -580,7 +581,7 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
         addr: u64,
         memory_mapping: &MemoryMapping,
         invoke_context: &mut InvokeContext,
-    ) -> Result<StableInstruction, Error> {
+    ) -> Result<Instruction, Error> {
         let ix_c = translate_type::<SolInstruction>(
             memory_mapping,
             addr,
@@ -641,9 +642,9 @@ impl SyscallInvokeSigned for SyscallInvokeSignedC {
             });
         }
 
-        Ok(StableInstruction {
-            accounts: accounts.into(),
-            data: data.into(),
+        Ok(Instruction {
+            accounts,
+            data,
             program_id: *program_id,
         })
     }
@@ -1319,7 +1320,6 @@ mod tests {
          $transaction_accounts:expr,
          $program_accounts:expr,
          $instruction_accounts:expr) => {
-            let program_accounts = $program_accounts;
             let instruction_data = $instruction_data;
             let instruction_accounts = $instruction_accounts
                 .iter()
@@ -1351,7 +1351,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(program_accounts, &instruction_accounts, instruction_data);
+                .configure($program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }
@@ -1377,7 +1377,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1422,7 +1422,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1459,7 +1459,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1503,17 +1503,12 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let config = Config {
             aligned_memory_mapping: false,
@@ -1560,24 +1555,19 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            account.lamports(),
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(account.lamports(), *account.owner(), account.data(), false);
 
         let config = Config {
             aligned_memory_mapping: false,
             ..Config::default()
         };
         let memory_mapping = MemoryMapping::new(
-            mock_caller_account.regions.split_off(0),
+            mock_caller_account.regions.clone(),
             &config,
             SBPFVersion::V3,
         )
@@ -1679,17 +1669,12 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let caller_account = mock_caller_account.caller_account();
 
@@ -1716,17 +1701,12 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
 
         let mut caller_account = mock_caller_account.caller_account();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
@@ -1791,17 +1771,12 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
-        let mut mock_caller_account = MockCallerAccount::new(
-            1234,
-            *account.owner(),
-            0xFFFFFFFF00000000,
-            account.data(),
-            false,
-        );
+        let mut mock_caller_account =
+            MockCallerAccount::new(1234, *account.owner(), account.data(), false);
         let mut caller_account = mock_caller_account.caller_account();
         let callee_account = borrow_instruction_account!(invoke_context, 0);
 
@@ -1871,7 +1846,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1, 1]
         );
 
@@ -1910,18 +1885,20 @@ mod tests {
         fn new(
             lamports: u64,
             owner: Pubkey,
-            vm_addr: u64,
             data: &[u8],
             direct_mapping: bool,
         ) -> MockCallerAccount {
+            let vm_addr = MM_INPUT_START;
+            let mut region_addr = vm_addr;
+            let region_len = mem::size_of::<u64>()
+                + if direct_mapping {
+                    0
+                } else {
+                    data.len() + MAX_PERMITTED_DATA_INCREASE
+                };
+            let mut d = vec![0; region_len];
             let mut regions = vec![];
 
-            let mut d = vec![
-                0;
-                mem::size_of::<u64>()
-                    + if direct_mapping { 0 } else { data.len() }
-                    + MAX_PERMITTED_DATA_INCREASE
-            ];
             // always write the [len] part even when direct mapping
             unsafe { ptr::write_unaligned::<u64>(d.as_mut_ptr().cast(), data.len() as u64) };
 
@@ -1931,13 +1908,6 @@ mod tests {
             }
 
             // create a region for [len][data+realloc if !direct_mapping]
-            let mut region_addr = vm_addr;
-            let region_len = mem::size_of::<u64>()
-                + if direct_mapping {
-                    0
-                } else {
-                    data.len() + MAX_PERMITTED_DATA_INCREASE
-                };
             regions.push(MemoryRegion::new_writable(&mut d[..region_len], vm_addr));
             region_addr += region_len as u64;
 

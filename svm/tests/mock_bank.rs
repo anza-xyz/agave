@@ -5,11 +5,12 @@ use solana_sysvar::recent_blockhashes::{Entry as BlockhashesEntry, RecentBlockha
 use {
     solana_account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
     solana_bpf_loader_program::syscalls::{
-        SyscallAbort, SyscallGetClockSysvar, SyscallGetRentSysvar, SyscallInvokeSignedRust,
-        SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove, SyscallMemset,
-        SyscallSetReturnData,
+        SyscallAbort, SyscallGetClockSysvar, SyscallGetEpochScheduleSysvar, SyscallGetRentSysvar,
+        SyscallInvokeSignedRust, SyscallLog, SyscallMemcmp, SyscallMemcpy, SyscallMemmove,
+        SyscallMemset, SyscallSetReturnData,
     },
     solana_clock::{Clock, Slot, UnixTimestamp},
+    solana_epoch_schedule::EpochSchedule,
     solana_fee_structure::{FeeDetails, FeeStructure},
     solana_loader_v3_interface::{self as bpf_loader_upgradeable, state::UpgradeableLoaderState},
     solana_program_runtime::{
@@ -176,10 +177,20 @@ impl MockBankCallback {
             .write()
             .unwrap()
             .insert(RecentBlockhashes::id(), account_data);
+
+        // EpochSchedule is required for non-mocked LoaderV3 deploy
+        let epoch_schedule = EpochSchedule::without_warmup();
+
+        let mut account_data = AccountSharedData::default();
+        account_data.set_data(bincode::serialize(&epoch_schedule).unwrap());
+        self.account_shared_data
+            .write()
+            .unwrap()
+            .insert(EpochSchedule::id(), account_data);
     }
 }
 
-fn load_program(name: String) -> Vec<u8> {
+pub fn load_program(name: String) -> Vec<u8> {
     // Loading the program file
     let mut dir = env::current_dir().unwrap();
     dir.push("tests");
@@ -353,7 +364,7 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: false,
+        enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: true,
@@ -398,6 +409,12 @@ pub fn create_custom_loader<'a>() -> BuiltinProgram<InvokeContext<'a>> {
         .expect("Registration failed");
     loader
         .register_function("sol_get_rent_sysvar", SyscallGetRentSysvar::vm)
+        .expect("Registration failed");
+    loader
+        .register_function(
+            "sol_get_epoch_schedule_sysvar",
+            SyscallGetEpochScheduleSysvar::vm,
+        )
         .expect("Registration failed");
     loader
 }

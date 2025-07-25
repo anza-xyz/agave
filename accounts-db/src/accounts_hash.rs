@@ -551,7 +551,7 @@ impl AccountsHasher<'_> {
             })
             .collect();
         time.stop();
-        debug!("hashing {} {}", total_hashes, time);
+        debug!("hashing {total_hashes} {time}");
 
         if result.len() == 1 {
             result[0]
@@ -725,7 +725,7 @@ impl AccountsHasher<'_> {
             })
             .collect();
         time.stop();
-        debug!("hashing {} {}", total_hashes, time);
+        debug!("hashing {total_hashes} {time}");
 
         if let Some(mut specific_level_count_value) = specific_level_count {
             specific_level_count_value -= levels_hashed;
@@ -1247,15 +1247,6 @@ pub const ZERO_LAMPORT_ACCOUNT_LT_HASH: AccountLtHash = AccountLtHash(LtHash::id
 pub struct AccountsLtHash(pub LtHash);
 
 /// Hash of accounts
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum MerkleOrLatticeAccountsHash {
-    /// Merkle-based hash of accounts
-    Merkle(AccountsHashKind),
-    /// Lattice-based hash of accounts
-    Lattice,
-}
-
-/// Hash of accounts
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsHashKind {
     Full(AccountsHash),
@@ -1288,57 +1279,15 @@ pub struct AccountsHash(pub Hash);
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct IncrementalAccountsHash(pub Hash);
 
-/// Hash of accounts written in a single slot
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct AccountsDeltaHash(pub Hash);
-
-/// Snapshot serde-safe accounts delta hash
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SerdeAccountsDeltaHash(pub Hash);
-
-impl From<SerdeAccountsDeltaHash> for AccountsDeltaHash {
-    fn from(accounts_delta_hash: SerdeAccountsDeltaHash) -> Self {
-        Self(accounts_delta_hash.0)
-    }
-}
-impl From<AccountsDeltaHash> for SerdeAccountsDeltaHash {
-    fn from(accounts_delta_hash: AccountsDeltaHash) -> Self {
-        Self(accounts_delta_hash.0)
-    }
-}
-
 /// Snapshot serde-safe accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeAccountsHash(pub Hash);
 
-impl From<SerdeAccountsHash> for AccountsHash {
-    fn from(accounts_hash: SerdeAccountsHash) -> Self {
-        Self(accounts_hash.0)
-    }
-}
-impl From<AccountsHash> for SerdeAccountsHash {
-    fn from(accounts_hash: AccountsHash) -> Self {
-        Self(accounts_hash.0)
-    }
-}
-
 /// Snapshot serde-safe incremental accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeIncrementalAccountsHash(pub Hash);
-
-impl From<SerdeIncrementalAccountsHash> for IncrementalAccountsHash {
-    fn from(incremental_accounts_hash: SerdeIncrementalAccountsHash) -> Self {
-        Self(incremental_accounts_hash.0)
-    }
-}
-impl From<IncrementalAccountsHash> for SerdeIncrementalAccountsHash {
-    fn from(incremental_accounts_hash: IncrementalAccountsHash) -> Self {
-        Self(incremental_accounts_hash.0)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -2428,7 +2377,7 @@ mod tests {
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", len);
+        assert_eq!(result, result2.0, "len: {len}");
 
         let result2 = AccountsHasher::compute_merkle_root_from_slices(
             len,
@@ -2437,7 +2386,7 @@ mod tests {
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", len);
+        assert_eq!(result, result2.0, "len: {len}");
 
         let max = std::cmp::min(reduced.len(), fanout * 2);
         for left in 0..max {
