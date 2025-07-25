@@ -67,6 +67,6 @@ x509-parser = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-local-cluster = { workspace = true }
+solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
 solana-native-token = { workspace = true }
 solana-streamer = { workspace = true, features = ["dev-context-only-utils"] }

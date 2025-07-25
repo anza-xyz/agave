@@ -43,6 +43,6 @@ solana-version = { workspace = true }
 [dev-dependencies]
 solana-core = { workspace = true, features = ["dev-context-only-utils"] }
 solana-hash = { workspace = true }
-solana-local-cluster = { workspace = true }
+solana-local-cluster = { workspace = true, features = ["dev-context-only-utils"] }
 solana-poh-config = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
