@@ -207,8 +207,6 @@ pub struct AppendVec {
 }
 
 const PAGE_SIZE: usize = 4 * 1024;
-// Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
-const BUFFER_SIZE: usize = PAGE_SIZE * 4;
 
 /// Create a reusable buffer tuned for full accounts' storage scan.
 pub(crate) fn new_full_accounts_scan_buffer<'a>() -> impl RequiredLenBufFileRead<'a> {
@@ -216,6 +214,7 @@ pub(crate) fn new_full_accounts_scan_buffer<'a>() -> impl RequiredLenBufFileRead
     // In a recent sample, 99.98% of accounts' data lengths were less than or equal to 128KiB.
     const MIN_CAPACITY: usize = 1024 * 128;
     const MAX_CAPACITY: usize = STORE_META_OVERHEAD + MAX_PERMITTED_DATA_LENGTH as usize;
+    const BUFFER_SIZE: usize = PAGE_SIZE * 8;
     BufReaderWithOverflow::new(
         BufferedReader::<Stack<BUFFER_SIZE>>::new_stack(),
         MIN_CAPACITY,
@@ -1214,6 +1213,8 @@ impl AppendVec {
                 }
             }
             AppendVecFileBacking::File(file) => {
+                // Heuristic observed in benchmarking that maintains a reasonable balance between syscalls and data waste
+                const BUFFER_SIZE: usize = PAGE_SIZE * 4;
                 let mut reader =
                     BufferedReader::<Stack<BUFFER_SIZE>>::new_stack().with_file(file, self_len);
                 const REQUIRED_READ_LEN: usize =
