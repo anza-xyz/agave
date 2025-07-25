@@ -70,7 +70,7 @@ pub struct SvmTestEnvironment<'a> {
     pub fork_graph: Arc<RwLock<MockForkGraph>>,
     pub batch_processor: TransactionBatchProcessor<MockForkGraph>,
     pub processing_config: TransactionProcessingConfig<'a>,
-    pub processing_environment: TransactionProcessingEnvironment<'a>,
+    pub processing_environment: TransactionProcessingEnvironment,
     pub test_entry: SvmTestEntry,
 }
 

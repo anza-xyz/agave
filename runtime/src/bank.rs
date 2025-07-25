@@ -3270,7 +3270,7 @@ impl Bank {
             blockhash_lamports_per_signature,
             epoch_total_stake: self.get_current_epoch_total_stake(),
             feature_set: self.feature_set.runtime_features(),
-            rent: Some(&self.rent_collector.rent),
+            rent: self.rent_collector.rent.clone(),
         };
 
         let sanitized_output = self

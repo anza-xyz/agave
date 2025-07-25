@@ -32,6 +32,7 @@ use {
         loaded_programs::ProgramCacheEntry,
     },
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_rpc_client_api::{
         config::*,
         response::{Response as RpcResponse, *},
@@ -555,7 +556,7 @@ impl JsonRpcRequestProcessor {
             blockhash_lamports_per_signature: lamports_per_signature,
             epoch_total_stake: 0,
             feature_set: bank.feature_set.runtime_features(),
-            rent: None,
+            rent: Rent::default(),
         };
 
         let sanitized_output = self

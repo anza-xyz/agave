@@ -151,7 +151,7 @@ impl PayTubeChannel {
             blockhash_lamports_per_signature: fee_structure.lamports_per_signature,
             epoch_total_stake: 0,
             feature_set,
-            rent: Some(&rent),
+            rent,
         };
 
         // The PayTube transaction processing config for Solana SVM.

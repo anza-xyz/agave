@@ -2982,6 +2982,7 @@ dependencies = [
  "solana-perf",
  "solana-program-runtime",
  "solana-pubkey",
+ "solana-rent",
  "solana-rpc-client-api",
  "solana-sdk-ids",
  "solana-signature",

@@ -121,7 +121,7 @@ pub struct TransactionProcessingConfig<'a> {
 
 /// Runtime environment for transaction batch processing.
 #[derive(Default)]
-pub struct TransactionProcessingEnvironment<'a> {
+pub struct TransactionProcessingEnvironment {
     /// The blockhash to use for the transaction batch.
     pub blockhash: Hash,
     /// Lamports per signature that corresponds to this blockhash.
@@ -136,7 +136,7 @@ pub struct TransactionProcessingEnvironment<'a> {
     /// Runtime feature set to use for the transaction batch.
     pub feature_set: SVMFeatureSet,
     /// Rent calculator to use for the transaction batch.
-    pub rent: Option<&'a Rent>,
+    pub rent: Rent,
 }
 
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
@@ -409,7 +409,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         tx,
                         tx_details,
                         &environment.blockhash,
-                        environment.rent.unwrap_or(&Rent::default()),
+                        &environment.rent,
                         &mut error_metrics,
                     )
                 }));
@@ -421,7 +421,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 tx,
                 validate_result,
                 &mut error_metrics,
-                environment.rent.unwrap_or(&Rent::default()),
+                &environment.rent,
             ));
             load_us = load_us.saturating_add(single_load_us);
 
@@ -822,9 +822,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
         }
 
-        let default_rent = Rent::default();
-        let rent = environment.rent.unwrap_or(&default_rent);
-
         let lamports_before_tx =
             transaction_accounts_lamports_sum(&transaction_accounts).unwrap_or(0);
 
@@ -832,7 +829,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         let mut transaction_context = TransactionContext::new(
             transaction_accounts,
-            rent.clone(),
+            environment.rent.clone(),
             compute_budget.max_instruction_stack_depth,
             compute_budget.max_instruction_trace_length,
         );
@@ -843,7 +840,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         );
 
         let pre_account_state_info =
-            TransactionAccountStateInfo::new(&transaction_context, tx, rent);
+            TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
 
         let log_collector = if config.recording_config.enable_log_recording {
             match config.log_messages_bytes_limit {
@@ -891,7 +888,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let mut status = process_result
             .and_then(|info| {
                 let post_account_state_info =
-                    TransactionAccountStateInfo::new(&transaction_context, tx, rent);
+                    TransactionAccountStateInfo::new(&transaction_context, tx, &environment.rent);
                 TransactionAccountStateInfo::verify_changes(
                     &pre_account_state_info,
                     &post_account_state_info,
