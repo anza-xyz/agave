@@ -348,7 +348,6 @@ pub(crate) mod tests {
         solana_signer::Signer,
         solana_system_transaction::transfer,
         std::sync::Arc,
-        test_case::test_case,
     };
 
     #[test]
@@ -590,9 +589,8 @@ pub(crate) mod tests {
         }
     }
 
-    #[test_case(true ; "merkle")]
-    #[test_case(false ; "legacy")]
-    fn test_latest_index_conflict_round_trip(merkle_variant: bool) {
+    #[test]
+    fn test_latest_index_conflict_round_trip() {
         let mut rng = rand::thread_rng();
         let leader = Arc::new(Keypair::new());
         let (slot, parent_slot, reference_tick, version) = (53084024, 53084023, 0, 0);
@@ -612,7 +610,7 @@ pub(crate) mod tests {
                     &mut rng,
                     // With Merkle shreds, last erasure batch is padded with
                     // empty data shreds.
-                    next_shred_index + if merkle_variant { 30 } else { 1 },
+                    next_shred_index + 30,
                     &shredder,
                     &leader,
                     false,
