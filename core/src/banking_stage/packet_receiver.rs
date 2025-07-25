@@ -38,7 +38,6 @@ impl PacketReceiver {
             self.packet_deserializer
                 .receive_packets(recv_timeout, vote_storage.max_receive_size(), |packet| {
                     packet.check_insufficent_compute_unit_limit()?;
-                    packet.check_excessive_precompiles()?;
                     Ok(packet)
                 })
                 // Consumes results if Ok, otherwise we keep the Err

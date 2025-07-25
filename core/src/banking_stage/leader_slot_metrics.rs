@@ -97,9 +97,6 @@ struct LeaderSlotPacketCountMetrics {
     // total number of packets filtered due to insufficient compute limits during receiving from sigverify
     insufficient_compute_limit_count: u64,
 
-    // total number of packets filtered due to excessive precompile signatures during receiving from sigverify
-    excessive_precompile_count: u64,
-
     // total number of invalid vote packets filtered out during receiving from sigverify
     invalid_votes_count: u64,
 
@@ -174,7 +171,6 @@ impl LeaderSlotPacketCountMetrics {
             failed_sanitization_count,
             failed_prioritization_count,
             insufficient_compute_limit_count,
-            excessive_precompile_count,
             invalid_votes_count,
             exceeded_buffer_limit_dropped_packets_count,
             newly_buffered_packets_count,
@@ -216,11 +212,6 @@ impl LeaderSlotPacketCountMetrics {
             (
                 "insufficient_compute_limit_count",
                 insufficient_compute_limit_count,
-                i64
-            ),
-            (
-                "excessive_precompile_count",
-                excessive_precompile_count,
                 i64
             ),
             ("invalid_votes_count", invalid_votes_count, i64),
@@ -670,7 +661,6 @@ impl LeaderSlotMetricsTracker {
                 invalid_vote_count: Saturating(invalid_vote_count),
                 failed_prioritization_count: Saturating(failed_prioritization_count),
                 failed_sanitization_count: Saturating(failed_sanitization_count),
-                excessive_precompile_count: Saturating(excessive_precompile_count),
                 insufficient_compute_limit_count: Saturating(insufficient_compute_limit_count),
             } = stats;
 
@@ -679,7 +669,6 @@ impl LeaderSlotMetricsTracker {
             metrics.invalid_votes_count += invalid_vote_count;
             metrics.failed_prioritization_count += failed_prioritization_count;
             metrics.failed_sanitization_count += failed_sanitization_count;
-            metrics.excessive_precompile_count += excessive_precompile_count;
             metrics.insufficient_compute_limit_count += insufficient_compute_limit_count;
         }
     }

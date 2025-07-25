@@ -40,8 +40,6 @@ pub struct PacketReceiverStats {
     pub failed_prioritization_count: Saturating<u64>,
     /// Number of vote packets dropped
     pub invalid_vote_count: Saturating<u64>,
-    /// Number of packets dropped due to excessive precompiles
-    pub excessive_precompile_count: Saturating<u64>,
     /// Number of packets dropped due to insufficient compute limit
     pub insufficient_compute_limit_count: Saturating<u64>,
 }
@@ -60,9 +58,6 @@ impl PacketReceiverStats {
             }
             DeserializedPacketError::VoteTransactionError => {
                 self.invalid_vote_count += 1;
-            }
-            DeserializedPacketError::FailedFilter(PacketFilterFailure::ExcessivePrecompiles) => {
-                self.excessive_precompile_count += 1;
             }
             DeserializedPacketError::FailedFilter(
                 PacketFilterFailure::InsufficientComputeLimit,
