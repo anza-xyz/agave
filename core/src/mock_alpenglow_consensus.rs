@@ -66,7 +66,6 @@ struct PeerData {
 #[derive(Default, Debug)]
 struct AgStateMachine {
     block_notarized: bool,
-    block_has_notar_cert: bool,
     block_finalized: bool,
     notarize_stake_collected: Stake,
     finalize_stake_collected: Stake,
@@ -203,15 +202,13 @@ impl MockAlpenglowConsensus {
                 let should_exit = should_exit.clone();
                 let verify_signatures = verify_signatures.clone();
                 let socket = socket.clone();
-                let cluster_info = cluster_info.clone();
-                let epoch_specs = epoch_specs.clone();
+                let my_id = cluster_info.id();
                 move || {
                     Self::listener_thread(
                         shared_state,
                         should_exit,
                         verify_signatures,
-                        cluster_info,
-                        epoch_specs,
+                        my_id,
                         socket,
                         command_sender,
                     )
@@ -292,15 +289,13 @@ impl MockAlpenglowConsensus {
         self_state: Arc<[Mutex<SharedState>; 3]>,
         should_exit: Arc<AtomicBool>,
         verify_signatures: Arc<AtomicBool>,
-        cluster_info: Arc<ClusterInfo>,
-        mut epoch_specs: EpochSpecs,
+        my_id: Pubkey,
         socket: Arc<UdpSocket>,
         command_sender: Sender<Command>,
     ) {
         socket
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
-        let id = cluster_info.id();
         // Set aside enough space to fetch multiple packets from the kernel per syscall
         let mut packets: Vec<Packet> = vec![Packet::default(); 1024];
         loop {
@@ -390,26 +385,27 @@ impl MockAlpenglowConsensus {
                         if !state.alpenglow_state.block_notarized {
                             state.alpenglow_state.notarize_stake_collected += stake;
                             trace!(
-                                "{id}:{} of {}",
+                                "{my_id}:{} of {}",
                                 state.alpenglow_state.notarize_stake_collected,
                                 stake_60_percent
                             );
                             if state.alpenglow_state.notarize_stake_collected > stake_60_percent {
                                 state.alpenglow_state.block_notarized = true;
                                 trace!(
-                                    "{id} has notarized slot {} by observing 60% of notar votes",
+                                    "{my_id} has notarized slot {} by observing 60% of notar votes",
                                     state.current_slot
                                 );
                                 command_sender
                                     .try_send(Command::SendNotarizeCertificate(state.current_slot));
+                                command_sender.try_send(Command::SendFinalize(state.current_slot));
                             }
                         }
                         if !state.alpenglow_state.block_finalized {
                             if state.alpenglow_state.notarize_stake_collected > stake_80_percent {
-                                state.alpenglow_state.block_has_notar_cert = true;
+                                state.alpenglow_state.block_notarized = true;
                                 state.alpenglow_state.block_finalized = true;
                                 trace!(
-                                    "{id} has finalized slot {} by observing 80% of notar votes",
+                                    "{my_id} has finalized slot {} by observing 80% of notar votes",
                                     state.current_slot
                                 );
                                 command_sender
@@ -418,10 +414,10 @@ impl MockAlpenglowConsensus {
                         }
                     }
                     VotorMessageType::NotarizeCertificate => {
-                        if !state.alpenglow_state.block_has_notar_cert {
-                            state.alpenglow_state.block_has_notar_cert = true;
+                        if !state.alpenglow_state.block_notarized {
+                            state.alpenglow_state.block_notarized = true;
                             trace!(
-                                "{id} has notarized slot {} by observing notar certificate",
+                                "{my_id} has notarized slot {} by observing notar certificate",
                                 state.current_slot
                             );
                             command_sender
@@ -435,7 +431,7 @@ impl MockAlpenglowConsensus {
                             if state.alpenglow_state.finalize_stake_collected > stake_60_percent {
                                 state.alpenglow_state.block_finalized = true;
                                 trace!(
-                                    "{id} has finalized slot {} by observing finalize votes",
+                                    "{my_id} has finalized slot {} by observing finalize votes",
                                     state.current_slot
                                 );
                                 command_sender
