@@ -143,6 +143,7 @@ macro_rules! define_accounts_db_test {
         }
     };
 }
+
 pub(crate) use define_accounts_db_test;
 
 fn run_generate_index_duplicates_within_slot_test(db: AccountsDb, reverse: bool) {
@@ -7157,4 +7158,149 @@ fn test_calculate_capitalization_overflow_inter_slot() {
     accounts_db.store_for_tests(0, &[(&Pubkey::new_unique(), &account)]);
     accounts_db.store_for_tests(1, &[(&Pubkey::new_unique(), &account)]);
     accounts_db.calculate_capitalization_at_startup_from_index(&Ancestors::from(vec![0, 1]), 1);
+}
+
+#[test]
+fn test_mark_obsolete_accounts_at_startup_none() {
+    let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
+    let accounts_db = AccountsDb::new_for_tests(paths);
+    let slots = 0;
+    let pubkeys_with_duplicates_by_bin = vec![];
+
+    let obsolete_stats =
+        accounts_db.mark_obsolete_accounts_at_startup(slots, pubkeys_with_duplicates_by_bin);
+
+    assert_eq!(
+        obsolete_stats.accounts_marked_obsolete, 0,
+        "No accounts should be reclaimed for empty bin"
+    );
+}
+
+#[test]
+fn test_mark_obsolete_accounts_at_startup_purge_slot() {
+    let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
+    let accounts_db = AccountsDb::new_for_tests(paths);
+    let slots = 2;
+    let pubkey1 = Pubkey::new_unique();
+    let pubkey2 = Pubkey::new_unique();
+    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+
+    // Store the same pubkey in multiple slots
+    // Store other pubkey in slot0 to ensure slot is not purged
+    accounts_db.store_for_tests(0, &[(&pubkey1, &account), (&pubkey2, &account)]);
+    accounts_db.flush_accounts_cache_slot_for_tests(0);
+    accounts_db.store_for_tests(1, &[(&pubkey1, &account)]);
+    accounts_db.flush_accounts_cache_slot_for_tests(1);
+    accounts_db.store_for_tests(2, &[(&pubkey1, &account)]);
+    accounts_db.flush_accounts_cache_slot_for_tests(2);
+
+    let pubkeys_with_duplicates_by_bin = vec![vec![pubkey1]];
+
+    let obsolete_stats =
+        accounts_db.mark_obsolete_accounts_at_startup(slots, pubkeys_with_duplicates_by_bin);
+
+    // Verify that slot 0 has not been purged
+    assert!(accounts_db.storage.get_slot_storage_entry(0).is_some());
+
+    // Verify that slot 1 has been purged
+    assert!(accounts_db.storage.get_slot_storage_entry(1).is_none());
+
+    // Verify that the pubkey ref1's count is 1
+    assert_eq!(
+        accounts_db.accounts_index.ref_count_from_storage(&pubkey1),
+        1
+    );
+
+    assert_eq!(obsolete_stats.accounts_marked_obsolete, 2);
+}
+
+#[test]
+fn test_mark_obsolete_accounts_at_startup_multiple_bins() {
+    let (_accounts_dirs, paths) = get_temp_accounts_paths(2).unwrap();
+    let accounts_db = AccountsDb::new_for_tests(paths);
+    let pubkey1 = Pubkey::from([0; 32]); // Ensure pubkey1 is in bin 0
+    let pubkey2 = Pubkey::from([255; 32]); // Ensure pubkey2 is in a different bin
+    let account = AccountSharedData::new(100, 0, &Pubkey::default());
+
+    for slot in 0..2 {
+        accounts_db.store_for_tests(slot, &[(&pubkey1, &account), (&pubkey2, &account)]);
+        accounts_db.flush_accounts_cache_slot_for_tests(slot);
+    }
+
+    let pubkeys_with_duplicates_by_bin = vec![vec![pubkey1], vec![pubkey2]];
+
+    let obsolete_stats =
+        accounts_db.mark_obsolete_accounts_at_startup(2, pubkeys_with_duplicates_by_bin);
+
+    // Verify that slot 0 has been purged
+    assert!(accounts_db.storage.get_slot_storage_entry(0).is_none());
+
+    // Verify that slot 1 has been purged
+    assert!(accounts_db.storage.get_slot_storage_entry(1).is_some());
+
+    // Verify that both pubkeys ref_counts are 1
+    assert_eq!(
+        accounts_db.accounts_index.ref_count_from_storage(&pubkey1),
+        1
+    );
+    assert_eq!(
+        accounts_db.accounts_index.ref_count_from_storage(&pubkey2),
+        1
+    );
+
+    // Ensure that stats were accumulated correctly
+    assert_eq!(obsolete_stats.accounts_marked_obsolete, 2);
+    assert_eq!(obsolete_stats.slots_removed, 1);
+}
+
+// This test verifies that when obsolete accounts are marked, the duplicates lt hash is set to the
+// default value. When they are not marked, it is populated. The second case ensures test validity.
+#[test_case(true; "mark_obsolete_accounts")]
+#[test_case(false; "do_not_mark_obsolete_accounts")]
+fn test_obsolete_accounts_empty_default_duplicate_hash(mark_obsolete_accounts: bool) {
+    let slot0 = 0;
+    let slot1 = 1;
+
+    let db = AccountsDb::new_with_config(
+        Vec::new(),
+        Some(AccountsDbConfig {
+            mark_obsolete_accounts,
+            ..ACCOUNTS_DB_CONFIG_FOR_TESTING
+        }),
+        None,
+        Arc::default(),
+    );
+
+    let pubkey = Pubkey::new_unique();
+
+    let storage = db.create_and_insert_store(slot0, 1000, "test");
+
+    let account0 = AccountSharedData::new(1, 0, &Pubkey::default());
+    let account1 = AccountSharedData::new(100, 0, &Pubkey::default());
+
+    storage
+        .accounts
+        .write_accounts(&(slot0, &[(&pubkey, &account0)][..]), 0);
+
+    let storage = db.create_and_insert_store(slot1, 1000, "test");
+
+    storage
+        .accounts
+        .write_accounts(&(slot1, &[(&pubkey, &account1)][..]), 0);
+
+    assert!(!db.accounts_index.contains(&pubkey));
+    let result = db.generate_index(None, false, true);
+    if mark_obsolete_accounts {
+        // If obsolete accounts are marked, the duplicates lt hash should be the default value
+        // This is because all duplicates are marked as obsolete and skipped during lt hash calculation.
+        assert_eq!(
+            *result.duplicates_lt_hash.unwrap(),
+            DuplicatesLtHash::default()
+        );
+    } else {
+        assert_ne!(
+            *result.duplicates_lt_hash.unwrap(),
+            DuplicatesLtHash::default()
+        );
+    }
 }

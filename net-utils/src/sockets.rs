@@ -1,22 +1,21 @@
+#[cfg(feature = "dev-context-only-utils")]
+use tokio::net::UdpSocket as TokioUdpSocket;
 use {
     crate::PortRange,
     log::warn,
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
         io,
-        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
+        ops::Range,
         sync::atomic::{AtomicU16, Ordering},
     },
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {std::net::Ipv4Addr, tokio::net::UdpSocket as TokioUdpSocket};
 // base port for deconflicted allocations
 const BASE_PORT: u16 = 5000;
 // how much to allocate per individual process.
 // we expect to have at most 64 concurrent tests in CI at any moment on a given host.
 const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
-/// Retrieve a free 20-port slice for unit tests
-///
 /// When running under nextest, this will try to provide
 /// a unique slice of port numbers (assuming no other nextest processes
 /// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
@@ -25,9 +24,9 @@ const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
 #[allow(clippy::arithmetic_side_effects)]
-pub fn localhost_port_range_for_tests() -> (u16, u16) {
+pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
     static SLICE: AtomicU16 = AtomicU16::new(0);
-    let offset = SLICE.fetch_add(20, Ordering::Relaxed);
+    let offset = SLICE.fetch_add(size, Ordering::Relaxed);
     let start = offset
         + match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
             Ok(slot) => {
@@ -41,8 +40,30 @@ pub fn localhost_port_range_for_tests() -> (u16, u16) {
             }
             Err(_) => BASE_PORT,
         };
-    assert!(start < u16::MAX - 20, "ran out of port numbers!");
-    (start, start + 20)
+    assert!(start < u16::MAX - size, "Ran out of port numbers!");
+    start..start + size
+}
+
+/// Retrieve a free 20-port slice for unit tests
+///
+/// When running under nextest, this will try to provide
+/// a unique slice of port numbers (assuming no other nextest processes
+/// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
+/// The port ranges will be reused following nextest logic.
+///
+/// When running without nextest, this will only bump an atomic and eventually
+/// panic when it runs out of port numbers to assign.
+pub fn localhost_port_range_for_tests() -> (u16, u16) {
+    let pr = unique_port_range_for_tests(20);
+    (pr.start, pr.end)
+}
+
+/// Bind a `UdpSocket` to a unique port.
+pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        unique_port_range_for_tests(1).start,
+    )
 }
 
 pub fn bind_gossip_port_in_range(

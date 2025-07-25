@@ -57,14 +57,13 @@ fn make_shreds_from_entries<R: Rng>(
     reed_solomon_cache: &ReedSolomonCache,
     stats: &mut ProcessShredsStats,
 ) -> (Vec<Shred>, Vec<Shred>) {
-    let (data, code) = shredder.entries_to_shreds(
+    let (data, code) = shredder.entries_to_merkle_shreds_for_tests(
         keypair,
         entries,
         is_last_in_slot,
         chained_merkle_root,
         rng.gen_range(0..2_000), // next_shred_index
         rng.gen_range(0..2_000), // next_code_index
-        true,                    // merkle_variant
         reed_solomon_cache,
         stats,
     );

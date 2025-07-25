@@ -2236,7 +2236,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&[0, 1], &[], &[]);
+                .configure(vec![0, 1], vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -4441,7 +4441,7 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = [InstructionAccount::new(
+                let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
                     0, // This is incorrect / inconsistent but not required
                     0,
@@ -4452,7 +4452,7 @@ mod tests {
                     .transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[0], &instruction_accounts, &[index_in_trace as u8]);
+                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

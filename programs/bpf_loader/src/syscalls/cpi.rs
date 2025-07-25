@@ -1320,7 +1320,6 @@ mod tests {
          $transaction_accounts:expr,
          $program_accounts:expr,
          $instruction_accounts:expr) => {
-            let program_accounts = $program_accounts;
             let instruction_data = $instruction_data;
             let instruction_accounts = $instruction_accounts
                 .iter()
@@ -1352,7 +1351,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(program_accounts, &instruction_accounts, instruction_data);
+                .configure($program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }
@@ -1378,7 +1377,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1423,7 +1422,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1460,7 +1459,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1504,7 +1503,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1556,7 +1555,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1670,7 +1669,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1702,7 +1701,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1772,7 +1771,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1]
         );
 
@@ -1847,7 +1846,7 @@ mod tests {
             transaction_context,
             b"instruction data",
             transaction_accounts,
-            &[0],
+            vec![0],
             &[1, 1]
         );
 

@@ -1,7 +1,6 @@
 use {
-    solana_runtime::snapshot_package::{
-        cmp_snapshot_packages_by_priority, SnapshotKind, SnapshotPackage,
-    },
+    crate::snapshot_package::{cmp_snapshot_packages_by_priority, SnapshotKind, SnapshotPackage},
+    log::*,
     std::cmp::Ordering::Greater,
 };
 
@@ -111,11 +110,7 @@ impl PendingSnapshotPackages {
 
 #[cfg(test)]
 mod tests {
-    use {
-        super::*,
-        solana_clock::Slot,
-        solana_runtime::snapshot_package::{SnapshotKind, SnapshotPackage},
-    };
+    use {super::*, solana_clock::Slot};
 
     fn new(snapshot_kind: SnapshotKind, slot: Slot) -> SnapshotPackage {
         SnapshotPackage {

@@ -1,15 +1,14 @@
+#[cfg(feature = "dev-context-only-utils")]
+use solana_hash::Hash;
 use {
     crate::{
         bank::{Bank, BankFieldsToSerialize, BankHashStats, BankSlotDelta},
         snapshot_hash::SnapshotHash,
     },
     log::*,
-    solana_accounts_db::{
-        accounts::Accounts, accounts_db::AccountStorageEntry, accounts_hash::AccountsHash,
-    },
+    solana_accounts_db::{accounts::Accounts, accounts_db::AccountStorageEntry},
     solana_clock::Slot,
     solana_epoch_schedule::EpochSchedule,
-    solana_hash::Hash,
     solana_rent_collector::RentCollector,
     std::{
         sync::{atomic::Ordering, Arc},
@@ -161,7 +160,6 @@ pub struct SnapshotPackage {
     pub status_cache_slot_deltas: Vec<BankSlotDelta>,
     pub bank_fields_to_serialize: BankFieldsToSerialize,
     pub bank_hash_stats: BankHashStats,
-    pub accounts_hash: AccountsHash,
     pub write_version: u64,
 
     /// The instant this snapshot package was sent to the queue.
@@ -193,7 +191,6 @@ impl SnapshotPackage {
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
             bank_fields_to_serialize: snapshot_info.bank_fields_to_serialize,
             bank_hash_stats: snapshot_info.bank_hash_stats,
-            accounts_hash: AccountsHash(Hash::default()), // obsolete, will be removed next
             write_version: snapshot_info.write_version,
             enqueued: Instant::now(),
         }
@@ -214,7 +211,6 @@ impl SnapshotPackage {
             status_cache_slot_deltas: Vec::default(),
             bank_fields_to_serialize: BankFieldsToSerialize::default_for_tests(),
             bank_hash_stats: BankHashStats::default(),
-            accounts_hash: AccountsHash(Hash::default()),
             write_version: u64::default(),
             enqueued: Instant::now(),
         }
