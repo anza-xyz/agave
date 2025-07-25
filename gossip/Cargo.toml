@@ -98,8 +98,8 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-bencher = { workspace = true }
 bs58 = { workspace = true }
+criterion = { workspace = true }
 num_cpus = { workspace = true }
 rand0-7 = { workspace = true }
 rand_chacha0-2 = { workspace = true }

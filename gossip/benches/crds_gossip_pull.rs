@@ -1,5 +1,5 @@
 use {
-    bencher::{benchmark_group, benchmark_main, Bencher},
+    criterion::{criterion_group, criterion_main, Criterion},
     rand::{thread_rng, Rng},
     rayon::ThreadPoolBuilder,
     solana_gossip::{
@@ -11,19 +11,21 @@ use {
     std::sync::RwLock,
 };
 
-fn bench_hash_as_u64(b: &mut Bencher) {
+fn bench_hash_as_u64(c: &mut Criterion) {
     let hashes: Vec<_> = std::iter::repeat_with(Hash::new_unique)
         .take(1000)
         .collect();
-    b.iter(|| {
-        hashes
-            .iter()
-            .map(CrdsFilter::hash_as_u64)
-            .collect::<Vec<_>>()
+    c.bench_function("bench_hash_as_u64", |b| {
+        b.iter(|| {
+            hashes
+                .iter()
+                .map(CrdsFilter::hash_as_u64)
+                .collect::<Vec<_>>()
+        })
     });
 }
 
-fn bench_build_crds_filters(b: &mut Bencher) {
+fn bench_build_crds_filters(c: &mut Criterion) {
     let thread_pool = ThreadPoolBuilder::new().build().unwrap();
     let mut rng = thread_rng();
     let crds_gossip_pull = CrdsGossipPull::default();
@@ -40,15 +42,17 @@ fn bench_build_crds_filters(b: &mut Bencher) {
         .count();
     assert_eq!(num_inserts, 90_000);
     let crds = RwLock::new(crds);
-    b.iter(|| {
-        let filters = crds_gossip_pull.build_crds_filters(
-            &thread_pool,
-            &crds,
-            992, // max_bloom_filter_bytes
-        );
-        assert_eq!(filters.len(), 16);
+    c.bench_function("bench_build_crds_filters", |b| {
+        b.iter(|| {
+            let filters = crds_gossip_pull.build_crds_filters(
+                &thread_pool,
+                &crds,
+                992, // max_bloom_filter_bytes
+            );
+            assert_eq!(filters.len(), 16);
+        })
     });
 }
 
-benchmark_group!(benches, bench_hash_as_u64, bench_build_crds_filters);
-benchmark_main!(benches);
+criterion_group!(benches, bench_hash_as_u64, bench_build_crds_filters);
+criterion_main!(benches);
