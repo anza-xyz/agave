@@ -85,7 +85,7 @@ struct SharedState {
 
 impl SharedState {
     fn reset(&mut self) -> HashMap<Pubkey, PeerData> {
-        let mut peers = HashMap::new();
+        let mut peers = HashMap::with_capacity(2048);
         std::mem::swap(&mut peers, &mut self.peers);
         self.current_slot = 0;
         self.total_staked = 0;
@@ -95,7 +95,7 @@ impl SharedState {
     fn new(current_slot: Slot) -> Self {
         Self {
             current_slot_start: Instant::now(),
-            peers: HashMap::new(),
+            peers: HashMap::with_capacity(2048),
             current_slot,
             total_staked: 0,
             alpenglow_state: AgStateMachine::default(),
@@ -540,6 +540,11 @@ impl MockAlpenglowConsensus {
         let interval = config.test_interval_slots as u64;
         if interval > 0 {
             if self.safety_latch_engaged {
+                datapoint_info!(
+                    "mock_alpenglow",
+                    ("safety_latch", 1, i64),
+                    ("slot", slot, i64),
+                );
                 debug!("Alpenglow test disabled due to safety latch");
                 return;
             }
@@ -570,7 +575,7 @@ impl MockAlpenglowConsensus {
             self.lockdown();
             datapoint_info!(
                 "mock_alpenglow",
-                ("forking_backoff", 1, i64),
+                ("safety_latch", 1, i64),
                 ("slot", slot, i64),
             );
             return;
@@ -705,37 +710,8 @@ pub(crate) fn get_test_config_from_account<T: DeserializeOwned>(bank: &Bank) -> 
 
 fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake, slot: Slot) {
     trace!("Reporting statistics for slot {}", slot);
-    let mut total_voted_stake: [Stake; 4] = [0; 4];
-    let mut total_voted_nodes: [usize; 4] = [0; 4];
-    let mut total_delay_ms = [0u128; 4];
-    for (pubkey, peer_data) in peers.iter() {
-        for i in 0..4 {
-            let Some(rel_toa) = peer_data.relative_toa[i] else {
-                continue;
-            };
-            total_voted_stake[i] += peer_data.stake;
-            total_voted_nodes[i] += 1;
-            total_delay_ms[i] +=
-                (rel_toa.as_millis().clamp(0, 800) as u128) * peer_data.stake as u128;
-        }
-    }
-
-    let mut stake_weighted_delay = [0f64; 4];
-    let mut percent_collected = [0f64; 4];
-
-    for i in 0..4 {
-        if total_voted_stake[i] > 0 {
-            stake_weighted_delay[i] = total_delay_ms[i] as f64 / total_voted_stake[i] as f64;
-        }
-        percent_collected[i] = 100.0 * total_voted_stake[i] as f64 / total_staked as f64;
-
-        info!(
-            "{:?}: got {} % of total stake collected, stake-weighted delay is {}ms",
-            VotorMessageType::try_from(i as u64).unwrap(), // this unwrap is ok since i is in static range
-            percent_collected[i],
-            stake_weighted_delay[i]
-        );
-    }
+    let (total_voted_nodes, stake_weighted_delay, percent_collected) =
+        compute_stake_weighted_means(&peers, total_staked);
     datapoint_info!(
         "mock_alpenglow",
         ("total_peers", peers.len(), f64),
@@ -779,12 +755,54 @@ fn report_collected_votes(peers: HashMap<Pubkey, PeerData>, total_staked: Stake,
     );
 }
 
+/// computes stake-weighted means of interesting KPIs
+///
+/// returns: (total_voted_nodes, stake_weighted_delay, percent_collected)
+fn compute_stake_weighted_means(
+    peers: &HashMap<Pubkey, PeerData>,
+    total_staked: u64,
+) -> ([usize; 4], [f64; 4], [f64; 4]) {
+    let mut total_voted_stake: [Stake; 4] = [0; 4];
+    let mut total_voted_nodes: [usize; 4] = [0; 4];
+    let mut total_delay_ms = [0u128; 4];
+    for (pubkey, peer_data) in peers.iter() {
+        for i in 0..4 {
+            let Some(rel_toa) = peer_data.relative_toa[i] else {
+                continue;
+            };
+            total_voted_stake[i] += peer_data.stake;
+            total_voted_nodes[i] += 1;
+            total_delay_ms[i] +=
+                (rel_toa.as_millis().clamp(0, 800) as u128) * peer_data.stake as u128;
+        }
+    }
+
+    let mut stake_weighted_delay = [0f64; 4];
+    let mut percent_collected = [0f64; 4];
+
+    for i in 0..4 {
+        if total_voted_stake[i] > 0 {
+            stake_weighted_delay[i] = total_delay_ms[i] as f64 / total_voted_stake[i] as f64;
+        }
+        percent_collected[i] = 100.0 * total_voted_stake[i] as f64 / total_staked as f64;
+
+        info!(
+            "{:?}: got {} % of total stake collected, stake-weighted delay is {}ms",
+            VotorMessageType::try_from(i as u64).unwrap(), // this unwrap is ok since i is in static range
+            percent_collected[i],
+            stake_weighted_delay[i]
+        );
+    }
+    (total_voted_nodes, stake_weighted_delay, percent_collected)
+}
+
 #[cfg(test)]
 mod tests {
     use {
         crate::mock_alpenglow_consensus::{
-            get_state_for_slot, prep_and_sign_packet, MockAlpenglowConsensus, PeerData,
-            SharedState, VotorMessageType, MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_MAX_SIZE,
+            compute_stake_weighted_means, get_state_for_slot, prep_and_sign_packet,
+            MockAlpenglowConsensus, PeerData, SharedState, VotorMessageType, MOCK_VOTE_HEADER_SIZE,
+            MOCK_VOTE_PACKET_MAX_SIZE,
         },
         crossbeam_channel::bounded,
         solana_clock::Slot,
@@ -849,6 +867,7 @@ mod tests {
             let peers_map = make_peer_map(peers.as_slice());
             mock_prep_rx(&shared_state, slot, peers_map);
 
+            sleep(Duration::from_millis(10));
             // make sure we capture Notarize
             send_packet(
                 1,
@@ -858,11 +877,17 @@ mod tests {
                 &peers,
                 &mut packet_buf,
             );
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
+                let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
+                assert!(peerdata.relative_toa[0].unwrap().as_millis() > 0);
+                assert!(peerdata.relative_toa[0].unwrap().as_millis() < 100);
+                assert!(peerdata.relative_toa[1].is_none());
+                assert!(peerdata.relative_toa[2].is_none());
+                assert!(peerdata.relative_toa[3].is_none());
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 1);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, false);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, false);
@@ -878,7 +903,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -898,15 +923,27 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
+                let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
+                assert!(peerdata.relative_toa[2].unwrap().as_millis() > 0);
+                assert!(peerdata.relative_toa[2].unwrap().as_millis() < 200);
+                assert!(peerdata.relative_toa[3].is_none());
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 6);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
+                let (total_voted_nodes, stake_weighted_delay, percent_collected) =
+                    compute_stake_weighted_means(&slot_state.peers, peers.len() as u64);
+                assert_eq!(total_voted_nodes[0], 6);
+                assert_eq!(total_voted_nodes[1], 0);
+                assert_eq!(total_voted_nodes[2], 6);
+                assert_eq!(total_voted_nodes[3], 0);
+                assert!(stake_weighted_delay[0] < stake_weighted_delay[2]);
+                assert_eq!(stake_weighted_delay[1], 0.0);
+                assert_eq!(stake_weighted_delay[3], 0.0);
             }
-
             // new slot new pattern (slow finalize)
             let slot = slot + 1;
             debug!("Slot {slot} starting");
@@ -924,7 +961,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -945,7 +982,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -964,7 +1001,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -973,12 +1010,14 @@ mod tests {
                 assert_eq!(slot_state.alpenglow_state.block_notarized, true);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
             }
+
             // epic packet loss we only see finalize votes
             let slot = slot + 1;
             debug!("Slot {slot} starting");
             let peers_map = make_peer_map(peers.as_slice());
             mock_prep_rx(&shared_state, slot, peers_map);
 
+            sleep(Duration::from_millis(10));
             for p in 1..=8 {
                 send_packet(
                     p,
@@ -989,7 +1028,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(20));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -998,6 +1037,9 @@ mod tests {
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 8);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, false);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
+                let (total_voted_nodes, stake_weighted_delay, percent_collected) =
+                    compute_stake_weighted_means(&slot_state.peers, peers.len() as u64);
+                assert!(stake_weighted_delay[2] > 0.0);
             }
 
             // epic packet loss we only see certs
