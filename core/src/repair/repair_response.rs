@@ -46,9 +46,10 @@ pub fn repair_response_packet_from_bytes(
 mod test {
     use {
         super::*,
+        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            shred::{Shred, ShredFlags},
+            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
             sigverify_shreds::{verify_shred_cpu, LruCache},
         },
         solana_packet::PacketFlags,
@@ -63,19 +64,21 @@ mod test {
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
         solana_logger::setup();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let mut shred = Shred::new_from_data(
-            slot,
-            0xc0de,
-            0xdead,
-            &[1, 2, 3, 4],
-            ShredFlags::LAST_SHRED_IN_SLOT,
-            0,
-            0,
-            0xc0de,
-        );
-        assert_eq!(shred.slot(), slot);
+        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
         let keypair = Keypair::new();
-        shred.sign(&keypair);
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            &keypair,
+            &[],
+            true,
+            Some(Hash::default()),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        let shred = shreds.pop().unwrap();
+
         trace!("signature {}", shred.signature());
         let nonce = 9;
         let mut packet = repair_response_packet_from_bytes(

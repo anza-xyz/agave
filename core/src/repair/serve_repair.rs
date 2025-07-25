@@ -1346,7 +1346,10 @@ mod tests {
             blockstore_processor::fill_blockstore_slot_with_ticks,
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path_auto_delete,
-            shred::{max_ticks_per_n_shreds, Shred, ShredFlags},
+            shred::{
+                max_ticks_per_n_shreds, ProcessShredsStats, ReedSolomonCache, Shred, ShredFlags,
+                Shredder,
+            },
         },
         solana_perf::packet::{deserialize_from_with_limit, Packet, PacketFlags, PacketRef},
         solana_pubkey::Pubkey,
@@ -1368,19 +1371,20 @@ mod tests {
 
     #[test]
     fn test_deserialize_shred_as_ping() {
-        let data_buf = vec![7u8, 44]; // REPAIR_RESPONSE_SERIALIZED_PING_BYTES - SIZE_OF_DATA_SHRED_HEADERS
+        let shredder = Shredder::new(123, 122, 0, 0).unwrap();
         let keypair = Keypair::new();
-        let mut shred = Shred::new_from_data(
-            123, // slot
-            456, // index
-            111, // parent_offset
-            &data_buf,
-            ShredFlags::empty(),
-            222, // reference_tick
-            333, // version
-            444, // fec_set_index
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            &keypair,
+            &[],
+            true,
+            Some(Hash::default()),
+            0,
+            0,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
         );
-        shred.sign(&keypair);
+        let shred = shreds.pop().unwrap();
         let mut pkt = Packet::default();
         shred.copy_to_packet(&mut pkt);
         pkt.meta_mut().size = REPAIR_RESPONSE_SERIALIZED_PING_BYTES;
@@ -1822,12 +1826,10 @@ mod tests {
     }
 
     #[test]
-    fn test_run_window_request() {
-        run_window_request(2, 9);
-    }
-
     /// test window requests respond with the right shred, and do not overrun
-    pub fn run_window_request(slot: Slot, nonce: Nonce) {
+    fn test_run_window_request() {
+        let slot = 2;
+        let nonce = 9;
         let recycler = PacketBatchRecycler::default();
         solana_logger::setup();
         let ledger_path = get_tmp_ledger_path_auto_delete!();
@@ -1835,13 +1837,26 @@ mod tests {
         let handler = StandardRepairHandler::new(blockstore.clone());
         let rv = handler.run_window_request(&recycler, &socketaddr_any!(), slot, 0, nonce);
         assert!(rv.is_none());
-        let shred = Shred::new_from_data(slot, 1, 1, &[], ShredFlags::empty(), 0, 2, 0);
+        let shredder = Shredder::new(slot, slot - 1, 0, 2).unwrap();
+        let keypair = Keypair::new();
+        let reed_solomon_cache = ReedSolomonCache::default();
+        let index = 1;
+        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+            &keypair,
+            &[],
+            true,
+            Some(Hash::default()),
+            index as u32,
+            index as u32,
+            &reed_solomon_cache,
+            &mut ProcessShredsStats::default(),
+        );
+        shreds.truncate(1);
 
         blockstore
-            .insert_shreds(vec![shred], None, false)
+            .insert_shreds(shreds, None, false)
             .expect("Expect successful ledger write");
 
-        let index = 1;
         let mut rv = handler
             .run_window_request(&recycler, &socketaddr_any!(), slot, index, nonce)
             .expect("packets");
