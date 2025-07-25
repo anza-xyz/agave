@@ -150,7 +150,8 @@ where
                             MAX_PROCESSING_AGE,
                         )
                     },
-                    |_| PreLockFilterAction::AttemptToSchedule // no pre-lock filter for now
+                    |_| PreLockFilterAction::AttemptToSchedule, // no pre-lock filter for now
+                    bank_start.working_bank.slot(),
                 )?);
 
                 self.count_metrics.update(|count_metrics| {
@@ -532,6 +533,7 @@ mod tests {
         finished_consume_work_sender
             .send(FinishedConsumeWork {
                 work: ConsumeWork {
+                    slot: 0,
                     batch_id: TransactionBatchId::new(0),
                     ids: vec![],
                     transactions: vec![],

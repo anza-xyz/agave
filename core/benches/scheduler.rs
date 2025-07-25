@@ -225,6 +225,7 @@ fn timing_scheduler<T: ReceiveAndBuffer, S: Scheduler<T::Transaction>>(
                             black_box(&mut container),
                             bench_env.filter_1,
                             bench_env.filter_2,
+                            1, // dummy slot
                         )
                         .unwrap();
                 }
