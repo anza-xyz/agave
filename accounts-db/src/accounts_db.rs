@@ -1473,13 +1473,6 @@ impl solana_frozen_abi::abi_example::AbiExample for AccountsDb {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PubkeyHashAccount {
-    pub pubkey: Pubkey,
-    pub hash: AccountHash,
-    pub account: AccountSharedData,
-}
-
 impl AccountsDb {
     // The default high and low watermark sizes for the accounts read cache.
     // If the cache size exceeds MAX_SIZE_HI, it'll evict entries until the size is <= MAX_SIZE_LO.
@@ -5892,46 +5885,6 @@ impl AccountsDb {
             ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
         }
     }
-    /// helper to return
-    /// 1. pubkey, hash pairs for the slot
-    /// 2. us spent scanning
-    /// 3. Measure started when we began accumulating
-    pub fn get_pubkey_hash_for_slot(
-        &self,
-        slot: Slot,
-    ) -> (Vec<(Pubkey, AccountHash)>, u64, Measure) {
-        let mut scan = Measure::start("scan");
-        let scan_result: ScanStorageResult<(Pubkey, AccountHash), HashMap<Pubkey, AccountHash>> =
-            self.scan_account_storage(
-                slot,
-                |loaded_account| {
-                    // Cache only has one version per key, don't need to worry about versioning
-                    Some((*loaded_account.pubkey(), loaded_account.loaded_hash()))
-                },
-                |accum: &mut HashMap<_, _>, stored_account, data| {
-                    // SAFETY: We called scan_account_storage() with
-                    // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
-                    let data = data.unwrap();
-                    let loaded_account =
-                        LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
-                    let mut loaded_hash = loaded_account.loaded_hash();
-                    if loaded_hash == AccountHash(Hash::default()) {
-                        loaded_hash = Self::hash_account(&loaded_account, loaded_account.pubkey())
-                    }
-                    accum.insert(*loaded_account.pubkey(), loaded_hash);
-                },
-                ScanAccountStorageData::DataRefForStorage,
-            );
-        scan.stop();
-
-        let accumulate = Measure::start("accumulate");
-        let hashes: Vec<_> = match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
-        };
-
-        (hashes, scan.as_us(), accumulate)
-    }
 
     /// Return all of the accounts for a given slot
     pub fn get_pubkey_account_for_slot(&self, slot: Slot) -> Vec<(Pubkey, AccountSharedData)> {
@@ -5956,51 +5909,6 @@ impl AccountsDb {
         match scan_result {
             ScanStorageResult::Cached(cached_result) => cached_result,
             ScanStorageResult::Stored(stored_result) => stored_result.into_iter().collect(),
-        }
-    }
-
-    /// Return all of the accounts for a given slot
-    pub fn get_pubkey_hash_account_for_slot(&self, slot: Slot) -> Vec<PubkeyHashAccount> {
-        type ScanResult =
-            ScanStorageResult<PubkeyHashAccount, HashMap<Pubkey, (AccountHash, AccountSharedData)>>;
-        let scan_result: ScanResult = self.scan_account_storage(
-            slot,
-            |loaded_account| {
-                // Cache only has one version per key, don't need to worry about versioning
-                Some(PubkeyHashAccount {
-                    pubkey: *loaded_account.pubkey(),
-                    hash: loaded_account.loaded_hash(),
-                    account: loaded_account.take_account(),
-                })
-            },
-            |accum: &mut HashMap<_, _>, stored_account, data| {
-                // SAFETY: We called scan_account_storage() with
-                // ScanAccountStorageData::DataRefForStorage, so `data` must be Some.
-                let data = data.unwrap();
-                let loaded_account =
-                    LoadedAccount::Stored(StoredAccountInfo::new_from(stored_account, data));
-                let mut loaded_hash = loaded_account.loaded_hash();
-                let key = *loaded_account.pubkey();
-                let account = loaded_account.take_account();
-                if loaded_hash == AccountHash(Hash::default()) {
-                    loaded_hash = Self::hash_account(&account, &key)
-                }
-                // Storage may have duplicates so only keep the latest version for each key
-                accum.insert(key, (loaded_hash, account));
-            },
-            ScanAccountStorageData::DataRefForStorage,
-        );
-
-        match scan_result {
-            ScanStorageResult::Cached(cached_result) => cached_result,
-            ScanStorageResult::Stored(stored_result) => stored_result
-                .into_iter()
-                .map(|(pubkey, (hash, account))| PubkeyHashAccount {
-                    pubkey,
-                    hash,
-                    account,
-                })
-                .collect(),
         }
     }
 

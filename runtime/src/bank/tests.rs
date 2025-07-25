@@ -11126,15 +11126,12 @@ fn test_register_hard_fork() {
 #[test]
 fn test_last_restart_slot() {
     fn last_restart_slot_dirty(bank: &Bank) -> bool {
-        let (dirty_accounts, _, _) = bank
+        let dirty_accounts = bank
             .rc
             .accounts
             .accounts_db
-            .get_pubkey_hash_for_slot(bank.slot());
-        let dirty_accounts: HashSet<_> = dirty_accounts
-            .into_iter()
-            .map(|(pubkey, _hash)| pubkey)
-            .collect();
+            .get_pubkeys_for_slot(bank.slot());
+        let dirty_accounts: HashSet<_> = dirty_accounts.into_iter().collect();
         dirty_accounts.contains(&sysvar::last_restart_slot::id())
     }
 
