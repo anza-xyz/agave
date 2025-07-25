@@ -353,7 +353,7 @@ impl<'a> SnapshotMinimizer<'a> {
     fn purge_dead_slots(&self, dead_slots: Vec<Slot>) {
         let stats = PurgeStats::default();
         self.accounts_db()
-            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats, false);
+            .purge_slots_from_cache_and_store(dead_slots.iter(), &stats);
     }
 
     /// Convenience function for getting accounts_db
