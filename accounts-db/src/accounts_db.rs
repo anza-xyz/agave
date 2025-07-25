@@ -879,18 +879,6 @@ pub enum LoadedAccount<'a> {
 }
 
 impl LoadedAccount<'_> {
-    pub fn loaded_hash(&self) -> AccountHash {
-        match self {
-            LoadedAccount::Stored(_stored_account) => {
-                // The account hash is no longer stored, so it is always the default value.
-                // Callers that want the account hash must (and do) check if the value is
-                // "missing", i.e. the default value, and then call hash_account() themselves.
-                AccountHash(Hash::default())
-            }
-            LoadedAccount::Cached(cached_account) => cached_account.hash(),
-        }
-    }
-
     pub fn pubkey(&self) -> &Pubkey {
         match self {
             LoadedAccount::Stored(stored_account) => stored_account.pubkey(),
@@ -4670,29 +4658,6 @@ impl AccountsDb {
             }
         }
         Some((account, slot))
-    }
-
-    pub fn load_account_hash(
-        &self,
-        ancestors: &Ancestors,
-        pubkey: &Pubkey,
-        max_root: Option<Slot>,
-        load_hint: LoadHint,
-    ) -> Option<AccountHash> {
-        let (slot, storage_location, _maybe_account_accesor) =
-            self.read_index_for_accessor_or_load_slow(ancestors, pubkey, max_root, false)?;
-        // Notice the subtle `?` at previous line, we bail out pretty early if missing.
-
-        let (mut account_accessor, _) = self.retry_to_get_account_accessor(
-            slot,
-            storage_location,
-            ancestors,
-            pubkey,
-            max_root,
-            load_hint,
-        )?;
-        account_accessor
-            .check_and_get_loaded_account(|loaded_account| Some(loaded_account.loaded_hash()))
     }
 
     fn get_account_accessor<'a>(
