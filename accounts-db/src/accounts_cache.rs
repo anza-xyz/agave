@@ -1,8 +1,6 @@
 use {
-    crate::{accounts_db::AccountsDb, accounts_hash::AccountHash},
     ahash::RandomState as AHashRandomState,
     dashmap::DashMap,
-    seqlock::SeqLock,
     solana_account::{AccountSharedData, ReadableAccount},
     solana_clock::Slot,
     solana_nohash_hasher::BuildNoHashHasher,
@@ -76,7 +74,6 @@ impl SlotCache {
         let data_len = account.data().len() as u64;
         let item = Arc::new(CachedAccount {
             account,
-            hash: SeqLock::new(None),
             pubkey: *pubkey,
         });
         if let Some(old) = self.cache.insert(*pubkey, item.clone()) {
@@ -140,22 +137,10 @@ impl Deref for SlotCache {
 #[derive(Debug)]
 pub struct CachedAccount {
     pub account: AccountSharedData,
-    hash: SeqLock<Option<AccountHash>>,
     pubkey: Pubkey,
 }
 
 impl CachedAccount {
-    pub fn hash(&self) -> AccountHash {
-        let hash = self.hash.read();
-        match hash {
-            Some(hash) => hash,
-            None => {
-                let hash = AccountsDb::hash_account(&self.account, &self.pubkey);
-                *self.hash.lock_write() = Some(hash);
-                hash
-            }
-        }
-    }
     pub fn pubkey(&self) -> &Pubkey {
         &self.pubkey
     }
