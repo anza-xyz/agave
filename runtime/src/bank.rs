@@ -73,9 +73,7 @@ use {
     solana_accounts_db::{
         account_locks::validate_account_locks,
         accounts::{AccountAddressFilter, Accounts, PubkeyAccountSlot},
-        accounts_db::{
-            AccountStorageEntry, AccountsDb, AccountsDbConfig, DuplicatesLtHash, PubkeyHashAccount,
-        },
+        accounts_db::{AccountStorageEntry, AccountsDb, AccountsDbConfig, DuplicatesLtHash},
         accounts_hash::AccountsLtHash,
         accounts_index::{IndexKey, ScanConfig, ScanResult},
         accounts_update_notifier_interface::AccountsUpdateNotifier,
@@ -105,7 +103,7 @@ use {
     solana_hash::Hash,
     solana_inflation::Inflation,
     solana_keypair::Keypair,
-    solana_lattice_hash::lt_hash::LtHash,
+    solana_lattice_hash::lt_hash::{Checksum as LtHashChecksum, LtHash},
     solana_measure::{meas_dur, measure::Measure, measure_time, measure_us},
     solana_message::{inner_instruction::InnerInstructions, AccountKeys, SanitizedMessage},
     solana_native_token::LAMPORTS_PER_SOL,
@@ -3704,18 +3702,25 @@ impl Bank {
         }
     }
 
-    /// Returns the accounts, sorted by pubkey, that were part of accounts delta hash calculation
+    /// Returns the accounts, sorted by pubkey, that were part of the accounts lt hash calculation
     /// This is used when writing a bank hash details file.
-    pub(crate) fn get_accounts_for_bank_hash_details(&self) -> Vec<PubkeyHashAccount> {
-        let accounts_db = &self.rc.accounts.accounts_db;
-
-        let mut accounts_written_this_slot =
-            accounts_db.get_pubkey_hash_account_for_slot(self.slot());
-
-        // Sort the accounts by pubkey to match the order of the accounts delta hash.
-        // This also makes comparison of files from different nodes deterministic.
-        accounts_written_this_slot.sort_unstable_by_key(|account| account.pubkey);
-        accounts_written_this_slot
+    pub(crate) fn get_accounts_for_bank_hash_details(
+        &self,
+    ) -> Vec<(Pubkey, LtHashChecksum, AccountSharedData)> {
+        let mut accounts = self
+            .rc
+            .accounts
+            .accounts_db
+            .get_pubkey_account_for_slot(self.slot());
+        // Sort the accounts by pubkey to make diff deterministic.
+        accounts.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        accounts
+            .into_iter()
+            .map(|(pubkey, account)| {
+                let account_lt_hash = AccountsDb::lt_hash_account(&account, &pubkey);
+                (pubkey, account_lt_hash.0.checksum(), account)
+            })
+            .collect()
     }
 
     pub fn cluster_type(&self) -> ClusterType {
