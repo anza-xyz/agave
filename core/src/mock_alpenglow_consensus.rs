@@ -537,7 +537,7 @@ impl MockAlpenglowConsensus {
         }
 
         // ensure we do not start process at inappropriate time
-        if slot < self.highest_slot || slot < 3 {
+        if slot <= self.highest_slot || slot < 3 {
             trace!(
                 "Skipping AG logic for slot {slot}, current highest slot is {}",
                 self.highest_slot
