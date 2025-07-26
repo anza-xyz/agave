@@ -6,7 +6,7 @@ use {
     quinn::{
         crypto::rustls::{QuicClientConfig, QuicServerConfig},
         ClientConfig, ConnectError, Connecting, Connection, ConnectionError, Endpoint,
-        EndpointConfig, IdleTimeout, SendDatagramError, ServerConfig, TokioRuntime,
+        EndpointConfig, IdleTimeout, NoneTokenStore, SendDatagramError, ServerConfig, TokioRuntime,
         TransportConfig, VarInt,
     },
     rustls::{
@@ -325,6 +325,11 @@ fn new_client_config(
     config.alpn_protocols = vec![ALPN_REPAIR_PROTOCOL_ID.to_vec()];
     let mut config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(config).unwrap()));
     config.transport_config(Arc::new(new_transport_config()));
+    // The quinn TokenStore allows for TLS session resumption by caching
+    // key material. This store is keyed by the server hostname.
+    // However, all peers use the fake hostname "connect", which breaks
+    // that feature. Therefore, the TokenStore is disabled.
+    config.token_store(Arc::new(NoneTokenStore));
     Ok(config)
 }
 
