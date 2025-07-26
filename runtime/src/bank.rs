@@ -4024,7 +4024,7 @@ impl Bank {
         let block_cost_limit = cost_tracker.get_block_limit();
         let vote_cost_limit = cost_tracker.get_vote_limit();
         // SIMD-0306 makes account cost limit 40% of the block cost limit.
-        let account_cost_limit = block_cost_limit * 40 / 100;
+        let account_cost_limit = block_cost_limit.saturating_mul(40).saturating_div(100);
         cost_tracker.set_limits(account_cost_limit, block_cost_limit, vote_cost_limit);
     }
 
