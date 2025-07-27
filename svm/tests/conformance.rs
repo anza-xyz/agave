@@ -322,7 +322,6 @@ fn execute_fixture_as_instr(
         compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
     );
-    transaction_context.set_remove_accounts_executable_flag_checks(false);
 
     let mut loaded_programs = ProgramCacheForTxBatch::new(
         42,
