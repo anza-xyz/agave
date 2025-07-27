@@ -2,7 +2,7 @@
 
 use {
     crate::{counter::CounterPoint, datapoint::DataPoint},
-    crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError},
     gethostname::gethostname,
     log::*,
     solana_cluster_type::ClusterType,
@@ -313,7 +313,7 @@ impl MetricsAgent {
         };
 
         loop {
-            match receiver.recv_timeout(write_frequency / 2) {
+            match receiver.try_recv() {
                 Ok(cmd) => match cmd {
                     MetricsCommand::Flush(barrier) => {
                         debug!("metrics_thread: flush");
@@ -334,12 +334,14 @@ impl MetricsAgent {
                         }
                     }
                 },
-                Err(RecvTimeoutError::Timeout) => (),
-                Err(RecvTimeoutError::Disconnected) => {
+                Err(TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(TryRecvError::Disconnected) => {
                     debug!("run: sender disconnected");
                     break;
                 }
-            }
+            };
 
             let now = Instant::now();
             if now.duration_since(last_write_time) >= write_frequency {
