@@ -10784,9 +10784,8 @@ fn test_feature_activation_loaded_programs_epoch_transition() {
     assert!(bank.process_transaction(&transaction).is_ok());
 }
 
-// this test is obsolete and will be removed next
 #[test]
-fn test_bank_verify_accounts_hash_with_base() {
+fn test_verify_accounts_hash() {
     let GenesisConfigInfo {
         mut genesis_config,
         mint_keypair: mint,
@@ -10823,7 +10822,7 @@ fn test_bank_verify_accounts_hash_with_base() {
     let (mut bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     // make some banks, do some transactions, ensure there's some zero-lamport accounts
-    for _ in 0..2 {
+    for _ in 0..4 {
         let slot = bank.slot() + 1;
         bank = new_bank_from_parent_with_bank_forks(
             bank_forks.as_ref(),
@@ -10834,23 +10833,6 @@ fn test_bank_verify_accounts_hash_with_base() {
         do_transfers(&bank);
     }
 
-    // update the base accounts hash
-    bank.squash();
-    bank.force_flush_accounts_cache();
-
-    // make more banks, do more transactions, ensure there's more zero-lamport accounts
-    for _ in 0..2 {
-        let slot = bank.slot() + 1;
-        bank = new_bank_from_parent_with_bank_forks(
-            bank_forks.as_ref(),
-            bank,
-            &Pubkey::new_unique(),
-            slot,
-        );
-        do_transfers(&bank);
-    }
-
-    // update the incremental accounts hash
     bank.squash();
     bank.force_flush_accounts_cache();
 
