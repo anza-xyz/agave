@@ -6766,7 +6766,6 @@ impl AccountsDb {
         &self,
         limit_load_slot_count_from_snapshot: Option<usize>,
         verify: bool,
-        should_calculate_duplicates_lt_hash: bool, // always true, will be removed next
     ) -> IndexGenerationInfo {
         let mut total_time = Measure::start("generate_index");
         let mut slots = self.storage.all_slots();
@@ -7065,17 +7064,8 @@ impl AccountsDb {
                                         accounts_data_len_from_duplicates,
                                         accounts_duplicates_num,
                                         duplicates_lt_hash,
-                                    ) = self.visit_duplicate_pubkeys_during_startup(
-                                        pubkeys,
-                                        &timings,
-                                        // With obsolete accounts, the duplicates lt_hash should
-                                        // NOT be created, but hash generation from storages
-                                        // requires a duplicates_lt_hash. Skip calculating the
-                                        // duplicates hash from accounts if obsolete accounts
-                                        // are being marked.
-                                        should_calculate_duplicates_lt_hash
-                                            && !self.mark_obsolete_accounts,
-                                    );
+                                    ) = self
+                                        .visit_duplicate_pubkeys_during_startup(pubkeys, &timings);
                                     let intermediate = DuplicatePubkeysVisitedInfo {
                                         accounts_data_len_from_duplicates,
                                         num_duplicate_accounts: accounts_duplicates_num,
@@ -7160,7 +7150,7 @@ impl AccountsDb {
         // duplicates, then we'd never set outer_duplicates_lt_hash to Some! So do one
         // last check here to ensure outer_duplicates_lt_hash is Some if we're supposed
         // to calculate the duplicates lt hash.
-        if should_calculate_duplicates_lt_hash && outer_duplicates_lt_hash.is_none() {
+        if outer_duplicates_lt_hash.is_none() {
             outer_duplicates_lt_hash = Some(Box::new(DuplicatesLtHash::default()));
         }
 
@@ -7277,18 +7267,18 @@ impl AccountsDb {
     /// returns tuple of:
     /// - data len sum of all older duplicates
     /// - number of duplicate accounts
-    /// - slots that contained duplicate pubkeys
     /// - lt hash of duplicates
     fn visit_duplicate_pubkeys_during_startup(
         &self,
         pubkeys: &[Pubkey],
         timings: &GenerateIndexTimings,
-        should_calculate_duplicates_lt_hash: bool,
     ) -> (u64, u64, Option<Box<DuplicatesLtHash>>) {
         let mut accounts_data_len_from_duplicates = 0;
         let mut num_duplicate_accounts = 0_u64;
+        // With obsolete accounts, the duplicates_lt_hash should NOT be created.
+        // And skip calculating the lt_hash from accounts too.
         let mut duplicates_lt_hash =
-            should_calculate_duplicates_lt_hash.then(|| Box::new(DuplicatesLtHash::default()));
+            (!self.mark_obsolete_accounts).then(|| Box::new(DuplicatesLtHash::default()));
         let mut lt_hash_time = Duration::default();
         self.accounts_index.scan(
             pubkeys.iter(),

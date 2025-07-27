@@ -1079,7 +1079,7 @@ where
     let IndexGenerationInfo {
         accounts_data_len,
         duplicates_lt_hash,
-    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index, true);
+    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     handle.join().unwrap();
