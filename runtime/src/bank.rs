@@ -4772,7 +4772,7 @@ impl Bank {
     ///
     /// This fn is used at startup to verify the bank was rebuilt correctly.
     pub fn get_snapshot_hash(&self) -> SnapshotHash {
-        SnapshotHash::new(Some(self.accounts_lt_hash.lock().unwrap().0.checksum()))
+        SnapshotHash::new(self.accounts_lt_hash.lock().unwrap().0.checksum())
     }
 
     pub fn load_account_into_read_cache(&self, key: &Pubkey) {

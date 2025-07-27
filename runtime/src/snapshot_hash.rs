@@ -31,14 +31,8 @@ pub struct SnapshotHash(pub Hash);
 impl SnapshotHash {
     /// Make a snapshot hash from accounts hashes
     #[must_use]
-    pub fn new(
-        accounts_lt_hash_checksum: Option<AccountsLtHashChecksum>, // option wrapper will be removed next
-    ) -> Self {
-        let accounts_hash = Hash::new_from_array(
-            accounts_lt_hash_checksum
-                .expect("lattice kind must have lt hash checksum")
-                .0,
-        );
+    pub fn new(accounts_lt_hash_checksum: AccountsLtHashChecksum) -> Self {
+        let accounts_hash = Hash::new_from_array(accounts_lt_hash_checksum.0);
         Self(accounts_hash)
     }
 }

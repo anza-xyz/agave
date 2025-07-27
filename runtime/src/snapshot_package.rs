@@ -180,13 +180,13 @@ impl SnapshotPackage {
             snapshot_kind,
             slot: accounts_package.slot,
             block_height: accounts_package.block_height,
-            hash: SnapshotHash::new(Some(
+            hash: SnapshotHash::new(
                 snapshot_info
                     .bank_fields_to_serialize
                     .accounts_lt_hash
                     .0
                     .checksum(),
-            )),
+            ),
             snapshot_storages: accounts_package.snapshot_storages,
             status_cache_slot_deltas: snapshot_info.status_cache_slot_deltas,
             bank_fields_to_serialize: snapshot_info.bank_fields_to_serialize,
