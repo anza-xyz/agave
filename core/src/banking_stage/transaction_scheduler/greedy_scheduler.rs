@@ -48,6 +48,7 @@ pub struct GreedyScheduler<Tx: TransactionWithMeta> {
     common: SchedulingCommon<Tx>,
     working_account_set: ReadWriteAccountSet,
     unschedulables: Vec<TransactionPriorityId>,
+    batches: Batches<Tx>,
     config: GreedySchedulerConfig,
 }
 
@@ -59,9 +60,13 @@ impl<Tx: TransactionWithMeta> GreedyScheduler<Tx> {
         config: GreedySchedulerConfig,
     ) -> Self {
         Self {
-            common: SchedulingCommon::new(consume_work_senders, finished_consume_work_receiver),
             working_account_set: ReadWriteAccountSet::default(),
             unschedulables: Vec::with_capacity(config.max_scanned_transactions_per_scheduling_pass),
+            batches: Batches::new(
+                consume_work_senders.len(),
+                config.target_transactions_per_batch,
+            ),
+            common: SchedulingCommon::new(consume_work_senders, finished_consume_work_receiver),
             config,
         }
     }
@@ -103,7 +108,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
         let mut num_unschedulable_conflicts: usize = 0;
         let mut num_unschedulable_threads: usize = 0;
 
-        let mut batches = Batches::new(num_threads, self.config.target_transactions_per_batch);
+        self.batches.clear();
         while num_scanned < self.config.max_scanned_transactions_per_scheduling_pass
             && !schedulable_threads.is_empty()
             && !container.is_empty()
@@ -129,7 +134,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 self.working_account_set.clear();
                 num_sent += self
                     .common
-                    .send_batches(&mut batches, self.config.target_transactions_per_batch)?;
+                    .send_batches(&mut self.batches, self.config.target_transactions_per_batch)?;
             }
 
             // Now check if the transaction can actually be scheduled.
@@ -141,9 +146,9 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                 |thread_set| {
                     select_thread(
                         thread_set,
-                        batches.total_cus(),
+                        self.batches.total_cus(),
                         self.common.in_flight_tracker.cus_in_flight_per_thread(),
-                        batches.transactions(),
+                        self.batches.transactions(),
                         self.common.in_flight_tracker.num_in_flight_per_thread(),
                     )
                 },
@@ -167,15 +172,21 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                         "locks must be available"
                     );
                     num_scheduled += 1;
-                    batches.add_transaction_to_batch(thread_id, id.id, transaction, max_age, cost);
+                    self.batches.add_transaction_to_batch(
+                        thread_id,
+                        id.id,
+                        transaction,
+                        max_age,
+                        cost,
+                    );
 
                     // If target batch size is reached, send all the batches
-                    if batches.transactions()[thread_id].len()
+                    if self.batches.transactions()[thread_id].len()
                         >= self.config.target_transactions_per_batch
                     {
                         self.working_account_set.clear();
                         num_sent += self.common.send_batches(
-                            &mut batches,
+                            &mut self.batches,
                             self.config.target_transactions_per_batch,
                         )?;
                     }
@@ -183,7 +194,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
                     // if the thread is at target_cu_per_thread, remove it from the schedulable threads
                     // if there are no more schedulable threads, stop scheduling.
                     if self.common.in_flight_tracker.cus_in_flight_per_thread()[thread_id]
-                        + batches.total_cus()[thread_id]
+                        + self.batches.total_cus()[thread_id]
                         >= target_cu_per_thread
                     {
                         schedulable_threads.remove(thread_id);
@@ -197,7 +208,7 @@ impl<Tx: TransactionWithMeta> Scheduler<Tx> for GreedyScheduler<Tx> {
 
         self.working_account_set.clear();
         // Use zero here to avoid allocating since we are done with `Batches`.
-        num_sent += self.common.send_batches(&mut batches, 0)?;
+        num_sent += self.common.send_batches(&mut self.batches, 0)?;
         let Saturating(num_scheduled) = num_scheduled;
         assert_eq!(
             num_scheduled, num_sent,
