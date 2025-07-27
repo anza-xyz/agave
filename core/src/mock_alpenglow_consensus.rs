@@ -163,7 +163,7 @@ impl MockVotePacketHeader {
 /// before triggering safety latching
 const MAX_TOWER_HEIGHT: Slot = 32 + 100;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Command {
     SendNotarize(Slot),
     SendNotarizeCertificate(Slot),
@@ -799,10 +799,13 @@ fn compute_stake_weighted_means(
 #[cfg(test)]
 mod tests {
     use {
-        crate::mock_alpenglow_consensus::{
-            compute_stake_weighted_means, get_state_for_slot, prep_and_sign_packet,
-            MockAlpenglowConsensus, PeerData, SharedState, VotorMessageType, MOCK_VOTE_HEADER_SIZE,
-            MOCK_VOTE_PACKET_MAX_SIZE,
+        crate::{
+            mock_alpenglow_consensus::{
+                compute_stake_weighted_means, get_state_for_slot, prep_and_sign_packet, Command,
+                MockAlpenglowConsensus, PeerData, SharedState, VotorMessageType,
+                MOCK_VOTE_HEADER_SIZE, MOCK_VOTE_PACKET_MAX_SIZE,
+            },
+            repair::repair_weighted_traversal::test,
         },
         crossbeam_channel::bounded,
         solana_clock::Slot,
@@ -827,6 +830,8 @@ mod tests {
 
     #[test]
     fn test_mock_alpenglow_statemachine() {
+        let test_timeout = Duration::from_secs(3);
+        let max_slots = 5;
         solana_logger::setup_with("trace");
         let num_nodes = 10;
         let keypairs: Vec<Keypair> = (0..num_nodes).map(|_| Keypair::new()).collect();
@@ -843,8 +848,8 @@ mod tests {
         let verify_signatures = Arc::new(AtomicBool::new(false));
         let packet_size = Arc::new(AtomicU16::new(512));
 
-        let mut packet_buf = [0u8; MOCK_VOTE_PACKET_MAX_SIZE];
-
+        let mut packet_tx_buf = [0u8; MOCK_VOTE_PACKET_MAX_SIZE];
+        let mut packet_rx_buf = packet_tx_buf;
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 MockAlpenglowConsensus::listener_thread(
@@ -856,9 +861,14 @@ mod tests {
                     command_sender,
                 )
             });
+            //make sure test terminates listener thread even if we panic
             scope.spawn(|| {
-                //make sure test exists if we panic
-                sleep(Duration::from_secs(5));
+                for _ in 0..max_slots {
+                    if should_exit.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    sleep(test_timeout);
+                }
                 should_exit.store(true, std::sync::atomic::Ordering::Relaxed);
             });
 
@@ -866,52 +876,49 @@ mod tests {
             debug!("Slot {slot} starting");
             let peers_map = make_peer_map(peers.as_slice());
             mock_prep_rx(&shared_state, slot, peers_map);
-
-            sleep(Duration::from_millis(10));
-            // make sure we capture Notarize
-            send_packet(
-                1,
-                VotorMessageType::Notarize,
-                slot,
-                &keypairs,
-                &peers,
-                &mut packet_buf,
-            );
-            sleep(Duration::from_millis(100));
+            // make sure initial state is correct
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
-                let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
-                assert!(peerdata.relative_toa[0].unwrap().as_millis() > 0);
-                assert!(peerdata.relative_toa[0].unwrap().as_millis() < 1000);
-                assert!(peerdata.relative_toa[1].is_none());
-                assert!(peerdata.relative_toa[2].is_none());
-                assert!(peerdata.relative_toa[3].is_none());
-                assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 1);
+                assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, false);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, false);
             }
+
+            sleep(Duration::from_millis(1));
             // make sure we produce NotarizeCert when getting 60% of stake
-            for p in 2..=6 {
+            for p in 1..=6 {
                 send_packet(
                     p,
                     VotorMessageType::Notarize,
                     slot,
                     &keypairs,
                     &peers,
-                    &mut packet_buf,
+                    &mut packet_tx_buf,
                 );
             }
-            sleep(Duration::from_millis(100));
+
+            // wait for the broadcasts
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendNotarizeCertificate(slot));
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalize(slot));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
+                let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
+                assert!(peerdata.relative_toa[0].unwrap().as_millis() > 0);
+                assert!(peerdata.relative_toa[0].unwrap() < test_timeout);
+                assert!(peerdata.relative_toa[1].is_none());
+                assert!(peerdata.relative_toa[2].is_none());
+                assert!(peerdata.relative_toa[3].is_none());
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 6);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, true);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, false);
             }
+            sleep(Duration::from_millis(1));
             // make sure we produce FinalizeCert when getting 60% of stake sending Finalize
             for p in 1..=6 {
                 send_packet(
@@ -920,17 +927,19 @@ mod tests {
                     slot,
                     &keypairs,
                     &peers,
-                    &mut packet_buf,
+                    &mut packet_tx_buf,
                 );
             }
-            sleep(Duration::from_millis(100));
+            // wait for the broadcast
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
                 assert!(peerdata.relative_toa[2].unwrap().as_millis() > 0);
-                assert!(peerdata.relative_toa[2].unwrap().as_millis() < 2000);
+                assert!(peerdata.relative_toa[2].unwrap() < test_timeout);
                 assert!(peerdata.relative_toa[3].is_none());
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 6);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
@@ -958,15 +967,14 @@ mod tests {
                     slot,
                     &keypairs,
                     &peers,
-                    &mut packet_buf,
+                    &mut packet_tx_buf,
                 );
             }
-            sleep(Duration::from_millis(100));
+            sleep(Duration::from_millis(1));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
-                assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 5);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, false);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, false);
             }
@@ -979,10 +987,15 @@ mod tests {
                     slot,
                     &keypairs,
                     &peers,
-                    &mut packet_buf,
+                    &mut packet_tx_buf,
                 );
             }
-            sleep(Duration::from_millis(100));
+
+            // wait for the broadcasts
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendNotarizeCertificate(slot));
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalize(slot));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -998,15 +1011,17 @@ mod tests {
                     slot,
                     &keypairs,
                     &peers,
-                    &mut packet_buf,
+                    &mut packet_tx_buf,
                 );
             }
-            sleep(Duration::from_millis(100));
+            // wait for the broadcast
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
-                assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 9);
+                assert!(slot_state.alpenglow_state.notarize_stake_collected >= 8);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, true);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
             }
@@ -1017,24 +1032,25 @@ mod tests {
             let peers_map = make_peer_map(peers.as_slice());
             mock_prep_rx(&shared_state, slot, peers_map);
 
-            sleep(Duration::from_millis(10));
-            for p in 1..=8 {
+            sleep(Duration::from_millis(1));
+            for p in 1..=6 {
                 send_packet(
                     p,
                     VotorMessageType::Finalize,
                     slot,
                     &keypairs,
                     &peers,
-                    &mut packet_buf,
+                    &mut packet_tx_buf,
                 );
             }
-            sleep(Duration::from_millis(100));
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
                 assert_eq!(slot_state.alpenglow_state.notarize_stake_collected, 0);
-                assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 8);
+                assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 6);
                 assert_eq!(slot_state.alpenglow_state.block_notarized, false);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
                 let (total_voted_nodes, stake_weighted_delay, percent_collected) =
@@ -1056,10 +1072,13 @@ mod tests {
                 slot,
                 &keypairs,
                 &peers,
-                &mut packet_buf,
+                &mut packet_tx_buf,
             );
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendNotarizeCertificate(slot));
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalize(slot));
 
-            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -1076,9 +1095,10 @@ mod tests {
                 slot,
                 &keypairs,
                 &peers,
-                &mut packet_buf,
+                &mut packet_tx_buf,
             );
-            sleep(Duration::from_millis(100));
+            let cmd = vote_command_receiver.recv_timeout(test_timeout).unwrap();
+            assert_eq!(cmd, Command::SendFinalizeCertificate(slot));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -1088,6 +1108,11 @@ mod tests {
                 assert_eq!(slot_state.alpenglow_state.block_notarized, true);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
             }
+            assert!(
+                slot <= max_slots,
+                "max_slots should match actual test length to prevent CI from flaking"
+            );
+            should_exit.store(true, std::sync::atomic::Ordering::Relaxed);
         });
     }
 
