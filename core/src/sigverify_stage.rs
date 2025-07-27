@@ -318,34 +318,57 @@ impl SigVerifyStage {
         let num_unique = non_discarded_packets.saturating_sub(discard_or_dedup_fail);
 
         let mut discard_time = Measure::start("sigverify_discard_time");
-        let mut num_packets_to_verify = num_unique;
         if num_unique > MAX_SIGVERIFY_BATCH {
             Self::discard_excess_packets(&mut batches, MAX_SIGVERIFY_BATCH);
-            num_packets_to_verify = MAX_SIGVERIFY_BATCH;
         }
         let excess_fail = num_unique.saturating_sub(MAX_SIGVERIFY_BATCH);
         discard_time.stop();
 
         // Pre-shrink packet batches if many packets are discarded from dedup / discard
-        let (pre_shrink_time_us, pre_shrink_total, batches) = Self::maybe_shrink_batches(batches);
+        let (pre_shrink_time_us, pre_shrink_total, mut batches) =
+            Self::maybe_shrink_batches(batches);
 
-        let mut verify_time = Measure::start("sigverify_batch_time");
-        let batches = verifier.verify_batches(batches, num_packets_to_verify);
-        let num_valid_packets = count_valid_packets(&batches);
-        verify_time.stop();
+        const VERIFY_CHUNK_THRESHOLD: usize = 1000;
+        let mut num_valid_packets = 0;
+        let mut verify_time_us = 0;
+        let mut post_shrink_time_us = 0;
+        let mut post_shrink_total = 0;
+        while !batches.is_empty() {
+            let mut num_packets = 0;
+            let mut split_at = batches.len();
+            for (i, batch) in batches.iter().enumerate() {
+                num_packets += batch.len();
+                if num_packets >= VERIFY_CHUNK_THRESHOLD {
+                    split_at = i + 1;
+                    break;
+                }
+            }
+            let mut chunk = batches;
+            batches = chunk.split_off(split_at);
+            let batches = chunk;
 
-        // Post-shrink packet batches if many packets are discarded from sigverify
-        let (post_shrink_time_us, post_shrink_total, batches) = Self::maybe_shrink_batches(batches);
+            let mut verify_time = Measure::start("sigverify_batch_time");
+            let batches = verifier.verify_batches(batches, num_packets);
+            num_valid_packets += count_valid_packets(&batches);
+            verify_time.stop();
+            verify_time_us += verify_time.as_us();
 
-        verifier.send_packets(batches)?;
+            // Post-shrink packet batches if many packets are discarded from sigverify
+            let (chunk_post_shrink_time_us, chunk_post_shrink_total, batches) =
+                Self::maybe_shrink_batches(batches);
+            post_shrink_time_us += chunk_post_shrink_time_us;
+            post_shrink_total += chunk_post_shrink_total;
+
+            verifier.send_packets(batches)?;
+        }
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} verified: {} v/s {}",
             timing::timestamp(),
             batches_len,
-            verify_time.as_ms(),
+            verify_time_us / 1000,
             num_packets,
-            (num_packets as f32 / verify_time.as_s())
+            (num_packets as f32 / (verify_time_us as f32 / 1000000f32))
         );
 
         stats
@@ -354,7 +377,7 @@ impl SigVerifyStage {
             .unwrap();
         stats
             .verify_batches_pp_us_hist
-            .increment(verify_time.as_us() / (num_packets as u64))
+            .increment(verify_time_us / (num_packets as u64))
             .unwrap();
         stats
             .discard_packets_pp_us_hist
@@ -376,7 +399,7 @@ impl SigVerifyStage {
         stats.total_shrinks += pre_shrink_total + post_shrink_total;
         stats.total_dedup_time_us += dedup_time.as_us() as usize;
         stats.total_discard_time_us += discard_time.as_us() as usize;
-        stats.total_verify_time_us += verify_time.as_us() as usize;
+        stats.total_verify_time_us += verify_time_us as usize;
         stats.total_shrink_time_us += (pre_shrink_time_us + post_shrink_time_us) as usize;
 
         Ok(())
