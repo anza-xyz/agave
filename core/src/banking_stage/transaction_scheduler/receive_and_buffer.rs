@@ -297,6 +297,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
 
         // Receive packet batches.
         const TIMEOUT: Duration = Duration::from_millis(10);
+        const PACKET_BURST_LIMIT: usize = 1000;
         let start = Instant::now();
         let mut num_received = 0;
         let mut received_message = false;
@@ -336,7 +337,7 @@ impl ReceiveAndBuffer for TransactionViewReceiveAndBuffer {
             }
         }
 
-        while start.elapsed() < TIMEOUT {
+        while start.elapsed() < TIMEOUT && num_received < PACKET_BURST_LIMIT {
             match self.receiver.try_recv() {
                 Ok(packet_batch_message) => {
                     received_message = true;
