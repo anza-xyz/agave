@@ -850,7 +850,6 @@ where
         accounts_db_config,
         accounts_update_notifier,
         exit,
-        true,
     )?;
     bank_fields.bank_hash_stats = reconstructed_accounts_db_info.bank_hash_stats;
 
@@ -1012,7 +1011,6 @@ fn reconstruct_accountsdb_from_fields<E>(
     accounts_db_config: Option<AccountsDbConfig>,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     exit: Arc<AtomicBool>,
-    has_accounts_lt_hash: bool, // always true, will be removed next
 ) -> Result<(AccountsDb, ReconstructedAccountsDbInfo), Error>
 where
     E: SerializableStorage + std::marker::Sync,
@@ -1081,11 +1079,7 @@ where
     let IndexGenerationInfo {
         accounts_data_len,
         duplicates_lt_hash,
-    } = accounts_db.generate_index(
-        limit_load_slot_count_from_snapshot,
-        verify_index,
-        has_accounts_lt_hash,
-    );
+    } = accounts_db.generate_index(limit_load_slot_count_from_snapshot, verify_index, true);
     info!("Building accounts index... Done in {:?}", start.elapsed());
 
     handle.join().unwrap();

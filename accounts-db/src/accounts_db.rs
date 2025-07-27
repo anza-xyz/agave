@@ -6766,7 +6766,7 @@ impl AccountsDb {
         &self,
         limit_load_slot_count_from_snapshot: Option<usize>,
         verify: bool,
-        should_calculate_duplicates_lt_hash: bool,
+        should_calculate_duplicates_lt_hash: bool, // always true, will be removed next
     ) -> IndexGenerationInfo {
         let mut total_time = Measure::start("generate_index");
         let mut slots = self.storage.all_slots();
