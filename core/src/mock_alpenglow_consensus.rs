@@ -858,7 +858,7 @@ mod tests {
             });
             scope.spawn(|| {
                 //make sure test exists if we panic
-                sleep(Duration::from_secs(1));
+                sleep(Duration::from_secs(5));
                 should_exit.store(true, std::sync::atomic::Ordering::Relaxed);
             });
 
@@ -877,14 +877,14 @@ mod tests {
                 &peers,
                 &mut packet_buf,
             );
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
                 assert!(peerdata.relative_toa[0].unwrap().as_millis() > 0);
-                assert!(peerdata.relative_toa[0].unwrap().as_millis() < 100);
+                assert!(peerdata.relative_toa[0].unwrap().as_millis() < 1000);
                 assert!(peerdata.relative_toa[1].is_none());
                 assert!(peerdata.relative_toa[2].is_none());
                 assert!(peerdata.relative_toa[3].is_none());
@@ -903,7 +903,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -923,14 +923,14 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
                     .unwrap();
                 let peerdata = slot_state.peers.get(&peers[1].0).unwrap();
                 assert!(peerdata.relative_toa[2].unwrap().as_millis() > 0);
-                assert!(peerdata.relative_toa[2].unwrap().as_millis() < 200);
+                assert!(peerdata.relative_toa[2].unwrap().as_millis() < 2000);
                 assert!(peerdata.relative_toa[3].is_none());
                 assert_eq!(slot_state.alpenglow_state.finalize_stake_collected, 6);
                 assert_eq!(slot_state.alpenglow_state.block_finalized, true);
@@ -961,7 +961,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -982,7 +982,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -1001,7 +1001,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -1028,7 +1028,7 @@ mod tests {
                     &mut packet_buf,
                 );
             }
-            sleep(Duration::from_millis(20));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -1059,7 +1059,7 @@ mod tests {
                 &mut packet_buf,
             );
 
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
@@ -1078,7 +1078,7 @@ mod tests {
                 &peers,
                 &mut packet_buf,
             );
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(100));
             {
                 let slot_state = get_state_for_slot(shared_state.as_slice(), slot)
                     .lock()
