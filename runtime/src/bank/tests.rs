@@ -88,10 +88,7 @@ use {
     solana_sha256_hasher::hash,
     solana_signature::Signature,
     solana_signer::Signer,
-    solana_stake_interface::{
-        instruction as stake_instruction,
-        state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
-    },
+    solana_stake_interface::state::{Authorized, Delegation, Lockup, Stake, StakeStateV2},
     solana_stake_program::stake_state,
     solana_svm::{
         account_loader::{FeesOnlyTransaction, LoadedTransaction},
@@ -116,8 +113,8 @@ use {
     solana_vote_program::{
         vote_instruction,
         vote_state::{
-            self, create_account_with_authorized, BlockTimestamp, VoteInit, VoteState,
-            VoteStateVersions, MAX_LOCKOUT_HISTORY,
+            self, create_account_with_authorized, BlockTimestamp, VoteAuthorize, VoteInit,
+            VoteState, VoteStateVersions, MAX_LOCKOUT_HISTORY,
         },
     },
     spl_generic_token::token,
@@ -3114,8 +3111,9 @@ fn test_bank_cloned_stake_delegations() {
         )
     };
 
+    // create the vote account
     let vote_keypair = Keypair::new();
-    let mut instructions = vote_instruction::create_account_with_config(
+    let instructions = vote_instruction::create_account_with_config(
         &mint_keypair.pubkey(),
         &vote_keypair.pubkey(),
         &VoteInit {
@@ -3131,28 +3129,37 @@ fn test_bank_cloned_stake_delegations() {
         },
     );
 
-    let stake_keypair = Keypair::new();
-    instructions.extend(stake_instruction::create_account_and_delegate_stake(
-        &mint_keypair.pubkey(),
-        &stake_keypair.pubkey(),
-        &vote_keypair.pubkey(),
-        &Authorized::auto(&stake_keypair.pubkey()),
-        &Lockup::default(),
-        stake_balance,
-    ));
-
     let message = Message::new(&instructions, Some(&mint_keypair.pubkey()));
     let transaction = Transaction::new(
-        &[&mint_keypair, &vote_keypair, &stake_keypair],
+        &[&mint_keypair, &vote_keypair],
         message,
         bank.last_blockhash(),
     );
 
     bank.process_transaction(&transaction).unwrap();
 
+    // insert a stake account delegated to it, since we do not have a stake program
+    let stake_pubkey = Pubkey::new_unique();
+    let stake_account = stake_state::create_account_with_activation_epoch(
+        &stake_pubkey,
+        &vote_keypair.pubkey(),
+        &bank.get_account(&vote_keypair.pubkey()).unwrap(),
+        &Rent::default(),
+        stake_balance,
+        bank.epoch(),
+    );
+
+    bank.store_account(&stake_pubkey, &stake_account);
+
+    // the stakes cache is updated by any successful transaction that touches a stake account
+    let transaction =
+        system_transaction::transfer(&mint_keypair, &stake_pubkey, 1, bank.last_blockhash());
+
+    bank.process_transaction(&transaction).unwrap();
+
     let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
     assert_eq!(stake_delegations.len(), 2);
-    assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
+    assert!(stake_delegations.get(&stake_pubkey).is_some());
 }
 
 #[test]
@@ -5174,7 +5181,7 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 0);
             assert_eq!(
                 bank.hash().to_string(),
-                "AyXhbqmPsC46x7MHAuW89pQcNZVrUZnAND6ABWJ24svx",
+                "EzyLJJki4ALhQAq5wbmiNctDhytQckGJRXnk9APKXv7r",
             );
         }
 
@@ -5182,14 +5189,14 @@ fn test_bank_hash_consistency() {
             assert_eq!(bank.epoch(), 1);
             assert_eq!(
                 bank.hash().to_string(),
-                "ApbSYzbXgNBobjzp8ytimvVsMBUxtuJR9nFieePdpwj3"
+                "6h1KzSuTW6MwkgjtEbrv6AyUZ2NHtSxCQi8epjHDFYh8"
             );
         }
         if bank.slot == 128 {
             assert_eq!(bank.epoch(), 2);
             assert_eq!(
                 bank.hash().to_string(),
-                "FxaFn1Dj7fetY1SXWWi6DyEYidoiDLZexe3hM1tNvkwJ"
+                "4GX3883TVK7SQfbPUHem4HXcqdHU2DZVAB6yEXspn2qe"
             );
             break;
         }
@@ -5406,7 +5413,7 @@ fn test_shrink_candidate_slots_cached() {
     // No more slots should be shrunk
     assert_eq!(bank2.shrink_candidate_slots(), 0);
     // alive_counts represents the count of alive accounts in the three slots 0,1,2
-    assert_eq!(alive_counts, vec![13, 1, 6]);
+    assert_eq!(alive_counts, vec![12, 1, 6]);
 }
 
 #[test]
@@ -8181,7 +8188,6 @@ fn test_vote_epoch_panic() {
     let (bank, bank_forks) = Bank::new_with_bank_forks_for_tests(&genesis_config);
 
     let vote_keypair = keypair_from_seed(&[1u8; 32]).unwrap();
-    let stake_keypair = keypair_from_seed(&[2u8; 32]).unwrap();
 
     let mut setup_ixs = Vec::new();
     setup_ixs.extend(vote_instruction::create_account_with_config(
@@ -8199,14 +8205,6 @@ fn test_vote_epoch_panic() {
             ..vote_instruction::CreateVoteAccountConfig::default()
         },
     ));
-    setup_ixs.extend(stake_instruction::create_account_and_delegate_stake(
-        &mint_keypair.pubkey(),
-        &stake_keypair.pubkey(),
-        &vote_keypair.pubkey(),
-        &Authorized::auto(&mint_keypair.pubkey()),
-        &Lockup::default(),
-        1_000_000_000_000,
-    ));
     setup_ixs.push(vote_instruction::withdraw(
         &vote_keypair.pubkey(),
         &mint_keypair.pubkey(),
@@ -8220,7 +8218,7 @@ fn test_vote_epoch_panic() {
     ));
 
     let result = bank.process_transaction(&Transaction::new(
-        &[&mint_keypair, &vote_keypair, &stake_keypair],
+        &[&mint_keypair, &vote_keypair],
         Message::new(&setup_ixs, Some(&mint_keypair.pubkey())),
         bank.last_blockhash(),
     ));
@@ -9761,23 +9759,15 @@ fn test_rent_state_changes_sysvars() {
     } = create_genesis_config_with_leader(sol_to_lamports(100.), &Pubkey::new_unique(), 42);
     genesis_config.rent = Rent::default();
 
-    let validator_pubkey = solana_pubkey::new_rand();
+    let validator_pubkey = Pubkey::new_unique();
     let validator_stake_lamports = sol_to_lamports(1.);
-    let validator_staking_keypair = Keypair::new();
+    let validator_vote_account_pubkey = Pubkey::new_unique();
     let validator_voting_keypair = Keypair::new();
 
     let validator_vote_account = vote_state::create_account(
         &validator_voting_keypair.pubkey(),
         &validator_pubkey,
         0,
-        validator_stake_lamports,
-    );
-
-    let validator_stake_account = stake_state::create_account(
-        &validator_staking_keypair.pubkey(),
-        &validator_voting_keypair.pubkey(),
-        &validator_vote_account,
-        &genesis_config.rent,
         validator_stake_lamports,
     );
 
@@ -9790,11 +9780,7 @@ fn test_rent_state_changes_sysvars() {
         ),
     );
     genesis_config.accounts.insert(
-        validator_staking_keypair.pubkey(),
-        Account::from(validator_stake_account),
-    );
-    genesis_config.accounts.insert(
-        validator_voting_keypair.pubkey(),
+        validator_vote_account_pubkey,
         Account::from(validator_vote_account),
     );
 
@@ -9802,12 +9788,14 @@ fn test_rent_state_changes_sysvars() {
 
     // Ensure transactions with sysvars succeed, even though sysvars appear RentPaying by balance
     let tx = Transaction::new_signed_with_payer(
-        &[stake_instruction::deactivate_stake(
-            &validator_staking_keypair.pubkey(),
-            &validator_staking_keypair.pubkey(),
+        &[vote_instruction::authorize(
+            &validator_vote_account_pubkey,
+            &validator_voting_keypair.pubkey(),
+            &Pubkey::new_unique(),
+            VoteAuthorize::Voter,
         )],
         Some(&mint_keypair.pubkey()),
-        &[&mint_keypair, &validator_staking_keypair],
+        &[&mint_keypair, &validator_voting_keypair],
         bank.last_blockhash(),
     );
     let result = bank.process_transaction(&tx);

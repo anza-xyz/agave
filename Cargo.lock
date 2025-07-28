@@ -7373,6 +7373,7 @@ dependencies = [
  "agave-feature-set",
  "ahash 0.8.11",
  "log",
+ "qualifier_attr",
  "rand 0.8.5",
  "solana-bpf-loader-program",
  "solana-compute-budget-program",
@@ -9096,9 +9097,11 @@ dependencies = [
  "solana-native-token",
  "solana-net-utils",
  "solana-poh-config",
+ "solana-program-test",
  "solana-pubkey",
  "solana-pubsub-client",
  "solana-quic-client",
+ "solana-rent",
  "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-runtime",
@@ -10631,6 +10634,7 @@ dependencies = [
  "solana-keypair",
  "solana-message",
  "solana-native-token",
+ "solana-program-test",
  "solana-pubkey",
  "solana-remote-wallet",
  "solana-rpc-client",
@@ -10640,6 +10644,7 @@ dependencies = [
  "solana-signer",
  "solana-stake-interface",
  "solana-stake-program",
+ "solana-sysvar",
  "solana-transaction",
  "solana-version",
 ]
@@ -10701,29 +10706,6 @@ dependencies = [
  "solana-sysvar-id",
  "solana-transaction-context",
  "solana-vote-interface",
- "solana-vote-program",
- "test-case",
-]
-
-[[package]]
-name = "solana-stake-program-tests"
-version = "3.0.0"
-dependencies = [
- "agave-feature-set",
- "assert_matches",
- "bincode",
- "solana-account",
- "solana-instruction",
- "solana-keypair",
- "solana-program-error",
- "solana-program-test",
- "solana-pubkey",
- "solana-signer",
- "solana-stake-interface",
- "solana-system-interface",
- "solana-sysvar",
- "solana-transaction",
- "solana-transaction-error",
  "solana-vote-program",
  "test-case",
 ]
