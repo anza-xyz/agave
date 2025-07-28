@@ -22,6 +22,7 @@ mod geyser_plugin_utils;
 pub mod stats;
 pub mod tests;
 
+use crate::account_storage::AccountStoragesReshuffler;
 #[cfg(test)]
 use crate::append_vec::StoredAccountMeta;
 #[cfg(feature = "dev-context-only-utils")]
@@ -5714,8 +5715,9 @@ impl AccountsDb {
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
     ) -> AccountsLtHash {
+        let storages = AccountStoragesReshuffler::new(storages).into_par_balanced();
         let mut lt_hash = storages
-            .par_iter()
+            //            .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
                 let obsolete_accounts = storage.get_obsolete_accounts(None);
                 storage

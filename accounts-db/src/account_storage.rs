@@ -3,9 +3,13 @@
 use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
+    rayon::iter::{IntoParallelIterator, ParallelIterator},
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
-    std::sync::{Arc, RwLock},
+    std::{
+        ops::Range,
+        sync::{Arc, RwLock},
+    },
 };
 
 pub mod stored_account_info;
@@ -291,6 +295,66 @@ impl Default for AccountStorageStatus {
     fn default() -> Self {
         Self::Available
     }
+}
+
+pub struct AccountStoragesReshuffler<'a> {
+    storages: &'a [Arc<AccountStorageEntry>],
+    indices: Vec<usize>,
+}
+
+impl<'a> AccountStoragesReshuffler<'a> {
+    pub fn new(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
+        let indices = (0..storages.len()).collect();
+        Self { storages, indices }
+    }
+
+    pub fn into_balanced(mut self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
+        self.indices
+            .sort_unstable_by_key(|i| self.storages[*i].accounts.len());
+        let range = 0..self.indices.len();
+        self.indices.into_iter().map(move |i| {
+            let index = select_from_range_with_start_end_rates(range.clone(), i, (4, 1));
+
+            self.storages[index].as_ref()
+        })
+    }
+
+    pub fn into_par_balanced(
+        mut self,
+    ) -> impl ParallelIterator<Item = &'a AccountStorageEntry> + 'a {
+        self.indices
+            .sort_unstable_by_key(|i| self.storages[*i].accounts.len());
+        let range = 0..self.indices.len();
+        self.indices.into_par_iter().map(move |i| {
+            let index = select_from_range_with_start_end_rates(range.clone(), i, (4, 1));
+            self.storages[index].as_ref()
+        })
+    }
+}
+
+/// Select the `nth` (`0 <= nth < range.len()`) value from a `range`, choosing values alternately
+/// from its start or end according to a `start_rate : end_rate` ratio.
+///
+/// For every `start_rate` values selected from the start, `end_rate` values are selected from the end.
+/// The resulting sequence alternates in a balanced and interleaved fashion between the range's start and end.
+/// ```
+fn select_from_range_with_start_end_rates(
+    range: Range<usize>,
+    nth: usize,
+    (start_rate, end_rate): (usize, usize),
+) -> usize {
+    let range_len = range.len();
+    let cycle = start_rate + end_rate;
+    let cycle_index = nth % cycle;
+    let cycle_num = nth.checked_div(cycle).expect("rates sum must be positive");
+
+    let index = if cycle_index < start_rate {
+        cycle_num * start_rate + cycle_index
+    } else {
+        let end_index = cycle_num * end_rate + cycle_index - start_rate;
+        range_len - end_index - 1
+    };
+    range.start + index
 }
 
 #[cfg(test)]
