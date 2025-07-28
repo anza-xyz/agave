@@ -9,7 +9,7 @@ use {
         ser::{Serialize, SerializeSeq, Serializer},
     },
     solana_account::{Account, AccountSharedData, ReadableAccount},
-    solana_clock::{Epoch, Slot},
+    solana_clock::Slot,
     solana_fee_structure::FeeDetails,
     solana_message::inner_instruction::InnerInstructionsList,
     solana_pubkey::Pubkey,
@@ -169,7 +169,6 @@ struct SerdeAccount {
     pubkey: String,
     owner: String,
     lamports: u64,
-    rent_epoch: Epoch,
     executable: bool,
     data: String,
 }
@@ -181,7 +180,6 @@ impl From<&(Pubkey, AccountSharedData)> for SerdeAccount {
             pubkey: pubkey.to_string(),
             owner: account.owner().to_string(),
             lamports: account.lamports(),
-            rent_epoch: account.rent_epoch(),
             executable: account.executable(),
             data: BASE64_STANDARD.encode(account.data()),
         }
@@ -201,7 +199,7 @@ impl TryFrom<SerdeAccount> for (Pubkey, AccountSharedData) {
                 .map_err(|err| err.to_string())?,
             owner: Pubkey::from_str(&temp_account.owner).map_err(|err| err.to_string())?,
             executable: temp_account.executable,
-            rent_epoch: temp_account.rent_epoch,
+            rent_epoch: u64::MAX, // obsolete, now always set to all ones
         });
 
         Ok((pubkey, account))
@@ -289,7 +287,7 @@ pub mod tests {
                     data: vec![0, 9, 1, 8, 2, 7, 3, 6, 4, 5],
                     owner: Pubkey::new_unique(),
                     executable: true,
-                    rent_epoch: 123,
+                    rent_epoch: u64::MAX,
                 });
                 let account_pubkey = Pubkey::new_unique();
                 let accounts = AccountsDetails {
