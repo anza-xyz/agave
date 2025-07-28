@@ -60,10 +60,7 @@ mod tests;
 mod types;
 mod utils;
 
-pub(crate) use {
-    solana_accounts_db::accounts_hash::{SerdeAccountsHash, SerdeIncrementalAccountsHash},
-    storage::{SerializableAccountStorageEntry, SerializedAccountsFileId},
-};
+pub(crate) use storage::{SerializableAccountStorageEntry, SerializedAccountsFileId};
 
 const MAX_STREAM_SIZE: u64 = 32 * 1024 * 1024 * 1024;
 
@@ -96,11 +93,11 @@ pub struct BankIncrementalSnapshotPersistence {
     /// slot of full snapshot
     pub full_slot: Slot,
     /// accounts hash from the full snapshot
-    pub full_hash: SerdeAccountsHash,
+    pub full_hash: [u8; 32],
     /// capitalization from the full snapshot
     pub full_capitalization: u64,
     /// hash of the accounts in the incremental snapshot slot range, including zero-lamport accounts
-    pub incremental_hash: SerdeIncrementalAccountsHash,
+    pub incremental_hash: [u8; 32],
     /// capitalization of the accounts in the incremental snapshot slot range
     pub incremental_capitalization: u64,
 }
@@ -109,7 +106,7 @@ pub struct BankIncrementalSnapshotPersistence {
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct BankHashInfo {
     obsolete_accounts_delta_hash: [u8; 32],
-    accounts_hash: SerdeAccountsHash, // obsolete
+    obsolete_accounts_hash: [u8; 32],
     stats: BankHashStats,
 }
 
@@ -785,7 +782,7 @@ impl Serialize for SerializableAccountsDb<'_> {
         }));
         let bank_hash_info = BankHashInfo {
             obsolete_accounts_delta_hash: [0; 32],
-            accounts_hash: SerdeAccountsHash(Hash::default()), // obsolete, any value works
+            obsolete_accounts_hash: [0; 32],
             stats: self.bank_hash_stats.clone(),
         };
 

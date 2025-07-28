@@ -324,9 +324,7 @@ mod tests {
         use {
             super::*,
             crate::{bank::BankHashStats, serde_snapshot::BankIncrementalSnapshotPersistence},
-            solana_accounts_db::accounts_hash::{
-                AccountsLtHash, SerdeAccountsHash, SerdeIncrementalAccountsHash,
-            },
+            solana_accounts_db::accounts_hash::AccountsLtHash,
             solana_clock::Slot,
             solana_frozen_abi::abi_example::AbiExample,
             solana_hash::Hash,
@@ -355,7 +353,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "RHixw67oBUdJQn9TLES55Nb4Sr1wuAfo7NTJH56oRxb")
+            frozen_abi(digest = "BTGQGexXMBBxcAByvhs2vaT2Wkaz1ki5sFFnhjdzDhAX")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
@@ -374,9 +372,9 @@ mod tests {
 
             let incremental_snapshot_persistence = BankIncrementalSnapshotPersistence {
                 full_slot: Slot::default(),
-                full_hash: SerdeAccountsHash(Hash::new_unique()),
+                full_hash: [1; 32],
                 full_capitalization: u64::default(),
-                incremental_hash: SerdeIncrementalAccountsHash(Hash::new_unique()),
+                incremental_hash: [2; 32],
                 incremental_capitalization: u64::default(),
             };
 
