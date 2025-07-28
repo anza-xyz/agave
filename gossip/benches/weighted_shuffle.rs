@@ -1,9 +1,9 @@
 use {
-    criterion::{black_box, criterion_group, criterion_main, Criterion},
+    criterion::{criterion_group, criterion_main, Criterion},
     rand::{Rng, SeedableRng},
     rand_chacha::ChaChaRng,
     solana_gossip::weighted_shuffle::WeightedShuffle,
-    std::iter::repeat_with,
+    std::{hint::black_box, iter::repeat_with},
 };
 
 fn make_weights<R: Rng>(rng: &mut R) -> Vec<u64> {
