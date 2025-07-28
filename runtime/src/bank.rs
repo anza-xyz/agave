@@ -5364,7 +5364,7 @@ impl Bank {
         if new_feature_activations
             .contains(&agave_feature_set::replace_spl_token_with_p_token::id())
         {
-            if let Err(e) = self.migrate_bpf_loader_v2_to_v3(
+            if let Err(e) = self.upgrade_loader_v2_program_with_loader_v3_program(
                 &agave_feature_set::replace_spl_token_with_p_token::SPL_TOKEN_PROGRAM_ID,
                 &agave_feature_set::replace_spl_token_with_p_token::PTOKEN_PROGRAM_BUFFER,
                 "replace_spl_token_with_p_token",

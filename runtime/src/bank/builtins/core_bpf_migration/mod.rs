@@ -365,24 +365,24 @@ impl Bank {
         Ok(())
     }
 
-    /// Migrate a Loader v2 BPF program.
+    /// Upgrade a Loader v2 BPF program to a Loader v3 BPF program.
     ///
     /// To use this function, add a feature-gated callsite to bank's
     /// `apply_feature_activations` function, similar to below.
     ///
     /// ```ignore
     /// if new_feature_activations.contains(&agave_feature_set::test_upgrade_program::id()) {
-    ///     self.migrate_bpf_loader_v2_to_v3(
+    ///     self.upgrade_loader_v2_program_with_loader_v3_program(
     ///        &bpf_loader_v2_program_address,
     ///        &source_buffer_address,
-    ///        "test_upgrade_loader_v2_bpf_program",
+    ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
     ///     );
     /// }
     /// ```
     /// The `source_buffer_address` must point to a Loader v3 buffer account
     /// (state equal to [`UpgradeableLoaderState::Buffer`]).
     #[allow(dead_code)] // Only used when an upgrade is configured.
-    pub(crate) fn migrate_bpf_loader_v2_to_v3(
+    pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
         &mut self,
         loader_v2_bpf_program_address: &Pubkey,
         source_buffer_address: &Pubkey,
