@@ -1,8 +1,6 @@
 #![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::indexing_slicing)]
 
-pub mod syscalls;
-
 #[cfg(feature = "svm-internal")]
 use qualifier_attr::qualifiers;
 use {
