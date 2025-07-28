@@ -66,6 +66,7 @@ members = [
     "poh-bench",
     "poseidon",
     "precompiles",
+    "program-binaries",
     "program-runtime",
     "program-test",
     "programs/bpf-loader-tests",
@@ -75,7 +76,6 @@ members = [
     "programs/ed25519-tests",
     "programs/loader-v4",
     "programs/stake",
-    "programs/stake-tests",
     "programs/system",
     "programs/vote",
     "programs/zk-elgamal-proof",
@@ -473,6 +473,7 @@ solana-poseidon = { path = "poseidon", version = "=3.0.0" }
 solana-precompile-error = "3.0.0"
 solana-presigner = "3.0.0"
 solana-program = { version = "3.0.0", default-features = false }
+solana-program-binaries = { path = "program-binaries", version = "=3.0.0" }
 solana-program-entrypoint = "3.1.0"
 solana-program-error = "3.0.0"
 solana-program-memory = "3.0.0"

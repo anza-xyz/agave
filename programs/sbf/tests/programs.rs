@@ -52,7 +52,6 @@ use {
     solana_sdk_ids::sysvar::{self as sysvar, clock},
     solana_sdk_ids::{bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4},
     solana_signer::Signer,
-    solana_stake_interface as stake,
     solana_svm::{
         transaction_commit_result::{CommittedTransaction, TransactionCommitResult},
         transaction_processor::ExecutionRecordingConfig,
@@ -3664,34 +3663,6 @@ fn test_program_fees() {
         .unwrap();
     let post_balance = bank_client.get_balance(&mint_keypair.pubkey()).unwrap();
     assert_eq!(pre_balance - post_balance, expected_prioritized_fee);
-}
-
-#[test]
-#[cfg(feature = "sbf_rust")]
-fn test_get_minimum_delegation() {
-    let GenesisConfigInfo {
-        genesis_config,
-        mint_keypair,
-        ..
-    } = create_genesis_config(100_123_456_789);
-
-    let bank = Bank::new_for_tests(&genesis_config);
-    let (bank, bank_forks) = bank.wrap_with_bank_forks_for_tests();
-    let mut bank_client = BankClient::new_shared(bank.clone());
-    let authority_keypair = Keypair::new();
-
-    let (_bank, program_id) = load_program_of_loader_v4(
-        &mut bank_client,
-        &bank_forks,
-        &mint_keypair,
-        &authority_keypair,
-        "solana_sbf_rust_get_minimum_delegation",
-    );
-
-    let account_metas = vec![AccountMeta::new_readonly(stake::program::id(), false)];
-    let instruction = Instruction::new_with_bytes(program_id, &[], account_metas);
-    let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
-    assert!(result.is_ok());
 }
 
 #[test]

@@ -3285,17 +3285,12 @@ mod balance_collector {
         super::*,
         rand0_7::prelude::*,
         solana_program_pack::Pack,
-        solana_sdk_ids::bpf_loader,
         spl_generic_token::token_2022,
         spl_token_interface::state::{
             Account as TokenAccount, AccountState as TokenAccountState, Mint,
         },
         test_case::test_case,
     };
-
-    // this could be part of mock_bank but so far nothing but this uses it
-    static SPL_TOKEN_BYTES: &[u8] =
-        include_bytes!("../../program-test/src/programs/spl_token-3.5.0.so");
 
     const STARTING_BALANCE: u64 = LAMPORTS_PER_SOL * 100;
 
@@ -3417,13 +3412,10 @@ mod balance_collector {
             u64::MAX,
         );
 
-        let spl_token = AccountSharedData::create(
-            LAMPORTS_PER_SOL,
-            SPL_TOKEN_BYTES.to_vec(),
-            bpf_loader::id(),
-            true,
-            u64::MAX,
-        );
+        let (_, spl_token) =
+            solana_program_binaries::by_id(&spl_token_interface::id(), &Rent::default())
+                .unwrap()
+                .swap_remove(0);
 
         for _ in 0..100 {
             let mut test_entry = SvmTestEntry::default();

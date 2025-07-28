@@ -1,6 +1,6 @@
 #![cfg(test)]
 use {
-    solana_account::Account,
+    solana_account::{Account, ReadableAccount},
     solana_clock::{Slot, MAX_PROCESSING_AGE},
     solana_compute_budget::compute_budget_limits::MAX_BUILTIN_ALLOCATION_COMPUTE_UNIT_LIMIT,
     solana_compute_budget_interface::ComputeBudgetInstruction,
@@ -15,7 +15,7 @@ use {
     solana_rent::Rent,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, secp256k1_program},
+    solana_sdk_ids::{bpf_loader_upgradeable, secp256k1_program},
     solana_signer::Signer,
     solana_svm::transaction_processor::ExecutionRecordingConfig,
     solana_svm_timings::ExecuteTimings,
@@ -24,8 +24,6 @@ use {
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     std::sync::{Arc, RwLock},
 };
-
-const MEMO_PROGRAM_ELF: &[u8] = include_bytes!("../../program-test/src/programs/spl_memo-3.0.0.so");
 
 fn new_bank_from_parent_with_bank_forks(
     bank_forks: &RwLock<BankForks>,
@@ -67,17 +65,14 @@ impl TestSetup {
     }
 
     fn install_memo_program_account(&mut self) {
-        self.genesis_config.accounts.insert(
-            spl_memo_interface::v3::id(),
-            Account {
-                lamports: u64::MAX,
-                // borrows memo elf for executing memo ix in order to set up test condition
-                data: MEMO_PROGRAM_ELF.to_vec(),
-                owner: bpf_loader::id(),
-                executable: true,
-                rent_epoch: 0,
-            },
-        );
+        let (pubkey, account) = solana_program_binaries::by_id(
+            &spl_memo_interface::v3::id(),
+            &self.genesis_config.rent,
+        )
+        .unwrap()
+        .swap_remove(0);
+
+        self.genesis_config.add_account(pubkey, account);
     }
 
     fn execute_test_transaction(&mut self, ixs: &[Instruction]) -> TestResult {
@@ -167,10 +162,17 @@ impl TestSetup {
         let payer_address = self.mint_keypair.pubkey();
         let upgrade_authority_address = payer_address;
 
+        let (_, memo) = solana_program_binaries::by_id(
+            &spl_memo_interface::v3::id(),
+            &self.genesis_config.rent,
+        )
+        .unwrap()
+        .swap_remove(0);
+
         // Stash a valid buffer account before attempting a deployment.
         {
             let metadata_offset = UpgradeableLoaderState::size_of_buffer_metadata();
-            let space = UpgradeableLoaderState::size_of_buffer(MEMO_PROGRAM_ELF.len());
+            let space = UpgradeableLoaderState::size_of_buffer(memo.data().len());
             let lamports = self.genesis_config.rent.minimum_balance(space);
 
             let mut data = vec![0; space];
@@ -181,7 +183,7 @@ impl TestSetup {
                 },
             )
             .unwrap();
-            data[metadata_offset..].copy_from_slice(MEMO_PROGRAM_ELF);
+            data[metadata_offset..].copy_from_slice(memo.data());
 
             self.genesis_config.accounts.insert(
                 buffer_address,
@@ -217,7 +219,7 @@ impl TestSetup {
             &buffer_address,
             &upgrade_authority_address,
             /* program_lamports */ 0, // Doesn't matter here.
-            /* max_data_len */ MEMO_PROGRAM_ELF.len().saturating_mul(2),
+            /* max_data_len */ memo.data().len().saturating_mul(2),
         )
         .unwrap()
         .pop()

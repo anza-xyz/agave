@@ -7498,6 +7498,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-program-binaries"
+version = "3.0.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "solana-account",
+ "solana-loader-v3-interface",
+ "solana-pubkey",
+ "solana-rent",
+ "solana-sdk-ids",
+ "spl-generic-token",
+]
+
+[[package]]
 name = "solana-program-entrypoint"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7621,6 +7635,7 @@ dependencies = [
  "solana-msg",
  "solana-native-token",
  "solana-poh-config",
+ "solana-program-binaries",
  "solana-program-entrypoint",
  "solana-program-error",
  "solana-program-runtime",
@@ -9507,6 +9522,7 @@ dependencies = [
  "solana-message",
  "solana-native-token",
  "solana-net-utils",
+ "solana-program-binaries",
  "solana-program-test",
  "solana-pubkey",
  "solana-rent",
