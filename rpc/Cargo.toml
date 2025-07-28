@@ -19,7 +19,7 @@ name = "solana_rpc"
 [features]
 dev-context-only-utils = [
     "solana-ledger/dev-context-only-utils",
-    "solana-rpc/dev-context-only-utils"
+    "solana-rpc/dev-context-only-utils",
 ]
 
 [dependencies]
