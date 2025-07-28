@@ -7329,7 +7329,6 @@ dependencies = [
 name = "solana-bucket-map"
 version = "3.0.0"
 dependencies = [
- "bencher",
  "bv",
  "bytemuck",
  "bytemuck_derive",
