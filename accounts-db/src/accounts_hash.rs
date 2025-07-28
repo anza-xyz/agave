@@ -1,22 +1,4 @@
-use {
-    bytemuck_derive::{Pod, Zeroable},
-    solana_hash::{Hash, HASH_BYTES},
-    solana_lattice_hash::lt_hash::LtHash,
-};
-
-/// Hash of an account
-#[repr(transparent)]
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Pod, Zeroable)]
-pub struct AccountHash(pub Hash);
-
-// Ensure the newtype wrapper never changes size from the underlying Hash
-// This also ensures there are no padding bytes, which is required to safely implement Pod
-const _: () = assert!(std::mem::size_of::<AccountHash>() == std::mem::size_of::<Hash>());
-
-/// The AccountHash for a zero-lamport account
-pub const ZERO_LAMPORT_ACCOUNT_HASH: AccountHash =
-    AccountHash(Hash::new_from_array([0; HASH_BYTES]));
+use {solana_hash::Hash, solana_lattice_hash::lt_hash::LtHash};
 
 /// Lattice hash of an account
 #[derive(Debug, Clone, Eq, PartialEq)]

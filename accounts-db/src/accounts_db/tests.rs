@@ -4,7 +4,6 @@ use {
     crate::{
         account_info::StoredSize,
         accounts_file::AccountsFileProvider,
-        accounts_hash::AccountHash,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
@@ -19,7 +18,6 @@ use {
         accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
         WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
-    solana_hash::Hash,
     solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::PUBKEY_BYTES,
     std::{
@@ -1868,14 +1866,12 @@ fn test_stored_readable_account() {
     };
     let offset = 99 * std::mem::size_of::<u64>(); // offset needs to be 8 byte aligned
     let stored_size = 101;
-    let hash = AccountHash(Hash::new_unique());
     let stored_account = StoredAccountMeta {
         meta: &meta,
         account_meta: &account_meta,
         data: &data,
         offset,
         stored_size,
-        hash: &hash,
     };
     assert!(accounts_equal(&account, &stored_account));
 }
@@ -1909,11 +1905,6 @@ fn test_hash_stored_account() {
     const ACCOUNT_DATA_LEN: usize = 3;
     let data: [u8; ACCOUNT_DATA_LEN] = [0x69, 0x6a, 0x6b];
     let offset: usize = 0x6c_6d_6e_6f_70_71_72_73;
-    let hash = AccountHash(Hash::from([
-        0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f, 0x80, 0x81, 0x82,
-        0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f, 0x90, 0x91,
-        0x92, 0x93,
-    ]));
 
     let stored_account = StoredAccountMeta {
         meta: &meta,
@@ -1921,7 +1912,6 @@ fn test_hash_stored_account() {
         data: &data,
         offset,
         stored_size: CACHE_VIRTUAL_STORED_SIZE as usize,
-        hash: &hash,
     };
     let account = stored_account.to_account_shared_data();
 
