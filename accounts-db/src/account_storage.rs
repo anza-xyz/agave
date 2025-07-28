@@ -297,38 +297,43 @@ impl Default for AccountStorageStatus {
     }
 }
 
-pub struct AccountStoragesReshuffler<'a> {
+pub struct AccountStoragesOrderBalancer<'a> {
+    small_to_large_ratio: (usize, usize),
     storages: &'a [Arc<AccountStorageEntry>],
     indices: Vec<usize>,
 }
 
-impl<'a> AccountStoragesReshuffler<'a> {
-    pub fn new(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
-        let indices = (0..storages.len()).collect();
-        Self { storages, indices }
+impl<'a> AccountStoragesOrderBalancer<'a> {
+    pub fn new(
+        storages: &'a [Arc<AccountStorageEntry>],
+        small_to_large_ratio: (usize, usize),
+    ) -> Self {
+        let mut indices: Vec<usize> = (0..storages.len()).collect();
+        indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
+        Self {
+            storages,
+            indices,
+            small_to_large_ratio,
+        }
     }
 
-    pub fn into_balanced(mut self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
-        self.indices
-            .sort_unstable_by_key(|i| self.storages[*i].accounts.len());
-        let range = 0..self.indices.len();
-        self.indices.into_iter().map(move |i| {
-            let index = select_from_range_with_start_end_rates(range.clone(), i, (4, 1));
-
-            self.storages[index].as_ref()
-        })
+    pub fn into_iter(self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
+        (0..self.indices.len()).map(move |i| self.nth_storage(i))
     }
 
-    pub fn into_par_balanced(
-        mut self,
-    ) -> impl ParallelIterator<Item = &'a AccountStorageEntry> + 'a {
-        self.indices
-            .sort_unstable_by_key(|i| self.storages[*i].accounts.len());
-        let range = 0..self.indices.len();
-        self.indices.into_par_iter().map(move |i| {
-            let index = select_from_range_with_start_end_rates(range.clone(), i, (4, 1));
-            self.storages[index].as_ref()
-        })
+    pub fn into_par_iter(self) -> impl ParallelIterator<Item = &'a AccountStorageEntry> + 'a {
+        (0..self.indices.len())
+            .into_par_iter()
+            .map(move |i| self.nth_storage(i))
+    }
+
+    fn nth_storage(&self, nth: usize) -> &'a AccountStorageEntry {
+        let range_index = select_from_range_with_start_end_rates(
+            0..self.storages.len(),
+            nth,
+            self.small_to_large_ratio.clone(),
+        );
+        self.storages[self.indices[range_index]].as_ref()
     }
 }
 
@@ -685,5 +690,33 @@ pub(crate) mod tests {
             .unwrap()
             .insert(0, storage.get_test_storage());
         storage.get_if(|_, _| true);
+    }
+
+    #[test]
+    fn test_select_range_with_start_end_rates() {
+        let interleaved: Vec<_> = (0..10)
+            .map(|i| select_from_range_with_start_end_rates(1..11, i, (2, 1)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 10, 3, 4, 9, 5, 6, 8, 7]);
+
+        let interleaved: Vec<_> = (0..10)
+            .map(|i| select_from_range_with_start_end_rates(1..11, i, (1, 1)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 10, 2, 9, 3, 8, 4, 7, 5, 6]);
+
+        let interleaved: Vec<_> = (0..9)
+            .map(|i| select_from_range_with_start_end_rates(1..10, i, (2, 1)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 9, 3, 4, 8, 5, 6, 7]);
+
+        let interleaved: Vec<_> = (0..9)
+            .map(|i| select_from_range_with_start_end_rates(1..10, i, (1, 2)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 9, 8, 2, 7, 6, 3, 5, 4]);
+
+        let interleaved: Vec<_> = (0..13)
+            .map(|i| select_from_range_with_start_end_rates(1..14, i, (2, 3)))
+            .collect();
+        assert_eq!(interleaved, vec![1, 2, 13, 12, 11, 3, 4, 10, 9, 8, 5, 6, 7]);
     }
 }
