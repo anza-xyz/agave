@@ -2,7 +2,7 @@
 pub(crate) mod tests {
     use {
         rand::Rng,
-        solana_account::AccountSharedData,
+        solana_account::{AccountSharedData, WritableAccount},
         solana_clock::Clock,
         solana_instruction::Instruction,
         solana_keypair::Keypair,
@@ -10,8 +10,9 @@ pub(crate) mod tests {
         solana_runtime::bank::Bank,
         solana_signer::{signers::Signers, Signer},
         solana_stake_interface::{
-            instruction as stake_instruction,
-            state::{Authorized, Lockup},
+            program as stake_program,
+            stake_flags::StakeFlags,
+            state::{Authorized, Delegation, Meta, Stake, StakeStateV2},
         },
         solana_transaction::Transaction,
         solana_vote::vote_account::{VoteAccount, VoteAccounts},
@@ -28,7 +29,7 @@ pub(crate) mod tests {
         validator_identity_account: &Keypair,
         amount: u64,
     ) {
-        let vote_pubkey = vote_account.pubkey();
+        let voter_pubkey = vote_account.pubkey();
         fn process_instructions<T: Signers>(bank: &Bank, keypairs: &T, ixs: &[Instruction]) {
             let tx = Transaction::new_signed_with_payer(
                 ixs,
@@ -44,11 +45,11 @@ pub(crate) mod tests {
             &[from_account, vote_account, validator_identity_account],
             &vote_instruction::create_account_with_config(
                 &from_account.pubkey(),
-                &vote_pubkey,
+                &voter_pubkey,
                 &VoteInit {
                     node_pubkey: validator_identity_account.pubkey(),
-                    authorized_voter: vote_pubkey,
-                    authorized_withdrawer: vote_pubkey,
+                    authorized_voter: voter_pubkey,
+                    authorized_withdrawer: voter_pubkey,
                     commission: 0,
                 },
                 amount,
@@ -62,18 +63,32 @@ pub(crate) mod tests {
         let stake_account_keypair = Keypair::new();
         let stake_account_pubkey = stake_account_keypair.pubkey();
 
-        process_instructions(
-            bank,
-            &[from_account, &stake_account_keypair],
-            &stake_instruction::create_account_and_delegate_stake(
-                &from_account.pubkey(),
-                &stake_account_pubkey,
-                &vote_pubkey,
-                &Authorized::auto(&stake_account_pubkey),
-                &Lockup::default(),
-                amount,
-            ),
+        let stake_account = StakeStateV2::Stake(
+            Meta {
+                authorized: Authorized::auto(&stake_account_pubkey),
+                ..Meta::default()
+            },
+            Stake {
+                delegation: Delegation {
+                    voter_pubkey,
+                    stake: amount,
+                    deactivation_epoch: u64::MAX,
+                    ..Delegation::default()
+                },
+                ..Stake::default()
+            },
+            StakeFlags::default(),
         );
+
+        let account = AccountSharedData::create(
+            1,
+            bincode::serialize(&stake_account).unwrap(),
+            stake_program::id(),
+            false,
+            u64::MAX,
+        );
+
+        bank.store_account(&stake_account_pubkey, &account);
     }
 
     #[test]

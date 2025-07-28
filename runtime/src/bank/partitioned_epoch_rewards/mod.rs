@@ -321,9 +321,8 @@ mod tests {
         solana_native_token::LAMPORTS_PER_SOL,
         solana_reward_info::RewardType,
         solana_signer::Signer,
-        solana_stake_interface::{error::StakeError, state::StakeStateV2},
+        solana_stake_interface::state::StakeStateV2,
         solana_system_transaction as system_transaction,
-        solana_transaction::Transaction,
         solana_vote::vote_transaction,
         solana_vote_interface::state::{VoteStateVersions, MAX_LOCKOUT_HISTORY},
         solana_vote_program::vote_state::{self, TowerSync},
@@ -858,13 +857,9 @@ mod tests {
         }
     }
 
-    /// Test that program execution that attempts to mutate a stake account
-    /// incorrectly should fail during reward period. A credit should succeed,
-    /// but a withdrawal should fail.
+    /// Test that lamports can be sent to stake accounts regardless of rewards period.
     #[test]
-    fn test_program_execution_restricted_for_stake_account_in_reward_period() {
-        use solana_transaction_error::TransactionError::InstructionError;
-
+    fn test_rewards_period_system_transfer() {
         let validator_vote_keypairs = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs];
         let GenesisConfigInfo {
@@ -938,36 +933,6 @@ mod tests {
 
             // Credits should always succeed
             assert!(system_result.is_ok());
-
-            // Attempt to withdraw from new stake account to the mint
-            let stake_ix = solana_stake_interface::instruction::withdraw(
-                &new_stake_address,
-                &new_stake_address,
-                &mint_keypair.pubkey(),
-                transfer_amount,
-                None,
-            );
-            let stake_tx = Transaction::new_signed_with_payer(
-                &[stake_ix],
-                Some(&mint_keypair.pubkey()),
-                &[&mint_keypair, &new_stake_signer],
-                bank.last_blockhash(),
-            );
-            let stake_result = bank.process_transaction(&stake_tx);
-
-            if slot == num_slots_in_epoch {
-                // When the bank is at the beginning of the new epoch, i.e. slot
-                // 32, StakeError::EpochRewardsActive should be thrown for
-                // actions like StakeInstruction::Withdraw
-                assert_eq!(
-                    stake_result,
-                    Err(InstructionError(0, StakeError::EpochRewardsActive.into()))
-                );
-            } else {
-                // When the bank is outside of reward interval, the withdraw
-                // transaction should not be affected and will succeed.
-                assert!(stake_result.is_ok());
-            }
 
             // Push a dummy blockhash, so that the latest_blockhash() for the transfer transaction in each
             // iteration are different. Otherwise, all those transactions will be the same, and will not be
