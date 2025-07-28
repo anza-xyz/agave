@@ -3,7 +3,7 @@
 use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
-    rayon::iter::{IntoParallelIterator, ParallelIterator},
+    rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
     std::{
@@ -321,7 +321,9 @@ impl<'a> AccountStoragesOrderBalancer<'a> {
         (0..self.indices.len()).map(move |i| self.nth_storage(i))
     }
 
-    pub fn into_par_iter(self) -> impl ParallelIterator<Item = &'a AccountStorageEntry> + 'a {
+    pub fn into_par_iter(
+        self,
+    ) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
         (0..self.indices.len())
             .into_par_iter()
             .map(move |i| self.nth_storage(i))
@@ -329,7 +331,7 @@ impl<'a> AccountStoragesOrderBalancer<'a> {
 
     fn nth_storage(&self, nth: usize) -> &'a AccountStorageEntry {
         let range_index = select_from_range_with_start_end_rates(
-            0..self.storages.len(),
+            0..self.indices.len(),
             nth,
             self.small_to_large_ratio.clone(),
         );
