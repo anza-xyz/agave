@@ -1125,11 +1125,6 @@ fn archive_snapshot(
                 .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
-            // Balance large and small files with bias towards small (4 small + 1 large), such
-            // that during unpacking large writes are mixed with file metadata operations
-            // and towards the end of archive (sizes equalize) writes are >256KiB / file.
-            const FILE_BALANCING_RATES: (usize, usize) = (4, 1); // (small_files_per_cycle, large_files_per_cycle)
-
             let mut sorted_storage_indices = (0..snapshot_storages.len()).collect::<Vec<_>>();
             sorted_storage_indices.sort_by_key(|&i| snapshot_storages[i].accounts.len());
             for i in 0..sorted_storage_indices.len() {
