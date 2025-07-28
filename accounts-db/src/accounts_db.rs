@@ -42,10 +42,7 @@ use {
             AccountsFile, AccountsFileError, AccountsFileProvider, MatchAccountOwnerError,
             StorageAccess,
         },
-        accounts_hash::{
-            AccountHash, AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_HASH,
-            ZERO_LAMPORT_ACCOUNT_LT_HASH,
-        },
+        accounts_hash::{AccountLtHash, AccountsLtHash, ZERO_LAMPORT_ACCOUNT_LT_HASH},
         accounts_index::{
             in_mem_accounts_index::StartupStats, AccountSecondaryIndexes, AccountsIndex,
             AccountsIndexConfig, AccountsIndexRootsStats, AccountsIndexScanResult, DiskIndexValue,
@@ -76,7 +73,6 @@ use {
     solana_account::{Account, AccountSharedData, ReadableAccount},
     solana_clock::{BankId, Epoch, Slot},
     solana_epoch_schedule::EpochSchedule,
-    solana_hash::Hash,
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{meas_dur, measure::Measure, measure_us},
     solana_nohash_hasher::{BuildNoHashHasher, IntMap, IntSet},
@@ -5094,17 +5090,6 @@ impl AccountsDb {
         let hasher = Self::hash_account_helper(account, pubkey, RentEpochInAccountHash::Excluded);
         let lt_hash = LtHash::with(&hasher);
         AccountLtHash(lt_hash)
-    }
-
-    /// Calculates the `AccountHash` of `account`
-    pub fn hash_account<T: ReadableAccount>(account: &T, pubkey: &Pubkey) -> AccountHash {
-        if account.lamports() == 0 {
-            return ZERO_LAMPORT_ACCOUNT_HASH;
-        }
-
-        let hasher = Self::hash_account_helper(account, pubkey, RentEpochInAccountHash::Included);
-        let hash = Hash::new_from_array(hasher.finalize().into());
-        AccountHash(hash)
     }
 
     /// Hashes `account` and returns the underlying Hasher
