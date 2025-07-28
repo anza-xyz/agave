@@ -10719,29 +10719,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-stake-program-tests"
-version = "3.0.0"
-dependencies = [
- "agave-feature-set",
- "assert_matches",
- "bincode",
- "solana-account",
- "solana-instruction",
- "solana-keypair",
- "solana-program-error",
- "solana-program-test",
- "solana-pubkey",
- "solana-signer",
- "solana-stake-interface",
- "solana-system-interface",
- "solana-sysvar",
- "solana-transaction",
- "solana-transaction-error",
- "solana-vote-program",
- "test-case",
-]
-
-[[package]]
 name = "solana-storage-bigtable"
 version = "3.0.0"
 dependencies = [
