@@ -54,6 +54,7 @@ use {
         active_stats::{ActiveStatItem, ActiveStats},
         ancestors::Ancestors,
         append_vec::{self, aligned_stored_size, IndexInfo, IndexInfoInner, STORE_META_OVERHEAD},
+        buffered_reader::RequiredLenBufFileRead,
         contains::Contains,
         is_zero_lamport::IsZeroLamport,
         partitioned_rewards::{
@@ -6768,7 +6769,7 @@ impl AccountsDb {
                 .par_chunks(chunk_size)
                 .map_init(
                     || Box::new(append_vec::new_full_accounts_scan_buffer()),
-                    |storages| {
+                    |reader, storages| {
                         let mut log_status = MultiThreadProgress::new(
                             &total_processed_slots_across_all_threads,
                             2,
@@ -6806,7 +6807,7 @@ impl AccountsDb {
                                     num_existed_in_mem,
                                     num_existed_on_disk,
                                 } = self.generate_index_for_slot(
-                                    &mut reader,
+                                    reader,
                                     storage,
                                     slot,
                                     store_id,
