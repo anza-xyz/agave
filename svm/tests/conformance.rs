@@ -29,7 +29,7 @@ use {
     solana_sysvar_id::SysvarId,
     solana_timings::ExecuteTimings,
     solana_transaction_context::{
-        ExecutionRecord, IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        ExecutionRecord, IndexOfAccount, TransactionAccount, TransactionContext,
     },
     std::{
         collections::{hash_map::Entry, HashMap},
@@ -388,31 +388,6 @@ fn execute_fixture_as_instr(
         compute_budget,
         SVMTransactionExecutionCost::default(),
     );
-
-    let mut instruction_accounts: Vec<InstructionAccount> =
-        Vec::with_capacity(sanitized_message.instructions()[0].accounts.len());
-
-    for (instruction_acct_idx, index_txn) in sanitized_message.instructions()[0]
-        .accounts
-        .iter()
-        .enumerate()
-    {
-        let index_in_callee = sanitized_message.instructions()[0]
-            .accounts
-            .get(0..instruction_acct_idx)
-            .unwrap()
-            .iter()
-            .position(|idx| *idx == *index_txn)
-            .unwrap_or(instruction_acct_idx);
-
-        instruction_accounts.push(InstructionAccount::new(
-            *index_txn as IndexOfAccount,
-            *index_txn as IndexOfAccount,
-            index_in_callee as IndexOfAccount,
-            sanitized_message.is_signer(*index_txn as usize),
-            sanitized_message.is_writable(*index_txn as usize),
-        ));
-    }
 
     invoke_context
         .prepare_next_top_level_instruction(

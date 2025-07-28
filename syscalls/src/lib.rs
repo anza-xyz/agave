@@ -4448,7 +4448,6 @@ mod tests {
             {
                 let instruction_accounts = vec![InstructionAccount::new(
                     index_in_trace.saturating_add(1) as IndexOfAccount,
-                    0, // This is incorrect / inconsistent but not required
                     0,
                     false,
                     false,

@@ -61,7 +61,7 @@ macro_rules! with_mock_invoke_context {
                 AccountSharedData::new(2, $account_size, &program_key),
             ),
         ];
-        let instruction_accounts = vec![InstructionAccount::new(2, 2, 0, false, true)];
+        let instruction_accounts = vec![InstructionAccount::new(2, 0, false, true)];
         solana_program_runtime::with_mock_invoke_context!(
             $invoke_context,
             transaction_context,

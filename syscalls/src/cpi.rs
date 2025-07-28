@@ -1311,7 +1311,6 @@ mod tests {
                 .map(|(index_in_callee, index_in_transaction)| {
                     InstructionAccount::new(
                         *index_in_transaction as IndexOfAccount,
-                        *index_in_transaction as IndexOfAccount,
                         index_in_callee as IndexOfAccount,
                         false,
                         $transaction_accounts[*index_in_transaction as usize].2,
@@ -1856,8 +1855,8 @@ mod tests {
             .configure(
                 vec![0],
                 vec![
-                    InstructionAccount::new(1, 0, 0, false, true),
-                    InstructionAccount::new(1, 0, 0, false, true),
+                    InstructionAccount::new(1, 0, false, true),
+                    InstructionAccount::new(1, 0, false, true),
                 ],
                 &[],
             );

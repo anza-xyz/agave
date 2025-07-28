@@ -73,7 +73,6 @@ pub struct InstructionAccount {
 impl InstructionAccount {
     pub fn new(
         index_in_transaction: IndexOfAccount,
-        _index_in_caller: IndexOfAccount,
         index_in_callee: IndexOfAccount,
         is_signer: bool,
         is_writable: bool,

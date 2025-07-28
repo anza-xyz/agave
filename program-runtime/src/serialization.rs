@@ -632,7 +632,6 @@ mod tests {
                     .unwrap_or(index_in_instruction);
                 InstructionAccount::new(
                     *index_in_transaction,
-                    *index_in_transaction,
                     index_in_callee as IndexOfAccount,
                     false,
                     is_writable(index_in_instruction),

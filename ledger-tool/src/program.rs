@@ -408,7 +408,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                 pubkey,
                 AccountSharedData::new(0, allocation_size, &Pubkey::new_unique()),
             ));
-            instruction_accounts.push(InstructionAccount::new(0, 0, 0, false, true));
+            instruction_accounts.push(InstructionAccount::new(0, 0, false, true));
             vec![]
         }
         Err(_) => {
@@ -480,7 +480,6 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
                         idx
                     };
                     InstructionAccount::new(
-                        txn_acct_index as IndexOfAccount,
                         txn_acct_index as IndexOfAccount,
                         txn_acct_index as IndexOfAccount,
                         account_info.is_signer.unwrap_or(false),
