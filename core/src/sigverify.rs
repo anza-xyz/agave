@@ -15,6 +15,11 @@ use {
     agave_banking_stage_ingress_types::BankingPacketBatch,
     crossbeam_channel::Sender,
     solana_perf::{cuda_runtime::PinnedVec, packet::PacketBatch, recycler::Recycler, sigverify},
+    solana_runtime::{bank::Bank, bank_forks::BankForks},
+    std::{
+        sync::{Arc, RwLock},
+        time::Instant,
+    },
 };
 
 pub struct TransactionSigVerifier {
@@ -23,14 +28,19 @@ pub struct TransactionSigVerifier {
     recycler: Recycler<TxOffset>,
     recycler_out: Recycler<PinnedVec<u8>>,
     reject_non_vote: bool,
+
+    _bank_forks: Option<Arc<RwLock<BankForks>>>,
+    _cached_working_bank: Option<Arc<Bank>>,
+    _last_bank_cache_time: Instant,
 }
 
 impl TransactionSigVerifier {
     pub fn new_reject_non_vote(
         packet_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        bank_forks: Option<Arc<RwLock<BankForks>>>,
     ) -> Self {
-        let mut new_self = Self::new(packet_sender, forward_stage_sender);
+        let mut new_self = Self::new(packet_sender, forward_stage_sender, bank_forks);
         new_self.reject_non_vote = true;
         new_self
     }
@@ -38,14 +48,21 @@ impl TransactionSigVerifier {
     pub fn new(
         banking_stage_sender: BankingPacketSender,
         forward_stage_sender: Option<Sender<(BankingPacketBatch, bool)>>,
+        bank_forks: Option<Arc<RwLock<BankForks>>>,
     ) -> Self {
         init();
+        let cached_working_bank = bank_forks
+            .as_ref()
+            .map(|bank_forks| bank_forks.read().unwrap().working_bank());
         Self {
             banking_stage_sender,
             forward_stage_sender,
             recycler: Recycler::warmed(50, 4096),
             recycler_out: Recycler::warmed(50, 4096),
             reject_non_vote: false,
+            _bank_forks: bank_forks,
+            _cached_working_bank: cached_working_bank,
+            _last_bank_cache_time: Instant::now(),
         }
     }
 }

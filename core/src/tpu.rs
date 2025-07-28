@@ -287,6 +287,7 @@ impl Tpu {
             let verifier = TransactionSigVerifier::new(
                 non_vote_sender,
                 enable_block_production_forwarding.then(|| forward_stage_sender.clone()),
+                Some(bank_forks.clone()),
             );
             SigVerifier::Local(SigVerifyStage::new(
                 packet_receiver,
@@ -300,6 +301,7 @@ impl Tpu {
             let verifier = TransactionSigVerifier::new_reject_non_vote(
                 tpu_vote_sender,
                 Some(forward_stage_sender),
+                Some(bank_forks.clone()),
             );
             SigVerifyStage::new(
                 vote_packet_receiver,
