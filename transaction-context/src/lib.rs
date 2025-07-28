@@ -60,10 +60,6 @@ pub type IndexOfAccount = u16;
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
-    /// Points to the first occurrence in the parent `InstructionContext`
-    ///
-    /// This excludes the program accounts.
-    pub index_in_caller: IndexOfAccount,
     /// Points to the first occurrence in the current `InstructionContext`
     ///
     /// This excludes the program accounts.
@@ -77,14 +73,13 @@ pub struct InstructionAccount {
 impl InstructionAccount {
     pub fn new(
         index_in_transaction: IndexOfAccount,
-        index_in_caller: IndexOfAccount,
+        _index_in_caller: IndexOfAccount,
         index_in_callee: IndexOfAccount,
         is_signer: bool,
         is_writable: bool,
     ) -> InstructionAccount {
         InstructionAccount {
             index_in_transaction,
-            index_in_caller,
             index_in_callee,
             is_signer: is_signer as u8,
             is_writable: is_writable as u8,
@@ -736,6 +731,18 @@ impl InstructionContext {
             .index_in_transaction as IndexOfAccount)
     }
 
+    /// Get the index of account in instruction from the index in transaction
+    pub fn get_index_of_account_in_instruction(
+        &self,
+        index_in_transaction: IndexOfAccount,
+    ) -> Result<IndexOfAccount, InstructionError> {
+        self.instruction_accounts
+            .iter()
+            .position(|account| account.index_in_transaction == index_in_transaction)
+            .map(|idx| idx as IndexOfAccount)
+            .ok_or(InstructionError::MissingAccount)
+    }
+
     /// Returns `Some(instruction_account_index)` if this is a duplicate
     /// and `None` if it is the first account with this key
     pub fn is_instruction_account_duplicate(
@@ -824,6 +831,21 @@ impl InstructionContext {
             transaction_context,
             index_in_transaction,
             Some(instruction_account_index),
+        )
+    }
+
+    /// Retrieves an instruction account using the index in transaction
+    pub fn try_borrow_instruction_account_with_transaction_index<'a, 'b: 'a>(
+        &'a self,
+        transaction_context: &'a TransactionContext,
+        index_in_transaction: IndexOfAccount,
+    ) -> Result<BorrowedAccount<'a>, InstructionError> {
+        let index_in_instruction =
+            self.get_index_of_account_in_instruction(index_in_transaction)?;
+        self.try_borrow_account(
+            transaction_context,
+            index_in_transaction,
+            Some(index_in_instruction),
         )
     }
 

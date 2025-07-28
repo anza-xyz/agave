@@ -296,9 +296,9 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                 .unwrap();
             let account_info = &account_infos[account_info_index];
             let mut borrowed_account = instruction_context
-                .try_borrow_instruction_account(
+                .try_borrow_instruction_account_with_transaction_index(
                     transaction_context,
-                    instruction_account.index_in_caller,
+                    instruction_account.index_in_transaction,
                 )
                 .unwrap();
             if borrowed_account.get_lamports() != account_info.lamports() {
@@ -324,7 +324,8 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
                     .unwrap();
             }
             if instruction_account.is_writable() {
-                account_indices.push((instruction_account.index_in_caller, account_info_index));
+                account_indices
+                    .push((instruction_account.index_in_transaction, account_info_index));
             }
         }
 
@@ -338,9 +339,12 @@ impl solana_sysvar::program_stubs::SyscallStubs for SyscallStubs {
         let instruction_context = transaction_context
             .get_current_instruction_context()
             .unwrap();
-        for (index_in_caller, account_info_index) in account_indices.into_iter() {
+        for (index_in_transaction, account_info_index) in account_indices.into_iter() {
             let borrowed_account = instruction_context
-                .try_borrow_instruction_account(transaction_context, index_in_caller)
+                .try_borrow_instruction_account_with_transaction_index(
+                    transaction_context,
+                    index_in_transaction,
+                )
                 .unwrap();
             let account_info = &account_infos[account_info_index];
             **account_info.try_borrow_mut_lamports().unwrap() = borrowed_account.get_lamports();

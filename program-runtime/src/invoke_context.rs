@@ -413,10 +413,11 @@ impl<'a> InvokeContext<'a> {
                     continue;
                 }
 
-                let borrowed_account = instruction_context.try_borrow_instruction_account(
-                    self.transaction_context,
-                    instruction_account.index_in_caller,
-                )?;
+                let borrowed_account = instruction_context
+                    .try_borrow_instruction_account_with_transaction_index(
+                        self.transaction_context,
+                        instruction_account.index_in_transaction,
+                    )?;
 
                 // Readonly in caller cannot become writable in callee
                 if instruction_account.is_writable() && !borrowed_account.is_writable() {

@@ -797,10 +797,10 @@ where
             continue; // Skip duplicate account
         }
 
-        let callee_account = instruction_context.try_borrow_instruction_account(
-            transaction_context,
-            instruction_account.index_in_caller,
-        )?;
+        let index_in_caller = instruction_context
+            .get_index_of_account_in_instruction(instruction_account.index_in_transaction)?;
+        let callee_account = instruction_context
+            .try_borrow_instruction_account(transaction_context, index_in_caller)?;
         let account_key = invoke_context
             .transaction_context
             .get_key_of_account_at_index(instruction_account.index_in_transaction)?;
@@ -817,16 +817,17 @@ where
         } else if let Some(caller_account_index) =
             account_info_keys.iter().position(|key| *key == account_key)
         {
-            let serialized_metadata = accounts_metadata
-                .get(instruction_account.index_in_caller as usize)
-                .ok_or_else(|| {
-                    ic_msg!(
-                        invoke_context,
-                        "Internal error: index mismatch for account {}",
-                        account_key
-                    );
-                    Box::new(InstructionError::MissingAccount)
-                })?;
+            let serialized_metadata =
+                accounts_metadata
+                    .get(index_in_caller as usize)
+                    .ok_or_else(|| {
+                        ic_msg!(
+                            invoke_context,
+                            "Internal error: index mismatch for account {}",
+                            account_key
+                        );
+                        Box::new(InstructionError::MissingAccount)
+                    })?;
 
             // build the CallerAccount corresponding to this account.
             if caller_account_index >= account_infos.len() {
@@ -857,7 +858,7 @@ where
             )?;
 
             accounts.push(TranslatedAccount {
-                index_in_caller: instruction_account.index_in_caller,
+                index_in_caller,
                 caller_account,
                 update_caller_account_region: instruction_account.is_writable() || update_caller,
                 update_caller_account_info: instruction_account.is_writable(),
