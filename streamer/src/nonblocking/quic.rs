@@ -174,6 +174,7 @@ pub fn spawn_server_multi(
         max_unstaked_connections,
         max_staked_connections,
         max_connections_per_peer,
+        max_unstaked_connections_per_ipaddr,
         max_streams_per_ms,
         max_connections_per_ipaddr_per_min,
         wait_for_chunk_timeout,
@@ -204,6 +205,7 @@ pub fn spawn_server_multi(
         packet_sender,
         exit,
         max_connections_per_peer,
+        max_unstaked_connections_per_ipaddr,
         staked_nodes,
         max_staked_connections,
         max_unstaked_connections,
@@ -275,6 +277,7 @@ async fn run_server(
     packet_sender: Sender<PacketBatch>,
     exit: Arc<AtomicBool>,
     max_connections_per_peer: usize,
+    max_unstaked_connections_per_ipaddr: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
     max_unstaked_connections: usize,
@@ -395,6 +398,7 @@ async fn run_server(
                         staked_connection_table.clone(),
                         sender.clone(),
                         max_connections_per_peer,
+                        max_unstaked_connections_per_ipaddr,
                         staked_nodes.clone(),
                         max_staked_connections,
                         max_unstaked_connections,
@@ -689,6 +693,7 @@ async fn setup_connection(
     staked_connection_table: Arc<Mutex<ConnectionTable>>,
     packet_sender: Sender<PacketAccumulator>,
     max_connections_per_peer: usize,
+    max_unstaked_connections_per_ipaddr: usize,
     staked_nodes: Arc<RwLock<StakedNodes>>,
     max_staked_connections: usize,
     max_unstaked_connections: usize,
@@ -738,7 +743,7 @@ async fn setup_connection(
                 let params = get_connection_stake(&new_connection, &staked_nodes).map_or(
                     NewConnectionHandlerParams::new_unstaked(
                         packet_sender.clone(),
-                        max_connections_per_peer,
+                        max_unstaked_connections_per_ipaddr,
                         stats.clone(),
                     ),
                     |(pubkey, stake, total_stake, max_stake, min_stake)| {
@@ -747,11 +752,15 @@ async fn setup_connection(
                         let min_stake_ratio =
                             1_f64 / (max_streams_per_ms * STREAM_THROTTLING_INTERVAL_MS) as f64;
                         let stake_ratio = stake as f64 / total_stake as f64;
-                        let peer_type = if stake_ratio < min_stake_ratio {
+                        let (peer_type, max_connections_per_peer) = if stake_ratio < min_stake_ratio
+                        {
                             // If it is a staked connection with ultra low stake ratio, treat it as unstaked.
-                            ConnectionPeerType::Unstaked
+                            (
+                                ConnectionPeerType::Unstaked,
+                                max_unstaked_connections_per_ipaddr,
+                            )
                         } else {
-                            ConnectionPeerType::Staked(stake)
+                            (ConnectionPeerType::Staked(stake), max_connections_per_peer)
                         };
                         NewConnectionHandlerParams {
                             packet_sender,
