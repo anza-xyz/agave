@@ -220,7 +220,7 @@ fi
 
 if [[ -z "$validatorOnly" ]]; then
   # shellcheck disable=SC2086 # Don't want to double quote $rust_version
-  "$cargo" $maybeRustVersion build --manifest-path programs/bpf_loader/gen-syscall-list/Cargo.toml
+  "$cargo" $maybeRustVersion build --manifest-path syscalls/gen-syscall-list/Cargo.toml
   # shellcheck disable=SC2086 # Don't want to double quote $rust_version
   "$cargo" $maybeRustVersion run --bin gen-headers
   mkdir -p "$installDir"/bin/platform-tools-sdk/sbf
