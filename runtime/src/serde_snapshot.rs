@@ -79,26 +79,14 @@ pub struct AccountsDbFields<T>(
     Vec<(Slot, Hash)>,
 );
 
-/// Incremental snapshots only calculate their accounts hash based on the
-/// account changes WITHIN the incremental slot range. So, we need to keep track
-/// of the full snapshot expected accounts hash results. We also need to keep
-/// track of the hash and capitalization specific to the incremental snapshot
-/// slot range. The capitalization we calculate for the incremental slot will
-/// NOT be consistent with the bank's capitalization. It is not feasible to
-/// calculate a capitalization delta that is correct given just incremental
-/// slots account data and the full snapshot's capitalization.
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
-pub struct BankIncrementalSnapshotPersistence {
-    /// slot of full snapshot
-    pub full_slot: Slot,
-    /// accounts hash from the full snapshot
+#[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ObsoleteIncrementalSnapshotPersistence {
+    pub full_slot: u64,
     pub full_hash: [u8; 32],
-    /// capitalization from the full snapshot
     pub full_capitalization: u64,
-    /// hash of the accounts in the incremental snapshot slot range, including zero-lamport accounts
     pub incremental_hash: [u8; 32],
-    /// capitalization of the accounts in the incremental snapshot slot range
     pub incremental_capitalization: u64,
 }
 
@@ -406,7 +394,7 @@ struct ExtraFieldsToDeserialize {
     #[serde(deserialize_with = "default_on_eof")]
     lamports_per_signature: u64,
     #[serde(deserialize_with = "default_on_eof")]
-    _incremental_snapshot_persistence: Option<BankIncrementalSnapshotPersistence>, // obsolete
+    _obsolete_incremental_snapshot_persistence: Option<ObsoleteIncrementalSnapshotPersistence>,
     #[serde(deserialize_with = "default_on_eof")]
     _obsolete_epoch_accounts_hash: Option<Hash>,
     #[serde(deserialize_with = "default_on_eof")]
@@ -424,9 +412,9 @@ struct ExtraFieldsToDeserialize {
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[cfg_attr(feature = "dev-context-only-utils", derive(Default, PartialEq))]
 #[derive(Debug, Serialize)]
-pub struct ExtraFieldsToSerialize<'a> {
+pub struct ExtraFieldsToSerialize {
     pub lamports_per_signature: u64,
-    pub incremental_snapshot_persistence: Option<&'a BankIncrementalSnapshotPersistence>, // obsolete
+    pub obsolete_incremental_snapshot_persistence: Option<ObsoleteIncrementalSnapshotPersistence>,
     pub obsolete_epoch_accounts_hash: Option<Hash>,
     pub versioned_epoch_stakes: HashMap<u64, VersionedEpochStakes>,
     pub accounts_lt_hash: Option<SerdeAccountsLtHash>,
@@ -459,7 +447,7 @@ where
     // Process extra fields
     let ExtraFieldsToDeserialize {
         lamports_per_signature,
-        _incremental_snapshot_persistence,
+        _obsolete_incremental_snapshot_persistence: _incremental_snapshot_persistence,
         _obsolete_epoch_accounts_hash,
         versioned_epoch_stakes,
         accounts_lt_hash,
@@ -702,7 +690,7 @@ impl Serialize for SerializableBankAndStorage<'_> {
             },
             ExtraFieldsToSerialize {
                 lamports_per_signature,
-                incremental_snapshot_persistence: None,
+                obsolete_incremental_snapshot_persistence: None,
                 obsolete_epoch_accounts_hash: None,
                 versioned_epoch_stakes,
                 accounts_lt_hash,

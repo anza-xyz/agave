@@ -126,7 +126,7 @@ mod tests {
                 &get_storages_to_serialize(&bank2.get_snapshot_storages(None)),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank2.fee_rate_governor.lamports_per_signature,
-                    incremental_snapshot_persistence: None,
+                    obsolete_incremental_snapshot_persistence: None,
                     obsolete_epoch_accounts_hash: None,
                     versioned_epoch_stakes,
                     accounts_lt_hash,
@@ -323,9 +323,8 @@ mod tests {
     mod test_bank_serialize {
         use {
             super::*,
-            crate::{bank::BankHashStats, serde_snapshot::BankIncrementalSnapshotPersistence},
+            crate::{bank::BankHashStats, serde_snapshot::ObsoleteIncrementalSnapshotPersistence},
             solana_accounts_db::accounts_hash::AccountsLtHash,
-            solana_clock::Slot,
             solana_frozen_abi::abi_example::AbiExample,
             solana_hash::Hash,
             solana_lattice_hash::lt_hash::LtHash,
@@ -353,7 +352,7 @@ mod tests {
         #[cfg_attr(
             feature = "frozen-abi",
             derive(AbiExample),
-            frozen_abi(digest = "BTGQGexXMBBxcAByvhs2vaT2Wkaz1ki5sFFnhjdzDhAX")
+            frozen_abi(digest = "CCsPFzrwkgWmiYh25nwNvBSRdgiUW45Rh6jGh1XGcNZt")
         )]
         #[derive(Serialize)]
         pub struct BankAbiTestWrapper {
@@ -370,8 +369,8 @@ mod tests {
             // ensure there is at least one snapshot storage example for ABI digesting
             assert!(!snapshot_storages.is_empty());
 
-            let incremental_snapshot_persistence = BankIncrementalSnapshotPersistence {
-                full_slot: Slot::default(),
+            let incremental_snapshot_persistence = ObsoleteIncrementalSnapshotPersistence {
+                full_slot: u64::default(),
                 full_hash: [1; 32],
                 full_capitalization: u64::default(),
                 incremental_hash: [2; 32],
@@ -387,7 +386,9 @@ mod tests {
                 &get_storages_to_serialize(&snapshot_storages),
                 ExtraFieldsToSerialize {
                     lamports_per_signature: bank.fee_rate_governor.lamports_per_signature,
-                    incremental_snapshot_persistence: Some(&incremental_snapshot_persistence),
+                    obsolete_incremental_snapshot_persistence: Some(
+                        incremental_snapshot_persistence,
+                    ),
                     obsolete_epoch_accounts_hash: Some(Hash::new_unique()),
                     versioned_epoch_stakes,
                     accounts_lt_hash: Some(AccountsLtHash(LtHash::identity()).into()),
