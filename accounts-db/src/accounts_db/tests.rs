@@ -4,6 +4,7 @@ use {
     crate::{
         account_info::StoredSize,
         accounts_file::AccountsFileProvider,
+        accounts_hash::AccountHash,
         accounts_index::{tests::*, AccountSecondaryIndexesIncludeExclude},
         ancient_append_vecs,
         append_vec::{
@@ -18,6 +19,8 @@ use {
         accounts_equal, Account, AccountSharedData, InheritableAccountFields, ReadableAccount,
         WritableAccount, DUMMY_INHERITABLE_ACCOUNT_FIELDS,
     },
+    solana_hash::Hash,
+    solana_lattice_hash::lt_hash::Checksum as LtHashChecksum,
     solana_pubkey::PUBKEY_BYTES,
     std::{
         iter::{self, FromIterator},
@@ -1922,16 +1925,21 @@ fn test_hash_stored_account() {
     };
     let account = stored_account.to_account_shared_data();
 
-    let expected_account_hash =
-        AccountHash(Hash::from_str("4xuaE8UfH8EYsPyDZvJXUScoZSyxUJf2BpzVMLTFh497").unwrap());
-
+    let expected_account_hash = LtHashChecksum([
+        160, 29, 105, 138, 56, 166, 40, 55, 224, 231, 29, 208, 68, 46, 190, 89, 141, 20, 65, 86,
+        115, 14, 182, 125, 174, 181, 165, 0, 72, 175, 105, 177,
+    ]);
     assert_eq!(
-        AccountsDb::hash_account(&stored_account, stored_account.pubkey(),),
+        AccountsDb::lt_hash_account(&stored_account, stored_account.pubkey())
+            .0
+            .checksum(),
         expected_account_hash,
         "StoredAccountMeta's data layout might be changed; update hashing if needed."
     );
     assert_eq!(
-        AccountsDb::hash_account(&account, stored_account.pubkey(),),
+        AccountsDb::lt_hash_account(&account, stored_account.pubkey())
+            .0
+            .checksum(),
         expected_account_hash,
         "Account-based hashing must be consistent with StoredAccountMeta-based one."
     );
