@@ -353,7 +353,6 @@ dependencies = [
  "solana-big-mod-exp",
  "solana-blake3-hasher",
  "solana-bn254",
- "solana-bpf-loader-program",
  "solana-clock",
  "solana-cpi",
  "solana-curve25519 3.0.0",

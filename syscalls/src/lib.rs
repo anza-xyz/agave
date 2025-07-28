@@ -2161,7 +2161,6 @@ mod tests {
         assert_matches::assert_matches,
         core::slice,
         solana_account::{create_account_shared_data_for_test, AccountSharedData},
-        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Clock,
         solana_epoch_rewards::EpochRewards,
         solana_epoch_schedule::EpochSchedule,
@@ -2170,9 +2169,18 @@ mod tests {
         solana_instruction::Instruction,
         solana_last_restart_slot::LastRestartSlot,
         solana_program::program::check_type_assumptions,
-        solana_program_runtime::{invoke_context::InvokeContext, with_mock_invoke_context},
+        solana_program_runtime::{
+            execution_budget::MAX_HEAP_FRAME_BYTES,
+            invoke_context::{BpfAllocator, InvokeContext, SyscallContext},
+            with_mock_invoke_context,
+        },
         solana_sbpf::{
-            error::EbpfError, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
+            aligned_memory::AlignedMemory,
+            ebpf::{self, HOST_ALIGN},
+            error::EbpfError,
+            memory_region::{MemoryMapping, MemoryRegion},
+            program::SBPFVersion,
+            vm::Config,
         },
         solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, sysvar},
         solana_sha256_hasher::hashv,
@@ -2612,82 +2620,104 @@ mod tests {
         );
     }
 
+    macro_rules! setup_alloc_test {
+        ($invoke_context:ident, $memory_mapping:ident, $heap:ident) => {
+            prepare_mockup!($invoke_context, program_id, bpf_loader::id());
+            $invoke_context
+                .set_syscall_context(SyscallContext {
+                    allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                    accounts_metadata: Vec::new(),
+                    trace_log: Vec::new(),
+                })
+                .unwrap();
+            let config = Config {
+                aligned_memory_mapping: false,
+                ..Config::default()
+            };
+            let mut $heap =
+                AlignedMemory::<{ HOST_ALIGN }>::zero_filled(MAX_HEAP_FRAME_BYTES as usize);
+            let regions = vec![MemoryRegion::new_writable(
+                $heap.as_slice_mut(),
+                ebpf::MM_HEAP_START,
+            )];
+            let mut $memory_mapping =
+                MemoryMapping::new(regions, &config, SBPFVersion::V3).unwrap();
+        };
+    }
+
     #[test]
     fn test_syscall_sol_alloc_free() {
         // large alloc
         {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_ne!(result.unwrap(), 0);
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
-            let result =
-                SyscallAllocFree::rust(invoke_context, u64::MAX, 0, 0, 0, 0, memory_mapping);
+            let result = SyscallAllocFree::rust(
+                &mut invoke_context,
+                u64::MAX,
+                0,
+                0,
+                0,
+                0,
+                &mut memory_mapping,
+            );
             assert_eq!(result.unwrap(), 0);
         }
 
         // many small unaligned allocs
         {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..100 {
-                let result = SyscallAllocFree::rust(invoke_context, 1, 0, 0, 0, 0, memory_mapping);
+                let result =
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
 
         // many small aligned allocs
         {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             for _ in 0..12 {
-                let result = SyscallAllocFree::rust(invoke_context, 1, 0, 0, 0, 0, memory_mapping);
+                let result =
+                    SyscallAllocFree::rust(&mut invoke_context, 1, 0, 0, 0, 0, &mut memory_mapping);
                 assert_ne!(result.unwrap(), 0);
             }
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 solana_program_entrypoint::HEAP_LENGTH as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             assert_eq!(result.unwrap(), 0);
         }
@@ -2695,19 +2725,15 @@ mod tests {
         // aligned allocs
 
         fn aligned<T>() {
-            prepare_mockup!(invoke_context, program_id, bpf_loader::id());
-            mock_create_vm!(vm, Vec::new(), Vec::new(), &mut invoke_context);
-            let mut vm = vm.unwrap();
-            let invoke_context = &mut vm.context_object_pointer;
-            let memory_mapping = &mut vm.memory_mapping;
+            setup_alloc_test!(invoke_context, memory_mapping, heap);
             let result = SyscallAllocFree::rust(
-                invoke_context,
+                &mut invoke_context,
                 size_of::<T>() as u64,
                 0,
                 0,
                 0,
                 0,
-                memory_mapping,
+                &mut memory_mapping,
             );
             let address = result.unwrap();
             assert_ne!(address, 0);

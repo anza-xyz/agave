@@ -316,32 +316,6 @@ macro_rules! create_vm {
     };
 }
 
-#[macro_export]
-macro_rules! mock_create_vm {
-    ($vm:ident, $additional_regions:expr, $accounts_metadata:expr, $invoke_context:expr $(,)?) => {
-        let loader = solana_type_overrides::sync::Arc::new(BuiltinProgram::new_mock());
-        let function_registry = solana_sbpf::program::FunctionRegistry::default();
-        let executable = solana_sbpf::elf::Executable::<InvokeContext>::from_text_bytes(
-            &[0x07, 0x0A, 0, 0, 0, 0, 0, 0, 0x9D, 0, 0, 0, 0, 0, 0, 0],
-            loader,
-            SBPFVersion::V3,
-            function_registry,
-        )
-        .unwrap();
-        executable
-            .verify::<solana_sbpf::verifier::RequisiteVerifier>()
-            .unwrap();
-        $crate::create_vm!(
-            $vm,
-            &executable,
-            $additional_regions,
-            $accounts_metadata,
-            $invoke_context,
-        );
-        let $vm = $vm.map(|(vm, _, _)| vm);
-    };
-}
-
 fn create_memory_mapping<'a, 'b, C: ContextObject>(
     executable: &'a Executable<C>,
     stack: &'b mut [u8],

@@ -60,7 +60,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-solana-bpf-loader-program = { workspace = true, features = ["svm-internal"] }
 solana-epoch-rewards = { workspace = true }
 solana-epoch-schedule = { workspace = true }
 solana-fee-calculator = { workspace = true }

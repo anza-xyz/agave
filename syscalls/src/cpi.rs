@@ -1276,11 +1276,11 @@ mod tests {
         super::*,
         assert_matches::assert_matches,
         solana_account::{Account, AccountSharedData, ReadableAccount},
-        solana_bpf_loader_program::mock_create_vm,
         solana_clock::Epoch,
         solana_instruction::Instruction,
         solana_program_runtime::{
-            invoke_context::SerializedAccountMetadata, with_mock_invoke_context_with_feature_set,
+            invoke_context::{BpfAllocator, SerializedAccountMetadata, SyscallContext},
+            with_mock_invoke_context_with_feature_set,
         },
         solana_sbpf::{
             ebpf::MM_INPUT_START, memory_region::MemoryRegion, program::SBPFVersion, vm::Config,
@@ -1840,7 +1840,13 @@ mod tests {
             &[1, 1]
         );
 
-        mock_create_vm!(_vm, Vec::new(), vec![account_metadata], &mut invoke_context);
+        invoke_context
+            .set_syscall_context(SyscallContext {
+                allocator: BpfAllocator::new(solana_program_entrypoint::HEAP_LENGTH as u64),
+                accounts_metadata: vec![account_metadata],
+                trace_log: Vec::new(),
+            })
+            .unwrap();
 
         invoke_context
             .transaction_context
