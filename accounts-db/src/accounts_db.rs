@@ -5087,34 +5087,24 @@ impl AccountsDb {
             return ZERO_LAMPORT_ACCOUNT_LT_HASH;
         }
 
-        let hasher = Self::hash_account_helper(account, pubkey, RentEpochInAccountHash::Excluded);
+        let hasher = Self::hash_account_helper(account, pubkey);
         let lt_hash = LtHash::with(&hasher);
         AccountLtHash(lt_hash)
     }
 
     /// Hashes `account` and returns the underlying Hasher
-    fn hash_account_helper(
-        account: &impl ReadableAccount,
-        pubkey: &Pubkey,
-        rent_epoch_in_account_hash: RentEpochInAccountHash,
-    ) -> blake3::Hasher {
+    fn hash_account_helper(account: &impl ReadableAccount, pubkey: &Pubkey) -> blake3::Hasher {
         let mut hasher = blake3::Hasher::new();
 
         // allocate a buffer on the stack that's big enough
         // to hold a token account or a stake account
-        const META_SIZE: usize = 8 /* lamports */ + 8 /* rent_epoch */ + 1 /* executable */ + 32 /* owner */ + 32 /* pubkey */;
+        const META_SIZE: usize = 8 /* lamports */ + 1 /* executable */ + 32 /* owner */ + 32 /* pubkey */;
         const DATA_SIZE: usize = 200; // stake accounts are 200 B and token accounts are 165-182ish B
         const BUFFER_SIZE: usize = META_SIZE + DATA_SIZE;
         let mut buffer = SmallVec::<[u8; BUFFER_SIZE]>::new();
 
-        // collect lamports, rent_epoch into buffer to hash
+        // collect lamports into buffer to hash
         buffer.extend_from_slice(&account.lamports().to_le_bytes());
-
-        if rent_epoch_in_account_hash == RentEpochInAccountHash::Included {
-            // conditionally hash in the rent epoch
-            // once the rent epoch is permanently excluded, also remove the 8 bytes in the META_SIZE above
-            buffer.extend_from_slice(&account.rent_epoch().to_le_bytes());
-        }
 
         let data = account.data();
         if data.len() > DATA_SIZE {
@@ -5129,7 +5119,7 @@ impl AccountsDb {
             buffer.extend_from_slice(data);
         }
 
-        // collect exec_flag, owner, pubkey into buffer to hash
+        // collect executable, owner, and pubkey into buffer to hash
         buffer.push(account.executable().into());
         buffer.extend_from_slice(account.owner().as_ref());
         buffer.extend_from_slice(pubkey.as_ref());
@@ -7398,15 +7388,6 @@ impl AccountsDb {
             );
         }
     }
-}
-
-/// Should the rent_epoch field be used to compute the hash of an account?
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum RentEpochInAccountHash {
-    /// Do include the rent_epoch when computing the hash of an account
-    Included,
-    /// Do *not* include the rent_epoch when computing the hash of an account
-    Excluded,
 }
 
 #[derive(Debug, Copy, Clone)]
