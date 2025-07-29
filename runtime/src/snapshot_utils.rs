@@ -1125,7 +1125,7 @@ fn archive_snapshot(
                 .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
-            let storages_orderer = AccountStoragesOrderBalancer::new(
+            let storages_orderer = AccountStoragesOrderBalancer::with_small_to_large_ratio(
                 snapshot_storages,
                 INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );

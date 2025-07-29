@@ -5715,10 +5715,16 @@ impl AccountsDb {
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
     ) -> AccountsLtHash {
-        let storages = AccountStoragesOrderBalancer::new(storages, (4, 1));
+        const INTERLEAVE_SCAN_ACCOUNTS_SMALL_TO_LARGE_RATIO: (usize, usize) = (9, 1);
+        const SCAN_ACCOUNTS_BATCH_CYCLES_COUNT: usize = 1000;
+        let ordering_ratio = INTERLEAVE_SCAN_ACCOUNTS_SMALL_TO_LARGE_RATIO;
+        let storages =
+            AccountStoragesOrderBalancer::with_small_to_large_ratio(storages, ordering_ratio);
         let mut lt_hash = storages
             .into_par_iter()
-            .by_uniform_blocks(100)
+            .by_uniform_blocks(
+                (ordering_ratio.0 + ordering_ratio.1) * SCAN_ACCOUNTS_BATCH_CYCLES_COUNT,
+            )
             .fold(LtHash::identity, |mut accum, storage| {
                 let obsolete_accounts = storage.get_obsolete_accounts(None);
                 storage

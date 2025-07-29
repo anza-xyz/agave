@@ -3,6 +3,7 @@
 use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
+    rand::seq::SliceRandom,
     rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
@@ -298,44 +299,44 @@ impl Default for AccountStorageStatus {
 }
 
 pub struct AccountStoragesOrderBalancer<'a> {
-    small_to_large_ratio: (usize, usize),
     storages: &'a [Arc<AccountStorageEntry>],
     indices: Vec<usize>,
 }
 
 impl<'a> AccountStoragesOrderBalancer<'a> {
-    pub fn new(
+    pub fn with_small_to_large_ratio(
         storages: &'a [Arc<AccountStorageEntry>],
         small_to_large_ratio: (usize, usize),
     ) -> Self {
-        let mut indices: Vec<usize> = (0..storages.len()).collect();
+        let len_range = 0..storages.len();
+        let mut indices: Vec<_> = len_range.clone().collect();
         indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
-        Self {
-            storages,
-            indices,
-            small_to_large_ratio,
-        }
+        indices.iter_mut().for_each(|i| {
+            *i = select_from_range_with_start_end_rates(
+                len_range.clone(),
+                *i,
+                small_to_large_ratio.clone(),
+            )
+        });
+        Self { storages, indices }
+    }
+
+    pub fn randomized(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
+        let mut indices: Vec<usize> = (0..storages.len()).collect();
+        indices.shuffle(&mut rand::thread_rng());
+        Self { storages, indices }
     }
 
     pub fn into_iter(self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
-        (0..self.indices.len()).map(move |i| self.nth_storage(i))
+        self.indices.into_iter().map(|i| self.storages[i].as_ref())
     }
 
     pub fn into_par_iter(
         self,
     ) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
-        (0..self.indices.len())
+        self.indices
             .into_par_iter()
-            .map(move |i| self.nth_storage(i))
-    }
-
-    fn nth_storage(&self, nth: usize) -> &'a AccountStorageEntry {
-        let range_index = select_from_range_with_start_end_rates(
-            0..self.indices.len(),
-            nth,
-            self.small_to_large_ratio.clone(),
-        );
-        self.storages[self.indices[range_index]].as_ref()
+            .map(|i| self.storages[i].as_ref())
     }
 }
 
