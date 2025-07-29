@@ -20,9 +20,6 @@ pub struct MigratingBuiltinCost {
     position: usize,
 }
 
-#[derive(Clone)]
-pub struct NotMigratingBuiltinCost {}
-
 /// DEVELOPER: when a builtin is migrated to sbpf, please add its corresponding
 /// migration feature ID to BUILTIN_INSTRUCTION_COSTS, and move it from
 /// NON_MIGRATING_BUILTINS_COSTS to MIGRATING_BUILTINS_COSTS, so the builtin's
@@ -32,7 +29,7 @@ pub struct NotMigratingBuiltinCost {}
 #[derive(Clone)]
 pub enum BuiltinCost {
     Migrating(MigratingBuiltinCost),
-    NotMigrating(NotMigratingBuiltinCost),
+    NotMigrating,
 }
 
 impl BuiltinCost {
@@ -42,14 +39,14 @@ impl BuiltinCost {
                 core_bpf_migration_feature,
                 ..
             }) => Some(core_bpf_migration_feature),
-            BuiltinCost::NotMigrating(_) => None,
+            BuiltinCost::NotMigrating => None,
         }
     }
 
     fn position(&self) -> Option<usize> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
-            BuiltinCost::NotMigrating(_) => None,
+            BuiltinCost::NotMigrating => None,
         }
     }
 }
@@ -96,43 +93,15 @@ pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[(
 )];
 
 const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
-    (
-        vote::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        system_program::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        compute_budget::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        bpf_loader_upgradeable::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        bpf_loader_deprecated::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        bpf_loader::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        loader_v4::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    // Note: These are precompile, run directly in bank during sanitizing;
-    (
-        secp256k1_program::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
-    (
-        ed25519_program::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
-    ),
+    (vote::id(), BuiltinCost::NotMigrating),
+    (system_program::id(), BuiltinCost::NotMigrating),
+    (compute_budget::id(), BuiltinCost::NotMigrating),
+    (bpf_loader_upgradeable::id(), BuiltinCost::NotMigrating),
+    (bpf_loader_deprecated::id(), BuiltinCost::NotMigrating),
+    (bpf_loader::id(), BuiltinCost::NotMigrating),
+    (loader_v4::id(), BuiltinCost::NotMigrating),
+    (secp256k1_program::id(), BuiltinCost::NotMigrating),
+    (ed25519_program::id(), BuiltinCost::NotMigrating),
 ];
 
 /// A table of 256 booleans indicates whether the first `u8` of a Pubkey exists in
@@ -175,7 +144,7 @@ const fn validate_position(migrating_builtins: &[(Pubkey, BuiltinCost)]) {
                 position == index,
                 "migration feture must exist and at correct position"
             ),
-            BuiltinCost::NotMigrating(_) => {
+            BuiltinCost::NotMigrating => {
                 panic!("migration feture must exist and at correct position")
             }
         }
