@@ -1,12 +1,11 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{self as feature_set},
     ahash::AHashMap,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, compute_budget, ed25519_program,
-        loader_v4, secp256k1_program, stake, system_program, vote,
+        loader_v4, secp256k1_program, system_program, vote,
     },
 };
 
@@ -77,20 +76,14 @@ static BUILTIN_INSTRUCTION_COSTS: std::sync::LazyLock<AHashMap<Pubkey, BuiltinCo
 /// correctly furnishing `core_bpf_migration_feature`.
 ///
 #[allow(dead_code)]
-const TOTAL_COUNT_BUILTINS: usize = 10;
+const TOTAL_COUNT_BUILTINS: usize = 9;
 #[cfg(test)]
 static_assertions::const_assert_eq!(
     MIGRATING_BUILTINS_COSTS.len() + NON_MIGRATING_BUILTINS_COSTS.len(),
     TOTAL_COUNT_BUILTINS
 );
 
-pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[(
-    stake::id(),
-    BuiltinCost::Migrating(MigratingBuiltinCost {
-        core_bpf_migration_feature: feature_set::migrate_stake_program_to_core_bpf::id(),
-        position: 0,
-    }),
-)];
+pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[];
 
 const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (vote::id(), BuiltinCost::NotMigrating),
@@ -174,7 +167,7 @@ pub fn get_migration_feature_position(feature_id: &Pubkey) -> usize {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {super::*, agave_feature_set as feature_set, solana_sdk_ids::stake};
 
     #[test]
     fn test_const_builtin_cost_arrays() {
