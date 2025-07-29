@@ -28,4 +28,4 @@ cargo run --manifest-path json-rpc-client/Cargo.toml -- -C config.yml -k json-rp
 ```
 
 The client will communicate with the server and print the responses it
-recieves from the server.
+receives from the server.
