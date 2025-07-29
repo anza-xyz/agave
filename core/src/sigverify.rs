@@ -80,6 +80,7 @@ impl SigVerifier for TransactionSigVerifier {
             &self.recycler_out,
             self.reject_non_vote,
             valid_packets,
+            |_| true,
         );
         batches
     }

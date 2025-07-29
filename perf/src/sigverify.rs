@@ -509,11 +509,18 @@ pub fn shrink_batches(batches: Vec<PacketBatch>) -> Vec<PacketBatch> {
         .collect()
 }
 
-pub fn ed25519_verify_cpu(batches: &mut [PacketBatch], reject_non_vote: bool, packet_count: usize) {
+pub fn ed25519_verify_cpu(
+    batches: &mut [PacketBatch],
+    reject_non_vote: bool,
+    packet_count: usize,
+    extra_verification: impl Fn(&PacketRefMut) -> bool + Send + Sync,
+) {
     debug!("CPU ECDSA for {packet_count}");
     PAR_THREAD_POOL.install(|| {
         batches.par_iter_mut().flatten().for_each(|mut packet| {
-            if !packet.meta().discard() && !verify_packet(&mut packet, reject_non_vote) {
+            if !packet.meta().discard()
+                && (!verify_packet(&mut packet, reject_non_vote) || !extra_verification(&packet))
+            {
                 packet.meta_mut().set_discard(true);
             }
         });
@@ -589,9 +596,15 @@ pub fn ed25519_verify(
     recycler_out: &Recycler<PinnedVec<u8>>,
     reject_non_vote: bool,
     valid_packet_count: usize,
+    extra_cpu_verification: impl Fn(&PacketRefMut) -> bool + Send + Sync,
 ) {
     let Some(api) = perf_libs::api() else {
-        return ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
+        return ed25519_verify_cpu(
+            batches,
+            reject_non_vote,
+            valid_packet_count,
+            extra_cpu_verification,
+        );
     };
     let total_packet_count = count_packets_in_batches(batches);
     // micro-benchmarks show GPU time for smallest batch around 15-20ms
@@ -606,7 +619,12 @@ pub fn ed25519_verify(
         return;
     };
     if valid_percentage < 90 || valid_packet_count < 64 {
-        ed25519_verify_cpu(batches, reject_non_vote, valid_packet_count);
+        ed25519_verify_cpu(
+            batches,
+            reject_non_vote,
+            valid_packet_count,
+            extra_cpu_verification,
+        );
         return;
     }
 
@@ -1152,7 +1170,14 @@ mod tests {
         let recycler = Recycler::default();
         let recycler_out = Recycler::default();
         let packet_count = sigverify::count_packets_in_batches(batches);
-        sigverify::ed25519_verify(batches, &recycler, &recycler_out, false, packet_count);
+        sigverify::ed25519_verify(
+            batches,
+            &recycler,
+            &recycler_out,
+            false,
+            packet_count,
+            |_| true,
+        );
     }
 
     #[test]
@@ -1288,8 +1313,15 @@ mod tests {
             // equivalent to the CPU verification pipeline.
             let mut batches_cpu = batches.clone();
             let packet_count = sigverify::count_packets_in_batches(&batches);
-            sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, packet_count);
-            ed25519_verify_cpu(&mut batches_cpu, false, packet_count);
+            sigverify::ed25519_verify(
+                &mut batches,
+                &recycler,
+                &recycler_out,
+                false,
+                packet_count,
+                |_| true,
+            );
+            ed25519_verify_cpu(&mut batches_cpu, false, packet_count, |_| true);
 
             // check result
             batches

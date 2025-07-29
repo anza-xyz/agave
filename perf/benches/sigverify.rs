@@ -33,7 +33,14 @@ fn bench_sigverify_simple(b: &mut Bencher) {
     let recycler_out = Recycler::default();
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -59,7 +66,14 @@ fn bench_sigverify_low_packets_small_batch(b: &mut Bencher) {
     let recycler = Recycler::default();
     let recycler_out = Recycler::default();
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -69,7 +83,14 @@ fn bench_sigverify_low_packets_large_batch(b: &mut Bencher) {
     let recycler = Recycler::default();
     let recycler_out = Recycler::default();
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -79,7 +100,14 @@ fn bench_sigverify_medium_packets_small_batch(b: &mut Bencher) {
     let recycler = Recycler::default();
     let recycler_out = Recycler::default();
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -89,7 +117,14 @@ fn bench_sigverify_medium_packets_large_batch(b: &mut Bencher) {
     let recycler = Recycler::default();
     let recycler_out = Recycler::default();
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -99,7 +134,14 @@ fn bench_sigverify_high_packets_small_batch(b: &mut Bencher) {
     let recycler = Recycler::default();
     let recycler_out = Recycler::default();
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -110,7 +152,14 @@ fn bench_sigverify_high_packets_large_batch(b: &mut Bencher) {
     let recycler_out = Recycler::default();
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
@@ -155,7 +204,14 @@ fn bench_sigverify_uneven(b: &mut Bencher) {
     let recycler_out = Recycler::default();
     // verify packets
     b.iter(|| {
-        sigverify::ed25519_verify(&mut batches, &recycler, &recycler_out, false, num_packets);
+        sigverify::ed25519_verify(
+            &mut batches,
+            &recycler,
+            &recycler_out,
+            false,
+            num_packets,
+            |_| true,
+        );
     })
 }
 
