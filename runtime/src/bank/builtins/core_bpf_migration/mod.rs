@@ -1,17 +1,18 @@
 pub(crate) mod error;
 mod source_buffer;
+mod target_bpf_v2;
 mod target_builtin;
 mod target_core_bpf;
 
 use {
-    crate::bank::Bank,
+    crate::bank::{builtins::core_bpf_migration::target_bpf_v2::TargetBpfV2, Bank},
     error::CoreBpfMigrationError,
     num_traits::{CheckedAdd, CheckedSub},
     solana_account::{AccountSharedData, ReadableAccount, WritableAccount},
     solana_builtins::core_bpf_migration::CoreBpfMigrationConfig,
     solana_hash::Hash,
     solana_instruction::error::InstructionError,
-    solana_loader_v3_interface::state::UpgradeableLoaderState,
+    solana_loader_v3_interface::{get_program_data_address, state::UpgradeableLoaderState},
     solana_program_runtime::{
         invoke_context::{EnvironmentConfig, InvokeContext},
         loaded_programs::ProgramCacheForTxBatch,
@@ -43,10 +44,10 @@ impl Bank {
     /// account address.
     fn new_target_program_account(
         &self,
-        target: &TargetBuiltin,
+        program_id: &Pubkey,
     ) -> Result<AccountSharedData, CoreBpfMigrationError> {
         let state = UpgradeableLoaderState::Program {
-            programdata_address: target.program_data_address,
+            programdata_address: get_program_data_address(program_id),
         };
         let lamports =
             self.get_minimum_balance_for_rent_exemption(UpgradeableLoaderState::size_of_program());
@@ -229,7 +230,7 @@ impl Bank {
         };
 
         // Attempt serialization first before modifying the bank.
-        let new_target_program_account = self.new_target_program_account(&target)?;
+        let new_target_program_account = self.new_target_program_account(builtin_program_id)?;
         let new_target_program_data_account =
             self.new_target_program_data_account(&source, config.upgrade_authority_address)?;
 
@@ -364,6 +365,92 @@ impl Bank {
         Ok(())
     }
 
+    /// Upgrade a Loader v2 BPF program to a Loader v3 BPF program.
+    ///
+    /// To use this function, add a feature-gated callsite to bank's
+    /// `apply_feature_activations` function, similar to below.
+    ///
+    /// ```ignore
+    /// if new_feature_activations.contains(&agave_feature_set::test_upgrade_program::id()) {
+    ///     self.upgrade_loader_v2_program_with_loader_v3_program(
+    ///        &bpf_loader_v2_program_address,
+    ///        &source_buffer_address,
+    ///        "test_upgrade_loader_v2_program_with_loader_v3_program",
+    ///     );
+    /// }
+    /// ```
+    /// The `source_buffer_address` must point to a Loader v3 buffer account
+    /// (state equal to [`UpgradeableLoaderState::Buffer`]).
+    #[allow(dead_code)] // Only used when an upgrade is configured.
+    pub(crate) fn upgrade_loader_v2_program_with_loader_v3_program(
+        &mut self,
+        loader_v2_bpf_program_address: &Pubkey,
+        source_buffer_address: &Pubkey,
+        datapoint_name: &'static str,
+    ) -> Result<(), CoreBpfMigrationError> {
+        datapoint_info!(datapoint_name, ("slot", self.slot, i64));
+
+        let target = TargetBpfV2::new_checked(self, loader_v2_bpf_program_address)?;
+        let source = SourceBuffer::new_checked(self, source_buffer_address)?;
+
+        // Attempt serialization first before modifying the bank.
+        let new_target_program_account =
+            self.new_target_program_account(loader_v2_bpf_program_address)?;
+        // Loader v2 programs do not have an upgrade authority, so pass `None` when
+        // creating the new program data account.
+        let new_target_program_data_account =
+            self.new_target_program_data_account(&source, None)?;
+
+        // Gather old and new account data sizes, for updating the bank's
+        // accounts data size delta off-chain.
+        // The old data size is the total size of all original accounts
+        // involved.
+        // The new data size is the total size of all the new program accounts.
+        let old_data_size = checked_add(
+            target.program_account.data().len(),
+            source.buffer_account.data().len(),
+        )?;
+        let new_data_size = checked_add(
+            new_target_program_account.data().len(),
+            new_target_program_data_account.data().len(),
+        )?;
+
+        // Deploy the new Loader v3 program.
+        // This step will validate the program ELF against the current runtime
+        // environment, as well as update the program cache.
+        self.directly_invoke_loader_v3_deploy(
+            &target.program_address,
+            new_target_program_data_account.data(),
+        )?;
+
+        // Calculate the lamports to burn.
+        // The target program account will be replaced, so burn its lamports.
+        // The source buffer account will be cleared, so burn its lamports.
+        // The two new program accounts will need to be funded.
+        let lamports_to_burn = checked_add(
+            target.program_account.lamports(),
+            source.buffer_account.lamports(),
+        )?;
+        let lamports_to_fund = checked_add(
+            new_target_program_account.lamports(),
+            new_target_program_data_account.lamports(),
+        )?;
+        self.update_captalization(lamports_to_burn, lamports_to_fund)?;
+
+        // Store the new program accounts and clear the source buffer account.
+        self.store_account(&target.program_address, &new_target_program_account);
+        self.store_account(
+            &target.program_data_address,
+            &new_target_program_data_account,
+        );
+        self.store_account(&source.buffer_address, &AccountSharedData::default());
+
+        // Update the account data size delta.
+        self.calculate_and_update_accounts_data_size_delta_off_chain(old_data_size, new_data_size);
+
+        Ok(())
+    }
+
     fn update_captalization(
         &mut self,
         lamports_to_burn: u64,
@@ -396,7 +483,7 @@ pub(crate) mod tests {
         solana_clock::Slot,
         solana_loader_v3_interface::get_program_data_address,
         solana_program_runtime::loaded_programs::{ProgramCacheEntry, ProgramCacheEntryType},
-        solana_sdk_ids::{bpf_loader_upgradeable, native_loader},
+        solana_sdk_ids::{bpf_loader, bpf_loader_upgradeable, native_loader},
         std::{fs::File, io::Read},
         test_case::test_case,
     };
@@ -1086,5 +1173,144 @@ pub(crate) mod tests {
                 slot: bank.slot(),
             },
         );
+    }
+
+    #[test]
+    fn test_upgrade_loader_v2_program_with_loader_v3_program() {
+        let mut bank = create_simple_test_bank(0);
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let program_account = {
+                let elf = [4u8; 200]; // Mock ELF to start.
+                let space = elf.len();
+                let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+                let owner = &bpf_loader::id();
+
+                let mut account = AccountSharedData::new(lamports, space, owner);
+                account.set_executable(true);
+                account.data_as_mut_slice().copy_from_slice(&elf);
+                bank.store_account_and_update_capitalization(
+                    &bpf_loader_v2_program_address,
+                    &account,
+                );
+                account
+            };
+
+            assert_eq!(
+                &bank.get_account(&bpf_loader_v2_program_address).unwrap(),
+                &program_account
+            );
+        };
+
+        let test_context = TestContext::new(
+            &bank,
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            None,
+        );
+        let TestContext {
+            source_buffer_address,
+            ..
+        } = test_context;
+
+        let (
+            expected_post_upgrade_capitalization,
+            expected_post_upgrade_accounts_data_size_delta_off_chain,
+        ) = test_context
+            .calculate_post_migration_capitalization_and_accounts_data_size_delta_off_chain(&bank);
+
+        // Perform the upgrade.
+        let upgrade_slot = bank.slot();
+        bank.upgrade_loader_v2_program_with_loader_v3_program(
+            &bpf_loader_v2_program_address,
+            &source_buffer_address,
+            "test_upgrade_loader_v2_program_with_loader_v3_program",
+        )
+        .unwrap();
+
+        // Run the post-upgrade program checks.
+        test_context.run_program_checks(&bank, upgrade_slot);
+
+        // Check the bank's capitalization.
+        assert_eq!(bank.capitalization(), expected_post_upgrade_capitalization);
+
+        // Check the bank's accounts data size delta off-chain.
+        assert_eq!(
+            bank.accounts_data_size_delta_off_chain.load(Relaxed),
+            expected_post_upgrade_accounts_data_size_delta_off_chain
+        );
+
+        // Check the migrated program account is now owned by the upgradeable loader.
+        let migrated_program_account = bank.get_account(&bpf_loader_v2_program_address).unwrap();
+        assert_eq!(
+            migrated_program_account.owner(),
+            &bpf_loader_upgradeable::id()
+        );
+    }
+
+    #[test]
+    fn test_upgrade_loader_v2_program_with_loader_v3_program_fail_invalid_buffer() {
+        let mut bank = create_simple_test_bank(0);
+
+        let bpf_loader_v2_program_address = Pubkey::new_unique();
+        let source_buffer_address = Pubkey::new_unique();
+
+        {
+            let program_account = {
+                let elf = [4u8; 200]; // Mock ELF to start.
+                let space = elf.len();
+                let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+                let owner = &bpf_loader::id();
+
+                let mut account = AccountSharedData::new(lamports, space, owner);
+                account.set_executable(true);
+                account.data_as_mut_slice().copy_from_slice(&elf);
+                bank.store_account_and_update_capitalization(
+                    &bpf_loader_v2_program_address,
+                    &account,
+                );
+                account
+            };
+
+            assert_eq!(
+                &bank.get_account(&bpf_loader_v2_program_address).unwrap(),
+                &program_account
+            );
+        };
+
+        // Set up the source buffer with a valid authority, but the migration
+        // config will define the upgrade authority to be `None`.
+        {
+            let elf = test_elf();
+            let buffer_metadata_size = UpgradeableLoaderState::size_of_buffer_metadata();
+            let space = buffer_metadata_size + elf.len();
+            let lamports = bank.get_minimum_balance_for_rent_exemption(space);
+            let owner = &bpf_loader_upgradeable::id();
+
+            let buffer_metadata = UpgradeableLoaderState::Program {
+                programdata_address: Pubkey::new_unique(),
+            };
+
+            let mut account =
+                AccountSharedData::new_data_with_space(lamports, &buffer_metadata, space, owner)
+                    .unwrap();
+            account.data_as_mut_slice()[buffer_metadata_size..].copy_from_slice(&elf);
+
+            bank.store_account_and_update_capitalization(&source_buffer_address, &account);
+        }
+
+        // Try to perform the upgrade.
+        assert_matches!(
+            bank.upgrade_loader_v2_program_with_loader_v3_program(
+                &bpf_loader_v2_program_address,
+                &source_buffer_address,
+                "test_upgrade_loader_v2_program_with_loader_v3_program",
+            )
+            .unwrap_err(),
+            CoreBpfMigrationError::InvalidBufferAccount(_)
+        )
     }
 }
