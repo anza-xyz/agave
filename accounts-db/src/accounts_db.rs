@@ -22,7 +22,6 @@ mod geyser_plugin_utils;
 pub mod stats;
 pub mod tests;
 
-use crate::account_storage::AccountStoragesOrderBalancer;
 #[cfg(test)]
 use crate::append_vec::StoredAccountMeta;
 #[cfg(feature = "dev-context-only-utils")]
@@ -32,7 +31,7 @@ use {
         account_info::{AccountInfo, Offset, StorageLocation},
         account_storage::{
             stored_account_info::{StoredAccountInfo, StoredAccountInfoWithoutData},
-            AccountStorage, AccountStorageStatus, ShrinkInProgress,
+            AccountStorage, AccountStorageStatus, AccountStoragesOrderer, ShrinkInProgress,
         },
         accounts_cache::{AccountsCache, CachedAccount, SlotCache},
         accounts_db::stats::{
@@ -5715,16 +5714,12 @@ impl AccountsDb {
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
     ) -> AccountsLtHash {
-        const INTERLEAVE_SCAN_ACCOUNTS_SMALL_TO_LARGE_RATIO: (usize, usize) = (9, 1);
-        const SCAN_ACCOUNTS_BATCH_CYCLES_COUNT: usize = 1000;
-        let ordering_ratio = INTERLEAVE_SCAN_ACCOUNTS_SMALL_TO_LARGE_RATIO;
-        let storages =
-            AccountStoragesOrderBalancer::with_small_to_large_ratio(storages, ordering_ratio);
+        // Randomized order works well with rayon work splitting, since we only care about
+        // uniform distribution of total work size per batch (other ordering strategies might be
+        // useful for optimizing disk read sizes and buffers usage in a single IO queue).
+        let storages = AccountStoragesOrderer::with_random_order(storages);
         let mut lt_hash = storages
             .into_par_iter()
-            .by_uniform_blocks(
-                (ordering_ratio.0 + ordering_ratio.1) * SCAN_ACCOUNTS_BATCH_CYCLES_COUNT,
-            )
             .fold(LtHash::identity, |mut accum, storage| {
                 let obsolete_accounts = storage.get_obsolete_accounts(None);
                 storage

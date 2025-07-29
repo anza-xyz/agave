@@ -298,12 +298,21 @@ impl Default for AccountStorageStatus {
     }
 }
 
-pub struct AccountStoragesOrderBalancer<'a> {
+/// Wrapper over slice of `Arc<AccountStorageEntry>` that provides an ordered access to storages.
+///
+/// A few strategies are available for ordering storages:
+/// - `with_small_to_large_ratio`: interleaving small and large storage written bytes
+/// - `with_random_order`: orders storages randomly
+pub struct AccountStoragesOrderer<'a> {
     storages: &'a [Arc<AccountStorageEntry>],
     indices: Vec<usize>,
 }
 
-impl<'a> AccountStoragesOrderBalancer<'a> {
+impl<'a> AccountStoragesOrderer<'a> {
+    /// Create balaning orderer that interleaves storages with small and large written bytes.
+    ///
+    /// Storages are returned in cycles based on `small_to_large_ratio` - `ratio.0` small storages
+    /// preceding `ratio.1` large storages.
     pub fn with_small_to_large_ratio(
         storages: &'a [Arc<AccountStorageEntry>],
         small_to_large_ratio: (usize, usize),
@@ -321,7 +330,8 @@ impl<'a> AccountStoragesOrderBalancer<'a> {
         Self { storages, indices }
     }
 
-    pub fn randomized(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
+    /// Create randomizing orderer.
+    pub fn with_random_order(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
         let mut indices: Vec<usize> = (0..storages.len()).collect();
         indices.shuffle(&mut rand::thread_rng());
         Self { storages, indices }

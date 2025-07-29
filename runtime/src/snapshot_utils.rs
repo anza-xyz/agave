@@ -21,7 +21,7 @@ use {
     log::*,
     regex::Regex,
     solana_accounts_db::{
-        account_storage::{AccountStorageMap, AccountStoragesOrderBalancer},
+        account_storage::{AccountStorageMap, AccountStoragesOrderer},
         account_storage_reader::AccountStorageReader,
         accounts_db::{AccountStorageEntry, AtomicAccountsFileId},
         accounts_file::{AccountsFile, AccountsFileError, StorageAccess},
@@ -1125,7 +1125,7 @@ fn archive_snapshot(
                 .append_dir_all(SNAPSHOTS_DIR, &staging_snapshots_dir)
                 .map_err(E::ArchiveSnapshotsDir)?;
 
-            let storages_orderer = AccountStoragesOrderBalancer::with_small_to_large_ratio(
+            let storages_orderer = AccountStoragesOrderer::with_small_to_large_ratio(
                 snapshot_storages,
                 INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );
