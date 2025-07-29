@@ -1434,15 +1434,6 @@ pub fn add_args<'a>(app: App<'a, 'a>, default_args: &'a DefaultArgs) -> App<'a, 
             .hidden(hidden_unless_forced()),
     )
     .arg(
-        Arg::with_name("accounts_db_hash_calculation_pubkey_bins")
-            .long("accounts-db-hash-calculation-pubkey-bins")
-            .value_name("USIZE")
-            .validator(is_parsable::<usize>)
-            .takes_value(true)
-            .help("The number of pubkey bins used for accounts hash calculation.")
-            .hidden(hidden_unless_forced()),
-    )
-    .arg(
         Arg::with_name("accounts_db_cache_limit_mb")
             .long("accounts-db-cache-limit-mb")
             .value_name("MEGABYTES")

@@ -411,12 +411,6 @@ pub fn execute(
         )
         .ok(),
         max_ancient_storages: value_t!(matches, "accounts_db_max_ancient_storages", usize).ok(),
-        hash_calculation_pubkey_bins: value_t!(
-            matches,
-            "accounts_db_hash_calculation_pubkey_bins",
-            usize
-        )
-        .ok(),
         exhaustively_verify_refcounts: matches.is_present("accounts_db_verify_refcounts"),
         storage_access,
         scan_filter_for_shrinking,

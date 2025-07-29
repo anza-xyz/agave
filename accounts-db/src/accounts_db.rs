@@ -107,10 +107,6 @@ const UNREF_ACCOUNTS_BATCH_SIZE: usize = 10_000;
 const DEFAULT_FILE_SIZE: u64 = 4 * 1024 * 1024;
 const DEFAULT_NUM_DIRS: u32 = 4;
 
-// When calculating hashes, it is helpful to break the pubkeys found into bins based on the pubkey value.
-// More bins means smaller vectors to sort, copy, etc.
-pub const DEFAULT_HASH_CALCULATION_PUBKEY_BINS: usize = 65536;
-
 // When getting accounts for shrinking from the index, this is the # of accounts to lookup per thread.
 // This allows us to split up accounts index accesses across multiple threads.
 const SHRINK_COLLECT_CHUNK_SIZE: usize = 50;
@@ -307,7 +303,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
-    hash_calculation_pubkey_bins: Some(4),
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -330,7 +325,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     num_clean_threads: None,
     num_foreground_threads: None,
     num_hash_threads: None,
-    hash_calculation_pubkey_bins: None,
 };
 
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
@@ -445,7 +439,6 @@ pub struct AccountsDbConfig {
     pub ancient_append_vec_offset: Option<i64>,
     pub ancient_storage_ideal_size: Option<u64>,
     pub max_ancient_storages: Option<usize>,
-    pub hash_calculation_pubkey_bins: Option<usize>,
     pub skip_initial_hash_calc: bool,
     pub exhaustively_verify_refcounts: bool,
     pub partitioned_epoch_rewards_config: PartitionedEpochRewardsConfig,
@@ -1278,9 +1271,6 @@ pub struct AccountsDb {
     /// true iff we want to skip the initial hash calculation on startup
     pub skip_initial_hash_calc: bool,
 
-    /// The number of pubkey bins used for accounts hash calculation
-    pub hash_calculation_pubkey_bins: usize,
-
     pub storage: AccountStorage,
 
     pub accounts_cache: AccountsCache,
@@ -1584,9 +1574,6 @@ impl AccountsDb {
             max_ancient_storages: accounts_db_config
                 .max_ancient_storages
                 .unwrap_or(DEFAULT_MAX_ANCIENT_STORAGES),
-            hash_calculation_pubkey_bins: accounts_db_config
-                .hash_calculation_pubkey_bins
-                .unwrap_or(DEFAULT_HASH_CALCULATION_PUBKEY_BINS),
             account_indexes: accounts_db_config.account_indexes.unwrap_or_default(),
             shrink_ratio: accounts_db_config.shrink_ratio,
             accounts_update_notifier,
