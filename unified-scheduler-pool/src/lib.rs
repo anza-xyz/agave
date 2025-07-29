@@ -2148,8 +2148,8 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     if matches!(scheduling_mode, BlockProduction) {
                         datapoint_info!(
                             "unified_scheduler-bp_session_stats",
-                            ("slot", current_slot.unwrap_or_default() as i64, i64),
-                            ("block_size_estimate", block_size_estimate as i64, i64),
+                            ("slot", current_slot.unwrap_or_default(), i64),
+                            ("block_size_estimate", block_size_estimate, i64),
                         );
                     }
                     if matches!(scheduling_mode, BlockVerification) {
