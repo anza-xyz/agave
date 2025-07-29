@@ -371,7 +371,7 @@ siphasher = "1.0.1"
 slab = "0.4.10"
 smallvec = "1.15.1"
 smpl_jwt = "0.7.1"
-socket2 = "0.5.10"
+socket2 = "0.6.0"
 soketto = "0.7"
 solana-account = "2.2.1"
 solana-account-decoder = { path = "account-decoder", version = "=3.0.0" }
