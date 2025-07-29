@@ -18,7 +18,7 @@ use {
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     std::{
         sync::{Arc, RwLock},
-        time::Instant,
+        time::{Duration, Instant},
     },
 };
 
@@ -29,9 +29,9 @@ pub struct TransactionSigVerifier {
     recycler_out: Recycler<PinnedVec<u8>>,
     reject_non_vote: bool,
 
-    _bank_forks: Option<Arc<RwLock<BankForks>>>,
-    _cached_working_bank: Option<Arc<Bank>>,
-    _last_bank_cache_time: Instant,
+    bank_forks: Option<Arc<RwLock<BankForks>>>,
+    cached_working_bank: Option<Arc<Bank>>,
+    last_bank_cache_time: Instant,
 }
 
 impl TransactionSigVerifier {
@@ -60,9 +60,9 @@ impl TransactionSigVerifier {
             recycler: Recycler::warmed(50, 4096),
             recycler_out: Recycler::warmed(50, 4096),
             reject_non_vote: false,
-            _bank_forks: bank_forks,
-            _cached_working_bank: cached_working_bank,
-            _last_bank_cache_time: Instant::now(),
+            bank_forks,
+            cached_working_bank,
+            last_bank_cache_time: Instant::now(),
         }
     }
 }
@@ -91,14 +91,38 @@ impl SigVerifier for TransactionSigVerifier {
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
     ) -> Vec<PacketBatch> {
+        let bank = self.get_cached_working_bank();
         sigverify::ed25519_verify(
             &mut batches,
             &self.recycler,
             &self.recycler_out,
             self.reject_non_vote,
             valid_packets,
-            |_| true,
+            |_| {
+                if let Some(_bank) = bank.as_ref() {
+                    true
+                } else {
+                    true
+                }
+            },
         );
         batches
+    }
+}
+
+impl TransactionSigVerifier {
+    fn get_cached_working_bank(&mut self) -> Option<Arc<Bank>> {
+        const CACHE_DURATION: Duration = Duration::from_millis(25);
+        if let Some(bank_forks) = self.bank_forks.as_ref() {
+            let now = Instant::now();
+            if now.duration_since(self.last_bank_cache_time) > CACHE_DURATION {
+                self.cached_working_bank = Some(bank_forks.read().unwrap().working_bank());
+                self.last_bank_cache_time = now;
+            }
+
+            self.cached_working_bank.clone()
+        } else {
+            None
+        }
     }
 }
