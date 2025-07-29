@@ -1,7 +1,7 @@
 #![cfg_attr(feature = "frozen-abi", feature(min_specialization))]
 #![allow(clippy::arithmetic_side_effects)]
 use {
-    agave_feature_set::{self as feature_set, FeatureSet},
+    agave_feature_set::{self as feature_set},
     ahash::AHashMap,
     solana_pubkey::Pubkey,
     solana_sdk_ids::{
@@ -12,7 +12,6 @@ use {
 
 #[derive(Clone)]
 pub struct MigratingBuiltinCost {
-    native_cost: u64,
     core_bpf_migration_feature: Pubkey,
     // encoding positional information explicitly for migration feature item,
     // its value must be correctly corresponding to this object's position
@@ -22,9 +21,7 @@ pub struct MigratingBuiltinCost {
 }
 
 #[derive(Clone)]
-pub struct NotMigratingBuiltinCost {
-    native_cost: u64,
-}
+pub struct NotMigratingBuiltinCost {}
 
 /// DEVELOPER: when a builtin is migrated to sbpf, please add its corresponding
 /// migration feature ID to BUILTIN_INSTRUCTION_COSTS, and move it from
@@ -39,13 +36,6 @@ pub enum BuiltinCost {
 }
 
 impl BuiltinCost {
-    fn native_cost(&self) -> u64 {
-        match self {
-            BuiltinCost::Migrating(MigratingBuiltinCost { native_cost, .. }) => *native_cost,
-            BuiltinCost::NotMigrating(NotMigratingBuiltinCost { native_cost }) => *native_cost,
-        }
-    }
-
     fn core_bpf_migration_feature(&self) -> Option<&Pubkey> {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost {
@@ -60,16 +50,6 @@ impl BuiltinCost {
         match self {
             BuiltinCost::Migrating(MigratingBuiltinCost { position, .. }) => Some(*position),
             BuiltinCost::NotMigrating(_) => None,
-        }
-    }
-
-    fn has_migrated(&self, feature_set: &FeatureSet) -> bool {
-        match self {
-            BuiltinCost::Migrating(MigratingBuiltinCost {
-                core_bpf_migration_feature,
-                ..
-            }) => feature_set.is_active(core_bpf_migration_feature),
-            BuiltinCost::NotMigrating(_) => false,
         }
     }
 }
@@ -110,7 +90,6 @@ static_assertions::const_assert_eq!(
 pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[(
     stake::id(),
     BuiltinCost::Migrating(MigratingBuiltinCost {
-        native_cost: solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS,
         core_bpf_migration_feature: feature_set::migrate_stake_program_to_core_bpf::id(),
         position: 0,
     }),
@@ -119,54 +98,40 @@ pub const MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[(
 const NON_MIGRATING_BUILTINS_COSTS: &[(Pubkey, BuiltinCost)] = &[
     (
         vote::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_vote_program::vote_processor::DEFAULT_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         system_program::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_system_program::system_processor::DEFAULT_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         compute_budget::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_compute_budget_program::DEFAULT_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         bpf_loader_upgradeable::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_bpf_loader_program::UPGRADEABLE_LOADER_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         bpf_loader_deprecated::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_bpf_loader_program::DEPRECATED_LOADER_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         bpf_loader::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_bpf_loader_program::DEFAULT_LOADER_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         loader_v4::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {
-            native_cost: solana_loader_v4_program::DEFAULT_COMPUTE_UNITS,
-        }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     // Note: These are precompile, run directly in bank during sanitizing;
     (
         secp256k1_program::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost { native_cost: 0 }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
     (
         ed25519_program::id(),
-        BuiltinCost::NotMigrating(NotMigratingBuiltinCost { native_cost: 0 }),
+        BuiltinCost::NotMigrating(NotMigratingBuiltinCost {}),
     ),
 ];
 
@@ -181,16 +146,6 @@ pub static MAYBE_BUILTIN_KEY: std::sync::LazyLock<[bool; 256]> = std::sync::Lazy
         .for_each(|key| temp_table[key.as_ref()[0] as usize] = true);
     temp_table
 });
-
-pub fn get_builtin_instruction_cost<'a>(
-    program_id: &'a Pubkey,
-    feature_set: &'a FeatureSet,
-) -> Option<u64> {
-    BUILTIN_INSTRUCTION_COSTS
-        .get(program_id)
-        .filter(|builtin_cost| !builtin_cost.has_migrated(feature_set))
-        .map(|builtin_cost| builtin_cost.native_cost())
-}
 
 pub enum BuiltinMigrationFeatureIndex {
     NotBuiltin,
@@ -264,33 +219,6 @@ mod test {
         assert!(NON_MIGRATING_BUILTINS_COSTS
             .iter()
             .all(|(_, c)| c.core_bpf_migration_feature().is_none()));
-    }
-
-    #[test]
-    fn test_get_builtin_instruction_cost() {
-        // use native cost if no migration planned
-        assert_eq!(
-            Some(solana_compute_budget_program::DEFAULT_COMPUTE_UNITS),
-            get_builtin_instruction_cost(&compute_budget::id(), &FeatureSet::all_enabled())
-        );
-
-        // use native cost if migration is planned but not activated
-        assert_eq!(
-            Some(solana_stake_program::stake_instruction::DEFAULT_COMPUTE_UNITS),
-            get_builtin_instruction_cost(&stake::id(), &FeatureSet::default())
-        );
-
-        // None if migration is planned and activated, in which case, it's no longer builtin
-        assert!(get_builtin_instruction_cost(&stake::id(), &FeatureSet::all_enabled()).is_none());
-
-        // None if not builtin
-        assert!(
-            get_builtin_instruction_cost(&Pubkey::new_unique(), &FeatureSet::default()).is_none()
-        );
-        assert!(
-            get_builtin_instruction_cost(&Pubkey::new_unique(), &FeatureSet::all_enabled())
-                .is_none()
-        );
     }
 
     #[test]
