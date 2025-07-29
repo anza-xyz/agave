@@ -339,7 +339,7 @@ impl<'a> AccountStoragesOrderer<'a> {
         }
     }
 
-    pub fn iter(&'a self) -> impl Iterator<Item = &'a AccountStorageEntry> + 'a {
+    pub fn iter(&'a self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices.iter().map(|i| self.storages[*i].as_ref())
     }
 
