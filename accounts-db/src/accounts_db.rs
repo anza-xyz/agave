@@ -6149,7 +6149,7 @@ impl AccountsDb {
     }
 
     pub fn store_cached<'a>(&self, accounts: impl StorableAccounts<'a>) {
-        self.store(
+        self.store_accounts_unfrozen(
             accounts,
             None,
             UpdateIndexThreadSelection::PoolWithThreshold,
@@ -6161,10 +6161,12 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
     ) {
-        self.store(accounts, transactions, UpdateIndexThreadSelection::Inline);
+        self.store_accounts_unfrozen(accounts, transactions, UpdateIndexThreadSelection::Inline);
     }
 
-    fn store<'a>(
+    /// Stores accounts in the write cache and updates the index.
+    /// This should only be used for accounts that are unrooted (unfrozen)
+    fn store_accounts_unfrozen<'a>(
         &self,
         accounts: impl StorableAccounts<'a>,
         transactions: Option<&'a [&'a SanitizedTransaction]>,
@@ -6185,23 +6187,9 @@ impl AccountsDb {
             .store_total_data
             .fetch_add(total_data as u64, Ordering::Relaxed);
 
-        self.store_accounts_unfrozen(accounts, transactions, update_index_thread_selection);
-        self.report_store_timings();
-    }
-
-    /// Stores accounts in the write cache and updates the index.
-    /// This should only be used for accounts that are unrooted (unfrozen)
-    fn store_accounts_unfrozen<'a>(
-        &self,
-        accounts: impl StorableAccounts<'a>,
-        transactions: Option<&'a [&'a SanitizedTransaction]>,
-        update_index_thread_selection: UpdateIndexThreadSelection,
-    ) {
-        let slot = accounts.target_slot();
-
         // Store the accounts in the write cache
         let mut store_accounts_time = Measure::start("store_accounts");
-        let infos = self.write_accounts_to_cache(slot, &accounts, transactions);
+        let infos = self.write_accounts_to_cache(accounts.target_slot(), &accounts, transactions);
         store_accounts_time.stop();
         self.stats
             .store_accounts
@@ -6225,6 +6213,7 @@ impl AccountsDb {
         self.stats
             .store_num_accounts
             .fetch_add(accounts.len() as u64, Ordering::Relaxed);
+        self.report_store_timings();
     }
 
     /// Stores accounts in the storage and updates the index.
@@ -7498,7 +7487,7 @@ impl AccountsDb {
 
     /// callers used to call store_uncached. But, this is not allowed anymore.
     pub fn store_for_tests(&self, slot: Slot, accounts: &[(&Pubkey, &AccountSharedData)]) {
-        self.store(
+        self.store_accounts_unfrozen(
             (slot, accounts),
             None,
             UpdateIndexThreadSelection::PoolWithThreshold,
