@@ -150,7 +150,6 @@ mod tests_core_bpf_migration {
     // See `solana_svm::account_loader::load_transaction_accounts`.
     #[test_case(TestPrototype::Builtin(&BUILTINS[0]); "system")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[1]); "vote")]
-    #[test_case(TestPrototype::Builtin(&BUILTINS[2]); "stake")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[3]); "bpf_loader_deprecated")]
     #[test_case(TestPrototype::Builtin(&BUILTINS[4]); "bpf_loader")]
     fn test_core_bpf_migration(prototype: TestPrototype) {

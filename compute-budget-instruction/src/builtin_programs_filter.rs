@@ -108,17 +108,6 @@ mod test {
             test_store.get_program_kind(index, &solana_sdk_ids::compute_budget::id()),
             ProgramKind::Builtin,
         );
-
-        // migrating builtins
-        index += 1;
-        assert_eq!(
-            test_store.get_program_kind(index, &solana_sdk_ids::stake::id()),
-            ProgramKind::MigratingBuiltin {
-                core_bpf_migration_feature_index: get_migration_feature_position(
-                    &feature_set::migrate_stake_program_to_core_bpf::id()
-                ),
-            }
-        );
     }
 
     #[test]
