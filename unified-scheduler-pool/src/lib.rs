@@ -116,8 +116,7 @@ impl SupportedSchedulingMode {
 
     #[cfg(feature = "dev-context-only-utils")]
     fn block_production_only() -> Self {
-        // todo...
-        Self::Both
+        Self::Either(BlockProduction)
     }
 }
 
@@ -1034,7 +1033,7 @@ where
         // So, wait a bit to unwrap the pool out of the sinful Arc finally here. Note that we can't resort to the
         // Drop impl, because of the need to take the ownership of the join handle of the cleaner
         // thread...
-        let mut this = self;
+        let mut this: Arc<Self> = self;
         let this: Self = loop {
             match Arc::try_unwrap(this) {
                 Ok(pool) => {
@@ -1050,14 +1049,9 @@ where
                 }
             }
         };
-        let Self {
-            scheduler_pool_sender,
-            cleaner_thread,
-            ..
-        } = this;
         // Accelerate cleaner thread joining by channel-disconnection via drop
-        drop(scheduler_pool_sender);
-        cleaner_thread.join().unwrap();
+        drop(this.scheduler_pool_sender);
+        this.cleaner_thread.join().unwrap();
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
     }
@@ -4004,7 +3998,12 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new_for_production(
+        let supported_scheduling_mode = match scheduling_mode {
+            BlockVerification => SupportedSchedulingMode::block_verification_only(),
+            BlockProduction => SupportedSchedulingMode::block_production_only(),
+        };
+        let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
+            supported_scheduling_mode,
             None,
             None,
             None,
@@ -5219,7 +5218,9 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
-        let pool = DefaultSchedulerPool::new_for_production(
+        let pool = DefaultSchedulerPool::new(
+            // Both block verification and production scheduler are needed for this test.
+            SupportedSchedulingMode::Both,
             None,
             None,
             None,
