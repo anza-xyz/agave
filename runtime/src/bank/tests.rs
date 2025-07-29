@@ -11091,8 +11091,8 @@ fn test_system_instruction_unsigned_transaction() {
 fn test_calc_vote_accounts_to_store_empty() {
     let vote_account_rewards = DashMap::default();
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-    assert!(result.rewards.is_empty());
+    assert_eq!(result.accounts_with_rewards.len(), result.accounts_with_rewards.len());
+    assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
@@ -11110,8 +11110,8 @@ fn test_calc_vote_accounts_to_store_overflow() {
         },
     );
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-    assert!(result.rewards.is_empty());
+    assert_eq!(result.accounts_with_rewards.len(), result.accounts_with_rewards.len());
+    assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
@@ -11131,14 +11131,13 @@ fn test_calc_vote_accounts_to_store_normal() {
                 },
             );
             let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-            assert_eq!(result.rewards.len(), result.accounts_to_store.len());
-            assert_eq!(result.rewards.len(), 1);
-            let rewards = &result.rewards[0];
-            let account = &result.accounts_to_store[0].1;
+            assert_eq!(result.accounts_with_rewards.len(), result.accounts_with_rewards.len());
+            assert_eq!(result.accounts_with_rewards.len(), 1);
+            let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
             _ = vote_account.checked_add_lamports(vote_rewards);
             assert!(accounts_equal(account, &vote_account));
             assert_eq!(
-                rewards.1,
+                *rewards,
                 RewardInfo {
                     reward_type: RewardType::Voting,
                     lamports: vote_rewards as i64,
@@ -11146,7 +11145,7 @@ fn test_calc_vote_accounts_to_store_normal() {
                     commission: Some(commission),
                 }
             );
-            assert_eq!(rewards.0, pubkey);
+            assert_eq!(*pubkey_result, pubkey);
         }
     }
 }

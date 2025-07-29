@@ -81,11 +81,8 @@ pub(crate) enum EpochRewardPhase {
 
 #[derive(Debug, Default)]
 pub(super) struct VoteRewardsAccounts {
-    /// reward info for each vote account pubkey.
-    /// This type is used by `update_reward_history()`
-    pub(super) rewards: Vec<(Pubkey, RewardInfo)>,
-    /// account to be stored, corresponds to pubkey in `rewards`
-    pub(super) accounts_to_store: Vec<(Pubkey, AccountSharedData)>,
+    /// accounts with rewards to be stored
+    pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
     /// total lamports across all `vote_rewards`
     pub(super) total_vote_rewards_lamports: u64,
 }

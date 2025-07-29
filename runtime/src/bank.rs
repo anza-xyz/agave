@@ -2354,8 +2354,7 @@ impl Bank {
     fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
         let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
-            rewards: Vec::with_capacity(len),
-            accounts_to_store: Vec::with_capacity(len),
+            accounts_with_rewards: Vec::with_capacity(len),
             total_vote_rewards_lamports: 0,
         };
         vote_account_rewards.into_iter().for_each(
@@ -2372,7 +2371,7 @@ impl Bank {
                     return;
                 }
 
-                result.rewards.push((
+                result.accounts_with_rewards.push((
                     vote_pubkey,
                     RewardInfo {
                         reward_type: RewardType::Voting,
@@ -2380,8 +2379,8 @@ impl Bank {
                         post_balance: vote_account.lamports(),
                         commission: Some(commission),
                     },
+                    vote_account,
                 ));
-                result.accounts_to_store.push((vote_pubkey, vote_account));
                 result.total_vote_rewards_lamports += vote_rewards;
             },
         );
@@ -2391,14 +2390,17 @@ impl Bank {
     fn update_reward_history(
         &self,
         stake_rewards: StakeRewards,
-        vote_rewards: &[(Pubkey, RewardInfo)],
+        vote_rewards: &VoteRewardsAccounts,
     ) {
-        let additional_reserve = stake_rewards.len() + vote_rewards.len();
+        let additional_reserve = stake_rewards.len() + vote_rewards.accounts_with_rewards.len();
         let mut rewards = self.rewards.write().unwrap();
         rewards.reserve(additional_reserve);
-        vote_rewards.iter().for_each(|(vote_pubkey, vote_reward)| {
-            rewards.push((*vote_pubkey, *vote_reward));
-        });
+        vote_rewards
+            .accounts_with_rewards
+            .iter()
+            .for_each(|(vote_pubkey, vote_reward, _)| {
+                rewards.push((*vote_pubkey, *vote_reward));
+            });
         stake_rewards
             .into_iter()
             .filter(|x| x.get_stake_reward() > 0)
