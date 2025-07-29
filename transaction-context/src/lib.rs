@@ -833,21 +833,6 @@ impl InstructionContext {
         )
     }
 
-    /// Retrieves an instruction account using the index in transaction
-    pub fn try_borrow_instruction_account_with_transaction_index<'a, 'b: 'a>(
-        &'a self,
-        transaction_context: &'a TransactionContext,
-        index_in_transaction: IndexOfAccount,
-    ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let index_in_instruction =
-            self.get_index_of_account_in_instruction(index_in_transaction)?;
-        self.try_borrow_account(
-            transaction_context,
-            index_in_transaction,
-            Some(index_in_instruction),
-        )
-    }
-
     /// Returns whether an instruction account is a signer
     pub fn is_instruction_account_signer(
         &self,
