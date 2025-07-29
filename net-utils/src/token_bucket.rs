@@ -148,8 +148,9 @@ where
     data: DashMap<K, TokenBucket>,
     target_capacity: usize,
     prototype_bucket: TokenBucket,
-    countdown_to_shrink: AtomicUsize,
+    countup_to_shrink: AtomicUsize,
     approx_len: AtomicUsize,
+    shrink_interval: usize,
 }
 
 impl<K> KeyedRateLimiter<K>
@@ -160,7 +161,7 @@ where
     /// underlying DashMap. This uses a LazyLRU style eviction policy, so actual memory consumption
     /// will be 2 * target_capacity.
     ///
-    /// shard_amount should greater than 0 and be a power of two.
+    /// shard_amount should be greater than 0 and be a power of two.
     /// If a shard_amount which is not a power of two is provided, the function will panic.
     #[allow(clippy::arithmetic_side_effects)]
     pub fn new(target_capacity: usize, prototype_bucket: TokenBucket, shard_amount: usize) -> Self {
@@ -168,8 +169,9 @@ where
             data: DashMap::with_capacity_and_shard_amount(target_capacity * 2, shard_amount),
             target_capacity,
             prototype_bucket,
-            countdown_to_shrink: AtomicUsize::new(0),
+            countup_to_shrink: AtomicUsize::new(0),
             approx_len: AtomicUsize::new(0),
+            shrink_interval: target_capacity / 4,
         }
     }
 
@@ -204,13 +206,13 @@ where
         };
 
         if entry_added {
-            // we want to check for length, but not too often
-            // this should reduce probability of lock contention
-            let step = self.target_capacity / 4;
+            let step = self.shrink_interval;
             if self
-                .countdown_to_shrink
+                .countup_to_shrink
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                     if v >= step {
+                        // reset the countup to starting position
+                        // thus preventing other threads from racing for locks
                         Some(0)
                     } else {
                         Some(v.saturating_add(1))
@@ -220,6 +222,8 @@ where
                 >= step
             {
                 self.maybe_shrink();
+            } else {
+                self.approx_len.fetch_add(1, Ordering::Relaxed);
             }
         }
         res
@@ -266,6 +270,19 @@ where
             actual_len += shard.len();
         }
         self.approx_len.store(actual_len, Ordering::Relaxed);
+    }
+
+    /// Set the auto-shrink interval. Set to usize::max to disable shrinking.
+    /// During writes we want to check for length, but not too often
+    /// to reduce probability of lock contention.
+    /// This should be > 1000 if possible to reduce the odds of lock contention.
+    pub fn set_shrink_interval(&mut self, interval: usize) {
+        self.shrink_interval = interval;
+    }
+
+    /// Get the auto-shrink interval.
+    pub fn shrink_interval(&self) -> usize {
+        self.shrink_interval
     }
 }
 
