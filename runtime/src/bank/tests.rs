@@ -11091,7 +11091,10 @@ fn test_system_instruction_unsigned_transaction() {
 fn test_calc_vote_accounts_to_store_empty() {
     let vote_account_rewards = DashMap::default();
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.accounts_with_rewards.len(), result.accounts_with_rewards.len());
+    assert_eq!(
+        result.accounts_with_rewards.len(),
+        result.accounts_with_rewards.len()
+    );
     assert!(result.accounts_with_rewards.is_empty());
 }
 
@@ -11110,7 +11113,10 @@ fn test_calc_vote_accounts_to_store_overflow() {
         },
     );
     let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-    assert_eq!(result.accounts_with_rewards.len(), result.accounts_with_rewards.len());
+    assert_eq!(
+        result.accounts_with_rewards.len(),
+        result.accounts_with_rewards.len()
+    );
     assert!(result.accounts_with_rewards.is_empty());
 }
 
@@ -11131,7 +11137,10 @@ fn test_calc_vote_accounts_to_store_normal() {
                 },
             );
             let result = Bank::calc_vote_accounts_to_store(vote_account_rewards);
-            assert_eq!(result.accounts_with_rewards.len(), result.accounts_with_rewards.len());
+            assert_eq!(
+                result.accounts_with_rewards.len(),
+                result.accounts_with_rewards.len()
+            );
             assert_eq!(result.accounts_with_rewards.len(), 1);
             let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
             _ = vote_account.checked_add_lamports(vote_rewards);

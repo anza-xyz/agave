@@ -3,7 +3,8 @@ use {
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        StakeRewardCalculation, VoteRewardsAccounts, REWARD_CALCULATION_NUM_BLOCKS,
+        StakeRewardCalculation, VoteRewardsAccounts, VoteRewardsAccountsStorable,
+        REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
@@ -24,7 +25,7 @@ use {
         iter::{IntoParallelRefIterator, ParallelIterator},
         ThreadPool,
     },
-    solana_account::{AccountSharedData, ReadableAccount},
+    solana_account::ReadableAccount,
     solana_clock::{Epoch, Slot},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
@@ -210,12 +211,11 @@ impl Bank {
         metrics: &RewardsMetrics,
     ) {
         let (_, measure_us) = measure_us!({
-            let accounts_to_store: Vec<(Pubkey, AccountSharedData)> = vote_account_rewards
-                .accounts_with_rewards
-                .iter()
-                .map(|(pubkey, _, account)| (*pubkey, account.clone()))
-                .collect();
-            self.store_accounts((self.slot(), &accounts_to_store[..]));
+            let storable = VoteRewardsAccountsStorable {
+                slot: self.slot(),
+                vote_rewards_accounts: vote_account_rewards,
+            };
+            self.store_accounts(storable);
         });
 
         metrics
@@ -810,7 +810,8 @@ mod tests {
             vote_rewards_accounts.accounts_with_rewards.len()
         );
         assert_eq!(vote_rewards_accounts.accounts_with_rewards.len(), 1);
-        let (vote_pubkey_from_result, rewards, account) = &vote_rewards_accounts.accounts_with_rewards[0];
+        let (vote_pubkey_from_result, rewards, account) =
+            &vote_rewards_accounts.accounts_with_rewards[0];
         let vote_rewards = 0;
         let commission = vote_state.commission;
         assert_eq!(account.lamports(), vote_account.lamports());

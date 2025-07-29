@@ -9,10 +9,13 @@ use {
         inflation_rewards::points::PointValue, stake_account::StakeAccount,
         stake_history::StakeHistory,
     },
-    solana_account::AccountSharedData,
+    solana_account::{AccountSharedData, ReadableAccount},
     solana_accounts_db::{
-        partitioned_rewards::PartitionedEpochRewardsConfig, stake_rewards::StakeReward,
+        partitioned_rewards::PartitionedEpochRewardsConfig,
+        stake_rewards::StakeReward,
+        storable_accounts::{AccountForStorage, StorableAccounts},
     },
+    solana_clock::Slot,
     solana_pubkey::Pubkey,
     solana_reward_info::RewardInfo,
     solana_stake_interface::state::{Delegation, Stake},
@@ -85,6 +88,53 @@ pub(super) struct VoteRewardsAccounts {
     pub(super) accounts_with_rewards: Vec<(Pubkey, RewardInfo, AccountSharedData)>,
     /// total lamports across all `vote_rewards`
     pub(super) total_vote_rewards_lamports: u64,
+}
+
+/// Wrapper struct to implement StorableAccounts for VoteRewardsAccounts
+pub(super) struct VoteRewardsAccountsStorable<'a> {
+    pub slot: Slot,
+    pub vote_rewards_accounts: &'a VoteRewardsAccounts,
+}
+
+impl<'a> StorableAccounts<'a> for VoteRewardsAccountsStorable<'a> {
+    fn account<Ret>(
+        &self,
+        index: usize,
+        mut callback: impl for<'local> FnMut(AccountForStorage<'local>) -> Ret,
+    ) -> Ret {
+        let (pubkey, _, account) = &self.vote_rewards_accounts.accounts_with_rewards[index];
+        callback((pubkey, account).into())
+    }
+
+    fn is_zero_lamport(&self, index: usize) -> bool {
+        self.vote_rewards_accounts.accounts_with_rewards[index]
+            .2
+            .lamports()
+            == 0
+    }
+
+    fn data_len(&self, index: usize) -> usize {
+        self.vote_rewards_accounts.accounts_with_rewards[index]
+            .2
+            .data()
+            .len()
+    }
+
+    fn pubkey(&self, index: usize) -> &Pubkey {
+        &self.vote_rewards_accounts.accounts_with_rewards[index].0
+    }
+
+    fn slot(&self, _index: usize) -> Slot {
+        self.target_slot()
+    }
+
+    fn target_slot(&self) -> Slot {
+        self.slot
+    }
+
+    fn len(&self) -> usize {
+        self.vote_rewards_accounts.accounts_with_rewards.len()
+    }
 }
 
 #[derive(Debug, Default)]
