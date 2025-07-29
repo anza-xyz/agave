@@ -72,7 +72,7 @@ struct LeaderTpuCacheUpdateInfo {
     pub(super) maybe_cluster_nodes: Option<ClientResult<Vec<RpcContactInfo>>>,
     pub(super) maybe_epoch_schedule: Option<ClientResult<EpochSchedule>>,
     pub(super) maybe_slot_leaders: Option<ClientResult<Vec<Pubkey>>>,
-    pub(super) estimated_current_slot: Slot,
+    pub(super) first_slot: Slot,
 }
 impl LeaderTpuCacheUpdateInfo {
     pub fn has_some(&self) -> bool {
@@ -231,7 +231,7 @@ impl LeaderTpuCache {
         }
 
         if let Some(Ok(epoch_schedule)) = cache_update_info.maybe_epoch_schedule {
-            let epoch = epoch_schedule.get_epoch(cache_update_info.estimated_current_slot);
+            let epoch = epoch_schedule.get_epoch(cache_update_info.first_slot);
             self.slots_in_epoch = epoch_schedule.get_slots_in_epoch(epoch);
             self.last_slot_in_epoch = epoch_schedule.get_last_slot_in_epoch(epoch);
         }
@@ -239,14 +239,14 @@ impl LeaderTpuCache {
         if let Some(slot_leaders) = cache_update_info.maybe_slot_leaders {
             match slot_leaders {
                 Ok(slot_leaders) => {
-                    self.first_slot = cache_update_info.estimated_current_slot;
+                    self.first_slot = cache_update_info.first_slot;
                     self.leaders = slot_leaders;
                 }
                 Err(err) => {
                     warn!(
-                        "Failed to fetch slot leaders (current estimated slot: \
+                        "Failed to fetch slot leaders (first_slot: \
                          {}): {err}",
-                        cache_update_info.estimated_current_slot
+                        cache_update_info.first_slot
                     );
                     has_error = true;
                 }
@@ -975,17 +975,24 @@ async fn maybe_fetch_cache_info(
         None
     };
 
+    // Grab information about the slot leaders currently in the cache.
     let estimated_current_slot = recent_slots.estimated_current_slot();
     let (last_slot, last_slot_in_epoch, slots_in_epoch) = {
         let leader_tpu_cache = leader_tpu_cache.read().unwrap();
         leader_tpu_cache.slot_info()
     };
+
+    // If we're crossing into a new epoch, fetch the updated epoch schedule.
     let maybe_epoch_schedule = if estimated_current_slot > last_slot_in_epoch {
         Some(rpc_client.get_epoch_schedule().await)
     } else {
         None
     };
 
+    // If we are within the fanout range of the last slot in the cache, fetch
+    // more slot leaders. We pull down a big batch at at time to amortize the
+    // cost of the RPC call. We don't want to stall transactions on pulling this
+    // down so we fetch it proactively.
     let maybe_slot_leaders = if estimated_current_slot >= last_slot.saturating_sub(MAX_FANOUT_SLOTS)
     {
         Some(
@@ -1003,7 +1010,7 @@ async fn maybe_fetch_cache_info(
         maybe_cluster_nodes,
         maybe_epoch_schedule,
         maybe_slot_leaders,
-        estimated_current_slot,
+        first_slot: estimated_current_slot,
     }
 }
 
