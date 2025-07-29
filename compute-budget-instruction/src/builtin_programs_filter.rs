@@ -63,10 +63,7 @@ impl BuiltinProgramsFilter {
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*, agave_feature_set as feature_set,
-        solana_builtins_default_costs::get_migration_feature_position,
-    };
+    use super::*;
 
     const DUMMY_PROGRAM_ID: &str = "dummmy1111111111111111111111111111111111111";
 
