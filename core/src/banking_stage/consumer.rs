@@ -22,7 +22,7 @@ use {
     },
     solana_runtime_transaction::transaction_with_meta::TransactionWithMeta,
     solana_svm::{
-        account_loader::validate_fee_payer,
+        account_loader::validate_fee_payer_with_error_counters,
         transaction_error_metrics::TransactionErrorMetrics,
         transaction_processing_result::TransactionProcessingResultExtensions,
         transaction_processor::{ExecutionRecordingConfig, TransactionProcessingConfig},
@@ -462,7 +462,7 @@ impl Consumer {
             .load_with_fixed_root(&bank.ancestors, fee_payer)
             .ok_or(TransactionError::AccountNotFound)?;
 
-        validate_fee_payer(
+        validate_fee_payer_with_error_counters(
             fee_payer,
             &mut fee_payer_account,
             0,
