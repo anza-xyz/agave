@@ -469,7 +469,7 @@ impl<'a> InvokeContext<'a> {
         &mut self,
         message: &impl SVMMessage,
         instruction: &SVMInstruction,
-        program_indices: Vec<IndexOfAccount>,
+        program_account_index: IndexOfAccount,
     ) -> Result<(), InstructionError> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
@@ -502,7 +502,11 @@ impl<'a> InvokeContext<'a> {
 
         self.transaction_context
             .get_next_instruction_context_mut()?
-            .configure(program_indices, instruction_accounts, instruction.data);
+            .configure(
+                vec![program_account_index],
+                instruction_accounts,
+                instruction.data,
+            );
         Ok(())
     }
 
