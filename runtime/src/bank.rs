@@ -4533,11 +4533,10 @@ impl Bank {
         mut config: VerifyAccountsHashConfig,
         duplicates_lt_hash: Option<Box<DuplicatesLtHash>>,
     ) -> bool {
-        let accounts = &self.rc.accounts;
+        let accounts_db = &self.rc.accounts.accounts_db;
         // Wait until initial hash calc is complete before starting a new hash calc.
         // This should only occur when we halt at a slot in ledger-tool.
-        accounts
-            .accounts_db
+        accounts_db
             .verify_accounts_hash_in_bg
             .join_background_thread();
 
@@ -4550,7 +4549,7 @@ impl Bank {
             config.run_in_background = false;
         }
 
-        if config.require_rooted_bank && !accounts.accounts_db.accounts_index.is_alive_root(slot) {
+        if config.require_rooted_bank && !accounts_db.accounts_index.is_alive_root(slot) {
             if let Some(parent) = self.parent() {
                 info!(
                     "slot {slot} is not a root, so verify accounts hash on parent bank at slot {}",
@@ -4568,43 +4567,47 @@ impl Bank {
             }
         }
 
+        fn check_lt_hash(
+            expected_accounts_lt_hash: &AccountsLtHash,
+            calculated_accounts_lt_hash: &AccountsLtHash,
+        ) -> bool {
+            let is_ok = calculated_accounts_lt_hash == expected_accounts_lt_hash;
+            if !is_ok {
+                let expected = expected_accounts_lt_hash.0.checksum();
+                let calculated = calculated_accounts_lt_hash.0.checksum();
+                error!(
+                    "Verifying accounts failed: accounts lattice hashes do not match, \
+                     expected: {expected}, calculated: {calculated}",
+                );
+            }
+            is_ok
+        }
+
         // The snapshot storages must be captured *before* starting the background verification.
         // Otherwise, it is possible that a delayed call to `get_snapshot_storages()` will *not*
         // get the correct storages required to calculate and verify the accounts hashes.
-        let snapshot_storages = self.rc.accounts.accounts_db.get_storages(RangeFull);
-
-        info!(
-            "Verifying accounts, in background? {}",
-            config.run_in_background,
-        );
+        let snapshot_storages = accounts_db.get_storages(RangeFull);
+        let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
         if config.run_in_background {
-            let accounts = Arc::clone(accounts);
-            let accounts_ = Arc::clone(&accounts);
-            let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
-            accounts.accounts_db.verify_accounts_hash_in_bg.start(|| {
+            let accounts_db_ = Arc::clone(accounts_db);
+            accounts_db.verify_accounts_hash_in_bg.start(|| {
                 Builder::new()
                     .name("solBgHashVerify".into())
                     .spawn(move || {
                         info!("Initial background accounts hash verification has started");
                         let start = Instant::now();
-                        let accounts_db = &accounts_.accounts_db;
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
-                            meas_dur!(accounts_db.thread_pool_hash.install(|| {
-                                accounts_db.calculate_accounts_lt_hash_at_startup_from_storages(
+                            meas_dur!(accounts_db_.thread_pool_hash.install(|| {
+                                accounts_db_.calculate_accounts_lt_hash_at_startup_from_storages(
                                     snapshot_storages.0.as_slice(),
                                     &duplicates_lt_hash.unwrap(),
                                 )
                             }));
-                        let is_ok = calculated_accounts_lt_hash == expected_accounts_lt_hash;
-                        if !is_ok {
-                            let expected = expected_accounts_lt_hash.0.checksum();
-                            let calculated = calculated_accounts_lt_hash.0.checksum();
-                            error!(
-                                "Verifying accounts failed: accounts lattice hashes do not \
-                                    match, expected: {expected}, calculated: {calculated}",
-                            );
-                        }
-                        accounts_db.verify_accounts_hash_in_bg.background_finished();
+                        let is_ok =
+                            check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash);
+                        accounts_db_
+                            .verify_accounts_hash_in_bg
+                            .background_finished();
                         let total_time = start.elapsed();
                         datapoint_info!(
                             "startup_verify_accounts",
@@ -4615,35 +4618,22 @@ impl Bank {
                                 i64
                             ),
                         );
-                        info!("Initial background accounts hash verification has stopped");
+                        info!("Initial background accounts hash verification has stopped in {total_time:?}");
                         is_ok
                     })
                     .unwrap()
             });
             true // initial result is true. We haven't failed yet. If verification fails, we'll panic from bg thread.
         } else {
-            let expected_accounts_lt_hash = self.accounts_lt_hash.lock().unwrap().clone();
             let calculated_accounts_lt_hash = if let Some(duplicates_lt_hash) = duplicates_lt_hash {
-                accounts
-                    .accounts_db
-                    .calculate_accounts_lt_hash_at_startup_from_storages(
-                        snapshot_storages.0.as_slice(),
-                        &duplicates_lt_hash,
-                    )
+                accounts_db.calculate_accounts_lt_hash_at_startup_from_storages(
+                    snapshot_storages.0.as_slice(),
+                    &duplicates_lt_hash,
+                )
             } else {
-                accounts
-                    .accounts_db
-                    .calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
+                accounts_db.calculate_accounts_lt_hash_at_startup_from_index(&self.ancestors, slot)
             };
-            let is_ok = calculated_accounts_lt_hash == expected_accounts_lt_hash;
-            if !is_ok {
-                let expected = expected_accounts_lt_hash.0.checksum();
-                let calculated = calculated_accounts_lt_hash.0.checksum();
-                error!(
-                    "Verifying accounts failed: accounts lattice hashes do not \
-                    match, expected: {expected}, calculated: {calculated}",
-                );
-            }
+            let is_ok = check_lt_hash(&expected_accounts_lt_hash, &calculated_accounts_lt_hash);
             self.set_initial_accounts_hash_verification_completed();
             is_ok
         }
