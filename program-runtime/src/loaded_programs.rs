@@ -613,7 +613,7 @@ enum IndexImplementation {
 /// - is validator global and fork graph aware, so it can optimize the commonalities across banks.
 /// - handles the visibility rules of un/re/deployments.
 /// - stores the usage statistics and verification status of each program.
-/// - is elastic and uses a probabilistic eviction stragety based on the usage statistics.
+/// - is elastic and uses a probabilistic eviction strategy based on the usage statistics.
 /// - also keeps the compiled executables around, but only for the most used programs.
 /// - supports various kinds of tombstones to avoid loading programs which can not be loaded.
 /// - cleans up entries on orphan branches when the block store is rerooted.
