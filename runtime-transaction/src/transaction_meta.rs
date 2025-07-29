@@ -13,7 +13,9 @@
 //!
 use {
     solana_compute_budget_instruction::compute_budget_instruction_details::ComputeBudgetInstructionDetails,
-    solana_hash::Hash, solana_message::TransactionSignatureDetails,
+    solana_hash::Hash,
+    solana_message::{v0::LoadedAddresses, TransactionSignatureDetails},
+    solana_transaction_error::TransactionError,
 };
 
 /// metadata can be extracted statically from sanitized transaction,
@@ -27,11 +29,13 @@ pub trait StaticMeta {
 }
 
 /// Statically loaded meta is a supertrait of Dynamically loaded meta, when
-/// transaction transited successfully into dynamically loaded, it should
+/// transaction transitioned successfully into dynamically loaded, it should
 /// have both meta data populated and available.
 /// Dynamic metadata available after accounts addresses are loaded from
 /// on-chain ALT, examples are: transaction usage costs, nonce account.
-pub trait DynamicMeta: StaticMeta {}
+pub trait DynamicMeta: StaticMeta {
+    fn resolved_addresses(&self) -> Result<&LoadedAddresses, &TransactionError>;
+}
 
 #[cfg_attr(feature = "dev-context-only-utils", derive(Clone))]
 #[derive(Debug)]

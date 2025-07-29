@@ -287,10 +287,12 @@ mod test {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
         std::borrow::Borrow,
     };
 
@@ -299,9 +301,9 @@ mod test {
         num_threads: usize,
         config: GreedySchedulerConfig,
     ) -> (
-        GreedyScheduler<RuntimeTransaction<SanitizedTransaction>>,
-        Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
-        Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        GreedyScheduler<RuntimeTransaction<ResolvedTransaction>>,
+        Vec<Receiver<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>>,
+        Sender<FinishedConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
@@ -320,7 +322,7 @@ mod test {
         to_pubkeys: impl IntoIterator<Item = impl Borrow<Pubkey>>,
         lamports: u64,
         priority: u64,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransaction> {
         let to_pubkeys_lamports = to_pubkeys
             .into_iter()
             .map(|pubkey| *pubkey.borrow())
@@ -344,7 +346,7 @@ mod test {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(10 * 1024);
         for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
             let transaction = prioritized_tranfers(
@@ -366,9 +368,9 @@ mod test {
     }
 
     fn collect_work(
-        receiver: &Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        receiver: &Receiver<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     ) -> (
-        Vec<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        Vec<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
         Vec<Vec<TransactionId>>,
     ) {
         receiver
@@ -381,14 +383,14 @@ mod test {
     }
 
     fn test_pre_graph_filter(
-        _txs: &[&RuntimeTransaction<SanitizedTransaction>],
+        _txs: &[&RuntimeTransaction<ResolvedTransaction>],
         results: &mut [bool],
     ) {
         results.fill(true);
     }
 
     fn test_pre_lock_filter(
-        _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
+        _tx: &TransactionState<RuntimeTransaction<ResolvedTransaction>>,
     ) -> PreLockFilterAction {
         PreLockFilterAction::AttemptToSchedule
     }

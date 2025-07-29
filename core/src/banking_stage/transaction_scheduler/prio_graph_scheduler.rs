@@ -440,10 +440,12 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_pubkey::Pubkey,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
         std::borrow::Borrow,
     };
 
@@ -451,9 +453,9 @@ mod tests {
     fn create_test_frame(
         num_threads: usize,
     ) -> (
-        PrioGraphScheduler<RuntimeTransaction<SanitizedTransaction>>,
-        Vec<Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>>,
-        Sender<FinishedConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        PrioGraphScheduler<RuntimeTransaction<ResolvedTransaction>>,
+        Vec<Receiver<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>>,
+        Sender<FinishedConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     ) {
         let (consume_work_senders, consume_work_receivers) =
             (0..num_threads).map(|_| unbounded()).unzip();
@@ -475,7 +477,7 @@ mod tests {
         to_pubkeys: impl IntoIterator<Item = impl Borrow<Pubkey>>,
         lamports: u64,
         priority: u64,
-    ) -> RuntimeTransaction<SanitizedTransaction> {
+    ) -> RuntimeTransaction<ResolvedTransaction> {
         let to_pubkeys_lamports = to_pubkeys
             .into_iter()
             .map(|pubkey| *pubkey.borrow())
@@ -499,7 +501,7 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>> {
         create_container_with_capacity(100 * 1024, tx_infos)
     }
 
@@ -513,7 +515,7 @@ mod tests {
                 u64,
             ),
         >,
-    ) -> TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>> {
         let mut container = TransactionStateContainer::with_capacity(capacity);
         for (from_keypair, to_pubkeys, lamports, compute_unit_price) in tx_infos.into_iter() {
             let transaction = prioritized_tranfers(
@@ -536,9 +538,9 @@ mod tests {
     }
 
     fn collect_work(
-        receiver: &Receiver<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        receiver: &Receiver<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
     ) -> (
-        Vec<ConsumeWork<RuntimeTransaction<SanitizedTransaction>>>,
+        Vec<ConsumeWork<RuntimeTransaction<ResolvedTransaction>>>,
         Vec<Vec<TransactionId>>,
     ) {
         receiver
@@ -551,14 +553,14 @@ mod tests {
     }
 
     fn test_pre_graph_filter(
-        _txs: &[&RuntimeTransaction<SanitizedTransaction>],
+        _txs: &[&RuntimeTransaction<ResolvedTransaction>],
         results: &mut [bool],
     ) {
         results.fill(true);
     }
 
     fn test_pre_lock_filter(
-        _tx: &TransactionState<RuntimeTransaction<SanitizedTransaction>>,
+        _tx: &TransactionState<RuntimeTransaction<ResolvedTransaction>>,
     ) -> PreLockFilterAction {
         PreLockFilterAction::AttemptToSchedule
     }

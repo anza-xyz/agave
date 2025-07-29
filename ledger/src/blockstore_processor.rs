@@ -42,7 +42,8 @@ use {
         vote_sender_types::ReplayVoteSender,
     },
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_signature::Signature,
     solana_svm::{
@@ -90,7 +91,7 @@ pub struct LockedTransactionsWithIndexes<Tx: SVMMessage> {
 }
 
 struct ReplayEntry {
-    entry: EntryType<RuntimeTransaction<SanitizedTransaction>>,
+    entry: EntryType<RuntimeTransaction<ResolvedTransaction>>,
     starting_index: usize,
 }
 
@@ -372,7 +373,7 @@ impl ExecuteBatchesInternalMetrics {
 fn execute_batches_internal(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
-    batches: &[TransactionBatchWithIndexes<RuntimeTransaction<SanitizedTransaction>>],
+    batches: &[TransactionBatchWithIndexes<RuntimeTransaction<ResolvedTransaction>>],
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     log_messages_bytes_limit: Option<usize>,
@@ -451,7 +452,7 @@ fn execute_batches_internal(
 fn process_batches(
     bank: &BankWithScheduler,
     replay_tx_thread_pool: &ThreadPool,
-    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<ResolvedTransaction>>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     batch_execution_timing: &mut BatchExecutionTiming,
@@ -506,7 +507,7 @@ fn process_batches(
 
 fn schedule_batches_for_execution(
     bank: &BankWithScheduler,
-    locked_entries: impl Iterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    locked_entries: impl Iterator<Item = LockedTransactionsWithIndexes<ResolvedTransaction>>,
 ) -> Result<()> {
     // Track the first error encountered in the loop below, if any.
     // This error will be propagated to the replay stage, or Ok(()).
@@ -534,7 +535,7 @@ fn schedule_batches_for_execution(
 fn execute_batches(
     bank: &Arc<Bank>,
     replay_tx_thread_pool: &ThreadPool,
-    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    locked_entries: impl ExactSizeIterator<Item = LockedTransactionsWithIndexes<ResolvedTransaction>>,
     transaction_status_sender: Option<&TransactionStatusSender>,
     replay_vote_sender: Option<&ReplayVoteSender>,
     timing: &mut BatchExecutionTiming,
@@ -598,7 +599,7 @@ pub fn process_entries_for_tests(
     let replay_tx_thread_pool = create_thread_pool(1);
     let verify_transaction = {
         let bank = bank.clone_with_scheduler();
-        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<ResolvedTransaction>> {
             bank.verify_transaction(versioned_tx, TransactionVerificationMode::FullVerification)
         }
     };
@@ -727,10 +728,10 @@ fn process_entries(
 fn queue_batches_with_lock_retry(
     bank: &Bank,
     starting_index: usize,
-    transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
-    batches: &mut Vec<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+    transactions: Vec<RuntimeTransaction<ResolvedTransaction>>,
+    batches: &mut Vec<LockedTransactionsWithIndexes<ResolvedTransaction>>,
     mut process_batches: impl FnMut(
-        Drain<LockedTransactionsWithIndexes<SanitizedTransaction>>,
+        Drain<LockedTransactionsWithIndexes<ResolvedTransaction>>,
     ) -> Result<()>,
 ) -> Result<()> {
     // try to lock the accounts
@@ -1605,7 +1606,7 @@ fn confirm_slot_entries(
         let bank = bank.clone_with_scheduler();
         move |versioned_tx: VersionedTransaction,
               verification_mode: TransactionVerificationMode|
-              -> Result<RuntimeTransaction<SanitizedTransaction>> {
+              -> Result<RuntimeTransaction<ResolvedTransaction>> {
             bank.verify_transaction(versioned_tx, verification_mode)
         }
     };
@@ -4807,7 +4808,7 @@ pub mod tests {
     fn create_test_transactions(
         mint_keypair: &Keypair,
         genesis_hash: &Hash,
-    ) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Vec<RuntimeTransaction<ResolvedTransaction>> {
         let pubkey = solana_pubkey::new_rand();
         let keypair2 = Keypair::new();
         let pubkey2 = solana_pubkey::new_rand();

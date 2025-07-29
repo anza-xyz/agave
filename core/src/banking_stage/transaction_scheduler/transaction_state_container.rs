@@ -351,20 +351,19 @@ mod tests {
         solana_keypair::Keypair,
         solana_message::Message,
         solana_perf::packet::Packet,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{
-            sanitized::{MessageHash, SanitizedTransaction},
-            Transaction,
-        },
+        solana_transaction::{sanitized::MessageHash, Transaction},
         std::collections::HashSet,
     };
 
     /// Returns (transaction_ttl, priority, cost)
     fn test_transaction(
         priority: u64,
-    ) -> (RuntimeTransaction<SanitizedTransaction>, MaxAge, u64, u64) {
+    ) -> (RuntimeTransaction<ResolvedTransaction>, MaxAge, u64, u64) {
         let from_keypair = Keypair::new();
         let ixs = vec![
             system_instruction::transfer(&from_keypair.pubkey(), &solana_pubkey::new_rand(), 1),
@@ -381,7 +380,7 @@ mod tests {
     }
 
     fn push_to_container(
-        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
         num: usize,
     ) {
         for priority in 0..num as u64 {

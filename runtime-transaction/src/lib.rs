@@ -2,6 +2,7 @@
 
 mod instruction_data_len;
 pub(crate) mod instruction_meta;
+pub mod resolved_transaction;
 pub mod runtime_transaction;
 pub mod signature_details;
 pub mod transaction_meta;

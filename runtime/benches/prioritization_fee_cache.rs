@@ -12,9 +12,11 @@ use {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         prioritization_fee_cache::*,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    solana_transaction::Transaction,
     std::sync::Arc,
     test::Bencher,
 };
@@ -24,7 +26,7 @@ fn build_sanitized_transaction(
     compute_unit_price: u64,
     signer_account: &Pubkey,
     write_account: &Pubkey,
-) -> RuntimeTransaction<SanitizedTransaction> {
+) -> RuntimeTransaction<ResolvedTransaction> {
     let transfer_lamports = 1;
     let transaction = Transaction::new_unsigned(Message::new(
         &[

@@ -24,7 +24,7 @@ use {
 /// A parsed and sanitized transaction view that has had all address lookups
 /// resolved.
 pub struct ResolvedTransactionView<D: TransactionData> {
-    /// The parsed and sanitized transction view.
+    /// The parsed and sanitized transaction view.
     view: TransactionView<true, D>,
     /// The resolved address lookups.
     resolved_addresses: Option<LoadedAddresses>,

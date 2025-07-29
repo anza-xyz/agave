@@ -282,16 +282,21 @@ mod tests {
     use {
         super::*,
         crate::banking_stage::transaction_scheduler::transaction_state_container::TransactionStateContainer,
-        crossbeam_channel::unbounded, solana_hash::Hash, solana_keypair::Keypair,
-        solana_pubkey::Pubkey, solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        crossbeam_channel::unbounded,
+        solana_hash::Hash,
+        solana_keypair::Keypair,
+        solana_pubkey::Pubkey,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_system_transaction as system_transaction,
-        solana_transaction::sanitized::SanitizedTransaction, test_case::test_case,
+        test_case::test_case,
     };
 
     const NUM_WORKERS: usize = 4;
     const DUMMY_COST: u64 = 1;
 
-    fn simple_transaction() -> RuntimeTransaction<SanitizedTransaction> {
+    fn simple_transaction() -> RuntimeTransaction<ResolvedTransaction> {
         RuntimeTransaction::from_transaction_for_tests(system_transaction::transfer(
             &Keypair::new(),
             &Pubkey::new_unique(),
@@ -301,7 +306,7 @@ mod tests {
     }
 
     fn add_transactions_to_container(
-        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
         count: usize,
     ) {
         for index in 0..count {

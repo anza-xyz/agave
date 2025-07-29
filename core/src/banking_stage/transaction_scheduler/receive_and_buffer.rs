@@ -32,12 +32,12 @@ use {
     solana_measure::measure_us,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_meta::StaticMeta,
-        transaction_with_meta::TransactionWithMeta,
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        transaction_meta::StaticMeta, transaction_with_meta::TransactionWithMeta,
     },
     solana_svm::transaction_error_metrics::TransactionErrorMetrics,
     solana_svm_transaction::svm_message::SVMMessage,
-    solana_transaction::sanitized::{MessageHash, SanitizedTransaction},
+    solana_transaction::sanitized::MessageHash,
     std::{
         num::Saturating,
         sync::{Arc, RwLock},
@@ -73,7 +73,7 @@ pub(crate) struct SanitizedTransactionReceiveAndBuffer {
 }
 
 impl ReceiveAndBuffer for SanitizedTransactionReceiveAndBuffer {
-    type Transaction = RuntimeTransaction<SanitizedTransaction>;
+    type Transaction = RuntimeTransaction<ResolvedTransaction>;
     type Container = TransactionStateContainer<Self::Transaction>;
 
     /// Returns whether the packet receiver is still connected.
@@ -150,7 +150,7 @@ impl SanitizedTransactionReceiveAndBuffer {
 
     fn buffer_packets(
         &mut self,
-        container: &mut TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        container: &mut TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
         _timing_metrics: &mut SchedulerTimingMetrics,
         count_metrics: &mut SchedulerCountMetrics,
         packets: Vec<ImmutableDeserializedPacket>,
@@ -683,7 +683,7 @@ mod tests {
         bank_forks: Arc<RwLock<BankForks>>,
     ) -> (
         SanitizedTransactionReceiveAndBuffer,
-        TransactionStateContainer<RuntimeTransaction<SanitizedTransaction>>,
+        TransactionStateContainer<RuntimeTransaction<ResolvedTransaction>>,
     ) {
         let receive_and_buffer = SanitizedTransactionReceiveAndBuffer {
             packet_receiver: PacketDeserializer::new(receiver),

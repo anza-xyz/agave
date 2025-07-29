@@ -2,19 +2,22 @@ use {
     super::{ComputeBudgetInstructionDetails, RuntimeTransaction},
     crate::{
         instruction_meta::InstructionMeta,
-        transaction_meta::{StaticMeta, TransactionMeta},
+        resolved_transaction::ResolvedTransaction,
+        transaction_meta::{DynamicMeta, StaticMeta, TransactionMeta},
         transaction_with_meta::TransactionWithMeta,
     },
-    solana_message::{AddressLoader, TransactionSignatureDetails},
+    solana_message::{
+        v0::LoadedAddresses, AddressLoader, SanitizedMessage, TransactionSignatureDetails,
+    },
     solana_pubkey::Pubkey,
-    solana_svm_transaction::instruction::SVMInstruction,
+    solana_svm_transaction::{instruction::SVMInstruction, svm_transaction::SVMTransaction},
     solana_transaction::{
         sanitized::{MessageHash, SanitizedTransaction},
         simple_vote_transaction_checker::is_simple_vote_transaction,
         versioned::{sanitized::SanitizedVersionedTransaction, VersionedTransaction},
     },
-    solana_transaction_error::TransactionResult as Result,
-    std::{borrow::Cow, collections::HashSet},
+    solana_transaction_error::{TransactionError, TransactionResult},
+    std::{borrow::Cow, collections::HashSet, sync::LazyLock},
 };
 
 impl RuntimeTransaction<SanitizedVersionedTransaction> {
@@ -22,7 +25,7 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
         sanitized_versioned_tx: SanitizedVersionedTransaction,
         message_hash: MessageHash,
         is_simple_vote_tx: Option<bool>,
-    ) -> Result<Self> {
+    ) -> TransactionResult<Self> {
         let message_hash = match message_hash {
             MessageHash::Precomputed(hash) => hash,
             MessageHash::Compute => sanitized_versioned_tx.get_message().message.hash(),
@@ -71,8 +74,8 @@ impl RuntimeTransaction<SanitizedVersionedTransaction> {
     }
 }
 
-impl RuntimeTransaction<SanitizedTransaction> {
-    /// Create a new `RuntimeTransaction<SanitizedTransaction>` from an
+impl RuntimeTransaction<ResolvedTransaction> {
+    /// Create a new `RuntimeTransaction<ResolvedTransaction>` from an
     /// unsanitized `VersionedTransaction`.
     pub fn try_create(
         tx: VersionedTransaction,
@@ -80,7 +83,7 @@ impl RuntimeTransaction<SanitizedTransaction> {
         is_simple_vote_tx: Option<bool>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Result<Self> {
+    ) -> TransactionResult<Self> {
         let statically_loaded_runtime_tx =
             RuntimeTransaction::<SanitizedVersionedTransaction>::try_from(
                 SanitizedVersionedTransaction::try_from(tx)?,
@@ -94,17 +97,17 @@ impl RuntimeTransaction<SanitizedTransaction> {
         )
     }
 
-    /// Create a new `RuntimeTransaction<SanitizedTransaction>` from a
+    /// Create a new `RuntimeTransaction<ResolvedTransaction>` from a
     /// `RuntimeTransaction<SanitizedVersionedTransaction>` that already has
     /// static metadata loaded.
     pub fn try_from(
         statically_loaded_runtime_tx: RuntimeTransaction<SanitizedVersionedTransaction>,
         address_loader: impl AddressLoader,
         reserved_account_keys: &HashSet<Pubkey>,
-    ) -> Result<Self> {
+    ) -> TransactionResult<Self> {
         let hash = *statically_loaded_runtime_tx.message_hash();
         let is_simple_vote_tx = statically_loaded_runtime_tx.is_simple_vote_transaction();
-        let sanitized_transaction = SanitizedTransaction::try_new(
+        let transaction = ResolvedTransaction::try_new(
             statically_loaded_runtime_tx.transaction,
             hash,
             is_simple_vote_tx,
@@ -112,34 +115,37 @@ impl RuntimeTransaction<SanitizedTransaction> {
             reserved_account_keys,
         )?;
 
-        let mut tx = Self {
-            transaction: sanitized_transaction,
+        Ok(Self {
+            transaction,
             meta: statically_loaded_runtime_tx.meta,
-        };
-        tx.load_dynamic_metadata()?;
-
-        Ok(tx)
-    }
-
-    fn load_dynamic_metadata(&mut self) -> Result<()> {
-        Ok(())
+        })
     }
 }
 
-impl TransactionWithMeta for RuntimeTransaction<SanitizedTransaction> {
+impl SVMTransaction for RuntimeTransaction<ResolvedTransaction> {
+    fn signature(&self) -> &solana_signature::Signature {
+        self.transaction.transaction.signature()
+    }
+
+    fn signatures(&self) -> &[solana_signature::Signature] {
+        self.transaction.transaction.signatures()
+    }
+}
+
+impl TransactionWithMeta for RuntimeTransaction<ResolvedTransaction> {
     #[inline]
     fn as_sanitized_transaction(&self) -> Cow<SanitizedTransaction> {
-        Cow::Borrowed(self)
+        Cow::Borrowed(&self.transaction.transaction)
     }
 
     #[inline]
     fn to_versioned_transaction(&self) -> VersionedTransaction {
-        self.transaction.to_versioned_transaction()
+        self.transaction.transaction.to_versioned_transaction()
     }
 }
 
 #[cfg(feature = "dev-context-only-utils")]
-impl RuntimeTransaction<SanitizedTransaction> {
+impl RuntimeTransaction<ResolvedTransaction> {
     pub fn from_transaction_for_tests(transaction: solana_transaction::Transaction) -> Self {
         let versioned_transaction = VersionedTransaction::from(transaction);
         Self::try_create(
@@ -150,6 +156,21 @@ impl RuntimeTransaction<SanitizedTransaction> {
             &HashSet::new(),
         )
         .expect("failed to create RuntimeTransaction from Transaction")
+    }
+}
+
+static DEFAULT_LOADED_ADDRESSES: LazyLock<LoadedAddresses> =
+    LazyLock::new(LoadedAddresses::default);
+
+impl DynamicMeta for RuntimeTransaction<ResolvedTransaction> {
+    fn resolved_addresses(&self) -> Result<&LoadedAddresses, &TransactionError> {
+        match &self.address_resolution_err {
+            Some(err) => Err(err),
+            None => match &self.transaction.transaction.message() {
+                SanitizedMessage::Legacy(_) => Ok(&DEFAULT_LOADED_ADDRESSES),
+                SanitizedMessage::V0(message) => Ok(&message.loaded_addresses),
+            },
+        }
     }
 }
 
@@ -290,13 +311,13 @@ mod tests {
         assert_eq!(hash, *statically_loaded_transaction.message_hash());
         assert!(!statically_loaded_transaction.is_simple_vote_transaction());
 
-        let dynamically_loaded_transaction = RuntimeTransaction::<SanitizedTransaction>::try_from(
+        let resolved_transaction = RuntimeTransaction::<ResolvedTransaction>::try_from(
             statically_loaded_transaction,
             SimpleAddressLoader::Disabled,
             &ReservedAccountKeys::empty_key_set(),
         );
         let dynamically_loaded_transaction =
-            dynamically_loaded_transaction.expect("created from statically loaded tx");
+            resolved_transaction.expect("created from statically loaded tx");
 
         assert_eq!(hash, *dynamically_loaded_transaction.message_hash());
         assert!(!dynamically_loaded_transaction.is_simple_vote_transaction());

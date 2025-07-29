@@ -19,12 +19,13 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         transaction_batch::{OwnedOrBorrowed, TransactionBatch},
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_signer::Signer,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
     solana_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{Arc, RwLock},
     test::Bencher,
 };
@@ -59,7 +60,7 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
     accounts
 }
 
-fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<ResolvedTransaction>> {
     let funded_accounts = create_funded_accounts(bank, 2 * num);
     funded_accounts
         .into_par_iter()

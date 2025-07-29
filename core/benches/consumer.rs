@@ -23,11 +23,12 @@ use {
         transaction_recorder::TransactionRecorder,
     },
     solana_runtime::{bank::Bank, bank_forks::BankForks},
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_signer::Signer,
     solana_system_interface::program as system_program,
     solana_system_transaction as system_transaction,
-    solana_transaction::sanitized::SanitizedTransaction,
     std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
@@ -66,7 +67,7 @@ fn create_funded_accounts(bank: &Bank, num: usize) -> Vec<Keypair> {
     accounts
 }
 
-fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<SanitizedTransaction>> {
+fn create_transactions(bank: &Bank, num: usize) -> Vec<RuntimeTransaction<ResolvedTransaction>> {
     let funded_accounts = create_funded_accounts(bank, 2 * num);
     funded_accounts
         .into_par_iter()

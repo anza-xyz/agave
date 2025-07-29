@@ -4,7 +4,7 @@
 //! and [`InstalledSchedulerPool`] to provide a concrete transaction scheduling implementation
 //! (including executing txes and committing tx results).
 //!
-//! At the highest level, this crate takes [`SanitizedTransaction`]s via its
+//! At the highest level, this crate takes [`ResolvedTransaction`]s via its
 //! [`InstalledScheduler::schedule_execution`] and commits any side-effects (i.e. on-chain state
 //! changes) into the associated [`Bank`](solana_runtime::bank::Bank) via `solana-ledger`'s helper
 //! function called [`execute_batch`].
@@ -42,10 +42,12 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
         vote_sender_types::ReplayVoteSender,
     },
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        transaction_with_meta::TransactionWithMeta,
+    },
     solana_svm::transaction_processing_result::ProcessedTransaction,
     solana_timings::ExecuteTimings,
-    solana_transaction::sanitized::SanitizedTransaction,
     solana_transaction_error::{TransactionError, TransactionResult as Result},
     solana_unified_scheduler_logic::{
         SchedulingMode::{self, BlockProduction, BlockVerification},
@@ -369,7 +371,7 @@ impl BankingStageHelper {
 
     pub fn create_new_task(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransaction>,
         index: usize,
     ) -> Task {
         SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
@@ -1146,7 +1148,7 @@ impl ExecutedTask {
         })
     }
 
-    fn into_transaction(self) -> RuntimeTransaction<SanitizedTransaction> {
+    fn into_transaction(self) -> RuntimeTransaction<ResolvedTransaction> {
         self.task.into_transaction()
     }
 }
@@ -2587,7 +2589,7 @@ impl<TH: TaskHandler> InstalledScheduler for PooledScheduler<TH> {
 
     fn schedule_execution(
         &self,
-        transaction: RuntimeTransaction<SanitizedTransaction>,
+        transaction: RuntimeTransaction<ResolvedTransaction>,
         index: usize,
     ) -> ScheduleResult {
         let task = SchedulingStateMachine::create_task(transaction, index, &mut |pubkey| {
@@ -2696,7 +2698,6 @@ mod tests {
         },
         solana_system_transaction as system_transaction,
         solana_timings::ExecuteTimingType,
-        solana_transaction::sanitized::SanitizedTransaction,
         solana_transaction_error::TransactionError,
         std::{
             num::Saturating,
@@ -4161,7 +4162,7 @@ mod tests {
 
         fn schedule_execution(
             &self,
-            transaction: RuntimeTransaction<SanitizedTransaction>,
+            transaction: RuntimeTransaction<ResolvedTransaction>,
             index: usize,
         ) -> ScheduleResult {
             let context = self.context().clone();

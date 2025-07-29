@@ -7,15 +7,17 @@ use {
     solana_keypair::Keypair,
     solana_message::Message,
     solana_pubkey::Pubkey,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_signer::Signer,
     solana_system_interface::instruction as system_instruction,
-    solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+    solana_transaction::Transaction,
     test::Bencher,
 };
 
 struct BenchSetup {
-    transactions: Vec<RuntimeTransaction<SanitizedTransaction>>,
+    transactions: Vec<RuntimeTransaction<ResolvedTransaction>>,
     feature_set: FeatureSet,
 }
 

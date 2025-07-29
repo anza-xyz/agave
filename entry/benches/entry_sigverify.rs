@@ -6,11 +6,11 @@ use {
     solana_hash::Hash,
     solana_message::SimpleAddressLoader,
     solana_perf::test_tx::test_tx,
-    solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+    solana_runtime_transaction::{
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+    },
     solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction},
-        versioned::VersionedTransaction,
-        TransactionVerificationMode,
+        sanitized::MessageHash, versioned::VersionedTransaction, TransactionVerificationMode,
     },
     solana_transaction_error::TransactionResult as Result,
     std::sync::Arc,
@@ -30,7 +30,7 @@ fn bench_gpusigverify(bencher: &mut Bencher) {
     let verify_transaction = {
         move |versioned_tx: VersionedTransaction,
               verification_mode: TransactionVerificationMode|
-              -> Result<RuntimeTransaction<SanitizedTransaction>> {
+              -> Result<RuntimeTransaction<ResolvedTransaction>> {
             let sanitized_tx = {
                 let message_hash =
                     if verification_mode == TransactionVerificationMode::FullVerification {
@@ -80,7 +80,7 @@ fn bench_cpusigverify(bencher: &mut Bencher) {
         .collect::<Vec<_>>();
 
     let verify_transaction = {
-        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<SanitizedTransaction>> {
+        move |versioned_tx: VersionedTransaction| -> Result<RuntimeTransaction<ResolvedTransaction>> {
             let sanitized_tx = {
                 let message_hash = versioned_tx.verify_and_hash_message()?;
                 RuntimeTransaction::try_create(

@@ -92,15 +92,17 @@ mod tests {
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_message::Message,
-        solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
+        solana_runtime_transaction::{
+            resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        },
         solana_signer::Signer,
         solana_system_interface::instruction as system_instruction,
-        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        solana_transaction::Transaction,
     };
 
     fn create_transaction_state(
         compute_unit_price: u64,
-    ) -> TransactionState<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionState<RuntimeTransaction<ResolvedTransaction>> {
         let from_keypair = Keypair::new();
         let ixs = vec![
             system_instruction::transfer(&from_keypair.pubkey(), &solana_pubkey::new_rand(), 1),

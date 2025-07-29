@@ -116,7 +116,8 @@ use {
     solana_rent_collector::RentCollector,
     solana_reward_info::RewardInfo,
     solana_runtime_transaction::{
-        runtime_transaction::RuntimeTransaction, transaction_with_meta::TransactionWithMeta,
+        resolved_transaction::ResolvedTransaction, runtime_transaction::RuntimeTransaction,
+        transaction_with_meta::TransactionWithMeta,
     },
     solana_sdk_ids::{bpf_loader_upgradeable, incinerator, native_loader},
     solana_sha256_hasher::hashv,
@@ -151,7 +152,7 @@ use {
     solana_time_utils::years_as_slots,
     solana_timings::{ExecuteTimingType, ExecuteTimings},
     solana_transaction::{
-        sanitized::{MessageHash, SanitizedTransaction, MAX_TX_ACCOUNT_LOCKS},
+        sanitized::{MessageHash, MAX_TX_ACCOUNT_LOCKS},
         versioned::VersionedTransaction,
         Transaction, TransactionVerificationMode,
     },
@@ -2962,7 +2963,7 @@ impl Bank {
     pub fn prepare_entry_batch(
         &self,
         txs: Vec<VersionedTransaction>,
-    ) -> Result<TransactionBatch<RuntimeTransaction<SanitizedTransaction>>> {
+    ) -> Result<TransactionBatch<RuntimeTransaction<ResolvedTransaction>>> {
         let sanitized_txs = txs
             .into_iter()
             .map(|tx| {
@@ -4706,7 +4707,7 @@ impl Bank {
         &self,
         tx: VersionedTransaction,
         verification_mode: TransactionVerificationMode,
-    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Result<RuntimeTransaction<ResolvedTransaction>> {
         let sanitized_tx = {
             let size =
                 bincode::serialized_size(&tx).map_err(|_| TransactionError::SanitizeFailure)?;
@@ -4735,7 +4736,7 @@ impl Bank {
     pub fn fully_verify_transaction(
         &self,
         tx: VersionedTransaction,
-    ) -> Result<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> Result<RuntimeTransaction<ResolvedTransaction>> {
         self.verify_transaction(tx, TransactionVerificationMode::FullVerification)
     }
 
@@ -5819,7 +5820,7 @@ impl Bank {
     pub fn prepare_batch_for_tests(
         &self,
         txs: Vec<Transaction>,
-    ) -> TransactionBatch<RuntimeTransaction<SanitizedTransaction>> {
+    ) -> TransactionBatch<RuntimeTransaction<ResolvedTransaction>> {
         let sanitized_txs = txs
             .into_iter()
             .map(RuntimeTransaction::from_transaction_for_tests)
