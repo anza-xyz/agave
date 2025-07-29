@@ -5715,11 +5715,10 @@ impl AccountsDb {
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
     ) -> AccountsLtHash {
-        let storages = AccountStoragesOrderBalancer::new(storages, (7, 1));
+        let storages = AccountStoragesOrderBalancer::new(storages, (4, 1));
         let mut lt_hash = storages
             .into_par_iter()
-            .with_min_len(16)
-            .with_max_len(64)
+            .by_uniform_blocks(100)
             .fold(LtHash::identity, |mut accum, storage| {
                 let obsolete_accounts = storage.get_obsolete_accounts(None);
                 storage

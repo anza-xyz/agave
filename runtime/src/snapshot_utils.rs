@@ -87,7 +87,7 @@ pub const INCREMENTAL_SNAPSHOT_ARCHIVE_FILENAME_REGEX: &str = r"^incremental-sna
 // Balance large and small files order in snapshot tar with bias towards small (4 small + 1 large),
 // such that during unpacking large writes are mixed with file metadata operations
 // and towards the end of archive (sizes equalize) writes are >256KiB / file.
-const INTERLEAVED_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
+const INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO: (usize, usize) = (4, 1);
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
 pub enum SnapshotVersion {
@@ -1127,7 +1127,7 @@ fn archive_snapshot(
 
             let storages_orderer = AccountStoragesOrderBalancer::new(
                 snapshot_storages,
-                INTERLEAVED_SMALL_TO_LARGE_RATIO,
+                INTERLEAVE_TAR_ENTRIES_SMALL_TO_LARGE_RATIO,
             );
             for storage in storages_orderer.into_iter() {
                 let path_in_archive = Path::new(ACCOUNTS_DIR)
