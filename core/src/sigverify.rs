@@ -87,7 +87,7 @@ impl SigVerifier for TransactionSigVerifier {
     }
 
     fn verify_batches(
-        &self,
+        &mut self,
         mut batches: Vec<PacketBatch>,
         valid_packets: usize,
     ) -> Vec<PacketBatch> {

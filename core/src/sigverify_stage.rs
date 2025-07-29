@@ -56,7 +56,11 @@ pub struct SigVerifyStage {
 
 pub trait SigVerifier {
     type SendType: std::fmt::Debug;
-    fn verify_batches(&self, batches: Vec<PacketBatch>, valid_packets: usize) -> Vec<PacketBatch>;
+    fn verify_batches(
+        &mut self,
+        batches: Vec<PacketBatch>,
+        valid_packets: usize,
+    ) -> Vec<PacketBatch>;
     fn send_packets(&mut self, packet_batches: Vec<PacketBatch>) -> Result<(), Self::SendType>;
 }
 
@@ -217,7 +221,7 @@ impl SigVerifierStats {
 impl SigVerifier for DisabledSigVerifier {
     type SendType = ();
     fn verify_batches(
-        &self,
+        &mut self,
         mut batches: Vec<PacketBatch>,
         _valid_packets: usize,
     ) -> Vec<PacketBatch> {
