@@ -767,13 +767,13 @@ mod tests {
             })
             .collect();
         shreds.shuffle(rng);
-        // Assert that all shreds verfiy and sanitize.
+        // Assert that all shreds verify and sanitize.
         for shred in &shreds {
             let pubkey = keypairs[&shred.slot()].pubkey();
             assert!(shred.verify(&pubkey));
             assert_matches!(shred.sanitize(), Ok(()));
         }
-        // Verfiy using layout api.
+        // Verify using layout api.
         for shred in &shreds {
             let shred = shred.payload();
             let slot = shred::layout::get_slot(shred).unwrap();
