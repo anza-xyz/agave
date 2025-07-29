@@ -321,11 +321,7 @@ impl<'a> AccountStoragesOrderer<'a> {
         let mut indices: Vec<_> = len_range.clone().collect();
         indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
         indices.iter_mut().for_each(|i| {
-            *i = select_from_range_with_start_end_rates(
-                len_range.clone(),
-                *i,
-                small_to_large_ratio.clone(),
-            )
+            *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
         });
         Self { storages, indices }
     }
@@ -337,16 +333,21 @@ impl<'a> AccountStoragesOrderer<'a> {
         Self { storages, indices }
     }
 
-    pub fn into_iter(self) -> impl ExactSizeIterator<Item = &'a AccountStorageEntry> + 'a {
-        self.indices.into_iter().map(|i| self.storages[i].as_ref())
-    }
-
     pub fn into_par_iter(
         self,
     ) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
         self.indices
             .into_par_iter()
             .map(|i| self.storages[i].as_ref())
+    }
+}
+
+impl<'a> IntoIterator for AccountStoragesOrderer<'a> {
+    type Item = &'a AccountStorageEntry;
+    type IntoIter = Box<dyn Iterator<Item = &'a AccountStorageEntry> + 'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.indices.into_iter().map(|i| self.storages[i].as_ref()))
     }
 }
 
