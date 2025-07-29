@@ -1508,13 +1508,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_core_bpf_programs() {
-        let (test_validator, _payer) = TestValidatorGenesis::default()
-            .deactivate_features(&[
-                // Don't migrate the stake program.
-                agave_feature_set::migrate_stake_program_to_core_bpf::id(),
-            ])
-            .start_async()
-            .await;
+        let (test_validator, _payer) = TestValidatorGenesis::default().start_async().await;
 
         let rpc_client = test_validator.get_async_rpc_client();
 
