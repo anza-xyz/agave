@@ -752,6 +752,8 @@ where
             // Maintain the runtime invariant established in register_banking_stage() about
             // the availability of pooled block production scheduler by re-spawning one.
             if block_production_scheduler_inner.can_put(&scheduler) {
+                // TODO: signal scheduler immdiatety not to receive from banking_packet_receiver,
+                // maybe by just disconnecting new_task_sender??
                 block_production_scheduler_inner.trash_taken();
                 // To prevent block-production scheduler from being taken in
                 // do_take_resumed_scheduler() by different thread at this very moment, the
@@ -1033,7 +1035,7 @@ where
         // Drop impl, because of the need to take the ownership of the join handle of the cleaner
         // thread...
         let mut this = self;
-        let mut this: Self = loop {
+        let this: Self = loop {
             match Arc::try_unwrap(this) {
                 Ok(pool) => {
                     break pool;
@@ -1048,9 +1050,14 @@ where
                 }
             }
         };
-        // Accelerate cleaner thread joining by disconnection
-        this.scheduler_pool_sender = crossbeam_channel::bounded(1).0;
-        this.cleaner_thread.join().unwrap();
+        let Self {
+            scheduler_pool_sender,
+            cleaner_thread,
+            ..
+        } = this;
+        // Accelerate cleaner thread joining by channel-disconnection via drop
+        drop(scheduler_pool_sender);
+        cleaner_thread.join().unwrap();
 
         info!("SchedulerPool::uninstalled_from_bank_forks(): ...finished");
     }
