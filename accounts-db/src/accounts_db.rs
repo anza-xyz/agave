@@ -5719,7 +5719,7 @@ impl AccountsDb {
         // useful for optimizing disk read sizes and buffers usage in a single IO queue).
         let storages = AccountStoragesOrderer::with_random_order(storages);
         let mut lt_hash = storages
-            .into_par_iter()
+            .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
                 let obsolete_accounts = storage.get_obsolete_accounts(None);
                 storage

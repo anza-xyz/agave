@@ -4,7 +4,7 @@ use {
     crate::accounts_db::{AccountStorageEntry, AccountsFileId},
     dashmap::DashMap,
     rand::seq::SliceRandom,
-    rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
+    rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator},
     solana_clock::Slot,
     solana_nohash_hasher::{BuildNoHashHasher, IntMap},
     std::{
@@ -301,15 +301,15 @@ impl Default for AccountStorageStatus {
 /// Wrapper over slice of `Arc<AccountStorageEntry>` that provides an ordered access to storages.
 ///
 /// A few strategies are available for ordering storages:
-/// - `with_small_to_large_ratio`: interleaving small and large storage written bytes
+/// - `with_small_to_large_ratio`: interleaving small and large storage file sizes
 /// - `with_random_order`: orders storages randomly
 pub struct AccountStoragesOrderer<'a> {
     storages: &'a [Arc<AccountStorageEntry>],
-    indices: Vec<usize>,
+    indices: Box<[usize]>,
 }
 
 impl<'a> AccountStoragesOrderer<'a> {
-    /// Create balaning orderer that interleaves storages with small and large written bytes.
+    /// Create balancing orderer that interleaves storages with small and large file sizes.
     ///
     /// Storages are returned in cycles based on `small_to_large_ratio` - `ratio.0` small storages
     /// preceding `ratio.1` large storages.
@@ -319,35 +319,32 @@ impl<'a> AccountStoragesOrderer<'a> {
     ) -> Self {
         let len_range = 0..storages.len();
         let mut indices: Vec<_> = len_range.clone().collect();
-        indices.sort_unstable_by_key(|i| storages[*i].written_bytes());
+        indices.sort_unstable_by_key(|i| storages[*i].capacity());
         indices.iter_mut().for_each(|i| {
             *i = select_from_range_with_start_end_rates(len_range.clone(), *i, small_to_large_ratio)
         });
-        Self { storages, indices }
+        Self {
+            storages,
+            indices: indices.into_boxed_slice(),
+        }
     }
 
     /// Create randomizing orderer.
     pub fn with_random_order(storages: &'a [Arc<AccountStorageEntry>]) -> Self {
         let mut indices: Vec<usize> = (0..storages.len()).collect();
         indices.shuffle(&mut rand::thread_rng());
-        Self { storages, indices }
+        Self {
+            storages,
+            indices: indices.into_boxed_slice(),
+        }
     }
 
-    pub fn into_par_iter(
-        self,
-    ) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
-        self.indices
-            .into_par_iter()
-            .map(|i| self.storages[i].as_ref())
+    pub fn iter(&'a self) -> impl Iterator<Item = &'a AccountStorageEntry> + 'a {
+        self.indices.iter().map(|i| self.storages[*i].as_ref())
     }
-}
 
-impl<'a> IntoIterator for AccountStoragesOrderer<'a> {
-    type Item = &'a AccountStorageEntry;
-    type IntoIter = Box<dyn Iterator<Item = &'a AccountStorageEntry> + 'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        Box::new(self.indices.into_iter().map(|i| self.storages[i].as_ref()))
+    pub fn par_iter(&'a self) -> impl IndexedParallelIterator<Item = &'a AccountStorageEntry> + 'a {
+        self.indices.par_iter().map(|i| self.storages[*i].as_ref())
     }
 }
 
