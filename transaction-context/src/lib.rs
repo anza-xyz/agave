@@ -900,7 +900,7 @@ pub struct BorrowedAccount<'a> {
     transaction_context: &'a TransactionContext,
     instruction_context: &'a InstructionContext,
     index_in_transaction: IndexOfAccount,
-    // Program accounts are not part of the instruction_accounts vector
+    // Program accounts are not part of the instruction_accounts vector, and thus None
     index_in_instruction_accounts: Option<IndexOfAccount>,
     account: RefMut<'a, AccountSharedData>,
 }
