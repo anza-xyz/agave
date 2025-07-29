@@ -15,9 +15,19 @@ Release channels have their own copy of this changelog:
 <a name="edge-channel"></a>
 ## 3.0.0 - Unreleased
 
+### RPC
+
+#### Breaking
+* Added a `slot` property to `EpochRewardsPeriodActiveErrorData`
+* Added error data containing a `slot` property to `RpcCustomError::SlotNotEpochBoundary`
+
+#### Changes
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
+
 ### Validator
 
 #### Breaking
+* Require increased `memlock` limits - recommended setting is `LimitMEMLOCK=2000000000` in systemd service configuration. Lack of sufficient limit (on Linux) will cause startup error.
 * Remove deprecated arguments
   * `--accounts-index-memory-limit-mb`
   * `--accountsdb-repl-bind-address`, `--accountsdb-repl-port`, `--accountsdb-repl-threads`, `--enable-accountsdb-repl`
@@ -32,7 +42,8 @@ Release channels have their own copy of this changelog:
 * Using `--snapshot-interval-slots 0` to disable generating snapshots has been removed. Use `--no-snapshots` instead.
 
 #### Changes
-* Reading snapshot archives requires increased `memlock` limits - recommended setting is `LimitMEMLOCK=2000000000` in systemd service configuration. Lack of sufficient limit will result slower startup times.
+* `--transaction-structure view` is now the default.
+* The default full snapshot interval is now 100,000 slots.
 
 ## 2.3.0
 

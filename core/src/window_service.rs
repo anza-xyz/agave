@@ -96,7 +96,7 @@ impl WindowServiceMetrics {
             Error::RecvTimeout(_) => self.num_errors_cross_beam_recv_timeout += 1,
             Error::Blockstore(err) => {
                 self.num_errors_blockstore += 1;
-                error!("blockstore error: {}", err);
+                error!("blockstore error: {err}");
             }
             _ => self.num_errors_other += 1,
         }
@@ -485,15 +485,14 @@ mod test {
         keypair: &Keypair,
     ) -> Vec<Shred> {
         let shredder = Shredder::new(slot, parent, 0, 0).unwrap();
-        let (data_shreds, _) = shredder.entries_to_shreds(
+        let (data_shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             entries,
             true, // is_last_in_slot
             // chained_merkle_root
             Some(Hash::new_from_array(rand::thread_rng().gen())),
-            0,    // next_shred_index
-            0,    // next_code_index
-            true, // merkle_variant
+            0, // next_shred_index
+            0, // next_code_index
             &ReedSolomonCache::default(),
             &mut ProcessShredsStats::default(),
         );

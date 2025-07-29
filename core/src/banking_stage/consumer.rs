@@ -1612,7 +1612,6 @@ mod tests {
             0,    // parent_slot
             true, // is_full_slot
             0,    // version
-            true, // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
         blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
@@ -1757,7 +1756,6 @@ mod tests {
             0,    // parent_slot
             true, // is_full_slot
             0,    // version
-            true, // merkle_variant
         );
         blockstore.insert_shreds(shreds, None, false).unwrap();
         blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();

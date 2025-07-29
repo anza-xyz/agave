@@ -189,9 +189,8 @@ annotateBlockexplorerUrl() {
 }
 
 build() {
-  supported=("22.04")
   declare MAYBE_DOCKER=
-  if [[ $(uname) != Linux || ! " ${supported[*]} " =~ $(lsb_release -sr) ]]; then
+  if [[ $(uname) != Linux ]]; then
     # shellcheck source=ci/docker/env.sh
     source "$SOLANA_ROOT"/ci/docker/env.sh
     MAYBE_DOCKER="ci/docker-run.sh ${CI_DOCKER_IMAGE:?}"

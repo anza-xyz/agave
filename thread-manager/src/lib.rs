@@ -220,7 +220,7 @@ mod tests {
                 .read_to_string(&mut buf)
                 .unwrap();
             let cfg: ThreadManagerConfig = toml::from_str(&buf).unwrap();
-            println!("{:?}", cfg);
+            println!("{cfg:?}");
         }
     }
     // Nobody runs Agave on windows, and on Mac we can not set mask affinity without patching external crate

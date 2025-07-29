@@ -17,8 +17,8 @@ The Tour De Sun 22 program is closed and no longer accepting applications. Pleas
 
 ## Solana Foundation Server Program
 
-Separately from the delegation program, The Solana Foundation offers a server program that provides servers in various data-centers all over the world. If you would like to run a consensus validator or RPC node, you may use this program to rent bare metal servers in various data-centers. The servers meet or exceed the [Solana validator hardware specs](./requirements.md#hardware-recommendations). No long-term lease commitments are required. To find out more, visit the [Solana server program page](https://solana.org/server-program).
+Separately from the delegation program, The Solana Foundation offers a server program that provides servers in various data-centers all over the world. If you would like to run a consensus validator or RPC node, you may use this program to rent bare metal servers in various data-centers. The servers meet or exceed the [Solana validator hardware specs](./requirements.md#hardware-recommendations). No long-term lease commitments are required. To find out more, visit the [Solana server recommendations page](https://solana.inflect.com/).
 
 ## Stake Pools
 
-The Solana ecosystem operates various stake pools.  These stake pools delegate stake to validators using various delegation strategies. To learn more about stake pools and their delegation strategies, visit the [Solana Foundation stake pools page](https://solana.org/stake-pools).
+The Solana ecosystem operates various stake pools.  These stake pools delegate stake to validators using various delegation strategies. To learn more about stake pools and their delegation strategies, visit the [Solana Stake Pool documentation](https://spl.solana.com/stake-pool).

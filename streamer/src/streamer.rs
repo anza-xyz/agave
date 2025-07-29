@@ -16,6 +16,7 @@ use {
     crossbeam_channel::{Receiver, RecvTimeoutError, SendError, Sender, TrySendError},
     histogram::Histogram,
     itertools::Itertools,
+    solana_packet::Packet,
     solana_pubkey::Pubkey,
     solana_time_utils::timestamp,
     std::{
@@ -30,6 +31,11 @@ use {
         time::{Duration, Instant},
     },
     thiserror::Error,
+};
+#[cfg(unix)]
+use {
+    nix::poll::{PollFd, PollFlags},
+    std::os::fd::AsFd,
 };
 
 pub trait ChannelSend<T>: Send + 'static {
@@ -66,6 +72,8 @@ where
         self.len()
     }
 }
+
+pub(crate) const SOCKET_READ_TIMEOUT: Duration = Duration::from_secs(1);
 
 // Total stake and nodes => stake map
 #[derive(Default)]
@@ -161,27 +169,31 @@ fn recv_loop<P: SocketProvider>(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> Result<()> {
-    let mut has_set_timeout = false;
+    fn setup_socket(socket: &UdpSocket) -> Result<()> {
+        // Non-unix implementation may block indefinitely due to its lack of polling support,
+        // so we set a read timeout to avoid blocking indefinitely.
+        #[cfg(not(unix))]
+        socket.set_read_timeout(Some(SOCKET_READ_TIMEOUT))?;
+
+        #[cfg(unix)]
+        socket.set_nonblocking(true)?;
+
+        Ok(())
+    }
+
+    let mut socket = provider.current_socket_ref();
+    setup_socket(&socket)?;
+    #[cfg(unix)]
+    let mut poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+
     loop {
-        let socket = match provider.current_socket() {
-            CurrentSocket::Changed(sock) => {
-                sock.set_read_timeout(Some(Duration::from_secs(1)))?;
-                has_set_timeout = true;
-                sock
-            }
-            CurrentSocket::Same(sock) => {
-                if !has_set_timeout {
-                    sock.set_read_timeout(Some(Duration::from_secs(1)))?;
-                    has_set_timeout = true;
-                }
-                sock
-            }
-        };
         let mut packet_batch = if use_pinned_memory {
             PinnedPacketBatch::new_with_recycler(recycler, PACKETS_PER_BATCH, stats.name)
         } else {
             PinnedPacketBatch::with_capacity(PACKETS_PER_BATCH)
         };
+        packet_batch.resize(PACKETS_PER_BATCH, Packet::default());
+
         loop {
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
@@ -196,7 +208,12 @@ fn recv_loop<P: SocketProvider>(
                 }
             }
 
-            if let Ok(len) = packet::recv_from(&mut packet_batch, socket, coalesce) {
+            #[cfg(unix)]
+            let result = packet::recv_from(&mut packet_batch, &socket, coalesce, &mut poll_fd);
+            #[cfg(not(unix))]
+            let result = packet::recv_from(&mut packet_batch, &socket, coalesce);
+
+            if let Ok(len) = result {
                 if len > 0 {
                     let StreamerReceiveStats {
                         packets_count,
@@ -228,6 +245,16 @@ fn recv_loop<P: SocketProvider>(
                 break;
             }
         }
+
+        if let CurrentSocket::Changed(s) = provider.current_socket() {
+            socket = s;
+            setup_socket(&socket)?;
+
+            #[cfg(unix)]
+            {
+                poll_fd = [PollFd::new(socket.as_fd(), PollFlags::POLLIN)];
+            }
+        }
     }
 }
 
@@ -244,8 +271,6 @@ pub fn receiver(
     in_vote_only_mode: Option<Arc<AtomicBool>>,
     is_staked_service: bool,
 ) -> JoinHandle<()> {
-    let res = socket.set_read_timeout(Some(Duration::new(1, 0)));
-    assert!(res.is_ok(), "streamer::receiver set_read_timeout error");
     Builder::new()
         .name(thread_name)
         .spawn(move || {
@@ -372,10 +397,7 @@ impl StreamerSendStats {
             });
             entries.truncate(MAX_REPORT_ENTRIES);
         }
-        info!(
-            "streamer send {} hosts: count:{} {:?}",
-            name, num_entries, entries,
-        );
+        info!("streamer send {name} hosts: count:{num_entries} {entries:?}");
     }
 
     fn maybe_submit(&mut self, name: &'static str, sender: &Sender<Box<dyn FnOnce() + Send>>) {
@@ -555,7 +577,7 @@ pub fn responder(
 }
 
 fn responder_loop<P: SocketProvider>(
-    mut provider: P,
+    provider: P,
     name: &'static str,
     r: PacketBatchReceiver,
     socket_addr_space: SocketAddrSpace,
@@ -572,7 +594,7 @@ fn responder_loop<P: SocketProvider>(
 
     loop {
         let sock = provider.current_socket_ref();
-        if let Err(e) = recv_send(sock, &r, &socket_addr_space, &mut stats) {
+        if let Err(e) = recv_send(&sock, &r, &socket_addr_space, &mut stats) {
             match e {
                 StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
                 StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
@@ -585,7 +607,7 @@ fn responder_loop<P: SocketProvider>(
         let now = timestamp();
         if now - last_print > 1000 && errors != 0 {
             datapoint_info!(name, ("errors", errors, i64),);
-            info!("{} last-error: {:?} count: {}", name, last_error, errors);
+            info!("{name} last-error: {last_error:?} count: {errors}");
             last_print = now;
             errors = 0;
         }
@@ -642,7 +664,7 @@ mod test {
     #[test]
     fn streamer_send_test() {
         let read = bind_to_localhost().expect("bind");
-        read.set_read_timeout(Some(Duration::new(1, 0))).unwrap();
+        read.set_read_timeout(Some(SOCKET_READ_TIMEOUT)).unwrap();
 
         let addr = read.local_addr().unwrap();
         let send = bind_to_localhost().expect("bind");

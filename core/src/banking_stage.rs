@@ -366,7 +366,6 @@ impl BankingStage {
     pub fn new(
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
-        cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
@@ -381,7 +380,6 @@ impl BankingStage {
         Self::new_num_threads(
             block_production_method,
             transaction_struct,
-            cluster_info,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -400,7 +398,6 @@ impl BankingStage {
     pub fn new_num_threads(
         block_production_method: BlockProductionMethod,
         transaction_struct: TransactionStructure,
-        cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
@@ -420,7 +417,6 @@ impl BankingStage {
         Self::new_central_scheduler(
             transaction_struct,
             use_greedy_scheduler,
-            cluster_info,
             poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -439,7 +435,6 @@ impl BankingStage {
     pub fn new_central_scheduler(
         transaction_struct: TransactionStructure,
         use_greedy_scheduler: bool,
-        cluster_info: &impl LikeClusterInfo,
         poh_recorder: &Arc<RwLock<PohRecorder>>,
         transaction_recorder: TransactionRecorder,
         non_vote_receiver: BankingPacketReceiver,
@@ -458,7 +453,7 @@ impl BankingStage {
             VoteStorage::new(&bank)
         };
 
-        let decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
+        let decision_maker = DecisionMaker::new(poh_recorder.clone());
         let committer = Committer::new(
             transaction_status_sender.clone(),
             replay_vote_sender.clone(),
@@ -688,7 +683,6 @@ mod tests {
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
         solana_entry::entry::{self, Entry, EntrySlice},
-        solana_gossip::cluster_info::Node,
         solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
@@ -710,7 +704,6 @@ mod tests {
         solana_runtime::{bank::Bank, genesis_utils::bootstrap_validator_stake_lamports},
         solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
         solana_signer::Signer,
-        solana_streamer::socket::SocketAddrSpace,
         solana_system_transaction as system_transaction,
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
         solana_vote::vote_transaction::new_tower_sync_transaction,
@@ -722,14 +715,6 @@ mod tests {
         },
         test_case::test_case,
     };
-
-    pub(crate) fn new_test_cluster_info(keypair: Option<Arc<Keypair>>) -> (Node, ClusterInfo) {
-        let keypair = keypair.unwrap_or_else(|| Arc::new(Keypair::new()));
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        let cluster_info =
-            ClusterInfo::new(node.info.clone(), keypair, SocketAddrSpace::Unspecified);
-        (node, cluster_info)
-    }
 
     pub(crate) fn sanitize_transactions(
         txs: Vec<Transaction>,
@@ -760,14 +745,11 @@ mod tests {
         );
         let (exit, poh_recorder, transaction_recorder, poh_service, _entry_receiever) =
             create_test_recorder(bank, blockstore, None, None);
-        let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-        let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
-            &cluster_info,
             &poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -818,14 +800,11 @@ mod tests {
         };
         let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, Some(poh_config), None);
-        let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-        let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
-            &cluster_info,
             &poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -885,14 +864,11 @@ mod tests {
         );
         let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
-        let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-        let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new(
             block_production_method,
             transaction_struct,
-            &cluster_info,
             &poh_recorder,
             transaction_recorder,
             non_vote_receiver,
@@ -1042,12 +1018,9 @@ mod tests {
             let (bank, bank_forks) = Bank::new_no_wallclock_throttle_for_tests(&genesis_config);
             let (exit, poh_recorder, transaction_recorder, poh_service, entry_receiver) =
                 create_test_recorder(bank.clone(), blockstore, None, None);
-            let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-            let cluster_info = Arc::new(cluster_info);
             let _banking_stage = BankingStage::new(
                 BlockProductionMethod::CentralScheduler,
                 transaction_struct,
-                &cluster_info,
                 &poh_recorder,
                 transaction_recorder,
                 non_vote_receiver,
@@ -1229,14 +1202,11 @@ mod tests {
         );
         let (exit, poh_recorder, transaction_recorder, poh_service, _entry_receiver) =
             create_test_recorder(bank.clone(), blockstore, None, None);
-        let (_, cluster_info) = new_test_cluster_info(/*keypair:*/ None);
-        let cluster_info = Arc::new(cluster_info);
         let (replay_vote_sender, _replay_vote_receiver) = unbounded();
 
         let banking_stage = BankingStage::new(
             BlockProductionMethod::CentralScheduler,
             transaction_struct,
-            &cluster_info,
             &poh_recorder,
             transaction_recorder,
             non_vote_receiver,

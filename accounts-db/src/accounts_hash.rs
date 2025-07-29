@@ -8,12 +8,11 @@ use {
     bytemuck_derive::{Pod, Zeroable},
     log::*,
     rayon::prelude::*,
-    solana_clock::Slot,
+    solana_clock::{Epoch, Slot},
     solana_hash::{Hash, HASH_BYTES},
     solana_lattice_hash::lt_hash::LtHash,
     solana_measure::{measure::Measure, measure_us},
     solana_pubkey::Pubkey,
-    solana_rent_collector::RentCollector,
     solana_sha256_hasher::Hasher,
     solana_sysvar::epoch_schedule::EpochSchedule,
     std::{
@@ -97,9 +96,10 @@ pub struct CalcAccountsHashConfig<'a> {
     /// does hash calc need to consider account data that exists in the write cache?
     /// if so, 'ancestors' will be used for this purpose as well as storages.
     pub epoch_schedule: &'a EpochSchedule,
-    pub rent_collector: &'a RentCollector,
     /// used for tracking down hash mismatches after the fact
     pub store_detailed_debug_info_on_failure: bool,
+    /// used to calculate the number of slots in the given epoch
+    pub epoch: Epoch,
 }
 
 // smallest, 3 quartiles, largest, average
@@ -551,7 +551,7 @@ impl AccountsHasher<'_> {
             })
             .collect();
         time.stop();
-        debug!("hashing {} {}", total_hashes, time);
+        debug!("hashing {total_hashes} {time}");
 
         if result.len() == 1 {
             result[0]
@@ -725,7 +725,7 @@ impl AccountsHasher<'_> {
             })
             .collect();
         time.stop();
-        debug!("hashing {} {}", total_hashes, time);
+        debug!("hashing {total_hashes} {time}");
 
         if let Some(mut specific_level_count_value) = specific_level_count {
             specific_level_count_value -= levels_hashed;
@@ -1247,15 +1247,6 @@ pub const ZERO_LAMPORT_ACCOUNT_LT_HASH: AccountLtHash = AccountLtHash(LtHash::id
 pub struct AccountsLtHash(pub LtHash);
 
 /// Hash of accounts
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum MerkleOrLatticeAccountsHash {
-    /// Merkle-based hash of accounts
-    Merkle(AccountsHashKind),
-    /// Lattice-based hash of accounts
-    Lattice,
-}
-
-/// Hash of accounts
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AccountsHashKind {
     Full(AccountsHash),
@@ -1288,57 +1279,15 @@ pub struct AccountsHash(pub Hash);
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct IncrementalAccountsHash(pub Hash);
 
-/// Hash of accounts written in a single slot
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct AccountsDeltaHash(pub Hash);
-
-/// Snapshot serde-safe accounts delta hash
-#[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SerdeAccountsDeltaHash(pub Hash);
-
-impl From<SerdeAccountsDeltaHash> for AccountsDeltaHash {
-    fn from(accounts_delta_hash: SerdeAccountsDeltaHash) -> Self {
-        Self(accounts_delta_hash.0)
-    }
-}
-impl From<AccountsDeltaHash> for SerdeAccountsDeltaHash {
-    fn from(accounts_delta_hash: AccountsDeltaHash) -> Self {
-        Self(accounts_delta_hash.0)
-    }
-}
-
 /// Snapshot serde-safe accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeAccountsHash(pub Hash);
 
-impl From<SerdeAccountsHash> for AccountsHash {
-    fn from(accounts_hash: SerdeAccountsHash) -> Self {
-        Self(accounts_hash.0)
-    }
-}
-impl From<AccountsHash> for SerdeAccountsHash {
-    fn from(accounts_hash: AccountsHash) -> Self {
-        Self(accounts_hash.0)
-    }
-}
-
 /// Snapshot serde-safe incremental accounts hash
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerdeIncrementalAccountsHash(pub Hash);
-
-impl From<SerdeIncrementalAccountsHash> for IncrementalAccountsHash {
-    fn from(incremental_accounts_hash: SerdeIncrementalAccountsHash) -> Self {
-        Self(incremental_accounts_hash.0)
-    }
-}
-impl From<IncrementalAccountsHash> for SerdeIncrementalAccountsHash {
-    fn from(incremental_accounts_hash: IncrementalAccountsHash) -> Self {
-        Self(incremental_accounts_hash.0)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1736,51 +1685,197 @@ mod tests {
             .collect();
 
         type ExpectedType = (String, bool, u64, String);
-        let expected:Vec<ExpectedType> = vec![
+        let expected: Vec<ExpectedType> = vec![
             // ("key/lamports key2/lamports ...",
             // is_last_slice
             // result lamports
             // result hashes)
             // "a5" = key_a, 5 lamports
             ("a1", false, 1, "[11111111111111111111111111111111]"),
-            ("a1b2", false, 3, "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("a1b2b3", false, 4, "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("a1b2b3b4", false, 5, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("a1b2b3b4c5", false, 10, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b2", false, 2, "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("b2b3", false, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b2b3b4", false, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b2b3b4c5", false, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b3", false, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b3b4", false, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b3b4c5", false, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b4", false, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b4c5", false, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("c5", false, 5, "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
+            (
+                "a1b2",
+                false,
+                3,
+                "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "a1b2b3",
+                false,
+                4,
+                "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "a1b2b3b4",
+                false,
+                5,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "a1b2b3b4c5",
+                false,
+                10,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b2",
+                false,
+                2,
+                "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "b2b3",
+                false,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b2b3b4",
+                false,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b2b3b4c5",
+                false,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b3",
+                false,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b3b4",
+                false,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b3b4c5",
+                false,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b4",
+                false,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b4c5",
+                false,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "c5",
+                false,
+                5,
+                "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
             ("a1", true, 1, "[11111111111111111111111111111111]"),
-            ("a1b2", true, 3, "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("a1b2b3", true, 4, "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("a1b2b3b4", true, 5, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("a1b2b3b4c5", true, 10, "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b2", true, 2, "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]"),
-            ("b2b3", true, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b2b3b4", true, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b2b3b4c5", true, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b3", true, 3, "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]"),
-            ("b3b4", true, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b3b4c5", true, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("b4", true, 4, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]"),
-            ("b4c5", true, 9, "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ("c5", true, 5, "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]"),
-            ].into_iter().map(|item| {
-                let result: ExpectedType = (
-                    item.0.to_string(),
-                    item.1,
-                    item.2,
-                    item.3.to_string(),
-                );
-                result
-            }).collect();
+            (
+                "a1b2",
+                true,
+                3,
+                "[11111111111111111111111111111111, 4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "a1b2b3",
+                true,
+                4,
+                "[11111111111111111111111111111111, 8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "a1b2b3b4",
+                true,
+                5,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "a1b2b3b4c5",
+                true,
+                10,
+                "[11111111111111111111111111111111, CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b2",
+                true,
+                2,
+                "[4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi]",
+            ),
+            (
+                "b2b3",
+                true,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b2b3b4",
+                true,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b2b3b4c5",
+                true,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b3",
+                true,
+                3,
+                "[8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR]",
+            ),
+            (
+                "b3b4",
+                true,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b3b4c5",
+                true,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "b4",
+                true,
+                4,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8]",
+            ),
+            (
+                "b4c5",
+                true,
+                9,
+                "[CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8, \
+                 GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+            (
+                "c5",
+                true,
+                5,
+                "[GgBaCs3NCBuZN12kCJgAW63ydqohFkHEdfdEXBPzLHq]",
+            ),
+        ]
+        .into_iter()
+        .map(|item| {
+            let result: ExpectedType = (item.0.to_string(), item.1, item.2, item.3.to_string());
+            result
+        })
+        .collect();
 
         let dir_for_temp_cache_files = tempdir().unwrap();
         let hash = AccountsHasher::new(dir_for_temp_cache_files.path().to_path_buf());
@@ -2282,7 +2377,7 @@ mod tests {
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", len);
+        assert_eq!(result, result2.0, "len: {len}");
 
         let result2 = AccountsHasher::compute_merkle_root_from_slices(
             len,
@@ -2291,7 +2386,7 @@ mod tests {
             |start| &reduced[start..],
             None,
         );
-        assert_eq!(result, result2.0, "len: {}", len);
+        assert_eq!(result, result2.0, "len: {len}");
 
         let max = std::cmp::min(reduced.len(), fanout * 2);
         for left in 0..max {

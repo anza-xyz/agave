@@ -19,9 +19,7 @@ use {
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     solana_entry::entry::Entry,
-    solana_gossip::cluster_info::{ClusterInfo, Node},
     solana_hash::Hash,
-    solana_keypair::Keypair,
     solana_ledger::{
         blockstore::Blockstore, create_new_tmp_ledger_auto_delete,
         genesis_utils::create_genesis_config, leader_schedule_cache::LeaderScheduleCache,
@@ -35,8 +33,6 @@ use {
         prioritization_fee_cache::PrioritizationFeeCache,
     },
     solana_runtime_transaction::runtime_transaction::RuntimeTransaction,
-    solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
     solana_system_transaction as system_transaction,
     solana_timings::ExecuteTimings,
     solana_transaction_error::TransactionResult as Result,
@@ -237,20 +233,10 @@ fn test_scheduler_producing_blocks() {
         let banking_tracer = BankingTracer::new_disabled();
         banking_tracer.create_channels(true)
     };
-    let cluster_info = {
-        let keypair = Arc::new(Keypair::new());
-        let node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-        Arc::new(ClusterInfo::new(
-            node.info,
-            keypair,
-            SocketAddrSpace::Unspecified,
-        ))
-    };
     ensure_banking_stage_setup(
         &pool,
         &bank_forks,
         &channels,
-        &cluster_info,
         &poh_recorder,
         transaction_recorder,
         BankingStage::num_threads(),

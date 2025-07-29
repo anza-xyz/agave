@@ -83,9 +83,11 @@ fn generate_transactions(
 ) -> BankingPacketBatch {
     assert!(num_instructions_per_tx <= MAX_INSTRUCTIONS_PER_TRANSACTION);
     if set_rand_cu_price {
-        assert!(num_instructions_per_tx > 0,
-            "`num_instructions_per_tx` must be at least 1 when `set_rand_cu_price` flag is set to count\
-             the set_compute_unit_price instruction.");
+        assert!(
+            num_instructions_per_tx > 0,
+            "`num_instructions_per_tx` must be at least 1 when `set_rand_cu_price` flag is set to \
+             count the set_compute_unit_price instruction."
+        );
     }
     let blockhash = FaultyBlockhash::new(bank.last_blockhash(), probability_invalid_blockhash);
 

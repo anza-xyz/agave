@@ -26,6 +26,7 @@ solana-account = { workspace = true }
 solana-instruction = { workspace = true, features = ["std"] }
 solana-instructions-sysvar = { workspace = true }
 solana-pubkey = { workspace = true }
+solana-sbpf = { workspace = true }
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 bincode = { workspace = true, optional = true }

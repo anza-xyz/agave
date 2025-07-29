@@ -86,10 +86,8 @@ impl LocalCluster {
 
         // Wait for a snapshot for a bank > last_slot to be made
         trace!(
-            "Waiting for {:?} snapshot archive to be generated with slot > {}, max wait duration: {:?}",
-            next_snapshot_type,
-            last_slot,
-            max_wait_duration,
+            "Waiting for {next_snapshot_type:?} snapshot archive to be generated with slot > \
+             {last_slot}, max wait duration: {max_wait_duration:?}",
         );
         let timer = Instant::now();
         let next_snapshot = loop {
@@ -122,7 +120,8 @@ impl LocalCluster {
             if let Some(max_wait_duration) = max_wait_duration {
                 assert!(
                     timer.elapsed() < max_wait_duration,
-                    "Waiting for next {next_snapshot_type:?} snapshot exceeded the {max_wait_duration:?} maximum wait duration!",
+                    "Waiting for next {next_snapshot_type:?} snapshot exceeded the \
+                     {max_wait_duration:?} maximum wait duration!",
                 );
             }
             sleep(Duration::from_secs(1));

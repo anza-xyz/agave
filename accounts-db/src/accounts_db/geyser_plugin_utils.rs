@@ -103,18 +103,21 @@ impl AccountsDb {
         let mut pure_notify_time = Duration::ZERO;
         let mut i = 0;
         let notifying_start = Instant::now();
-        storage.accounts.scan_accounts_for_geyser(|account| {
-            i += 1;
-            // later entries in the same slot are more recent and override earlier accounts for the same pubkey
-            // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
-            // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
-            let (_, notify_dur) = meas_dur!(notifier.notify_account_restore_from_snapshot(
-                storage.slot(),
-                i as u64,
-                &account
-            ));
-            pure_notify_time += notify_dur;
-        });
+        storage
+            .accounts
+            .scan_accounts_for_geyser(|account| {
+                i += 1;
+                // later entries in the same slot are more recent and override earlier accounts for the same pubkey
+                // We can pass an incrementing number here for write_version in the future, if the storage does not have a write_version.
+                // As long as all accounts for this slot are in 1 append vec that can be iterated oldest to newest.
+                let (_, notify_dur) = meas_dur!(notifier.notify_account_restore_from_snapshot(
+                    storage.slot(),
+                    i as u64,
+                    &account
+                ));
+                pure_notify_time += notify_dur;
+            })
+            .expect("must scan accounts storage");
         let notifying_time = notifying_start.elapsed();
 
         GeyserPluginNotifyAtSnapshotRestoreStats {
@@ -141,7 +144,7 @@ pub mod tests {
     };
 
     impl AccountsDb {
-        pub fn set_geyser_plugin_notifer(&mut self, notifier: Option<AccountsUpdateNotifier>) {
+        pub fn set_geyser_plugin_notifier(&mut self, notifier: Option<AccountsUpdateNotifier>) {
             self.accounts_update_notifier = notifier;
         }
     }
@@ -215,7 +218,7 @@ pub mod tests {
         // Do the notification
         let notifier = GeyserTestPlugin::default();
         let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifer(Some(notifier.clone()));
+        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
         accounts.notify_account_restore_from_snapshot();
 
         // Ensure key1 was notified twice in different slots
@@ -250,7 +253,7 @@ pub mod tests {
         let notifier = GeyserTestPlugin::default();
 
         let notifier = Arc::new(notifier);
-        accounts.set_geyser_plugin_notifer(Some(notifier.clone()));
+        accounts.set_geyser_plugin_notifier(Some(notifier.clone()));
 
         // Account with key1 is updated twice in two different slots -- should only get notified twice.
         // Account with key2 is updated slot0, should get notified once

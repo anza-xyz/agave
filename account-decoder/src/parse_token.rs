@@ -1,8 +1,6 @@
 use {
     crate::{
-        parse_account_data::{
-            ParsableAccount, ParseAccountError, SplTokenAdditionalData, SplTokenAdditionalDataV2,
-        },
+        parse_account_data::{ParsableAccount, ParseAccountError, SplTokenAdditionalDataV2},
         parse_token_extension::parse_extension,
     },
     solana_program_option::COption,
@@ -22,25 +20,6 @@ pub use {
     },
     spl_generic_token::{is_known_spl_token_id, spl_token_ids},
 };
-
-#[deprecated(since = "2.0.0", note = "Use `parse_token_v3` instead")]
-#[allow(deprecated)]
-pub fn parse_token(
-    data: &[u8],
-    decimals: Option<u8>,
-) -> Result<TokenAccountType, ParseAccountError> {
-    let additional_data = decimals.map(SplTokenAdditionalData::with_decimals);
-    parse_token_v2(data, additional_data.as_ref())
-}
-
-#[deprecated(since = "2.2.0", note = "Use `parse_token_v3` instead")]
-pub fn parse_token_v2(
-    data: &[u8],
-    additional_data: Option<&SplTokenAdditionalData>,
-) -> Result<TokenAccountType, ParseAccountError> {
-    let additional_data = additional_data.map(|v| (*v).into());
-    parse_token_v3(data, additional_data.as_ref())
-}
 
 pub fn parse_token_v3(
     data: &[u8],
@@ -141,20 +120,6 @@ pub fn convert_account_state(state: AccountState) -> UiAccountState {
         AccountState::Initialized => UiAccountState::Initialized,
         AccountState::Frozen => UiAccountState::Frozen,
     }
-}
-
-#[deprecated(since = "2.0.0", note = "Use `token_amount_to_ui_amount_v3` instead")]
-#[allow(deprecated)]
-pub fn token_amount_to_ui_amount(amount: u64, decimals: u8) -> UiTokenAmount {
-    token_amount_to_ui_amount_v2(amount, &SplTokenAdditionalData::with_decimals(decimals))
-}
-
-#[deprecated(since = "2.2.0", note = "Use `token_amount_to_ui_amount_v3` instead")]
-pub fn token_amount_to_ui_amount_v2(
-    amount: u64,
-    additional_data: &SplTokenAdditionalData,
-) -> UiTokenAmount {
-    token_amount_to_ui_amount_v3(amount, &(*additional_data).into())
 }
 
 pub fn token_amount_to_ui_amount_v3(

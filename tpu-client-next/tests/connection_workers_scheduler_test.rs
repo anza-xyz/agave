@@ -222,10 +222,8 @@ async fn test_basic_transactions_sending() {
             let elapsed = now.elapsed();
             assert!(
                 elapsed < TEST_MAX_TIME,
-                "Failed to send {} transaction in {:?}.  Only sent {}",
-                expected_num_txs,
-                elapsed,
-                actual_num_packets,
+                "Failed to send {expected_num_txs} transaction in {elapsed:?}. Only sent \
+                 {actual_num_packets}",
             );
         }
 
@@ -314,8 +312,8 @@ async fn test_connection_denied_until_allowed() {
     let actual_num_packets = count_received_packets_for(receiver, tx_size, TEST_MAX_TIME).await;
     assert!(
         actual_num_packets < expected_num_txs,
-        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?}\n\
-         Got packets: {actual_num_packets}"
+        "Expected to receive {expected_num_txs} packets in {TEST_MAX_TIME:?} Got packets: \
+         {actual_num_packets}"
     );
 
     // Wait for the exchange to finish.
@@ -558,11 +556,12 @@ async fn test_rate_limiting() {
         },
     );
 
+    // open a connection to consume the limit
     let connection_to_reach_limit = make_client_endpoint(&server_address, None).await;
     drop(connection_to_reach_limit);
 
-    // Setup sending txs
-    let tx_size = 1;
+    // Setup sending txs which are full packets in size
+    let tx_size = 1024;
     let expected_num_txs: usize = 16;
     let SpawnTxGenerator {
         tx_receiver,
@@ -583,11 +582,16 @@ async fn test_rate_limiting() {
     scheduler_cancel.cancel();
     let stats = join_scheduler(scheduler_handle).await;
 
-    // We do not expect to see any errors, as the connection is in the pending state still, when we
-    // do the shutdown.  If we increase the time we wait in `count_received_packets_for`, we would
-    // start seeing a `connection_error_timed_out` incremented to 1.  Potentially, we may want to
-    // accept both 0 and 1 as valid values for it.
-    assert_eq!(stats, SendTransactionStatsNonAtomic::default());
+    // we get 2 transactions registered as sent (but not acked) because of how QUIC works
+    // before ratelimiter kicks in.
+    assert!(
+        stats
+            == SendTransactionStatsNonAtomic {
+                successfully_sent: 2,
+                write_error_connection_lost: 2,
+                ..Default::default()
+            }
+    );
 
     // Stop the server.
     exit.store(true, Ordering::Relaxed);
@@ -635,9 +639,9 @@ async fn test_rate_limiting_establish_connection() {
         count_received_packets_for(receiver, tx_size, Duration::from_secs(70)).await;
     assert!(
         actual_num_packets > 0,
-        "As we wait longer than 1 minute, at least one transaction should be delivered.  \
-         After 1 minute the server is expected to accept our connection.\n\
-         Actual packets delivered: {actual_num_packets}"
+        "As we wait longer than 1 minute, at least one transaction should be delivered. After 1 \
+         minute the server is expected to accept our connection. Actual packets delivered: \
+         {actual_num_packets}"
     );
 
     // Stop the sender.
@@ -649,15 +653,13 @@ async fn test_rate_limiting_establish_connection() {
     assert!(
         stats.connection_error_timed_out > 0,
         "As the quinn timeout is below 1 minute, a few connections will fail to connect during \
-         the 1 minute delay.\n\
-         Actual connection_error_timed_out: {}",
+         the 1 minute delay. Actual connection_error_timed_out: {}",
         stats.connection_error_timed_out
     );
     assert!(
         stats.successfully_sent > 0,
         "As we run the test for longer than 1 minute, we expect a connection to be established, \
-         and a number of transactions to be delivered.\n\
-         Actual successfully_sent: {}",
+         and a number of transactions to be delivered.\nActual successfully_sent: {}",
         stats.successfully_sent
     );
 

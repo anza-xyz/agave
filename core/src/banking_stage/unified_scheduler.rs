@@ -2,12 +2,13 @@
 //! banking stage, starting from `BankingPacketBatch` ingestion from the sig verify stage and to
 //! `Task` submission to the unified scheduler.
 //!
-//! These preprocessing for task creation can be multi-threaded trivially. At the same time, the
-//! maximum cpu core utilization needs to be constrained among this processing and the actual task
-//! handling of unified scheduler. Thus, it's desired to share a single thread pool for the two
-//! kinds of work. Towards that end, the integration was implemented as a callback-style, which is
-//! invoked (via `select!` on `banking_packet_receiver`) at each of unified scheduler handler
-//! threads.
+//! These preprocessing for task creation can be multi-threaded trivially, including
+//! unified-scheduler specific task of UsageQueue lookups with BankingStageHelper. At the same
+//! time, the maximum cpu core utilization needs to be constrained among this processing and the
+//! actual task handling of unified scheduler. Thus, it's desired to share a single thread pool for
+//! the two kinds of work. Towards that end, the integration was implemented as a callback-style,
+//! which is invoked (via `select!` on `banking_packet_receiver`) at each of unified scheduler
+//! handler threads.
 //!
 //! Aside from some limited abstraction leakage to make `select!` work at the
 //! solana-unified-scheduler-pool crate, almost all of these preprocessing are intentionally
@@ -20,7 +21,8 @@
 //! 2. Do various sanitization on them
 //! 3. Calculate priorities
 //! 4. Convert them to tasks with the help of provided BankingStageHelper (remember that pubkey
-//!    lookup for UsageQueue is also performed here; thus multi-threaded and off-loaded from the
+//!    lookup for UsageQueue is also performed at this step by UsageQueueLoaderInner
+//!    internally; thus multi-threaded and off-loaded from the single-threaded-by-design
 //!    scheduler thread)
 //! 5. Submit the tasks.
 
@@ -28,9 +30,8 @@
 use qualifier_attr::qualifiers;
 use {
     super::{
-        decision_maker::{BufferedPacketsDecision, DecisionMaker},
+        decision_maker::{BufferedPacketsDecision, DecisionMaker, DecisionMakerWrapper},
         packet_deserializer::PacketDeserializer,
-        LikeClusterInfo,
     },
     crate::banking_trace::Channels,
     agave_banking_stage_ingress_types::BankingPacketBatch,
@@ -46,16 +47,14 @@ pub(crate) fn ensure_banking_stage_setup(
     pool: &DefaultSchedulerPool,
     bank_forks: &Arc<RwLock<BankForks>>,
     channels: &Channels,
-    cluster_info: &impl LikeClusterInfo,
     poh_recorder: &Arc<RwLock<PohRecorder>>,
     transaction_recorder: TransactionRecorder,
     num_threads: u32,
 ) {
     let mut root_bank_cache = RootBankCache::new(bank_forks.clone());
     let unified_receiver = channels.unified_receiver().clone();
-    let mut decision_maker = DecisionMaker::new(cluster_info.id(), poh_recorder.clone());
-    let banking_stage_monitor = Box::new(decision_maker.clone());
-
+    let mut decision_maker = DecisionMaker::new(poh_recorder.clone());
+    let banking_stage_monitor = Box::new(DecisionMakerWrapper::new(decision_maker.clone()));
     let banking_packet_handler = Box::new(
         move |helper: &BankingStageHelper, batches: BankingPacketBatch| {
             let decision = decision_maker.make_consume_or_forward_decision();

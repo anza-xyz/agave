@@ -33,7 +33,7 @@ indexmap = { workspace = true }
 itertools = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-nix = { workspace = true, features = ["net"] }
+nix = { workspace = true, features = ["net", "poll", "signal"] }
 num_cpus = { workspace = true }
 pem = { workspace = true }
 percentage = { workspace = true }

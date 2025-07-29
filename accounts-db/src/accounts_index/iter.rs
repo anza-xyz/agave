@@ -1,8 +1,5 @@
 use {
-    super::{
-        account_map_entry::AccountMapEntry, in_mem_accounts_index::InMemAccountsIndex,
-        AccountsIndex, DiskIndexValue, IndexValue,
-    },
+    super::{in_mem_accounts_index::InMemAccountsIndex, AccountsIndex, DiskIndexValue, IndexValue},
     solana_pubkey::Pubkey,
     std::{
         ops::{Bound, RangeBounds},
@@ -12,21 +9,23 @@ use {
 
 pub const ITER_BATCH_SIZE: usize = 1000;
 
-pub struct AccountsIndexIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
+pub struct AccountsIndexPubkeyIterator<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> {
     account_maps: &'a [Arc<InMemAccountsIndex<T, U>>],
     start_bound: Bound<&'a Pubkey>,
     end_bound: Bound<&'a Pubkey>,
     start_bin: usize,
     end_bin_inclusive: usize,
-    items: Vec<(Pubkey, Arc<AccountMapEntry<T>>)>,
-    returns_items: AccountsIndexIteratorReturnsItems,
+    items: Vec<Pubkey>,
+    iter_order: AccountsIndexPubkeyIterOrder,
 }
 
-impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIterator<'a, T, U> {
+impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>>
+    AccountsIndexPubkeyIterator<'a, T, U>
+{
     pub fn new<R>(
         index: &'a AccountsIndex<T, U>,
         range: Option<&'a R>,
-        returns_items: AccountsIndexIteratorReturnsItems,
+        iter_order: AccountsIndexPubkeyIterOrder,
     ) -> Self
     where
         R: RangeBounds<Pubkey>,
@@ -41,7 +40,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                     start_bin,
                     end_bin_inclusive,
                     items: Vec::new(),
-                    returns_items,
+                    iter_order,
                 }
             }
             None => Self {
@@ -51,7 +50,7 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
                 start_bin: 0,
                 end_bin_inclusive: index.account_maps.len().saturating_sub(1),
                 items: Vec::new(),
-                returns_items,
+                iter_order,
             },
         }
     }
@@ -59,10 +58,11 @@ impl<'a, T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> AccountsIndexIter
 
 /// Implement the Iterator trait for AccountsIndexIterator
 impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
-    for AccountsIndexIterator<'_, T, U>
+    for AccountsIndexPubkeyIterator<'_, T, U>
 {
-    type Item = Vec<(Pubkey, Arc<AccountMapEntry<T>>)>;
+    type Item = Vec<Pubkey>;
     fn next(&mut self) -> Option<Self::Item> {
+        let range = (self.start_bound, self.end_bound);
         while self.items.len() < ITER_BATCH_SIZE {
             if self.start_bin > self.end_bin_inclusive {
                 break;
@@ -70,9 +70,13 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
 
             let bin = self.start_bin;
             let map = &self.account_maps[bin];
-            let mut items = map.items(&(self.start_bound, self.end_bound));
-            if self.returns_items == AccountsIndexIteratorReturnsItems::Sorted {
-                items.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+            let mut items = map
+                .keys()
+                .into_iter()
+                .filter(|k| range.contains(&k))
+                .collect::<Vec<_>>();
+            if self.iter_order == AccountsIndexPubkeyIterOrder::Sorted {
+                items.sort_unstable();
             }
             self.items.append(&mut items);
             self.start_bin += 1;
@@ -82,15 +86,15 @@ impl<T: IndexValue, U: DiskIndexValue + From<T> + Into<T>> Iterator
     }
 }
 
-/// Specify how the accounts index iterator should return items
+/// Specify how the accounts index pubkey iterator should return pubkeys
 ///
 /// Users should prefer `Unsorted`, unless required otherwise,
 /// as sorting incurs additional runtime cost.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum AccountsIndexIteratorReturnsItems {
-    /// Returns items *not* sorted
+pub enum AccountsIndexPubkeyIterOrder {
+    /// Returns pubkeys *not* sorted
     Unsorted,
-    /// Returns items *sorted*
+    /// Returns pubkeys *sorted*
     Sorted,
 }
 
@@ -131,18 +135,18 @@ mod tests {
             );
         }
 
-        for returns_items in [
-            AccountsIndexIteratorReturnsItems::Sorted,
-            AccountsIndexIteratorReturnsItems::Unsorted,
+        for iter_order in [
+            AccountsIndexPubkeyIterOrder::Sorted,
+            AccountsIndexPubkeyIterOrder::Unsorted,
         ] {
             // Create a sorted iterator for the whole pubkey range.
-            let mut iter = index.iter(None::<&Range<Pubkey>>, returns_items);
+            let mut iter = index.iter(None::<&Range<Pubkey>>, iter_order);
             // First iter.next() should return the first batch of 2000 pubkeys in the first bin.
             let x = iter.next().unwrap();
             assert_eq!(x.len(), 2 * ITER_BATCH_SIZE);
             assert_eq!(
-                x.is_sorted_by(|a, b| a.0 < b.0),
-                returns_items == AccountsIndexIteratorReturnsItems::Sorted
+                x.is_sorted(),
+                iter_order == AccountsIndexPubkeyIterOrder::Sorted
             );
             assert_eq!(iter.items.len(), 0); // should be empty.
 
@@ -155,10 +159,7 @@ mod tests {
     fn test_accounts_iter_finished() {
         let index = AccountsIndex::<bool, bool>::default_for_tests();
         index.add_root(0);
-        let mut iter = index.iter(
-            None::<&Range<Pubkey>>,
-            AccountsIndexIteratorReturnsItems::Sorted,
-        );
+        let mut iter = index.iter(None::<&Range<Pubkey>>, AccountsIndexPubkeyIterOrder::Sorted);
         assert!(iter.next().is_none());
         let mut gc = vec![];
         index.upsert(

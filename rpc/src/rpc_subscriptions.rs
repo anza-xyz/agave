@@ -525,7 +525,7 @@ pub struct RpcSubscriptions {
 impl Drop for RpcSubscriptions {
     fn drop(&mut self) {
         self.shutdown().unwrap_or_else(|err| {
-            warn!("RPC Notification - shutdown error: {:?}", err);
+            warn!("RPC Notification - shutdown error: {err:?}");
         });
     }
 }
@@ -747,10 +747,7 @@ impl RpcSubscriptions {
             match notification_sender.send(notification_entry.into()) {
                 Ok(()) => (),
                 Err(SendError(notification)) => {
-                    warn!(
-                        "Dropped RPC Notification - receiver disconnected : {:?}",
-                        notification
-                    );
+                    warn!("Dropped RPC Notification - receiver disconnected : {notification:?}");
                 }
             }
         }
@@ -797,7 +794,7 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Slot)
                             {
-                                debug!("slot notify: {:?}", slot_info);
+                                debug!("slot notify: {slot_info:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-slot", 1);
                                 notifier.notify(slot_info, sub, false);
                             }
@@ -826,7 +823,7 @@ impl RpcSubscriptions {
                                     timestamp: vote_info.timestamp(),
                                     signature: signature.to_string(),
                                 };
-                                debug!("vote notify: {:?}", vote_info);
+                                debug!("vote notify: {vote_info:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-vote", 1);
                                 notifier.notify(&rpc_vote, sub, false);
                             }
@@ -836,7 +833,7 @@ impl RpcSubscriptions {
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Root)
                             {
-                                debug!("root notify: {:?}", root);
+                                debug!("root notify: {root:?}");
                                 inc_new_counter_info!("rpc-subscription-notify-root", 1);
                                 notifier.notify(root, sub, false);
                             }
@@ -1015,7 +1012,7 @@ impl RpcSubscriptions {
                                 let block_update_result = blockstore
                                     .get_complete_block(s, false)
                                     .map_err(|e| {
-                                        error!("get_complete_block error: {}", e);
+                                        error!("get_complete_block error: {e}");
                                         RpcBlockUpdateError::BlockStoreError
                                     })
                                     .and_then(|block| filter_block_result_txs(block, s, params));
@@ -1132,7 +1129,8 @@ impl RpcSubscriptions {
         let total_ms = total_time.as_ms();
         if total_notified > 0 || total_ms > 10 {
             debug!(
-                "notified({}): accounts: {} / {} logs: {} / {} programs: {} / {} signatures: {} / {}",
+                "notified({}): accounts: {} / {} logs: {} / {} programs: {} / {} signatures: {} / \
+                 {}",
                 source,
                 num_accounts_found.load(Ordering::Relaxed),
                 num_accounts_notified.load(Ordering::Relaxed),
@@ -1243,10 +1241,7 @@ pub(crate) mod tests {
         solana_system_transaction as system_transaction,
         solana_transaction::Transaction,
         solana_transaction_status::{TransactionDetails, UiTransactionEncoding},
-        std::{
-            collections::HashSet,
-            sync::atomic::{AtomicU64, Ordering::Relaxed},
-        },
+        std::{collections::HashSet, sync::atomic::AtomicU64},
     };
 
     struct AccountResult {
@@ -1891,7 +1886,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2084,7 +2078,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2198,7 +2191,6 @@ pub(crate) mod tests {
             ..
         } = create_genesis_config(100);
         let bank = Bank::new_for_tests(&genesis_config);
-        bank.lazy_rent_collection.store(true, Relaxed);
 
         let blockhash = bank.last_blockhash();
         let bank_forks = BankForks::new_rw_arc(bank);
@@ -2708,7 +2700,6 @@ pub(crate) mod tests {
         let bank2 = Bank::new_from_parent(bank0, &Pubkey::default(), 2);
         bank_forks.write().unwrap().insert(bank2);
 
-        // we need a pubkey that will pass its rent collection slot so rent_epoch gets updated to max since this account is exempt
         let alice = Keypair::from_base58_string("sfLnS4rZ5a8gXke3aGxCgM6usFAVPxLUaBSRdssGY9uS5eoiEWQ41CqDcpXbcekpKsie8Lyy3LNFdhEvjUE1wd9");
 
         let optimistically_confirmed_bank =

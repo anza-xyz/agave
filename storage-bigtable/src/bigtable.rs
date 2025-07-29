@@ -78,7 +78,7 @@ pub enum Error {
     ObjectCorrupt(String),
 
     #[error("RPC: {0}")]
-    Rpc(tonic::Status),
+    Rpc(Box<tonic::Status>),
 
     #[error("Timeout")]
     Timeout,
@@ -107,7 +107,7 @@ impl std::convert::From<tonic::transport::Error> for Error {
 
 impl std::convert::From<tonic::Status> for Error {
     fn from(err: tonic::Status) -> Self {
-        Self::Rpc(err)
+        Self::Rpc(Box::new(err))
     }
 }
 
@@ -146,7 +146,7 @@ impl BigTableConnection {
     ) -> Result<Self> {
         match std::env::var("BIGTABLE_EMULATOR_HOST") {
             Ok(endpoint) => {
-                info!("Connecting to bigtable emulator at {}", endpoint);
+                info!("Connecting to bigtable emulator at {endpoint}");
                 Self::new_for_emulator(
                     instance_name,
                     app_profile_id,
@@ -259,7 +259,7 @@ impl BigTableConnection {
                                 .insert("authorization", authorization_header);
                         }
                         Err(err) => {
-                            warn!("Failed to set authorization header: {}", err);
+                            warn!("Failed to set authorization header: {err}");
                         }
                     }
                 }
@@ -366,7 +366,7 @@ impl<F: FnMut(Request<()>) -> InterceptedRequestResult> BigTable<F> {
             for (i, mut chunk) in res.chunks.into_iter().enumerate() {
                 // The comments for `read_rows_response::CellChunk` provide essential details for
                 // understanding how the below decoding works...
-                trace!("chunk {}: {:?}", i, chunk);
+                trace!("chunk {i}: {chunk:?}");
 
                 // Starting a new row?
                 if !chunk.row_key.is_empty() {
@@ -934,7 +934,7 @@ where
 
     let data = decompress(value)?;
     T::decode(&data[..]).map_err(|err| {
-        warn!("Failed to deserialize {}/{}: {}", table, key, err);
+        warn!("Failed to deserialize {table}/{key}: {err}");
         Error::ObjectCorrupt(format!("{table}/{key}"))
     })
 }
@@ -955,7 +955,7 @@ where
 
     let data = decompress(value)?;
     bincode::deserialize(&data).map_err(|err| {
-        warn!("Failed to deserialize {}/{}: {}", table, key, err);
+        warn!("Failed to deserialize {table}/{key}: {err}");
         Error::ObjectCorrupt(format!("{table}/{key}"))
     })
 }

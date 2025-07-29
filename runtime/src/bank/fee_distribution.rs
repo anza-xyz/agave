@@ -49,7 +49,7 @@ impl Bank {
     // form of transaction fees as well.
     pub(super) fn distribute_transaction_fee_details(&self) {
         let fee_details = self.collector_fee_details.read().unwrap();
-        if fee_details.total() == 0 {
+        if fee_details.total_transaction_fee() == 0 {
             // nothing to distribute, exit early
             return;
         }

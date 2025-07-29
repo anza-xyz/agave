@@ -1,20 +1,49 @@
+#[cfg(feature = "dev-context-only-utils")]
+use tokio::net::UdpSocket as TokioUdpSocket;
 use {
     crate::PortRange,
     log::warn,
     socket2::{Domain, SockAddr, Socket, Type},
     std::{
         io,
-        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
+        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
+        ops::Range,
         sync::atomic::{AtomicU16, Ordering},
     },
 };
-#[cfg(feature = "dev-context-only-utils")]
-use {std::net::Ipv4Addr, tokio::net::UdpSocket as TokioUdpSocket};
 // base port for deconflicted allocations
 const BASE_PORT: u16 = 5000;
 // how much to allocate per individual process.
 // we expect to have at most 64 concurrent tests in CI at any moment on a given host.
 const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
+/// When running under nextest, this will try to provide
+/// a unique slice of port numbers (assuming no other nextest processes
+/// are running on the same host) based on NEXTEST_TEST_GLOBAL_SLOT variable
+/// The port ranges will be reused following nextest logic.
+///
+/// When running without nextest, this will only bump an atomic and eventually
+/// panic when it runs out of port numbers to assign.
+#[allow(clippy::arithmetic_side_effects)]
+pub fn unique_port_range_for_tests(size: u16) -> Range<u16> {
+    static SLICE: AtomicU16 = AtomicU16::new(0);
+    let offset = SLICE.fetch_add(size, Ordering::Relaxed);
+    let start = offset
+        + match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
+            Ok(slot) => {
+                let slot: u16 = slot.parse().unwrap();
+                assert!(
+                    offset < SLICE_PER_PROCESS,
+                    "Overrunning into the port range of another test! Consider using fewer ports \
+                     per test."
+                );
+                BASE_PORT + slot * SLICE_PER_PROCESS
+            }
+            Err(_) => BASE_PORT,
+        };
+    assert!(start < u16::MAX - size, "Ran out of port numbers!");
+    start..start + size
+}
+
 /// Retrieve a free 20-port slice for unit tests
 ///
 /// When running under nextest, this will try to provide
@@ -24,24 +53,17 @@ const SLICE_PER_PROCESS: u16 = (u16::MAX - BASE_PORT) / 64;
 ///
 /// When running without nextest, this will only bump an atomic and eventually
 /// panic when it runs out of port numbers to assign.
-#[allow(clippy::arithmetic_side_effects)]
 pub fn localhost_port_range_for_tests() -> (u16, u16) {
-    static SLICE: AtomicU16 = AtomicU16::new(0);
-    let offset = SLICE.fetch_add(20, Ordering::Relaxed);
-    let start = offset
-        + match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
-            Ok(slot) => {
-                let slot: u16 = slot.parse().unwrap();
-                assert!(
-                    offset < SLICE_PER_PROCESS,
-                    "Overrunning into the port range of another test! Consider using fewer ports per test."
-                );
-                BASE_PORT + slot * SLICE_PER_PROCESS
-            }
-            Err(_) => BASE_PORT,
-        };
-    assert!(start < u16::MAX - 20, "ran out of port numbers!");
-    (start, start + 20)
+    let pr = unique_port_range_for_tests(20);
+    (pr.start, pr.end)
+}
+
+/// Bind a `UdpSocket` to a unique port.
+pub fn bind_to_localhost_unique() -> io::Result<UdpSocket> {
+    bind_to(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        unique_port_range_for_tests(1).start,
+    )
 }
 
 pub fn bind_gossip_port_in_range(
@@ -200,7 +222,8 @@ pub fn bind_with_any_port_with_config(
 ) -> io::Result<UdpSocket> {
     let sock = udp_socket_with_config(config)?;
     let addr = SocketAddr::new(ip_addr, 0);
-    match sock.bind(&SockAddr::from(addr)) {
+    let bind = sock.bind(&SockAddr::from(addr));
+    match bind {
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
@@ -216,8 +239,8 @@ pub fn multi_bind_in_range_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({} requested)",
-            num
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({num} \
+             requested)"
         );
         num = 1;
     }
@@ -292,19 +315,17 @@ pub fn bind_two_in_range_with_offset_and_config(
         ));
     }
 
-    for port in range.0..range.1 {
-        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
-            if range.1.saturating_sub(port) >= offset {
-                if let Ok(second_bind) =
-                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config)
-                {
-                    return Ok((
-                        (first_bind.local_addr().unwrap().port(), first_bind),
-                        (second_bind.local_addr().unwrap().port(), second_bind),
-                    ));
-                }
-            } else {
-                break;
+    let max_start_port = range.1.saturating_sub(offset);
+    for port in range.0..=max_start_port {
+        let first_bind_result = bind_to_with_config(ip_addr, port, sock1_config);
+        if let Ok(first_bind) = first_bind_result {
+            let second_port = port.saturating_add(offset);
+            let second_bind_result = bind_to_with_config(ip_addr, second_port, sock2_config);
+            if let Ok(second_bind) = second_bind_result {
+                return Ok((
+                    (first_bind.local_addr().unwrap().port(), first_bind),
+                    (second_bind.local_addr().unwrap().port(), second_bind),
+                ));
             }
         }
     }
@@ -321,8 +342,7 @@ pub fn bind_more_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
         if num > 1 {
             warn!(
-                "bind_more_with_config() only supports 1 socket on this platform ({} requested)",
-                num
+                "bind_more_with_config() only supports 1 socket on this platform ({num} requested)"
             );
         }
         Ok(vec![socket])

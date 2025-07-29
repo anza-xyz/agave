@@ -272,7 +272,7 @@ impl RpcRequestMiddleware {
             .map(|m| m.len())
             .unwrap_or(0)
             .to_string();
-        info!("get {} -> {:?} ({} bytes)", path, filename, file_length);
+        info!("get {path} -> {filename:?} ({file_length} bytes)");
 
         if cfg!(not(test)) {
             assert!(
@@ -335,7 +335,7 @@ impl RpcRequestMiddleware {
             RpcHealthStatus::Behind { .. } => "behind",
             RpcHealthStatus::Unknown => "unknown",
         };
-        info!("health check: {}", response);
+        info!("health check: {response}");
         response
     }
 }
@@ -716,8 +716,8 @@ impl JsonRpcService {
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         runtime: Arc<TokioRuntime>,
     ) -> Result<Self, String> {
-        info!("rpc bound to {:?}", rpc_addr);
-        info!("rpc configuration: {:?}", config);
+        info!("rpc bound to {rpc_addr:?}");
+        info!("rpc configuration: {config:?}");
         let rpc_niceness_adj = config.rpc_niceness_adj;
 
         let health = Arc::new(RpcHealth::new(
@@ -778,7 +778,7 @@ impl JsonRpcService {
                         )
                     })
                     .unwrap_or_else(|err| {
-                        error!("Failed to initialize BigTable ledger storage: {:?}", err);
+                        error!("Failed to initialize BigTable ledger storage: {err:?}");
                         (None, None)
                     })
             } else {
@@ -867,9 +867,8 @@ impl JsonRpcService {
 
                 if let Err(e) = server {
                     warn!(
-                        "JSON RPC service unavailable error: {:?}. \n\
-                           Also, check that port {} is not already in use by another application",
-                        e,
+                        "JSON RPC service unavailable error: {e:?}. Also, check that port {} is \
+                         not already in use by another application",
                         rpc_addr.port()
                     );
                     close_handle_sender.send(Err(e.to_string())).unwrap();
@@ -984,9 +983,10 @@ mod tests {
         let bank = Bank::new_for_tests(&genesis_config);
         let cluster_info = Arc::new(new_test_cluster_info());
         let ip_addr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         let rpc_addr = SocketAddr::new(
             ip_addr,
-            solana_net_utils::find_available_port_in_range(ip_addr, (10000, 65535)).unwrap(),
+            solana_net_utils::find_available_port_in_range(ip_addr, port_range).unwrap(),
         );
         let bank_forks = BankForks::new_rw_arc(bank);
         let ledger_path = get_tmp_ledger_path_auto_delete!();

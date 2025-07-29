@@ -52,10 +52,10 @@ use {
     solana_keypair::{signable::Signable, Keypair},
     solana_ledger::shred::Shred,
     solana_net_utils::{
-        bind_in_range, bind_to_localhost, bind_to_unspecified, find_available_ports_in_range,
+        bind_in_range, bind_to_unspecified, find_available_ports_in_range,
         sockets::{
-            bind_common_in_range_with_config, bind_gossip_port_in_range, bind_in_range_with_config,
-            bind_more_with_config, bind_to_with_config, bind_two_in_range_with_offset_and_config,
+            bind_gossip_port_in_range, bind_in_range_with_config, bind_more_with_config,
+            bind_to_with_config, bind_two_in_range_with_offset_and_config,
             localhost_port_range_for_tests, multi_bind_in_range_with_config,
             SocketConfiguration as SocketConfig,
         },
@@ -90,7 +90,7 @@ use {
         io::{BufReader, BufWriter, Write},
         iter::repeat,
         net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
-        num::NonZeroUsize,
+        num::{NonZero, NonZeroUsize},
         ops::{Deref, Div},
         path::{Path, PathBuf},
         rc::Rc,
@@ -372,7 +372,7 @@ impl ClusterInfo {
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         for node in nodes {
             if let Err(err) = gossip_crds.insert(node, now, GossipRoute::LocalMessage) {
-                warn!("crds insert failed {:?}", err);
+                warn!("crds insert failed {err:?}");
             }
         }
     }
@@ -544,7 +544,8 @@ impl ClusterInfo {
                     }
                     let ip_addr = node.gossip().as_ref().map(SocketAddr::ip);
                     Some(format!(
-                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
+                        "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}|  {:5}| {:5}| {:5}| {:5}| {:5}| \
+                         {:5}| {}\n",
                         node.gossip()
                             .filter(|addr| self.socket_addr_space.check(addr))
                             .as_ref()
@@ -552,7 +553,11 @@ impl ClusterInfo {
                             .as_ref()
                             .map(IpAddr::to_string)
                             .unwrap_or_else(|| String::from("none")),
-                        if node.pubkey() == &my_pubkey { "me" } else { "" },
+                        if node.pubkey() == &my_pubkey {
+                            "me"
+                        } else {
+                            ""
+                        },
                         now.saturating_sub(last_updated),
                         node.pubkey().to_string(),
                         if let Some(node_version) = node_version {
@@ -563,10 +568,16 @@ impl ClusterInfo {
                         self.addr_to_string(&ip_addr, &node.gossip()),
                         self.addr_to_string(&ip_addr, &node.tpu_vote(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tpu(contact_info::Protocol::UDP)),
-                        self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::UDP)),
+                        self.addr_to_string(
+                            &ip_addr,
+                            &node.tpu_forwards(contact_info::Protocol::UDP)
+                        ),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP)),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC)),
-                        self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP)),
+                        self.addr_to_string(
+                            &ip_addr,
+                            &node.serve_repair(contact_info::Protocol::UDP)
+                        ),
                         node.shred_version(),
                     ))
                 }
@@ -679,7 +690,7 @@ impl ClusterInfo {
         let now = timestamp();
         for entry in entries {
             if let Err(err) = gossip_crds.insert(entry, now, GossipRoute::LocalMessage) {
-                error!("push_epoch_slots failed: {:?}", err);
+                error!("push_epoch_slots failed: {err:?}");
             }
         }
     }
@@ -768,7 +779,7 @@ impl ClusterInfo {
         let vote = CrdsValue::new(vote, &self.keypair());
         let mut gossip_crds = self.gossip.crds.write().unwrap();
         if let Err(err) = gossip_crds.insert(vote, now, GossipRoute::LocalMessage) {
-            error!("push_vote failed: {:?}", err);
+            error!("push_vote failed: {err:?}");
         }
     }
 
@@ -869,8 +880,8 @@ impl ClusterInfo {
             // restarted, and need to repush and evict the oldest vote
             let Some(vote_index) = self.find_vote_index_to_evict(refresh_vote_slot) else {
                 warn!(
-                    "trying to refresh slot {} but all votes in gossip table are for newer slots",
-                    refresh_vote_slot,
+                    "trying to refresh slot {refresh_vote_slot} but all votes in gossip table are \
+                     for newer slots",
                 );
                 return;
             };
@@ -1188,9 +1199,10 @@ impl ClusterInfo {
         stakes: &HashMap<Pubkey, u64>,
     ) -> impl Iterator<Item = (SocketAddr, Protocol)> {
         let now = timestamp();
+        let keypair = self.keypair();
         let mut contact_info = self.my_contact_info();
         contact_info.set_wallclock(now);
-        let self_info = CrdsValue::new(CrdsData::from(contact_info), &self.keypair());
+        let self_info = CrdsValue::new(CrdsData::from(contact_info), &keypair);
         let max_bloom_filter_bytes = get_max_bloom_filter_bytes(&self_info);
         let mut pings = Vec::new();
         let pulls = {
@@ -1198,7 +1210,7 @@ impl ClusterInfo {
             self.gossip
                 .new_pull_request(
                     thread_pool,
-                    self.keypair().deref(),
+                    &keypair,
                     self.my_shred_version(),
                     now,
                     gossip_validators,
@@ -1399,7 +1411,7 @@ impl ClusterInfo {
                 self.stats.trim_crds_table_failed.add_relaxed(1);
                 // TODO: Stakes are coming from the root-bank. Debug why/when
                 // they are empty/zero.
-                debug!("crds table trim failed: {:?}", err);
+                debug!("crds table trim failed: {err:?}");
             }
             Ok(num_purged) => {
                 self.stats
@@ -1419,7 +1431,7 @@ impl ClusterInfo {
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(std::cmp::min(get_thread_count(), 8))
-            .thread_name(|i| format!("solRunGossip{i:02}"))
+            .thread_name(|i| format!("solGossipRun{i:02}"))
             .build()
             .unwrap();
         let mut epoch_specs = bank_forks.map(EpochSpecs::from);
@@ -1694,10 +1706,10 @@ impl ClusterInfo {
         let (total_bytes, sent_crds_values) = WeightedShuffle::new("handle-pull-requests", scores)
             .shuffle(&mut rng)
             .filter_map(|k| {
-                let (&addr, values) = &mut pull_responses[k];
+                let (addr, values) = &mut pull_responses[k];
                 let num_values = values.len();
                 let response = Protocol::PullResponse(self_id, std::mem::take(values));
-                let packet = make_gossip_packet(addr, &response, &self.stats)?;
+                let packet = make_gossip_packet(*addr, &response, &self.stats)?;
                 Some((packet, num_values))
             })
             .take_while(|(packet, _)| {
@@ -2198,20 +2210,21 @@ impl ClusterInfo {
         let mut packet_buf = Vec::with_capacity(CHANNEL_CONSUME_CAPACITY);
         let run_consume = move || {
             while !exit.load(Ordering::Relaxed) {
-                match self.run_socket_consume(
+                let result = self.run_socket_consume(
                     &thread_pool,
                     epoch_specs.as_mut(),
                     &receiver,
                     &sender,
                     &mut packet_buf,
-                ) {
+                );
+                match result {
                     // A recv operation can only fail if the sending end of a
                     // channel is disconnected.
                     Err(GossipError::RecvError(_)) => break,
                     // A send operation can only fail if the receiving end of a
                     // channel is disconnected.
                     Err(GossipError::SendError) => break,
-                    Err(err) => error!("gossip consume: {}", err),
+                    Err(err) => error!("gossip consume: {err}"),
                     Ok(()) => (),
                 }
             }
@@ -2240,7 +2253,7 @@ impl ClusterInfo {
             .name("solGossipListen".to_string())
             .spawn(move || {
                 while !exit.load(Ordering::Relaxed) {
-                    if let Err(err) = self.run_listen(
+                    let result = self.run_listen(
                         &recycler,
                         epoch_specs.as_mut(),
                         &requests_receiver,
@@ -2248,7 +2261,8 @@ impl ClusterInfo {
                         &thread_pool,
                         should_check_duplicate_instance,
                         &mut packet_buf,
-                    ) {
+                    );
+                    if let Err(err) = result {
                         match err {
                             GossipError::RecvError(_) => break,
                             GossipError::DuplicateNodeInstance => {
@@ -2261,7 +2275,7 @@ impl ClusterInfo {
                                 // that this will exit cleanly.
                                 std::process::exit(1);
                             }
-                            _ => error!("gossip run_listen failed: {}", err),
+                            _ => error!("gossip run_listen failed: {err}"),
                         }
                     }
                 }
@@ -2383,8 +2397,8 @@ impl BindIpAddrs {
             for ip in &addrs {
                 if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
                     return Err(format!(
-                        "Invalid configuration: {:?} is not allowed with multiple --bind-address values (loopback, unspecified, or multicast)",
-                        ip
+                        "Invalid configuration: {ip:?} is not allowed with multiple \
+                         --bind-address values (loopback, unspecified, or multicast)"
                     ));
                 }
             }
@@ -2422,303 +2436,70 @@ pub struct Node {
 }
 
 impl Node {
+    /// create localhost node for tests
     pub fn new_localhost() -> Self {
         let pubkey = solana_pubkey::new_rand();
         Self::new_localhost_with_pubkey(&pubkey)
     }
 
+    /// create localhost node for tests with provided pubkey
+    /// unlike the [new_with_external_ip], this will also bind RPC sockets.
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
-        Self::new_localhost_with_pubkey_and_quic_endpoints(pubkey, DEFAULT_QUIC_ENDPOINTS)
-    }
-
-    pub fn new_localhost_with_pubkey_and_quic_endpoints(
-        pubkey: &Pubkey,
-        num_quic_endpoints: usize,
-    ) -> Self {
-        let localhost_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
         let port_range = localhost_port_range_for_tests();
-        let udp_config = SocketConfig::default();
-        let quic_config = SocketConfig::default();
-        let ((_tpu_port, tpu), (_tpu_quic_port, tpu_quic)) =
-            bind_two_in_range_with_offset_and_config(
-                localhost_ip_addr,
-                port_range,
-                QUIC_PORT_OFFSET,
-                udp_config,
-                quic_config,
-            )
-            .unwrap();
-        let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints, quic_config).unwrap();
-        let (gossip_port, (gossip, ip_echo)) =
-            bind_common_in_range_with_config(localhost_ip_addr, port_range, udp_config).unwrap();
-        let gossip_addr = SocketAddr::new(localhost_ip_addr, gossip_port);
-        let tvu = bind_to_localhost().unwrap();
-        let tvu_quic = bind_to_localhost().unwrap();
-        let ((_tpu_forwards_port, tpu_forwards), (_tpu_forwards_quic_port, tpu_forwards_quic)) =
-            bind_two_in_range_with_offset_and_config(
-                localhost_ip_addr,
-                port_range,
-                QUIC_PORT_OFFSET,
-                udp_config,
-                quic_config,
-            )
-            .unwrap();
-        let tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, num_quic_endpoints, quic_config).unwrap();
-        let tpu_vote = bind_to_localhost().unwrap();
-        let tpu_vote_quic = bind_to_localhost().unwrap();
-        let tpu_vote_quic =
-            bind_more_with_config(tpu_vote_quic, num_quic_endpoints, quic_config).unwrap();
-
-        let repair = bind_to_localhost().unwrap();
-        let repair_quic = bind_to_localhost().unwrap();
-        let [rpc_port, rpc_pubsub_port] =
-            find_available_ports_in_range(localhost_ip_addr, port_range).unwrap();
-        let rpc_addr = SocketAddr::new(localhost_ip_addr, rpc_port);
-        let rpc_pubsub_addr = SocketAddr::new(localhost_ip_addr, rpc_pubsub_port);
-        let broadcast = vec![bind_to_unspecified().unwrap()];
-        let retransmit_socket = bind_to_unspecified().unwrap();
-        let serve_repair = bind_to_localhost().unwrap();
-        let serve_repair_quic = bind_to_localhost().unwrap();
-        let ancestor_hashes_requests = bind_to_unspecified().unwrap();
-        let ancestor_hashes_requests_quic = bind_to_unspecified().unwrap();
-
-        let tpu_vote_forwarding_client = bind_to_localhost().unwrap();
-        let tpu_transaction_forwarding_client = bind_to_localhost().unwrap();
-        let quic_vote_client = bind_to_localhost().unwrap();
-        let rpc_sts_client = bind_to_localhost().unwrap();
-
-        let mut info = ContactInfo::new(
-            *pubkey,
-            timestamp(), // wallclock
-            0u16,        // shred_version
-        );
-        macro_rules! set_socket {
-            ($method:ident, $addr:expr, $name:literal) => {
-                info.$method($addr).expect(&format!(
-                    "Operator must spin up node with valid {} address",
-                    $name
-                ))
-            };
-            ($method:ident, $protocol:ident, $addr:expr, $name:literal) => {{
-                info.$method(contact_info::Protocol::$protocol, $addr)
-                    .expect(&format!(
-                        "Operator must spin up node with valid {} address",
-                        $name
-                    ))
-            }};
-        }
-        set_socket!(set_gossip, gossip_addr, "gossip");
-        set_socket!(set_tvu, UDP, tvu.local_addr().unwrap(), "TVU");
-        set_socket!(set_tvu, QUIC, tvu_quic.local_addr().unwrap(), "TVU QUIC");
-        set_socket!(set_tpu, tpu.local_addr().unwrap(), "TPU");
-        set_socket!(
-            set_tpu_forwards,
-            tpu_forwards.local_addr().unwrap(),
-            "TPU-forwards"
-        );
-        set_socket!(
-            set_tpu_vote,
-            UDP,
-            tpu_vote.local_addr().unwrap(),
-            "TPU-vote"
-        );
-        set_socket!(
-            set_tpu_vote,
-            QUIC,
-            tpu_vote_quic[0].local_addr().unwrap(),
-            "TPU-vote QUIC"
-        );
-        set_socket!(set_rpc, rpc_addr, "RPC");
-        set_socket!(set_rpc_pubsub, rpc_pubsub_addr, "RPC-pubsub");
-        set_socket!(
-            set_serve_repair,
-            UDP,
-            serve_repair.local_addr().unwrap(),
-            "serve-repair"
-        );
-        set_socket!(
-            set_serve_repair,
-            QUIC,
-            serve_repair_quic.local_addr().unwrap(),
-            "serve-repair QUIC"
-        );
-        Node {
-            info,
-            sockets: Sockets {
-                gossip: AtomicUdpSocket::new(gossip),
-                ip_echo: Some(ip_echo),
-                tvu: vec![tvu],
-                tvu_quic,
-                tpu: vec![tpu],
-                tpu_forwards: vec![tpu_forwards],
-                tpu_vote: vec![tpu_vote],
-                broadcast,
-                repair,
-                repair_quic,
-                retransmit_sockets: vec![retransmit_socket],
-                serve_repair,
-                serve_repair_quic,
-                ancestor_hashes_requests,
-                ancestor_hashes_requests_quic,
-                tpu_quic,
-                tpu_forwards_quic,
-                tpu_vote_quic,
-                tpu_vote_forwarding_client,
-                tpu_transaction_forwarding_client,
-                quic_vote_client,
-                rpc_sts_client,
-                vortexor_receivers: None,
+        let bind_ip_addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let config = NodeConfig {
+            bind_ip_addrs: BindIpAddrs {
+                addrs: vec![bind_ip_addr],
             },
-        }
+            gossip_port: port_range.0,
+            port_range,
+            advertised_ip: bind_ip_addr,
+            public_tpu_addr: None,
+            public_tpu_forwards_addr: None,
+            num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+            num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+            num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
+                .expect("Number of QUIC endpoints can not be zero"),
+            vortexor_receiver_addr: None,
+        };
+        let mut node = Self::new_with_external_ip(pubkey, config);
+        let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
+        let rpc_addr = SocketAddr::new(bind_ip_addr, rpc_ports[0]);
+        let rpc_pubsub_addr = SocketAddr::new(bind_ip_addr, rpc_ports[1]);
+        node.info.set_rpc(rpc_addr).unwrap();
+        node.info.set_rpc_pubsub(rpc_pubsub_addr).unwrap();
+        node
     }
 
-    fn bind_with_config(
-        bind_ip_addr: IpAddr,
-        port_range: PortRange,
-        config: SocketConfig,
-    ) -> (u16, UdpSocket) {
-        bind_in_range_with_config(bind_ip_addr, port_range, config).expect("Failed to bind")
-    }
-
+    #[deprecated(since = "3.0.0", note = "use new_with_external_ip")]
     pub fn new_single_bind(
         pubkey: &Pubkey,
         gossip_addr: &SocketAddr,
         port_range: PortRange,
         bind_ip_addr: IpAddr,
     ) -> Self {
-        let (gossip_port, (gossip, ip_echo)) =
-            bind_gossip_port_in_range(gossip_addr, port_range, bind_ip_addr);
-
-        let socket_config = SocketConfig::default();
-        let (tvu_port, tvu) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (tvu_quic_port, tvu_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let ((tpu_port, tpu), (_tpu_quic_port, tpu_quic)) =
-            bind_two_in_range_with_offset_and_config(
-                bind_ip_addr,
-                port_range,
-                QUIC_PORT_OFFSET,
-                socket_config,
-                socket_config,
-            )
-            .unwrap();
-        let tpu_quic: Vec<UdpSocket> =
-            bind_more_with_config(tpu_quic, DEFAULT_QUIC_ENDPOINTS, socket_config).unwrap();
-
-        let ((tpu_forwards_port, tpu_forwards), (_tpu_forwards_quic_port, tpu_forwards_quic)) =
-            bind_two_in_range_with_offset_and_config(
-                bind_ip_addr,
-                port_range,
-                QUIC_PORT_OFFSET,
-                socket_config,
-                socket_config,
-            )
-            .unwrap();
-        let tpu_forwards_quic =
-            bind_more_with_config(tpu_forwards_quic, DEFAULT_QUIC_ENDPOINTS, socket_config)
-                .unwrap();
-
-        let (tpu_vote_port, tpu_vote) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (tpu_vote_quic_port, tpu_vote_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let tpu_vote_quic: Vec<UdpSocket> =
-            bind_more_with_config(tpu_vote_quic, DEFAULT_QUIC_ENDPOINTS, socket_config).unwrap();
-
-        let (_, retransmit_socket) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (_, repair) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (_, repair_quic) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (serve_repair_port, serve_repair) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (serve_repair_quic_port, serve_repair_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (_, broadcast) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (_, ancestor_hashes_requests) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (_, ancestor_hashes_requests_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-
-        let [rpc_port, rpc_pubsub_port] =
-            find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
-
-        // These are client sockets, so the port is set to be 0 because it must be ephimeral.
-        let tpu_vote_forwarding_client =
-            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let tpu_transaction_forwarding_client =
-            bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let quic_vote_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-        let rpc_sts_client = bind_to_with_config(bind_ip_addr, 0, socket_config).unwrap();
-
-        let addr = gossip_addr.ip();
-        let mut info = ContactInfo::new(
-            *pubkey,
-            timestamp(), // wallclock
-            0u16,        // shred_version
-        );
-        macro_rules! set_socket {
-            ($method:ident, $port:ident, $name:literal) => {
-                info.$method((addr, $port)).expect(&format!(
-                    "Operator must spin up node with valid {} address",
-                    $name
-                ))
-            };
-            ($method:ident, $protocol:ident, $port:ident, $name:literal) => {{
-                info.$method(contact_info::Protocol::$protocol, (addr, $port))
-                    .expect(&format!(
-                        "Operator must spin up node with valid {} address",
-                        $name
-                    ))
-            }};
-        }
-        set_socket!(set_gossip, gossip_port, "gossip");
-        set_socket!(set_tvu, UDP, tvu_port, "TVU");
-        set_socket!(set_tvu, QUIC, tvu_quic_port, "TVU QUIC");
-        set_socket!(set_tpu, tpu_port, "TPU");
-        set_socket!(set_tpu_forwards, tpu_forwards_port, "TPU-forwards");
-        set_socket!(set_tpu_vote, UDP, tpu_vote_port, "TPU-vote");
-        set_socket!(set_tpu_vote, QUIC, tpu_vote_quic_port, "TPU-vote QUIC");
-        set_socket!(set_rpc, rpc_port, "RPC");
-        set_socket!(set_rpc_pubsub, rpc_pubsub_port, "RPC-pubsub");
-        set_socket!(set_serve_repair, UDP, serve_repair_port, "serve-repair");
-        set_socket!(
-            set_serve_repair,
-            QUIC,
-            serve_repair_quic_port,
-            "serve-repair QUIC"
-        );
-
-        trace!("new ContactInfo: {:?}", info);
-
-        Node {
-            info,
-            sockets: Sockets {
-                gossip: AtomicUdpSocket::new(gossip),
-                ip_echo: Some(ip_echo),
-                tvu: vec![tvu],
-                tvu_quic,
-                tpu: vec![tpu],
-                tpu_forwards: vec![tpu_forwards],
-                tpu_vote: vec![tpu_vote],
-                broadcast: vec![broadcast],
-                repair,
-                repair_quic,
-                retransmit_sockets: vec![retransmit_socket],
-                serve_repair,
-                serve_repair_quic,
-                ancestor_hashes_requests,
-                ancestor_hashes_requests_quic,
-                tpu_quic,
-                tpu_forwards_quic,
-                tpu_vote_quic,
-                tpu_vote_forwarding_client,
-                quic_vote_client,
-                tpu_transaction_forwarding_client,
-                rpc_sts_client,
-                vortexor_receivers: None,
+        let config = NodeConfig {
+            bind_ip_addrs: BindIpAddrs {
+                addrs: vec![bind_ip_addr],
             },
-        }
+            gossip_port: gossip_addr.port(),
+            port_range,
+            advertised_ip: bind_ip_addr,
+            public_tpu_addr: None,
+            public_tpu_forwards_addr: None,
+            num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+            num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+            num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
+                .expect("Number of QUIC endpoints can not be zero"),
+            vortexor_receiver_addr: None,
+        };
+        let mut node = Self::new_with_external_ip(pubkey, config);
+        let rpc_ports: [u16; 2] = find_available_ports_in_range(bind_ip_addr, port_range).unwrap();
+        let rpc_addr = SocketAddr::new(bind_ip_addr, rpc_ports[0]);
+        let rpc_pubsub_addr = SocketAddr::new(bind_ip_addr, rpc_ports[1]);
+        node.info.set_rpc(rpc_addr).unwrap();
+        node.info.set_rpc_pubsub(rpc_pubsub_addr).unwrap();
+        node
     }
 
     pub fn new_with_external_ip(pubkey: &Pubkey, config: NodeConfig) -> Node {
@@ -2749,47 +2530,50 @@ impl Node {
             num_tvu_receive_sockets.get(),
         )
         .expect("tvu multi_bind");
-
         let (tvu_quic_port, tvu_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("tvu_quic bind");
 
-        let (tpu_port, tpu_sockets) =
-            multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 32)
-                .expect("tpu multi_bind");
+        let ((tpu_port, tpu_socket), (_tpu_port_quic, tpu_quic)) =
+            bind_two_in_range_with_offset_and_config(
+                bind_ip_addr,
+                port_range,
+                QUIC_PORT_OFFSET,
+                socket_config,
+                socket_config,
+            )
+            .expect("tpu_socket primary bind");
+        let tpu_sockets =
+            bind_more_with_config(tpu_socket, 32, socket_config).expect("tpu_sockets multi_bind");
 
-        let (_tpu_port_quic, tpu_quic) = Self::bind_with_config(
-            bind_ip_addr,
-            (tpu_port + QUIC_PORT_OFFSET, tpu_port + QUIC_PORT_OFFSET + 1),
-            socket_config,
-        );
-        let tpu_quic =
-            bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config).unwrap();
+        let tpu_quic = bind_more_with_config(tpu_quic, num_quic_endpoints.get(), socket_config)
+            .expect("tpu_quic bind");
 
-        let (tpu_forwards_port, tpu_forwards_sockets) =
-            multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 8)
-                .expect("tpu_forwards multi_bind");
-
-        let (_tpu_forwards_port_quic, tpu_forwards_quic) = Self::bind_with_config(
-            bind_ip_addr,
-            (
-                tpu_forwards_port + QUIC_PORT_OFFSET,
-                tpu_forwards_port + QUIC_PORT_OFFSET + 1,
-            ),
-            socket_config,
-        );
+        let ((tpu_forwards_port, tpu_forwards_socket), (_, tpu_forwards_quic)) =
+            bind_two_in_range_with_offset_and_config(
+                bind_ip_addr,
+                port_range,
+                QUIC_PORT_OFFSET,
+                socket_config,
+                socket_config,
+            )
+            .expect("tpu_forwards primary bind");
+        let tpu_forwards_sockets = bind_more_with_config(tpu_forwards_socket, 8, socket_config)
+            .expect("tpu_forwards multi_bind");
         let tpu_forwards_quic =
             bind_more_with_config(tpu_forwards_quic, num_quic_endpoints.get(), socket_config)
-                .unwrap();
+                .expect("tpu_forwards_quic multi_bind");
 
         let (tpu_vote_port, tpu_vote_sockets) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 1)
                 .expect("tpu_vote multi_bind");
 
         let (tpu_vote_quic_port, tpu_vote_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("tpu_vote_quic");
         let tpu_vote_quic =
-            bind_more_with_config(tpu_vote_quic, num_quic_endpoints.get(), socket_config).unwrap();
+            bind_more_with_config(tpu_vote_quic, num_quic_endpoints.get(), socket_config)
+                .expect("tpu_vote_quic multi_bind");
 
         let (_, retransmit_sockets) = multi_bind_in_range_with_config(
             bind_ip_addr,
@@ -2799,22 +2583,28 @@ impl Node {
         )
         .expect("retransmit multi_bind");
 
-        let (_, repair) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
-        let (_, repair_quic) = Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+        let (_, repair) = bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            .expect("repair bind");
+        let (_, repair_quic) = bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+            .expect("repair_quic bind");
 
         let (serve_repair_port, serve_repair) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("serve_repair");
         let (serve_repair_quic_port, serve_repair_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("serve_repair_quic");
 
         let (_, broadcast) =
             multi_bind_in_range_with_config(bind_ip_addr, port_range, socket_config, 4)
                 .expect("broadcast multi_bind");
 
         let (_, ancestor_hashes_requests) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("ancestor_hashes_requests bind");
         let (_, ancestor_hashes_requests_quic) =
-            Self::bind_with_config(bind_ip_addr, port_range, socket_config);
+            bind_in_range_with_config(bind_ip_addr, port_range, socket_config)
+                .expect("ancestor_hashes_requests QUIC bind should succeed");
 
         // These are client sockets, so the port is set to be 0 because it must be ephimeral.
         let tpu_vote_forwarding_client =
@@ -2866,7 +2656,7 @@ impl Node {
         });
 
         info!("vortexor_receivers is {vortexor_receivers:?}");
-        trace!("new ContactInfo: {:?}", info);
+        trace!("new ContactInfo: {info:?}");
         let sockets = Sockets {
             gossip: AtomicUdpSocket::new(gossip),
             tvu: tvu_sockets,
@@ -4276,7 +4066,7 @@ mod tests {
 
         let cluster_info44 = Arc::new({
             let node = Node::new_localhost_with_pubkey(&keypair44.pubkey());
-            info!("{:?}", node);
+            info!("{node:?}");
             ClusterInfo::new(node.info, keypair44.clone(), SocketAddrSpace::Unspecified)
         });
         let cluster_info43 = Arc::new({
@@ -4288,19 +4078,19 @@ mod tests {
         assert_eq!(keypair44.pubkey().to_string().len(), 44);
 
         let trace = cluster_info44.contact_info_trace();
-        info!("cluster:\n{}", trace);
+        info!("cluster:\n{trace}");
         assert_eq!(trace.len(), 431);
 
         let trace = cluster_info44.rpc_info_trace();
-        info!("rpc:\n{}", trace);
+        info!("rpc:\n{trace}");
         assert_eq!(trace.len(), 335);
 
         let trace = cluster_info43.contact_info_trace();
-        info!("cluster:\n{}", trace);
+        info!("cluster:\n{trace}");
         assert_eq!(trace.len(), 431);
 
         let trace = cluster_info43.rpc_info_trace();
-        info!("rpc:\n{}", trace);
+        info!("rpc:\n{trace}");
         assert_eq!(trace.len(), 335);
     }
 }

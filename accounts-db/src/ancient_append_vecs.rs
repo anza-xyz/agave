@@ -11,6 +11,7 @@ use {
             stats::{ShrinkAncientStats, ShrinkStatsSub},
             AccountFromStorage, AccountStorageEntry, AccountsDb, AliveAccounts,
             GetUniqueAccountsResult, ShrinkCollect, ShrinkCollectAliveSeparatedByRefs,
+            UpdateIndexThreadSelection,
         },
         active_stats::ActiveStatItem,
         storable_accounts::{StorableAccounts, StorableAccountsBySlot},
@@ -544,9 +545,11 @@ impl AccountsDb {
         let target_slot = accounts_to_write.target_slot();
         let (shrink_in_progress, create_and_insert_store_elapsed_us) =
             measure_us!(self.get_store_for_shrink(target_slot, bytes));
-        let (store_accounts_timing, rewrite_elapsed_us) = measure_us!(
-            self.store_accounts_frozen(accounts_to_write, shrink_in_progress.new_storage(),)
-        );
+        let (store_accounts_timing, rewrite_elapsed_us) = measure_us!(self.store_accounts_frozen(
+            accounts_to_write,
+            shrink_in_progress.new_storage(),
+            UpdateIndexThreadSelection::PoolWithThreshold
+        ));
 
         write_ancient_accounts.metrics.accumulate(&ShrinkStatsSub {
             store_accounts_timing,
@@ -773,7 +776,7 @@ impl AccountsDb {
         // Without eager unref, we will collect X at `multi-ref` after shrink.
         // Packing multi-ref is less efficient than `one_ref``. But it might be ok - in next round of clean, hopefully, it can turn this from multi-ref into one-ref.
         let mut accounts_to_combine = accounts_per_storage
-            .iter()
+            .iter_mut()
             .map(|(info, unique_accounts)| {
                 self.shrink_collect::<ShrinkCollectAliveSeparatedByRefs<'_>>(
                     &info.storage,
@@ -1333,7 +1336,11 @@ pub mod tests {
                     NonZeroU64::new(ideal_size).unwrap(),
                 );
                 let storages_needed = result.len();
-                assert_eq!(storages_needed, expected_storages, "num_slots: {num_slots}, expected_storages: {expected_storages}, storages_needed: {storages_needed}, ideal_size: {ideal_size}");
+                assert_eq!(
+                    storages_needed, expected_storages,
+                    "num_slots: {num_slots}, expected_storages: {expected_storages}, \
+                     storages_needed: {storages_needed}, ideal_size: {ideal_size}"
+                );
                 compare_all_accounts(
                     &packed_to_compare(&result, &db)[..],
                     &original_results_all_accounts,
@@ -1454,13 +1461,17 @@ pub mod tests {
                             largest_account_size
                         );
                     }
+                    assert!(packed.bytes > 0, "packed size of zero");
                     assert!(
-                        packed.bytes > 0,
-                        "packed size of zero"
-                    );
-                    assert!(
-                        packed.bytes <= ideal_size || packed.accounts.iter().map(|(_slot, accounts)| accounts.len()).sum::<usize>() == 1,
-                        "packed size too large: bytes: {}, ideal_size: {}, data_size: {}, num_slots: {}, # accounts: {}",
+                        packed.bytes <= ideal_size
+                            || packed
+                                .accounts
+                                .iter()
+                                .map(|(_slot, accounts)| accounts.len())
+                                .sum::<usize>()
+                                == 1,
+                        "packed size too large: bytes: {}, ideal_size: {}, data_size: {}, \
+                         num_slots: {}, # accounts: {}",
                         packed.bytes,
                         ideal_size,
                         data_size,
@@ -1687,13 +1698,20 @@ pub mod tests {
                                 assert!(slots[i] < slots[i + 1]);
                             });
 
-                        log::debug!("output slots: {:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}, expected accounts to combine: {expected_accounts_to_combine}, target slots: {:?}, accounts_to_combine: {}", accounts_to_combine.target_slots_sorted,
-                        accounts_to_combine.target_slots_sorted,
-                        accounts_to_combine.accounts_to_combine.len(),);
+                        log::debug!(
+                            "output slots: {:?}, num_slots: {num_slots}, two_refs: {two_refs}, \
+                             many_refs: {many_ref_slots:?}, expected accounts to combine: \
+                             {expected_accounts_to_combine}, target slots: {:?}, \
+                             accounts_to_combine: {}",
+                            accounts_to_combine.target_slots_sorted,
+                            accounts_to_combine.target_slots_sorted,
+                            accounts_to_combine.accounts_to_combine.len(),
+                        );
                         assert_eq!(
                             accounts_to_combine.accounts_to_combine.len(),
                             expected_accounts_to_combine,
-                            "num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
+                            "num_slots: {num_slots}, two_refs: {two_refs}, many_refs: \
+                             {many_ref_slots:?}"
                         );
                     }
                 }
@@ -1807,7 +1825,8 @@ pub mod tests {
                                 assert_eq!(
                                     accounts_to_combine.accounts_to_combine.len(),
                                     expected_number_accounts_to_combine,
-                                    "method: {method:?}, num_slots: {num_slots}, two_refs: {two_refs}, many_refs: {many_ref_slots:?}"
+                                    "method: {method:?}, num_slots: {num_slots}, two_refs: \
+                                     {two_refs}, many_refs: {many_ref_slots:?}"
                                 );
 
                                 if add_dead_account {
@@ -2088,7 +2107,8 @@ pub mod tests {
                 .accounts
                 .scan_accounts(|_, _| {
                     count += 1;
-                });
+                })
+                .expect("must scan accounts storage");
             assert_eq!(count, 1);
             let account = shrink_in_progress
                 .new_storage()
@@ -2247,9 +2267,12 @@ pub mod tests {
                 })
                 .unwrap();
             let mut count = 0;
-            storage.accounts.scan_accounts(|_, _| {
-                count += 1;
-            });
+            storage
+                .accounts
+                .scan_accounts(|_, _| {
+                    count += 1;
+                })
+                .expect("must scan accounts storage");
             assert_eq!(count, 2);
             assert_eq!(accounts_shrunk_same_slot.0, *pk_with_2_refs);
             assert_eq!(accounts_shrunk_same_slot.1, account_shared_data_with_2_refs);
@@ -3108,9 +3131,12 @@ pub mod tests {
                             .iter()
                             .map(|storage| {
                                 let mut accounts = Vec::default();
-                                storage.accounts.scan_accounts_stored_meta(|account| {
-                                    accounts.push(AccountFromStorage::new(&account));
-                                });
+                                storage
+                                    .accounts
+                                    .scan_accounts_stored_meta(|account| {
+                                        accounts.push(AccountFromStorage::new(&account));
+                                    })
+                                    .expect("must scan accounts storage");
                                 (storage.slot(), accounts)
                             })
                             .collect::<Vec<_>>();
@@ -3182,11 +3208,15 @@ pub mod tests {
                             );
                             // make sure the single new append vec contains all the same accounts
                             let mut two = Vec::default();
-                            one.first().unwrap().1.new_storage().accounts.scan_accounts(
-                                |_offset, meta| {
+                            one.first()
+                                .unwrap()
+                                .1
+                                .new_storage()
+                                .accounts
+                                .scan_accounts(|_offset, meta| {
                                     two.push((*meta.pubkey(), meta.to_account_shared_data()));
-                                },
-                            );
+                                })
+                                .expect("must scan accounts storage");
 
                             compare_all_accounts(&initial_accounts, &two[..]);
                         }
@@ -3278,8 +3308,13 @@ pub mod tests {
                     assert_eq!(
                         expected_infos,
                         count,
-                        "percent_of_alive_shrunk_data: {percent_of_alive_shrunk_data}, infos: {expected_infos}, method: {method:?}, swap: {swap}, data: {:?}",
-                        infos.all_infos.iter().map(|info| (info.slot, info.capacity, info.alive_bytes)).collect::<Vec<_>>()
+                        "percent_of_alive_shrunk_data: {percent_of_alive_shrunk_data}, infos: \
+                         {expected_infos}, method: {method:?}, swap: {swap}, data: {:?}",
+                        infos
+                            .all_infos
+                            .iter()
+                            .map(|info| (info.slot, info.capacity, info.alive_bytes))
+                            .collect::<Vec<_>>()
                     );
                 }
             }

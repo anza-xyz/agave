@@ -903,23 +903,24 @@ mod test {
             compute_units_consumed: None,
             cost_units: None,
         };
+        #[rustfmt::skip]
         let expected_json_output_value: serde_json::Value = serde_json::from_str(
             "{\
-            \"err\":null,\
-            \"status\":{\"Ok\":null},\
-            \"fee\":1234,\
-            \"preBalances\":[1,2,3],\
-            \"postBalances\":[4,5,6],\
-            \"innerInstructions\":null,\
-            \"logMessages\":null,\
-            \"preTokenBalances\":null,\
-            \"postTokenBalances\":null,\
-            \"rewards\":null,\
-            \"loadedAddresses\":{\
-                \"readonly\": [],\
-                \"writable\": []\
-            }\
-        }",
+             \"err\":null,\
+             \"status\":{\"Ok\":null},\
+             \"fee\":1234,\
+             \"preBalances\":[1,2,3],\
+             \"postBalances\":[4,5,6],\
+             \"innerInstructions\":null,\
+             \"logMessages\":null,\
+             \"preTokenBalances\":null,\
+             \"postTokenBalances\":null,\
+             \"rewards\":null,\
+             \"loadedAddresses\":{\
+                 \"readonly\": [],\
+                 \"writable\": []\
+             }\
+             }",
         )
         .unwrap();
         let ui_meta_from: UiTransactionStatusMeta = meta.clone().into();
@@ -928,19 +929,20 @@ mod test {
             expected_json_output_value
         );
 
+        #[rustfmt::skip]
         let expected_json_output_value: serde_json::Value = serde_json::from_str(
             "{\
-            \"err\":null,\
-            \"status\":{\"Ok\":null},\
-            \"fee\":1234,\
-            \"preBalances\":[1,2,3],\
-            \"postBalances\":[4,5,6],\
-            \"innerInstructions\":null,\
-            \"logMessages\":null,\
-            \"preTokenBalances\":null,\
-            \"postTokenBalances\":null,\
-            \"rewards\":null\
-        }",
+             \"err\":null,\
+             \"status\":{\"Ok\":null},\
+             \"fee\":1234,\
+             \"preBalances\":[1,2,3],\
+             \"postBalances\":[4,5,6],\
+             \"innerInstructions\":null,\
+             \"logMessages\":null,\
+             \"preTokenBalances\":null,\
+             \"postTokenBalances\":null,\
+             \"rewards\":null\
+             }",
         )
         .unwrap();
         let ui_meta_parse_with_rewards = parse_ui_transaction_status_meta(meta.clone(), &[], true);

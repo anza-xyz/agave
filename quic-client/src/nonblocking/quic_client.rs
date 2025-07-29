@@ -229,6 +229,26 @@ pub struct QuicClient {
     stats: Arc<ClientStats>,
 }
 
+const CONNECTION_CLOSE_CODE_APPLICATION_CLOSE: u32 = 0u32;
+const CONNECTION_CLOSE_REASON_APPLICATION_CLOSE: &[u8] = b"dropped";
+
+impl QuicClient {
+    /// Explicitly close the connection. Must be called manually if cleanup is needed.
+    pub async fn close(&self) {
+        let mut conn_guard = self.connection.lock().await;
+        if let Some(conn) = conn_guard.take() {
+            debug!(
+                "Closing connection to {} connection_id: {:?}",
+                self.addr, conn.connection
+            );
+            conn.connection.close(
+                CONNECTION_CLOSE_CODE_APPLICATION_CLOSE.into(),
+                CONNECTION_CLOSE_REASON_APPLICATION_CLOSE,
+            );
+        }
+    }
+}
+
 impl QuicClient {
     pub fn new(endpoint: Arc<QuicLazyInitializedEndpoint>, addr: SocketAddr) -> Self {
         Self {

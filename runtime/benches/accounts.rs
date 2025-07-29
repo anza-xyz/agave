@@ -5,9 +5,7 @@ extern crate test;
 
 use {
     solana_account::{AccountSharedData, ReadableAccount},
-    solana_accounts_db::epoch_accounts_hash::EpochAccountsHash,
     solana_genesis_config::create_genesis_config,
-    solana_hash::Hash,
     solana_instruction::error::LamportsError,
     solana_pubkey::Pubkey,
     solana_runtime::bank::*,
@@ -48,15 +46,6 @@ fn bench_accounts_squash(bencher: &mut Bencher) {
     let mut pubkeys: Vec<Pubkey> = vec![];
     deposit_many(&prev_bank, &mut pubkeys, 250_000).unwrap();
     prev_bank.freeze();
-
-    // Need to set the EAH to Valid so that `Bank::new_from_parent()` doesn't panic during
-    // freeze when parent is in the EAH calculation window.
-    prev_bank
-        .rc
-        .accounts
-        .accounts_db
-        .epoch_accounts_hash_manager
-        .set_valid(EpochAccountsHash::new(Hash::new_unique()), 0);
 
     // Measures the performance of the squash operation.
     // This mainly consists of the freeze operation which calculates the

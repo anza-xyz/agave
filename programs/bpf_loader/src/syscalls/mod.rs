@@ -110,7 +110,10 @@ pub enum SyscallError {
         num_accounts: u64,
         max_accounts: u64,
     },
-    #[error("Invoked an instruction with too many account info's ({num_account_infos} > {max_account_infos})")]
+    #[error(
+        "Invoked an instruction with too many account info's ({num_account_infos} > \
+         {max_account_infos})"
+    )]
     MaxInstructionAccountInfosExceeded {
         num_account_infos: u64,
         max_account_infos: u64,
@@ -354,7 +357,7 @@ pub fn create_program_runtime_environment_v1<'a>(
         max_call_depth: compute_budget.max_call_depth,
         stack_frame_size: compute_budget.stack_frame_size,
         enable_address_translation: true,
-        enable_stack_frame_gaps: !feature_set.bpf_account_data_direct_mapping,
+        enable_stack_frame_gaps: true,
         instruction_meter_checkpoint_distance: 10000,
         enable_instruction_meter: true,
         enable_instruction_tracing: debugging_features,
@@ -581,10 +584,10 @@ fn address_is_aligned<T>(address: u64) -> bool {
 // Do not use this directly
 #[macro_export]
 macro_rules! translate_inner {
-    ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
+    ($memory_mapping:expr, $map:ident, $access_type:expr, $vm_addr:expr, $len:expr $(,)?) => {
         Result::<u64, Error>::from(
             $memory_mapping
-                .map($access_type, $vm_addr, $len)
+                .$map($access_type, $vm_addr, $len)
                 .map_err(|err| err.into()),
         )
     };
@@ -595,6 +598,7 @@ macro_rules! translate_type_inner {
     ($memory_mapping:expr, $access_type:expr, $vm_addr:expr, $T:ty, $check_aligned:expr $(,)?) => {{
         let host_addr = translate_inner!(
             $memory_mapping,
+            map,
             $access_type,
             $vm_addr,
             size_of::<$T>() as u64
@@ -619,7 +623,7 @@ macro_rules! translate_slice_inner {
         if isize::try_from(total_size).is_err() {
             return Err(SyscallError::InvalidLength.into());
         }
-        let host_addr = translate_inner!($memory_mapping, $access_type, $vm_addr, total_size)?;
+        let host_addr = translate_inner!($memory_mapping, map, $access_type, $vm_addr, total_size)?;
         if $check_aligned && !address_is_aligned::<$T>(host_addr) {
             return Err(SyscallError::UnalignedPointer.into());
         }
@@ -693,12 +697,52 @@ fn translate_slice_mut<'a, T>(
     )
 }
 
-// Safety: This will invalidate previously translated references.
-// No other translated references shall be live when calling this.
+fn touch_type_mut<T>(memory_mapping: &mut MemoryMapping, vm_addr: u64) -> Result<(), Error> {
+    translate_inner!(
+        memory_mapping,
+        map_with_access_violation_handler,
+        AccessType::Store,
+        vm_addr,
+        size_of::<T>() as u64,
+    )
+    .map(|_| ())
+}
+fn touch_slice_mut<T>(
+    memory_mapping: &mut MemoryMapping,
+    vm_addr: u64,
+    element_count: u64,
+) -> Result<(), Error> {
+    if element_count == 0 {
+        return Ok(());
+    }
+    translate_inner!(
+        memory_mapping,
+        map_with_access_violation_handler,
+        AccessType::Store,
+        vm_addr,
+        element_count.saturating_mul(size_of::<T>() as u64),
+    )
+    .map(|_| ())
+}
+
+// No other translated references can be live when calling this.
 // Meaning it should generally be at the beginning or end of a syscall and
 // it should only be called once with all translations passed in one call.
 #[macro_export]
 macro_rules! translate_mut {
+    (internal, $memory_mapping:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {
+        touch_slice_mut::<$T>(
+            $memory_mapping,
+            $vm_addr_and_element_count.0,
+            $vm_addr_and_element_count.1,
+        )?
+    };
+    (internal, $memory_mapping:expr, &mut $T:ty, $vm_addr:expr) => {
+        touch_type_mut::<$T>(
+            $memory_mapping,
+            $vm_addr,
+        )?
+    };
     (internal, $memory_mapping:expr, $check_aligned:expr, &mut [$T:ty], $vm_addr_and_element_count:expr) => {{
         let slice = translate_slice_mut::<$T>(
             $memory_mapping,
@@ -722,6 +766,7 @@ macro_rules! translate_mut {
         // This ensures that all the parameters are collected first so that if they depend on previous translations
         $(let $binding = ($vm_addr $(, $element_count)?);)+
         // they are not invalidated by the following translations here:
+        $(translate_mut!(internal, $memory_mapping, &mut $T, $binding);)+
         $(let $binding = translate_mut!(internal, $memory_mapping, $check_aligned, &mut $T, $binding);)+
         let host_ranges = [
             $(($binding.1, $binding.2),)+
@@ -2191,7 +2236,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context()
                 .unwrap()
-                .configure(&[0, 1], &[], &[]);
+                .configure(vec![0, 1], vec![], &[]);
             $invoke_context.push().unwrap();
         };
     }
@@ -2236,11 +2281,15 @@ mod tests {
         for (ok, start, length, value) in cases {
             if ok {
                 assert_eq!(
-                    translate_inner!(&memory_mapping, AccessType::Load, start, length).unwrap(),
+                    translate_inner!(&memory_mapping, map, AccessType::Load, start, length)
+                        .unwrap(),
                     value
                 )
             } else {
-                assert!(translate_inner!(&memory_mapping, AccessType::Load, start, length).is_err())
+                assert!(
+                    translate_inner!(&memory_mapping, map, AccessType::Load, start, length)
+                        .is_err()
+                )
             }
         }
     }
@@ -2288,7 +2337,7 @@ mod tests {
         // zero len
         let good_data = vec![1u8, 2, 3, 4, 5];
         let data: Vec<u8> = vec![];
-        assert_eq!(0x1 as *const u8, data.as_ptr());
+        assert_eq!(std::ptr::dangling::<u8>(), data.as_ptr());
         let memory_mapping = MemoryMapping::new(
             vec![MemoryRegion::new_readonly(&good_data, 0x100000000)],
             &config,
@@ -4392,18 +4441,18 @@ mod tests {
                     .transaction_context
                     .get_instruction_context_stack_height()
             {
-                let instruction_accounts = [InstructionAccount {
-                    index_in_transaction: index_in_trace.saturating_add(1) as IndexOfAccount,
-                    index_in_caller: 0, // This is incorrect / inconsistent but not required
-                    index_in_callee: 0,
-                    is_signer: false,
-                    is_writable: false,
-                }];
+                let instruction_accounts = vec![InstructionAccount::new(
+                    index_in_trace.saturating_add(1) as IndexOfAccount,
+                    0, // This is incorrect / inconsistent but not required
+                    0,
+                    false,
+                    false,
+                )];
                 invoke_context
                     .transaction_context
                     .get_next_instruction_context()
                     .unwrap()
-                    .configure(&[0], &instruction_accounts, &[index_in_trace as u8]);
+                    .configure(vec![0], instruction_accounts, &[index_in_trace as u8]);
                 invoke_context.transaction_context.push().unwrap();
             }
         }

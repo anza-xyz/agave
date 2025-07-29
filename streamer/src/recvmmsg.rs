@@ -1,6 +1,6 @@
 //! The `recvmmsg` module provides recvmmsg() API implementation
 
-pub use solana_perf::packet::NUM_RCVMMSGS;
+pub use solana_perf::packet::PACKETS_PER_BATCH;
 #[cfg(target_os = "linux")]
 use {
     crate::msghdr::create_msghdr,
@@ -21,7 +21,7 @@ use {
 pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num packets:*/ usize> {
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     let mut i = 0;
-    let count = cmp::min(NUM_RCVMMSGS, packets.len());
+    let count = cmp::min(PACKETS_PER_BATCH, packets.len());
     for p in packets.iter_mut().take(count) {
         p.meta_mut().size = 0;
         match socket.recv_from(p.buffer_mut()) {
@@ -101,9 +101,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     debug_assert!(packets.iter().all(|pkt| pkt.meta() == &Meta::default()));
     const SOCKADDR_STORAGE_SIZE: socklen_t = mem::size_of::<sockaddr_storage>() as socklen_t;
 
-    let mut iovs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
-    let mut addrs = [MaybeUninit::zeroed(); NUM_RCVMMSGS];
-    let mut hdrs = [MaybeUninit::uninit(); NUM_RCVMMSGS];
+    let mut iovs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
+    let mut addrs = [MaybeUninit::zeroed(); PACKETS_PER_BATCH];
+    let mut hdrs = [MaybeUninit::uninit(); PACKETS_PER_BATCH];
 
     let sock_fd = sock.as_raw_fd();
     let count = cmp::min(iovs.len(), packets.len());
@@ -163,7 +163,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     for (iov, addr, hdr) in izip!(&mut iovs, &mut addrs, &mut hdrs).take(count) {
         // SAFETY: We initialized `count` elements of each array above
         //
-        // It may be that `packets.len() != NUM_RCVMMSGS`; thus, some elements
+        // It may be that `packets.len() != PACKETS_PER_BATCH`; thus, some elements
         // in `iovs` / `addrs` / `hdrs` may not get initialized. So, we must
         // manually drop `count` elements from each array instead of being able
         // to convert [MaybeUninit<T>] to [T] and letting `Drop` do the work
@@ -226,7 +226,7 @@ mod tests {
 
         match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_one_iter(config),
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 
@@ -262,7 +262,7 @@ mod tests {
 
         match test_setup_reader_sender(IpAddr::V6(Ipv6Addr::LOCALHOST)) {
             Ok(config) => test_multi_iter(config),
-            Err(e) => warn!("Failed to configure IPv6: {:?}", e),
+            Err(e) => warn!("Failed to configure IPv6: {e:?}"),
         }
     }
 

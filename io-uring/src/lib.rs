@@ -1,11 +1,11 @@
 #![cfg(target_os = "linux")]
 mod ring;
 mod slab;
-pub use ring::*;
 use {
     io_uring::IoUring,
     std::{io, sync::Once},
 };
+pub use {ring::*, slab::FixedSlab};
 
 pub fn io_uring_supported() -> bool {
     static mut IO_URING_SUPPORTED: bool = false;

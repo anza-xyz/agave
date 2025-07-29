@@ -26,7 +26,7 @@ path = "src/main.rs"
 bs58 = { workspace = true }
 clap = { version = "3.1.5", features = ["cargo", "derive"] }
 dirs-next = { workspace = true }
-solana-clap-v3-utils = { workspace = true }
+solana-clap-v3-utils = { workspace = true, features = ["elgamal"] }
 solana-remote-wallet = { workspace = true, features = ["default"] }
 solana-seed-derivable = "=2.2.1"
 solana-signer = "=2.2.1"

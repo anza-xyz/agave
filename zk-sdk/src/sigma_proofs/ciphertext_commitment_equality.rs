@@ -5,7 +5,7 @@
 //! encrypts/encodes the same message. To generate the proof, a prover must provide the decryption
 //! key for the first ciphertext and the Pedersen opening for the commitment.
 //!
-//! The protocol guarantees computationally soundness (by the hardness of discrete log) and perfect
+//! The protocol guarantees computational soundness (by the hardness of discrete log) and perfect
 //! zero-knowledge in the random oracle model.
 
 #[cfg(target_arch = "wasm32")]
@@ -71,8 +71,8 @@ impl CiphertextCommitmentEqualityProof {
     ///
     /// * `keypair` - The ElGamal keypair associated with the first to be proved
     /// * `ciphertext` - The main ElGamal ciphertext to be proved
-    /// * `amount` - The message associated with the ElGamal ciphertext and Pedersen commitment
     /// * `opening` - The opening associated with the main Pedersen commitment to be proved
+    /// * `amount` - The message associated with the ElGamal ciphertext and Pedersen commitment
     /// * `transcript` - The transcript that does the bookkeeping for the Fiat-Shamir heuristic
     pub fn new(
         keypair: &ElGamalKeypair,
@@ -309,7 +309,7 @@ mod test {
             &keypair,
             &ciphertext,
             &opening,
-            message,
+            encrypted_message,
             &mut prover_transcript,
         );
 

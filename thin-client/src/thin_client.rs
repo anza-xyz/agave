@@ -88,12 +88,7 @@ impl ClientOptimizer {
             if index == (self.num_clients - 1) || time_ms == u64::MAX {
                 let times = self.times.read().unwrap();
                 let (min_time, min_index) = min_index(&times);
-                trace!(
-                    "done experimenting min: {} time: {} times: {:?}",
-                    min_index,
-                    min_time,
-                    times
-                );
+                trace!("done experimenting min: {min_index} time: {min_time} times: {times:?}");
 
                 // Only 1 thread should grab the num_clients-1 index, so this should be ok.
                 self.cur_index.store(min_index, Ordering::Relaxed);

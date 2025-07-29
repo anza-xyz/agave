@@ -10,7 +10,7 @@ use {
     log::*,
     lru::LruCache,
     quinn::Endpoint,
-    std::{net::SocketAddr, sync::Arc},
+    std::{net::SocketAddr, sync::Arc, time::Duration},
     thiserror::Error,
     tokio::{
         sync::mpsc::{self, error::TrySendError},
@@ -78,6 +78,7 @@ pub(crate) fn spawn_worker(
     worker_channel_size: usize,
     skip_check_transaction_age: bool,
     max_reconnect_attempts: usize,
+    handshake_timeout: Duration,
     stats: Arc<SendTransactionStats>,
 ) -> WorkerInfo {
     let (txs_sender, txs_receiver) = mpsc::channel(worker_channel_size);
@@ -91,6 +92,7 @@ pub(crate) fn spawn_worker(
         skip_check_transaction_age,
         max_reconnect_attempts,
         stats,
+        handshake_timeout,
     );
     let handle = tokio::spawn(async move {
         worker.run().await;
@@ -185,8 +187,8 @@ impl WorkersCache {
         }
 
         let current_worker = workers.get(peer).expect(
-            "Failed to fetch worker for peer {peer}.\n\
-             Peer existence must be checked before this call using `contains` method.",
+            "Failed to fetch worker for peer {peer}. Peer existence must be checked before this \
+             call using `contains` method.",
         );
         let send_res = current_worker.try_send_transactions(txs_batch);
 
@@ -212,7 +214,8 @@ impl WorkersCache {
     /// is removed from the cache.
     #[allow(
         dead_code,
-        reason = "This method will be used in the upcoming changes to implement optional backpressure on the sender."
+        reason = "This method will be used in the upcoming changes to implement optional \
+                  backpressure on the sender."
     )]
     pub async fn send_transactions_to_address(
         &mut self,
@@ -225,8 +228,8 @@ impl WorkersCache {
 
         let body = async move {
             let current_worker = workers.get(peer).expect(
-                "Failed to fetch worker for peer {peer}.\n\
-                 Peer existence must be checked before this call using `contains` method.",
+                "Failed to fetch worker for peer {peer}. Peer existence must be checked before \
+                 this call using `contains` method.",
             );
             let send_res = current_worker.send_transactions(txs_batch).await;
             if let Err(WorkersCacheError::ReceiverDropped) = send_res {
@@ -278,7 +281,7 @@ impl WorkersCache {
         }
         while let Some(res) = tasks.join_next().await {
             if let Err(err) = res {
-                debug!("A shutdown task failed: {}", err);
+                debug!("A shutdown task failed: {err}");
             }
         }
     }
@@ -316,6 +319,7 @@ pub fn shutdown_worker(worker: ShutdownWorker) {
 mod tests {
     use {
         crate::{
+            connection_worker::DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             connection_workers_scheduler::BindTarget,
             quic_networking::{create_client_config, create_client_endpoint},
             send_transaction_stats::SendTransactionStatsNonAtomic,
@@ -364,6 +368,7 @@ mod tests {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
         );
 
@@ -397,6 +402,7 @@ mod tests {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
         );
 
@@ -428,6 +434,7 @@ mod tests {
             worker_channel_size,
             skip_check_transaction_age,
             max_reconnect_attempts,
+            DEFAULT_MAX_CONNECTION_HANDSHAKE_TIMEOUT,
             stats.clone(),
         );
         assert!(cache.push(peer, worker).is_none());

@@ -181,14 +181,13 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         )
         .expect("Expected to create a new shredder");
 
-        let (data_shreds, coding_shreds) = shredder.entries_to_shreds(
+        let (data_shreds, coding_shreds) = shredder.entries_to_merkle_shreds_for_tests(
             keypair,
             &receive_results.entries,
             last_tick_height == bank.max_tick_height() && last_entries.is_none(),
             Some(self.chained_merkle_root),
             self.next_shred_index,
             self.next_code_index,
-            true, // merkle_variant
             &self.reed_solomon_cache,
             &mut stats,
         );
@@ -201,28 +200,26 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         }
         let last_shreds =
             last_entries.map(|(original_last_entry, duplicate_extra_last_entries)| {
-                let (original_last_data_shred, _) = shredder.entries_to_shreds(
+                let (original_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
                     &[original_last_entry],
                     true,
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut stats,
                 );
                 // Don't mark the last shred as last so that validators won't
                 // know that they've gotten all the shreds, and will continue
                 // trying to repair.
-                let (partition_last_data_shred, _) = shredder.entries_to_shreds(
+                let (partition_last_data_shred, _) = shredder.entries_to_merkle_shreds_for_tests(
                     keypair,
                     &duplicate_extra_last_entries,
                     true,
                     Some(self.chained_merkle_root),
                     self.next_shred_index,
                     self.next_code_index,
-                    true, // merkle_variant
                     &self.reed_solomon_cache,
                     &mut stats,
                 );
@@ -298,7 +295,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
         &mut self,
         receiver: &TransmitReceiver,
         cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        sock: BroadcastSocket,
         bank_forks: &RwLock<BankForks>,
         _quic_endpoint_sender: &AsyncSender<(SocketAddr, Bytes)>,
     ) -> Result<()> {
@@ -356,7 +353,8 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                 {
                     if cluster_partition.contains(node.pubkey()) {
                         info!(
-                            "Not broadcasting original shred index {}, slot {} to partition node {}",
+                            "Not broadcasting original shred index {}, slot {} to partition node \
+                             {}",
                             shred.index(),
                             shred.slot(),
                             node.pubkey(),
@@ -378,13 +376,15 @@ impl BroadcastRun for BroadcastDuplicatesRun {
                             .iter()
                             .filter_map(|pubkey| {
                                 info!(
-                                    "Broadcasting partition shred index {}, slot {} to partition node {}",
+                                    "Broadcasting partition shred index {}, slot {} to partition \
+                                     node {}",
                                     shred.index(),
                                     shred.slot(),
                                     pubkey,
                                 );
-                                let tvu = cluster_info
-                                    .lookup_contact_info(pubkey, |node| node.tvu(Protocol::UDP))??;
+                                let tvu = cluster_info.lookup_contact_info(pubkey, |node| {
+                                    node.tvu(Protocol::UDP)
+                                })??;
                                 Some((shred.payload(), tvu))
                             })
                             .collect(),
@@ -396,6 +396,12 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             .flatten()
             .collect();
 
+        let sock = match sock {
+            BroadcastSocket::Udp(sock) => sock,
+            BroadcastSocket::Xdp(_) => {
+                panic!("Xdp not supported for duplicate shreds run");
+            }
+        };
         batch_send(sock, packets).map_err(|SendPktsError::IoError(err, _)| Error::Io(err))
     }
 

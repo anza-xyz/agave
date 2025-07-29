@@ -19,7 +19,6 @@ pub fn cmp_accounts_packages_by_priority(a: &AccountsPackage, b: &AccountsPackag
 /// Compare accounts package kinds by priority
 ///
 /// Priority, from highest to lowest:
-/// - Epoch Accounts Hash
 /// - Full Snapshot
 /// - Incremental Snapshot
 ///
@@ -31,12 +30,6 @@ pub fn cmp_accounts_package_kinds_by_priority(
 ) -> Ordering {
     use AccountsPackageKind as Kind;
     match (a, b) {
-        // Epoch Accounts Hash packages
-        (Kind::EpochAccountsHash, Kind::EpochAccountsHash) => Equal,
-        (Kind::EpochAccountsHash, _) => Greater,
-        (_, Kind::EpochAccountsHash) => Less,
-
-        // Snapshot packages
         (Kind::Snapshot(snapshot_kind_a), Kind::Snapshot(snapshot_kind_b)) => {
             cmp_snapshot_kinds_by_priority(snapshot_kind_a, snapshot_kind_b)
         }
@@ -146,45 +139,6 @@ mod tests {
 
         for (accounts_package_a, accounts_package_b, expected_result) in [
             (
-                new(AccountsPackageKind::EpochAccountsHash, 11),
-                new(AccountsPackageKind::EpochAccountsHash, 22),
-                Less,
-            ),
-            (
-                new(AccountsPackageKind::EpochAccountsHash, 22),
-                new(AccountsPackageKind::EpochAccountsHash, 22),
-                Equal,
-            ),
-            (
-                new(AccountsPackageKind::EpochAccountsHash, 33),
-                new(AccountsPackageKind::EpochAccountsHash, 22),
-                Greater,
-            ),
-            (
-                new(AccountsPackageKind::EpochAccountsHash, 123),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    123,
-                ),
-                Greater,
-            ),
-            (
-                new(AccountsPackageKind::EpochAccountsHash, 123),
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                Greater,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                    123,
-                ),
-                new(AccountsPackageKind::EpochAccountsHash, 123),
-                Less,
-            ),
-            (
                 new(
                     AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                     11,
@@ -227,14 +181,6 @@ mod tests {
                     123,
                 ),
                 Greater,
-            ),
-            (
-                new(
-                    AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                    123,
-                ),
-                new(AccountsPackageKind::EpochAccountsHash, 123),
-                Less,
             ),
             (
                 new(
@@ -313,26 +259,6 @@ mod tests {
     fn test_cmp_accounts_package_kinds_by_priority() {
         for (accounts_package_kind_a, accounts_package_kind_b, expected_result) in [
             (
-                AccountsPackageKind::EpochAccountsHash,
-                AccountsPackageKind::EpochAccountsHash,
-                Equal,
-            ),
-            (
-                AccountsPackageKind::EpochAccountsHash,
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                Greater,
-            ),
-            (
-                AccountsPackageKind::EpochAccountsHash,
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                Greater,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
-                AccountsPackageKind::EpochAccountsHash,
-                Less,
-            ),
-            (
                 AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                 AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                 Equal,
@@ -341,11 +267,6 @@ mod tests {
                 AccountsPackageKind::Snapshot(SnapshotKind::FullSnapshot),
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
                 Greater,
-            ),
-            (
-                AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),
-                AccountsPackageKind::EpochAccountsHash,
-                Less,
             ),
             (
                 AccountsPackageKind::Snapshot(SnapshotKind::IncrementalSnapshot(5)),

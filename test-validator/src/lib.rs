@@ -25,10 +25,10 @@ use {
         geyser_plugin_manager::GeyserPluginManager, GeyserPluginManagerRequest,
     },
     solana_gossip::{
-        cluster_info::{ClusterInfo, Node},
+        cluster_info::{BindIpAddrs, ClusterInfo, Node, NodeConfig},
         contact_info::Protocol,
-        socketaddr,
     },
+    solana_inflation::Inflation,
     solana_instruction::{AccountMeta, Instruction},
     solana_keypair::{read_keypair_file, write_keypair_file, Keypair},
     solana_ledger::{
@@ -38,7 +38,7 @@ use {
     solana_loader_v3_interface::state::UpgradeableLoaderState,
     solana_message::Message,
     solana_native_token::sol_to_lamports,
-    solana_net_utils::PortRange,
+    solana_net_utils::{find_available_ports_in_range, PortRange},
     solana_pubkey::Pubkey,
     solana_rent::Rent,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -53,7 +53,7 @@ use {
     },
     solana_sdk_ids::address_lookup_table,
     solana_signer::Signer,
-    solana_streamer::socket::SocketAddrSpace,
+    solana_streamer::{quic::DEFAULT_QUIC_ENDPOINTS, socket::SocketAddrSpace},
     solana_tpu_client::tpu_client::DEFAULT_TPU_ENABLE_UDP,
     solana_transaction::Transaction,
     solana_validator_exit::Exit,
@@ -64,7 +64,7 @@ use {
         fs::{self, remove_dir_all, File},
         io::Read,
         net::{IpAddr, Ipv4Addr, SocketAddr},
-        num::NonZeroU64,
+        num::{NonZero, NonZeroU64},
         path::{Path, PathBuf},
         str::FromStr,
         sync::{Arc, RwLock},
@@ -102,7 +102,7 @@ impl Default for TestValidatorNodeConfig {
         #[cfg(debug_assertions)]
         let port_range = solana_net_utils::sockets::localhost_port_range_for_tests();
         Self {
-            gossip_addr: socketaddr!(Ipv4Addr::LOCALHOST, port_range.0),
+            gossip_addr: SocketAddr::new(bind_ip_addr, port_range.0),
             port_range,
             bind_ip_addr,
         }
@@ -122,6 +122,7 @@ pub struct TestValidatorGenesis {
     upgradeable_programs: Vec<UpgradeableProgramInfo>,
     ticks_per_slot: Option<u64>,
     epoch_schedule: Option<EpochSchedule>,
+    inflation: Option<Inflation>,
     node_config: TestValidatorNodeConfig,
     pub validator_exit: Arc<RwLock<Exit>>,
     pub start_progress: Arc<RwLock<ValidatorStartProgress>>,
@@ -154,6 +155,7 @@ impl Default for TestValidatorGenesis {
             upgradeable_programs: Vec::<UpgradeableProgramInfo>::default(),
             ticks_per_slot: Option::<u64>::default(),
             epoch_schedule: Option::<EpochSchedule>::default(),
+            inflation: Option::<Inflation>::default(),
             node_config: TestValidatorNodeConfig::default(),
             validator_exit: Arc::<RwLock<Exit>>::default(),
             start_progress: Arc::<RwLock<ValidatorStartProgress>>::default(),
@@ -250,6 +252,11 @@ impl TestValidatorGenesis {
 
     pub fn epoch_schedule(&mut self, epoch_schedule: EpochSchedule) -> &mut Self {
         self.epoch_schedule = Some(epoch_schedule);
+        self
+    }
+
+    pub fn inflation(&mut self, inflation: Inflation) -> &mut Self {
+        self.inflation = Some(inflation);
         self
     }
 
@@ -840,7 +847,7 @@ impl TestValidator {
             .read()
             .unwrap()
             .root_bank()
-            .set_startup_verification_complete();
+            .set_initial_accounts_hash_verification_completed();
     }
 
     /// Initialize the ledger directory
@@ -946,6 +953,10 @@ impl TestValidator {
             genesis_config.ticks_per_slot = ticks_per_slot;
         }
 
+        if let Some(inflation) = config.inflation {
+            genesis_config.inflation = inflation;
+        }
+
         for feature in feature_set {
             genesis_utils::activate_feature(&mut genesis_config, feature);
         }
@@ -1021,18 +1032,35 @@ impl TestValidator {
                 .to_str()
                 .unwrap(),
         )?;
-
-        let mut node = Node::new_single_bind(
-            &validator_identity.pubkey(),
-            &config.node_config.gossip_addr,
-            config.node_config.port_range,
-            config.node_config.bind_ip_addr,
-        );
-        if let Some((rpc, rpc_pubsub)) = config.rpc_ports {
-            let addr = node.info.gossip().unwrap().ip();
-            node.info.set_rpc((addr, rpc)).unwrap();
-            node.info.set_rpc_pubsub((addr, rpc_pubsub)).unwrap();
-        }
+        let node = {
+            let bind_ip_addr = config.node_config.bind_ip_addr;
+            let validator_node_config = NodeConfig {
+                bind_ip_addrs: BindIpAddrs::new(vec![bind_ip_addr])?,
+                gossip_port: config.node_config.gossip_addr.port(),
+                port_range: config.node_config.port_range,
+                advertised_ip: bind_ip_addr,
+                public_tpu_addr: None,
+                public_tpu_forwards_addr: None,
+                num_tvu_receive_sockets: NonZero::new(1).unwrap(),
+                num_tvu_retransmit_sockets: NonZero::new(1).unwrap(),
+                num_quic_endpoints: NonZero::new(DEFAULT_QUIC_ENDPOINTS)
+                    .expect("Number of QUIC endpoints can not be zero"),
+                vortexor_receiver_addr: None,
+            };
+            let mut node =
+                Node::new_with_external_ip(&validator_identity.pubkey(), validator_node_config);
+            let (rpc, rpc_pubsub) = config.rpc_ports.unwrap_or_else(|| {
+                let rpc_ports: [u16; 2] =
+                    find_available_ports_in_range(bind_ip_addr, config.node_config.port_range)
+                        .unwrap();
+                (rpc_ports[0], rpc_ports[1])
+            });
+            node.info.set_rpc((bind_ip_addr, rpc)).unwrap();
+            node.info
+                .set_rpc_pubsub((bind_ip_addr, rpc_pubsub))
+                .unwrap();
+            node
+        };
 
         let vote_account_address = validator_vote_account.pubkey();
         let rpc_url = format!("http://{}", node.info.rpc().unwrap());

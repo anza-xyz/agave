@@ -2,7 +2,6 @@
 
 use {
     crossbeam_channel::Receiver,
-    solana_ledger::blockstore::Blockstore,
     solana_runtime::bank::Bank,
     std::{
         sync::Arc,
@@ -30,11 +29,11 @@ const MAX_LOOP_COUNT: usize = 25;
 const LOOP_LIMITER: Duration = Duration::from_millis(10);
 
 impl CostUpdateService {
-    pub fn new(blockstore: Arc<Blockstore>, cost_update_receiver: CostUpdateReceiver) -> Self {
+    pub fn new(cost_update_receiver: CostUpdateReceiver) -> Self {
         let thread_hdl = Builder::new()
             .name("solCostUpdtSvc".to_string())
             .spawn(move || {
-                Self::service_loop(blockstore, cost_update_receiver);
+                Self::service_loop(cost_update_receiver);
             })
             .unwrap();
 
@@ -45,13 +44,20 @@ impl CostUpdateService {
         self.thread_hdl.join()
     }
 
-    fn service_loop(_blockstore: Arc<Blockstore>, cost_update_receiver: CostUpdateReceiver) {
+    fn service_loop(cost_update_receiver: CostUpdateReceiver) {
         for cost_update in cost_update_receiver.iter() {
             match cost_update {
                 CostUpdate::FrozenBank {
                     bank,
                     is_leader_block,
                 } => {
+                    let (total_transaction_fee, total_priority_fee) = {
+                        let collector_fee_details = bank.get_collector_fee_details();
+                        (
+                            collector_fee_details.total_transaction_fee(),
+                            collector_fee_details.total_priority_fee(),
+                        )
+                    };
                     for loop_count in 1..=MAX_LOOP_COUNT {
                         {
                             // Release the lock so that the thread that will
@@ -68,7 +74,12 @@ impl CostUpdateService {
                                     "inflight transaction count is {in_flight_transaction_count} \
                                      for slot {slot} after {loop_count} iteration(s)"
                                 );
-                                cost_tracker.report_stats(slot, is_leader_block);
+                                cost_tracker.report_stats(
+                                    slot,
+                                    is_leader_block,
+                                    total_transaction_fee,
+                                    total_priority_fee,
+                                );
                                 break;
                             }
                         }

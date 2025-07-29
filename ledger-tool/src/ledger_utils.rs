@@ -8,10 +8,7 @@ use {
         utils::{create_all_accounts_run_and_snapshot_dirs, move_and_async_delete_path_contents},
     },
     solana_clock::Slot,
-    solana_core::{
-        accounts_hash_verifier::AccountsHashVerifier,
-        snapshot_packager_service::PendingSnapshotPackages, validator::BlockVerificationMethod,
-    },
+    solana_core::validator::BlockVerificationMethod,
     solana_genesis_config::GenesisConfig,
     solana_geyser_plugin_manager::geyser_plugin_service::{
         GeyserPluginService, GeyserPluginServiceError,
@@ -30,8 +27,8 @@ use {
     solana_rpc::transaction_status_service::TransactionStatusService,
     solana_runtime::{
         accounts_background_service::{
-            AbsRequestHandlers, AccountsBackgroundService, PrunedBanksRequestHandler,
-            SnapshotRequestHandler,
+            AbsRequestHandlers, AccountsBackgroundService, PendingSnapshotPackages,
+            PrunedBanksRequestHandler, SnapshotRequestHandler,
         },
         bank_forks::BankForks,
         prioritization_fee_cache::PrioritizationFeeCache,
@@ -68,9 +65,9 @@ pub struct LoadAndProcessLedgerOutput {
 
 const PROCESS_SLOTS_HELP_STRING: &str =
     "The starting slot is either the latest found snapshot slot, or genesis (slot 0) if the \
-     --no-snapshot flag was specified or if no snapshots were found. \
-     The ending slot is the snapshot creation slot for create-snapshot, the value for \
-     --halt-at-slot if specified, or the highest slot in the blockstore.";
+     --no-snapshot flag was specified or if no snapshots were found. The ending slot is the \
+     snapshot creation slot for create-snapshot, the value for --halt-at-slot if specified, or \
+     the highest slot in the blockstore.";
 
 #[derive(Error, Debug)]
 pub(crate) enum LoadAndProcessLedgerError {
@@ -236,8 +233,8 @@ pub fn load_and_process_ledger(
             .join(LEDGER_TOOL_DIRECTORY)
             .join("accounts");
         info!(
-            "Default accounts path is switched aligning with Blockstore's secondary access: {:?}",
-            non_primary_accounts_path
+            "Default accounts path is switched aligning with Blockstore's secondary access: \
+             {non_primary_accounts_path:?}"
         );
         vec![non_primary_accounts_path]
     };
@@ -346,10 +343,7 @@ pub fn load_and_process_ledger(
         "block_verification_method",
         BlockVerificationMethod
     );
-    info!(
-        "Using: block-verification-method: {}",
-        block_verification_method,
-    );
+    info!("Using: block-verification-method: {block_verification_method}");
     let unified_scheduler_handler_threads =
         value_t!(arg_matches, "unified_scheduler_handler_threads", usize).ok();
     match block_verification_method {
@@ -385,18 +379,10 @@ pub fn load_and_process_ledger(
         bank_forks.read().unwrap().root(),
     ));
     let pending_snapshot_packages = Arc::new(Mutex::new(PendingSnapshotPackages::default()));
-    let (accounts_package_sender, accounts_package_receiver) = crossbeam_channel::unbounded();
-    let accounts_hash_verifier = AccountsHashVerifier::new(
-        accounts_package_sender.clone(),
-        accounts_package_receiver,
-        pending_snapshot_packages,
-        exit.clone(),
-        snapshot_controller.clone(),
-    );
     let snapshot_request_handler = SnapshotRequestHandler {
         snapshot_controller: snapshot_controller.clone(),
         snapshot_request_receiver,
-        accounts_package_sender,
+        pending_snapshot_packages,
     };
     let pruned_banks_receiver =
         AccountsBackgroundService::setup_bank_drop_callback(bank_forks.clone());
@@ -407,12 +393,8 @@ pub fn load_and_process_ledger(
         snapshot_request_handler,
         pruned_banks_request_handler,
     };
-    let accounts_background_service = AccountsBackgroundService::new(
-        bank_forks.clone(),
-        exit.clone(),
-        abs_request_handler,
-        process_options.accounts_db_test_hash_calculation,
-    );
+    let accounts_background_service =
+        AccountsBackgroundService::new(bank_forks.clone(), exit.clone(), abs_request_handler);
 
     let result = blockstore_processor::process_blockstore_from_root(
         blockstore.as_ref(),
@@ -431,7 +413,6 @@ pub fn load_and_process_ledger(
     .map_err(LoadAndProcessLedgerError::ProcessBlockstoreFromRoot);
 
     exit.store(true, Ordering::Relaxed);
-    accounts_hash_verifier.join().unwrap();
     if let Some(service) = transaction_status_service {
         service.quiesce_and_join_for_tests(tss_exit);
     }
@@ -499,8 +480,8 @@ pub fn open_blockstore(
             )
             .unwrap_or_else(|err| {
                 eprintln!(
-                    "Failed to open blockstore (with --force-update-to-open) at {:?}: {:?}",
-                    ledger_path, err
+                    "Failed to open blockstore (with --force-update-to-open) at {ledger_path:?}: \
+                     {err:?}"
                 );
                 exit(1);
             })
@@ -536,8 +517,7 @@ fn open_blockstore_with_temporary_primary_access(
     }
     // Now, attempt to open the blockstore with original AccessType
     info!(
-        "Blockstore forced open succeeded, retrying with original access: {:?}",
-        original_access_type
+        "Blockstore forced open succeeded, retrying with original access: {original_access_type:?}"
     );
     Blockstore::open_with_options(
         ledger_path,

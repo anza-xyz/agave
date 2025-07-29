@@ -1,4 +1,15 @@
 //! The `net_utils` module assists with networking
+
+// Activate some of the Rust 2024 lints to make the future migration easier.
+#![warn(if_let_rescope)]
+#![warn(keyword_idents_2024)]
+#![warn(missing_unsafe_on_extern)]
+#![warn(rust_2024_guarded_string_incompatible_syntax)]
+#![warn(rust_2024_incompatible_pat)]
+#![warn(tail_expr_drop_order)]
+#![warn(unsafe_attr_outside_unsafe)]
+#![warn(unsafe_op_in_unsafe_fn)]
+
 mod ip_echo_client;
 mod ip_echo_server;
 pub mod sockets;
@@ -333,7 +344,8 @@ pub fn bind_with_any_port_with_config(
 ) -> io::Result<UdpSocket> {
     let sock = udp_socket_with_config(config.into())?;
     let addr = SocketAddr::new(ip_addr, 0);
-    match sock.bind(&SockAddr::from(addr)) {
+    let bind = sock.bind(&SockAddr::from(addr));
+    match bind {
         Ok(_) => Result::Ok(sock.into()),
         Err(err) => Err(io::Error::other(format!("No available UDP port: {err}"))),
     }
@@ -354,8 +366,8 @@ pub fn multi_bind_in_range_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS && num != 1 {
         // See https://github.com/solana-labs/solana/issues/4607
         warn!(
-            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({} requested)",
-            num
+            "multi_bind_in_range_with_config() only supports 1 socket on this platform ({num} \
+             requested)"
         );
         num = 1;
     }
@@ -452,7 +464,8 @@ pub fn bind_common_with_config(
 
 #[deprecated(
     since = "2.3.2",
-    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+    note = "Please avoid this function, in favor of \
+            sockets::bind_two_in_range_with_offset_and_config"
 )]
 #[allow(deprecated)]
 pub fn bind_two_in_range_with_offset(
@@ -472,7 +485,8 @@ pub fn bind_two_in_range_with_offset(
 
 #[deprecated(
     since = "2.3.2",
-    note = "Please avoid this function, in favor of sockets::bind_two_in_range_with_offset_and_config"
+    note = "Please avoid this function, in favor of \
+            sockets::bind_two_in_range_with_offset_and_config"
 )]
 #[allow(deprecated)]
 pub fn bind_two_in_range_with_offset_and_config(
@@ -489,11 +503,12 @@ pub fn bind_two_in_range_with_offset_and_config(
     }
 
     for port in range.0..range.1 {
-        if let Ok(first_bind) = bind_to_with_config(ip_addr, port, sock1_config) {
+        let first_bind = bind_to_with_config(ip_addr, port, sock1_config);
+        if let Ok(first_bind) = first_bind {
             if range.1.saturating_sub(port) >= offset {
-                if let Ok(second_bind) =
-                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config)
-                {
+                let second_bind =
+                    bind_to_with_config(ip_addr, port.saturating_add(offset), sock2_config);
+                if let Ok(second_bind) = second_bind {
                     return Ok((
                         (first_bind.local_addr().unwrap().port(), first_bind),
                         (second_bind.local_addr().unwrap().port(), second_bind),
@@ -540,7 +555,8 @@ pub fn find_available_ports_in_range<const N: usize>(
     let config = sockets::SocketConfiguration::default();
     while num < N {
         let port_to_try = next_port_to_try.next().unwrap(); // this unwrap never fails since we exit earlier
-        match sockets::bind_common_with_config(ip_addr, port_to_try, config) {
+        let bind = sockets::bind_common_with_config(ip_addr, port_to_try, config);
+        match bind {
             Ok(_) => {
                 result[num] = port_to_try;
                 num = num.saturating_add(1);
@@ -568,8 +584,7 @@ pub fn bind_more_with_config(
     if !PLATFORM_SUPPORTS_SOCKET_CONFIGS {
         if num > 1 {
             warn!(
-                "bind_more_with_config() only supports 1 socket on this platform ({} requested)",
-                num
+                "bind_more_with_config() only supports 1 socket on this platform ({num} requested)"
             );
         }
         Ok(vec![socket])
