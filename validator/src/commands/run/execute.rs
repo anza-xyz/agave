@@ -103,7 +103,6 @@ pub fn execute(
     let cli::thread_args::NumThreadConfig {
         accounts_db_clean_threads,
         accounts_db_foreground_threads,
-        accounts_db_hash_threads,
         accounts_index_flush_threads,
         ip_echo_server_threads,
         rayon_global_threads,
@@ -416,7 +415,6 @@ pub fn execute(
         scan_filter_for_shrinking,
         num_clean_threads: Some(accounts_db_clean_threads),
         num_foreground_threads: Some(accounts_db_foreground_threads),
-        num_hash_threads: Some(accounts_db_hash_threads),
         ..AccountsDbConfig::default()
     };
 

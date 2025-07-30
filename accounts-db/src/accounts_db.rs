@@ -302,7 +302,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     mark_obsolete_accounts: false,
     num_clean_threads: None,
     num_foreground_threads: None,
-    num_hash_threads: None,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -324,7 +323,6 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     mark_obsolete_accounts: false,
     num_clean_threads: None,
     num_foreground_threads: None,
-    num_hash_threads: None,
 };
 
 struct LoadAccountsIndexForShrink<'a, T: ShrinkCollectRefs<'a>> {
@@ -449,8 +447,6 @@ pub struct AccountsDbConfig {
     pub num_clean_threads: Option<NonZeroUsize>,
     /// Number of threads for foreground operations (`thread_pool`)
     pub num_foreground_threads: Option<NonZeroUsize>,
-    /// Number of threads for background accounts hashing (`thread_pool_hash`)
-    pub num_hash_threads: Option<NonZeroUsize>,
 }
 
 #[cfg(not(test))]
@@ -1309,8 +1305,6 @@ pub struct AccountsDb {
     pub thread_pool: ThreadPool,
     /// Thread pool for AccountsBackgroundServices
     pub thread_pool_clean: ThreadPool,
-    /// Thread pool for AccountsHashVerifier
-    pub thread_pool_hash: ThreadPool,
 
     pub stats: AccountsStats,
 
@@ -1408,22 +1402,6 @@ pub fn make_min_priority_thread_pool() -> ThreadPool {
     let num_threads = quarter_thread_count();
     rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("solAccountsLo{i:02}"))
-        .num_threads(num_threads)
-        .build()
-        .unwrap()
-}
-
-/// Returns the default number of threads to use for background accounts hashing
-pub fn default_num_hash_threads() -> NonZeroUsize {
-    // 1/8 of the number of cpus and up to 6 threads gives good balance for the system.
-    let num_threads = (num_cpus::get() / 8).clamp(2, 6);
-    NonZeroUsize::new(num_threads).unwrap()
-}
-
-pub fn make_hash_thread_pool(num_threads: Option<NonZeroUsize>) -> ThreadPool {
-    let num_threads = num_threads.unwrap_or_else(default_num_hash_threads).get();
-    rayon::ThreadPoolBuilder::new()
-        .thread_name(|i| format!("solAcctHash{i:02}"))
         .num_threads(num_threads)
         .build()
         .unwrap()
@@ -1555,8 +1533,6 @@ impl AccountsDb {
             .build()
             .expect("new rayon threadpool");
 
-        let thread_pool_hash = make_hash_thread_pool(accounts_db_config.num_hash_threads);
-
         let new = Self {
             accounts_index,
             paths,
@@ -1589,7 +1565,6 @@ impl AccountsDb {
             scan_filter_for_shrinking: accounts_db_config.scan_filter_for_shrinking,
             thread_pool,
             thread_pool_clean,
-            thread_pool_hash,
             verify_accounts_hash_in_bg: VerifyAccountsHashInBackground::default(),
             active_stats: ActiveStats::default(),
             storage: AccountStorage::default(),

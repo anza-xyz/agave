@@ -4599,7 +4599,7 @@ impl Bank {
                         info!("Initial background accounts hash verification has started");
                         let start = Instant::now();
                         let (calculated_accounts_lt_hash, lattice_verify_time) =
-                            meas_dur!(accounts_db_.thread_pool_hash.install(|| {
+                            meas_dur!(accounts_db_.thread_pool.install(|| {
                                 accounts_db_.calculate_accounts_lt_hash_at_startup_from_storages(
                                     snapshot_storages.0.as_slice(),
                                     &duplicates_lt_hash.unwrap(),
