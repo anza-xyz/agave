@@ -1156,6 +1156,7 @@ mod tests {
                     CommitTransactionDetails::Committed {
                         compute_units,
                         loaded_accounts_data_size,
+                        result: _,
                     } => (
                         *compute_units,
                         CostModel::calculate_loaded_accounts_data_size_cost(
@@ -1798,6 +1799,7 @@ mod tests {
         let CommitTransactionDetails::Committed {
             compute_units,
             loaded_accounts_data_size,
+            result: _,
         } = consumer_output
             .execute_and_commit_transactions_output
             .commit_transactions_result

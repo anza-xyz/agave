@@ -29,6 +29,7 @@ pub enum CommitTransactionDetails {
     Committed {
         compute_units: u64,
         loaded_accounts_data_size: u32,
+        result: Result<(), TransactionError>,
     },
     NotCommitted(TransactionError),
 }
@@ -86,6 +87,7 @@ impl Committer {
                     loaded_accounts_data_size: committed_tx
                         .loaded_account_stats
                         .loaded_accounts_data_size,
+                    result: committed_tx.status.clone(),
                 },
                 Err(err) => CommitTransactionDetails::NotCommitted(err.clone()),
             })
