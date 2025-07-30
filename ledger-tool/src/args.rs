@@ -10,7 +10,7 @@ use {
     solana_clap_utils::{
         hidden_unless_forced,
         input_parsers::pubkeys_of,
-        input_validators::{is_parsable, is_pow2, is_within_range},
+        input_validators::{is_parsable, is_pow2},
     },
     solana_cli_output::CliAccountNewConfig,
     solana_clock::Slot,
@@ -21,7 +21,6 @@ use {
     solana_runtime::runtime_config::RuntimeConfig,
     std::{
         collections::HashSet,
-        num::NonZeroUsize,
         path::{Path, PathBuf},
         sync::Arc,
     },
