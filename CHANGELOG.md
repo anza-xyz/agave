@@ -9,11 +9,6 @@ and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backw
 
 ## 2.3.0
 
-### RPC
-
-#### Changes
-* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
-
 ### Validator
 
 #### Breaking
@@ -54,6 +49,7 @@ and follows a [Backwards Compatibility Policy](https://docs.solanalabs.com/backw
 
 #### Changes
 * `simulateTransaction` now includes `loadedAccountsDataSize` in its result. `loadedAccountsDataSize` is the total number of bytes loaded for all accounts in the simulated transaction.
+* The subscription server now prioritizes processing received messages before sending out responses. This ensures that new subscription requests and time-sensitive messages like `PING` opcodes take priority over notifications.
 
 ## 2.2.0
 
