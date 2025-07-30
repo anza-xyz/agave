@@ -84,16 +84,6 @@ pub(crate) trait FileBufRead<'a>: BufRead {
     fn get_file_offset(&self) -> usize;
 }
 
-impl<'a, T: FileBufRead<'a>> FileBufRead<'a> for Box<T> {
-    fn set_file(&mut self, file: &'a File, read_limit: usize) -> io::Result<()> {
-        self.as_mut().set_file(file, read_limit)
-    }
-
-    fn get_file_offset(&self) -> usize {
-        self.as_ref().get_file_offset()
-    }
-}
-
 /// An extension of the `BufRead` trait for readers that require stronger control
 /// over returned buffer size.
 ///
@@ -113,12 +103,6 @@ pub(crate) trait RequiredLenBufRead: BufRead {
     ///
     /// Returns `Err(io::ErrorKind::QuotaExceeded)` if `required_len` exceeds supported limit.
     fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]>;
-}
-
-impl<T: RequiredLenBufRead> RequiredLenBufRead for Box<T> {
-    fn fill_buf_required(&mut self, required_len: usize) -> io::Result<&[u8]> {
-        self.as_mut().fill_buf_required(required_len)
-    }
 }
 
 pub(crate) trait RequiredLenBufFileRead<'a>: RequiredLenBufRead + FileBufRead<'a> {}
