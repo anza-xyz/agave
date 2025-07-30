@@ -207,7 +207,7 @@ impl QosService {
                                 ),
                             );
                         }
-                        CommitTransactionDetails::NotCommitted => {
+                        CommitTransactionDetails::NotCommitted(_err) => {
                             cost_tracker.remove(tx_cost);
                         }
                     }
@@ -871,7 +871,9 @@ mod tests {
                 .enumerate()
                 .map(|(n, tx_cost)| {
                     if n % 2 == 0 {
-                        CommitTransactionDetails::NotCommitted
+                        CommitTransactionDetails::NotCommitted(
+                            TransactionError::InsufficientFundsForFee,
+                        )
                     } else {
                         CommitTransactionDetails::Committed {
                             compute_units: tx_cost.as_ref().unwrap().programs_execution_cost()
