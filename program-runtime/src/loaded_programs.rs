@@ -2181,7 +2181,7 @@ mod tests {
         cache: &ProgramCache<TestForkGraphSpecific>,
         loading_slot: Slot,
         keys: &[Pubkey],
-    ) -> Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> {
+    ) -> Vec<(Pubkey, ProgramCacheMatchCriteria)> {
         let fork_graph = cache.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
         let entries = cache.get_flattened_entries_for_tests();
@@ -2198,7 +2198,7 @@ mod tests {
                             )
                     })
                     .map(|(program_id, _entry)| {
-                        (*program_id, (ProgramCacheMatchCriteria::NoCriteria, 1))
+                        (*program_id, ProgramCacheMatchCriteria::NoCriteria)
                     })
             })
             .collect()
@@ -2219,7 +2219,7 @@ mod tests {
     }
 
     fn match_missing(
-        missing: &[(Pubkey, (ProgramCacheMatchCriteria, u64))],
+        missing: &[(Pubkey, ProgramCacheMatchCriteria)],
         program: &Pubkey,
         expected_result: bool,
     ) -> bool {
@@ -2298,7 +2298,7 @@ mod tests {
         assert!(match_missing(&missing, &program2, false));
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_slot(&extracted, &program4, 0, 22));
 
@@ -2307,7 +2307,7 @@ mod tests {
             get_entries_to_load(&cache, 15, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(15, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 15));
         assert!(match_slot(&extracted, &program2, 11, 15));
         // The effective slot of program4 deployed in slot 15 is 19. So it should not be usable in slot 16.
@@ -2323,7 +2323,7 @@ mod tests {
             get_entries_to_load(&cache, 18, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(18, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 18));
         assert!(match_slot(&extracted, &program2, 11, 18));
         // The effective slot of program4 deployed in slot 15 is 18. So it should be usable in slot 18.
@@ -2334,7 +2334,7 @@ mod tests {
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         // The effective slot of program4 deployed in slot 15 is 19. So it should be usable in slot 23.
@@ -2345,7 +2345,7 @@ mod tests {
             get_entries_to_load(&cache, 11, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(11, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 11));
         // program2 was updated at slot 11, but is not effective till slot 12. The result should contain a tombstone.
         let tombstone = extracted
@@ -2377,7 +2377,7 @@ mod tests {
             get_entries_to_load(&cache, 21, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(21, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         // Since the fork was pruned, we should not find the entry deployed at slot 20.
         assert!(match_slot(&extracted, &program1, 0, 21));
         assert!(match_slot(&extracted, &program2, 11, 21));
@@ -2387,7 +2387,7 @@ mod tests {
         let mut missing =
             get_entries_to_load(&cache, 27, &[program1, program2, program3, program4]);
         let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_slot(&extracted, &program3, 25, 27));
@@ -2415,7 +2415,7 @@ mod tests {
             get_entries_to_load(&cache, 23, &[program1, program2, program3, program4]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(23, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 23));
         assert!(match_slot(&extracted, &program2, 11, 23));
         assert!(match_slot(&extracted, &program4, 15, 23));
@@ -2463,17 +2463,17 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 12));
         assert!(match_slot(&extracted, &program2, 11, 12));
 
         // Test the same fork, but request the program modified at a later slot than what's in the cache.
         let mut missing = get_entries_to_load(&cache, 12, &[program1, program2, program3]);
-        missing.get_mut(0).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
-        missing.get_mut(1).unwrap().1 .0 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(0).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
+        missing.get_mut(1).unwrap().1 = ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(5);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(12, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_missing(&missing, &program1, true));
         assert!(match_slot(&extracted, &program2, 11, 12));
     }
@@ -2533,14 +2533,14 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 19, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program3, false));
         let mut extracted = ProgramCacheForTxBatch::new(19, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 19));
         assert!(match_slot(&extracted, &program2, 11, 19));
 
         // Testing fork 0 - 5 - 11 - 25 - 27 with current slot at 27
         let mut missing = get_entries_to_load(&cache, 27, &[program1, program2, program3]);
         let mut extracted = ProgramCacheForTxBatch::new(27, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 27));
         assert!(match_slot(&extracted, &program2, 11, 27));
         assert!(match_missing(&missing, &program3, true));
@@ -2549,7 +2549,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 22, &[program1, program2, program3]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(22, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 20, 22));
         assert!(match_missing(&missing, &program3, true));
     }
@@ -2562,9 +2562,9 @@ mod tests {
         cache.set_fork_graph(Arc::downgrade(&fork_graph));
 
         let program1 = Pubkey::new_unique();
-        let mut missing = vec![(program1, (ProgramCacheMatchCriteria::NoCriteria, 1))];
+        let mut missing = vec![(program1, ProgramCacheMatchCriteria::NoCriteria)];
         let mut extracted = ProgramCacheForTxBatch::new(0, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_missing(&missing, &program1, true));
     }
 
@@ -2641,7 +2641,7 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
 
         // The cache should have the program deployed at slot 0
         assert_eq!(
@@ -2682,14 +2682,14 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 5, 6));
 
         // Pruning slot 5 will remove program1 entry deployed at slot 5.
@@ -2698,14 +2698,14 @@ mod tests {
 
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
         assert!(match_slot(&extracted, &program2, 10, 20));
 
         let mut missing = get_entries_to_load(&cache, 6, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(6, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 6));
 
         // Pruning slot 10 will remove program2 entry deployed at slot 10.
@@ -2715,7 +2715,7 @@ mod tests {
         let mut missing = get_entries_to_load(&cache, 20, &[program1, program2]);
         assert!(match_missing(&missing, &program2, false));
         let mut extracted = ProgramCacheForTxBatch::new(20, cache.environments.clone(), None, 0);
-        cache.extract(&mut missing, &mut extracted);
+        cache.extract(&mut missing, &mut extracted, true);
         assert!(match_slot(&extracted, &program1, 0, 20));
     }
 

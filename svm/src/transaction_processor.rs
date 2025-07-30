@@ -1544,8 +1544,8 @@ mod tests {
             TransactionBatchProcessor::new(0, 0, Arc::downgrade(&fork_graph), None, None);
         let key = Pubkey::new_unique();
 
-        let mut account_maps = AHashMap::new();
-        account_maps.insert(key, 4);
+        let mut account_set = HashSet::new();
+        account_set.insert(key);
 
         let mut program_cache_for_tx_batch = {
             let program_cache = batch_processor.program_cache.read().unwrap();
@@ -1558,7 +1558,7 @@ mod tests {
 
         batch_processor.replenish_program_cache(
             &account_loader,
-            &account_maps,
+            &account_set,
             &mut program_cache_for_tx_batch,
             &mut ExecuteTimings::default(),
             false,
@@ -1583,8 +1583,8 @@ mod tests {
             .insert(key, account_data);
         let account_loader = (&mock_bank).into();
 
-        let mut account_maps = AHashMap::new();
-        account_maps.insert(key, 4);
+        let mut account_set = HashSet::new();
+        account_set.insert(key);
         let mut loaded_missing = 0;
 
         for limit_to_load_programs in [false, true] {
@@ -1599,7 +1599,7 @@ mod tests {
 
             batch_processor.replenish_program_cache(
                 &account_loader,
-                &account_maps,
+                &account_set,
                 &mut program_cache_for_tx_batch,
                 &mut ExecuteTimings::default(),
                 false,
@@ -1668,18 +1668,19 @@ mod tests {
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = vec![owner1, owner2];
 
-        let mut program_accounts_map = AHashMap::default();
+        let mut program_accounts_set = HashSet::default();
 
         batch_processor.filter_executable_program_accounts(
             &account_loader,
-            &mut program_accounts_map,
+            &mut program_accounts_set,
+            &mut ProgramCacheForTxBatch::default(),
             &sanitized_transaction,
             &owners,
         );
 
-        assert_eq!(program_accounts_map.len(), 2);
-        assert_eq!(program_accounts_map[&key1], 1);
-        assert_eq!(program_accounts_map[&key2], 1);
+        assert_eq!(program_accounts_set.len(), 2);
+        assert!(program_accounts_set.contains(&key1));
+        assert!(program_accounts_set.contains(&key2));
     }
 
     #[test]
@@ -1754,42 +1755,38 @@ mod tests {
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
         let owners = &[program1_pubkey, program2_pubkey];
 
-        let mut tx1_programs = AHashMap::default();
+        let mut tx1_programs = HashSet::default();
         batch_processor.filter_executable_program_accounts(
             &account_loader,
             &mut tx1_programs,
+            &mut ProgramCacheForTxBatch::default(),
             &sanitized_tx1,
             owners,
         );
 
         assert_eq!(tx1_programs.len(), 1);
-        assert_eq!(
-            tx1_programs
-                .get(&account3_pubkey)
-                .expect("failed to find the program account"),
-            &1,
+        assert!(
+            tx1_programs.contains(&account3_pubkey),
+            "failed to find the program account",
         );
 
-        let mut tx2_programs = AHashMap::default();
+        let mut tx2_programs = HashSet::default();
         batch_processor.filter_executable_program_accounts(
             &account_loader,
             &mut tx2_programs,
+            &mut ProgramCacheForTxBatch::default(),
             &sanitized_tx2,
             owners,
         );
 
         assert_eq!(tx2_programs.len(), 2);
-        assert_eq!(
-            tx2_programs
-                .get(&account3_pubkey)
-                .expect("failed to find the program account"),
-            &1,
+        assert!(
+            tx2_programs.contains(&account3_pubkey),
+            "failed to find the program account",
         );
-        assert_eq!(
-            tx2_programs
-                .get(&account4_pubkey)
-                .expect("failed to find the program account"),
-            &1,
+        assert!(
+            tx2_programs.contains(&account4_pubkey),
+            "failed to find the program account",
         );
     }
 
@@ -1990,8 +1987,9 @@ mod tests {
             &batch_processor.program_cache.read().unwrap(),
         );
         batch_processor.program_cache.write().unwrap().extract(
-            &mut vec![(key, (ProgramCacheMatchCriteria::NoCriteria, 1))],
+            &mut vec![(key, ProgramCacheMatchCriteria::NoCriteria)],
             &mut loaded_programs_for_tx_batch,
+            true,
         );
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
 
