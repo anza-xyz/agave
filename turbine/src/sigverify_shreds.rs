@@ -39,6 +39,7 @@ use {
         thread::{Builder, JoinHandle},
         time::{Duration, Instant},
     },
+    thiserror::Error,
 };
 
 // 34MB where each cache entry is 136 bytes.
@@ -60,10 +61,18 @@ const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(30);
 const SIGVERIFY_SHRED_BATCH_SIZE: usize = 1024;
 
 #[allow(clippy::enum_variant_names)]
-enum Error {
+enum ShredSigverifyError {
     RecvDisconnected,
     RecvTimeout,
     SendError,
+}
+
+#[derive(Debug, Error)]
+enum ResignError {
+    #[error("verification of retransmitter signature failed")]
+    VerifyRetransmitterSignature,
+    #[error(transparent)]
+    Shred(#[from] shred::Error),
 }
 
 pub fn spawn_shred_sigverify(
@@ -115,9 +124,9 @@ pub fn spawn_shred_sigverify(
                 &mut shred_buffer,
             ) {
                 Ok(()) => (),
-                Err(Error::RecvTimeout) => (),
-                Err(Error::RecvDisconnected) => break,
-                Err(Error::SendError) => break,
+                Err(ShredSigverifyError::RecvTimeout) => (),
+                Err(ShredSigverifyError::RecvDisconnected) => break,
+                Err(ShredSigverifyError::SendError) => break,
             }
             stats.maybe_submit();
         }
@@ -144,7 +153,7 @@ fn run_shred_sigverify<const K: usize>(
     cache: &RwLock<LruCache>,
     stats: &mut ShredSigVerifyStats,
     shred_buffer: &mut Vec<PacketBatch>,
-) -> Result<(), Error> {
+) -> Result<(), ShredSigverifyError> {
     const RECV_TIMEOUT: Duration = Duration::from_secs(1);
     let packets = shred_fetch_receiver.recv_timeout(RECV_TIMEOUT)?;
     stats.num_packets += packets.len();
@@ -211,7 +220,7 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| !packet.meta().discard())
             .for_each(|mut packet| {
-                maybe_verify_and_resign_packet(
+                if let Err(_) = maybe_verify_and_resign_packet(
                     &mut packet,
                     &root_bank,
                     &working_bank,
@@ -220,7 +229,9 @@ fn run_shred_sigverify<const K: usize>(
                     cluster_nodes_cache,
                     stats,
                     keypair,
-                )
+                ) {
+                    packet.meta_mut().set_discard(true);
+                }
             })
     });
     stats.resign_micros += resign_start.elapsed().as_micros() as u64;
@@ -278,16 +289,10 @@ fn maybe_verify_and_resign_packet(
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
     stats: &ShredSigVerifyStats,
     keypair: &Keypair,
-) {
+) -> Result<(), ResignError> {
     let repair = packet.meta().repair();
-    let Some(shred) = get_shred(packet.as_ref()) else {
-        packet.meta_mut().set_discard(true);
-        return;
-    };
-    let Ok(is_signed) = is_retransmitter_signed_variant(shred) else {
-        packet.meta_mut().set_discard(true);
-        return;
-    };
+    let shred = get_shred(packet.as_ref()).ok_or(shred::Error::InvalidPacketSize)?;
+    let is_signed = is_retransmitter_signed_variant(shred)?;
     if is_signed {
         // Repair packets do not follow turbine tree and
         // are verified using the trailing nonce.
@@ -315,15 +320,14 @@ fn maybe_verify_and_resign_packet(
                 })
                 .unwrap_or_default()
             {
-                packet.meta_mut().set_discard(true);
-                return;
+                return Err(ResignError::VerifyRetransmitterSignature);
             }
         }
 
-        if resign_packet(packet, keypair).is_err() {
-            packet.meta_mut().set_discard(true);
-        }
+        resign_packet(packet, keypair)?;
     }
+
+    Ok(())
 }
 
 #[must_use]
@@ -447,7 +451,7 @@ fn count_discards(packets: &[PacketBatch]) -> usize {
         .count()
 }
 
-impl From<RecvTimeoutError> for Error {
+impl From<RecvTimeoutError> for ShredSigverifyError {
     fn from(err: RecvTimeoutError) -> Self {
         match err {
             RecvTimeoutError::Timeout => Self::RecvTimeout,
@@ -456,7 +460,7 @@ impl From<RecvTimeoutError> for Error {
     }
 }
 
-impl<T> From<SendError<T>> for Error {
+impl<T> From<SendError<T>> for ShredSigverifyError {
     fn from(_: SendError<T>) -> Self {
         Self::SendError
     }
@@ -715,7 +719,8 @@ mod tests {
                     &cluster_nodes_cache,
                     &stats,
                     &keypair,
-                );
+                )
+                .expect("packet should pass the verification");
                 assert!(!packet.meta().discard());
 
                 // Check whether the packet was modified.
@@ -735,7 +740,8 @@ mod tests {
                     &cluster_nodes_cache,
                     &stats,
                     &keypair,
-                );
+                )
+                .expect("packet should pass the verification");
                 assert!(!bytes_packet.meta().discard());
 
                 // Check whether the packet was modified.
@@ -755,7 +761,8 @@ mod tests {
                     &cluster_nodes_cache,
                     &stats,
                     &keypair,
-                );
+                )
+                .expect("packet should pass the verification");
                 assert!(!packet.meta().discard());
 
                 let mut bytes_packet = shred.payload().to_bytes_packet(nonce);
@@ -772,7 +779,8 @@ mod tests {
                     &cluster_nodes_cache,
                     &stats,
                     &keypair,
-                );
+                )
+                .expect("packet should pass the verification");
                 assert!(!packet.meta().discard());
 
                 // Packet should not be modified.
