@@ -3719,6 +3719,7 @@ impl Bank {
                                 loaded_accounts_count: loaded_accounts.len(),
                                 loaded_accounts_data_size,
                             },
+                            fee_payer_post_balance: loaded_accounts[0].1.lamports(),
                         })
                     }
                     ProcessedTransaction::FeesOnly(fees_only_tx) => Ok(CommittedTransaction {
@@ -3732,6 +3733,11 @@ impl Bank {
                             loaded_accounts_count: fees_only_tx.rollback_accounts.count(),
                             loaded_accounts_data_size,
                         },
+                        fee_payer_post_balance: fees_only_tx
+                            .rollback_accounts
+                            .fee_payer()
+                            .1
+                            .lamports(),
                     }),
                 }
             })
