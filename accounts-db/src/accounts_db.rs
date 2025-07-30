@@ -1026,7 +1026,9 @@ impl AccountStorageEntry {
             count_and_status: SeqLock::new(*count_and_status),
             alive_bytes: AtomicUsize::new(self.alive_bytes()),
             accounts,
-            zero_lamport_single_ref_offsets: RwLock::default(),
+            zero_lamport_single_ref_offsets: RwLock::new(
+                self.zero_lamport_single_ref_offsets.read().unwrap().clone(),
+            ),
             obsolete_accounts: RwLock::new(self.obsolete_accounts.read().unwrap().clone()),
         })
     }
@@ -2843,11 +2845,18 @@ impl AccountsDb {
             return;
         }
         let mut clean_dead_slots = Measure::start("reclaims::clean_dead_slots");
-        self.clean_stored_dead_slots(
-            dead_slots,
-            purged_account_slots,
-            pubkeys_removed_from_accounts_index,
-        );
+
+        if !self.mark_obsolete_accounts
+        {
+            self.clean_stored_dead_slots(
+                dead_slots,
+                purged_account_slots,
+                pubkeys_removed_from_accounts_index,
+            );
+        }
+        else {
+            self.remove_dead_slots_metadata(dead_slots.iter());
+        }
         clean_dead_slots.stop();
 
         let mut purge_removed_slots = Measure::start("reclaims::purge_removed_slots");
@@ -5153,10 +5162,14 @@ impl AccountsDb {
 
             let store_id = storage.id();
             for (i, offset) in stored_accounts_info.offsets.iter().enumerate() {
+                let zero_lamport = accounts_and_meta_to_store.is_zero_lamport(i);
                 infos.push(AccountInfo::new(
                     StorageLocation::AppendVec(store_id, *offset),
-                    accounts_and_meta_to_store.is_zero_lamport(i),
+                    zero_lamport,
                 ));
+                if zero_lamport && self.mark_obsolete_accounts {
+                    storage.insert_zero_lamport_single_ref_account_offset(*offset);
+                }
             }
             storage.add_accounts(
                 stored_accounts_info.offsets.len(),
@@ -5446,19 +5459,37 @@ impl AccountsDb {
                 flush_stats.num_bytes_flushed.0,
                 "flush_slot_cache",
             );
-            let (store_accounts_timing_inner, store_accounts_total_inner_us) = measure_us!(self
-                .store_accounts_frozen(
-                    (slot, &accounts[..]),
-                    &flushed_store,
-                    UpdateIndexThreadSelection::PoolWithThreshold,
-                ));
+            let (store_accounts_timing_inner, store_accounts_total_inner_us) =
+                if should_flush_f.is_some() && self.mark_obsolete_accounts {
+                    measure_us!(self.store_accounts_flush(
+                        (slot, &accounts[..]),
+                        &flushed_store,
+                        UpsertReclaim::PopulateReclaims,
+                        UpdateIndexThreadSelection::PoolWithThreshold,
+                    ))
+                } else {
+                    measure_us!(self
+                    .store_accounts_frozen(
+                        (slot, &accounts[..]),
+                        &flushed_store,
+                        UpdateIndexThreadSelection::PoolWithThreshold,
+                    ))
+                };
             flush_stats.store_accounts_timing = store_accounts_timing_inner;
             flush_stats.store_accounts_total_us = Saturating(store_accounts_total_inner_us);
 
             // If the above sizing function is correct, just one AppendVec is enough to hold
             // all the data for the slot
-            assert!(self.storage.get_slot_storage_entry(slot).is_some());
             self.reopen_storage_as_readonly_shrinking_in_progress_ok(slot);
+            let storage = self
+                .storage
+                .get_slot_storage_entry(slot)
+                .expect("Storage entry exists after flush");
+
+            // Zero lamport single refs may have been added. Check if this is a candidate for shrink
+            if self.is_candidate_for_shrink(&storage) {
+                self.shrink_candidate_slots.lock().unwrap().insert(slot);
+            }
         }
 
         // Remove this slot from the cache, which will to AccountsDb's new readers should look like an
@@ -5701,10 +5732,13 @@ impl AccountsDb {
         storages: &[Arc<AccountStorageEntry>],
         duplicates_lt_hash: &DuplicatesLtHash,
     ) -> AccountsLtHash {
+        // During index generation, we marked obsolete accounts in the storages.
+        // We need to filter them out of the lt_hash calculation.
+        let max_slot = storages.iter().map(|s| s.slot()).max().unwrap_or(0);
         let mut lt_hash = storages
             .par_iter()
             .fold(LtHash::identity, |mut accum, storage| {
-                let obsolete_accounts = storage.get_obsolete_accounts(None);
+                let obsolete_accounts = storage.get_obsolete_accounts(Some(max_slot));
                 storage
                     .accounts
                     .scan_accounts(|offset, account| {
@@ -6465,6 +6499,18 @@ impl AccountsDb {
         storage: &Arc<AccountStorageEntry>,
         update_index_thread_selection: UpdateIndexThreadSelection,
     ) -> StoreAccountsTiming {
+        self.store_accounts_flush(accounts, storage, UpsertReclaim::IgnoreReclaims, update_index_thread_selection)
+    }
+
+    /// Stores accounts in the storage and updates the index.
+    /// This should only be used on accounts that are rooted (frozen)
+    pub fn store_accounts_flush<'a>(
+        &self,
+        accounts: impl StorableAccounts<'a>,
+        storage: &Arc<AccountStorageEntry>,
+        handle_reclaims: UpsertReclaim,
+        update_index_thread_selection: UpdateIndexThreadSelection,
+    ) -> StoreAccountsTiming {
         let slot = accounts.target_slot();
         let mut store_accounts_time = Measure::start("store_accounts");
 
@@ -6486,12 +6532,6 @@ impl AccountsDb {
             .fetch_add(store_accounts_time.as_us(), Ordering::Relaxed);
         let mut update_index_time = Measure::start("update_index");
 
-        let reclaim = UpsertReclaim::IgnoreReclaims;
-
-        // if we are squashing a single slot, then we can expect a single dead slot
-        let expected_single_dead_slot =
-            (!accounts.contains_multiple_slots()).then(|| accounts.target_slot());
-
         // If the cache was flushed, then because `update_index` occurs
         // after the account are stored by the above `store_accounts_to`
         // call and all the accounts are stored, all reads after this point
@@ -6499,7 +6539,7 @@ impl AccountsDb {
         let reclaims = self.update_index(
             infos,
             &accounts,
-            UpsertReclaim::IgnoreReclaims,
+            handle_reclaims,
             update_index_thread_selection,
             &self.thread_pool_clean,
         );
@@ -6521,16 +6561,15 @@ impl AccountsDb {
         //
         // From 1) and 2) we guarantee passing `no_purge_stats` == None, which is
         // equivalent to asserting there will be no dead slots, is safe.
-        let mut handle_reclaims_elapsed = 0;
-        if reclaim == UpsertReclaim::PopulateReclaims {
+        if handle_reclaims == UpsertReclaim::PopulateReclaims {
             let mut handle_reclaims_time = Measure::start("handle_reclaims");
             self.handle_reclaims(
                 (!reclaims.is_empty()).then(|| reclaims.iter()),
-                expected_single_dead_slot,
+                None,
                 &HashSet::default(),
                 // this callsite does NOT process dead slots
-                HandleReclaims::DoNotProcessDeadSlots,
-                MarkAccountsObsolete::No,
+                HandleReclaims::ProcessDeadSlots(&PurgeStats::default()),
+                MarkAccountsObsolete::Yes(storage.slot()),
             );
             handle_reclaims_time.stop();
             handle_reclaims_elapsed = handle_reclaims_time.as_us();
@@ -6544,7 +6583,7 @@ impl AccountsDb {
         StoreAccountsTiming {
             store_accounts_elapsed: store_accounts_time.as_us(),
             update_index_elapsed: update_index_time.as_us(),
-            handle_reclaims_elapsed,
+            handle_reclaims_elapsed: 0,
         }
     }
 
