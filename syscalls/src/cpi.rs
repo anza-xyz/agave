@@ -1309,11 +1309,9 @@ mod tests {
             let instruction_data = $instruction_data;
             let instruction_accounts = $instruction_accounts
                 .iter()
-                .enumerate()
-                .map(|(index_in_callee, index_in_transaction)| {
+                .map(|index_in_transaction| {
                     InstructionAccount::new(
                         *index_in_transaction as IndexOfAccount,
-                        index_in_callee as IndexOfAccount,
                         false,
                         $transaction_accounts[*index_in_transaction as usize].2,
                     )
@@ -1857,8 +1855,8 @@ mod tests {
             .configure_for_tests(
                 vec![0],
                 vec![
-                    InstructionAccount::new(1, 0, false, true),
-                    InstructionAccount::new(1, 0, false, true),
+                    InstructionAccount::new(1, false, true),
+                    InstructionAccount::new(1, false, true),
                 ],
                 &[],
             );

@@ -334,8 +334,7 @@ impl<'a> InvokeContext<'a> {
             let instruction_context = self.transaction_context.get_current_instruction_context()?;
             debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
 
-            for (instruction_account_index, account_meta) in instruction.accounts.iter().enumerate()
-            {
+            for account_meta in instruction.accounts.iter() {
                 let index_in_transaction = self
                     .transaction_context
                     .find_index_of_account(&account_meta.pubkey)
@@ -371,7 +370,6 @@ impl<'a> InvokeContext<'a> {
                     *index_in_callee = instruction_accounts.len() as u8;
                     instruction_accounts.push(InstructionAccount::new(
                         index_in_transaction,
-                        instruction_account_index as IndexOfAccount,
                         account_meta.is_signer,
                         account_meta.is_writable,
                     ));
@@ -498,7 +496,6 @@ impl<'a> InvokeContext<'a> {
             let index_in_transaction = *index_in_transaction as usize;
             instruction_accounts.push(InstructionAccount::new(
                 index_in_transaction as IndexOfAccount,
-                *index_in_callee as IndexOfAccount,
                 message.is_signer(index_in_transaction),
                 message.is_writable(index_in_transaction),
             ));
@@ -883,23 +880,14 @@ pub fn mock_process_instruction_with_feature_set<
 ) -> Vec<AccountSharedData> {
     let mut instruction_accounts: Vec<InstructionAccount> =
         Vec::with_capacity(instruction_account_metas.len());
-    for (instruction_account_index, account_meta) in instruction_account_metas.iter().enumerate() {
+    for account_meta in instruction_account_metas.iter() {
         let index_in_transaction = transaction_accounts
             .iter()
             .position(|(key, _account)| *key == account_meta.pubkey)
             .unwrap_or(transaction_accounts.len())
             as IndexOfAccount;
-        let index_in_callee = instruction_accounts
-            .get(0..instruction_account_index)
-            .unwrap()
-            .iter()
-            .position(|instruction_account| {
-                instruction_account.index_in_transaction == index_in_transaction
-            })
-            .unwrap_or(instruction_account_index) as IndexOfAccount;
         instruction_accounts.push(InstructionAccount::new(
             index_in_transaction,
-            index_in_callee,
             account_meta.is_signer,
             account_meta.is_writable,
         ));
@@ -1017,12 +1005,7 @@ mod tests {
             let program_id = instruction_context.get_last_program_key(transaction_context)?;
             let instruction_accounts = (0..4)
                 .map(|instruction_account_index| {
-                    InstructionAccount::new(
-                        instruction_account_index,
-                        instruction_account_index,
-                        false,
-                        false,
-                    )
+                    InstructionAccount::new(instruction_account_index, false, false)
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
@@ -1126,7 +1109,6 @@ mod tests {
             ));
             instruction_accounts.push(InstructionAccount::new(
                 index as IndexOfAccount,
-                instruction_accounts.len() as IndexOfAccount,
                 false,
                 true,
             ));
@@ -1137,7 +1119,6 @@ mod tests {
                 AccountSharedData::new(1, 1, &solana_pubkey::Pubkey::default()),
             ));
             instruction_accounts.push(InstructionAccount::new(
-                index as IndexOfAccount,
                 index as IndexOfAccount,
                 false,
                 false,
@@ -1215,7 +1196,6 @@ mod tests {
             .map(|instruction_account_index| {
                 InstructionAccount::new(
                     instruction_account_index,
-                    instruction_account_index,
                     false,
                     instruction_account_index < 2,
                 )
@@ -1271,7 +1251,6 @@ mod tests {
         let instruction_accounts = (0..4)
             .map(|instruction_account_index| {
                 InstructionAccount::new(
-                    instruction_account_index,
                     instruction_account_index,
                     false,
                     instruction_account_index < 2,
@@ -1361,8 +1340,8 @@ mod tests {
             (program_key, program_account),
         ];
         let instruction_accounts = vec![
-            InstructionAccount::new(0, 0, false, true),
-            InstructionAccount::new(1, 1, false, false),
+            InstructionAccount::new(0, false, true),
+            InstructionAccount::new(1, false, false),
         ];
         with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
         let mut program_cache_for_tx_batch = ProgramCacheForTxBatch::default();
