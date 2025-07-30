@@ -315,6 +315,8 @@ pub struct TransactionSimulationResult {
     pub loaded_accounts_data_size: u32,
     pub return_data: Option<TransactionReturnData>,
     pub inner_instructions: Option<Vec<InnerInstructions>>,
+    pub fee: Option<u64>,
+    pub balance_collector: Option<BalanceCollector>,
 }
 
 #[derive(Clone, Debug)]
@@ -3098,6 +3100,7 @@ impl Bank {
 
         let LoadAndExecuteTransactionsOutput {
             mut processing_results,
+            balance_collector,
             ..
         } = self.load_and_execute_transactions(
             &batch,
@@ -3134,6 +3137,7 @@ impl Bank {
             inner_instructions,
             units_consumed,
             loaded_accounts_data_size,
+            fee_details,
         ) = match processing_result {
             Ok(processed_tx) => match processed_tx {
                 ProcessedTransaction::Executed(executed_tx) => {
@@ -3152,6 +3156,7 @@ impl Bank {
                         details.inner_instructions,
                         details.executed_units,
                         executed_tx.loaded_transaction.loaded_accounts_data_size,
+                        Some(executed_tx.loaded_transaction.fee_details),
                     )
                 }
                 ProcessedTransaction::FeesOnly(fees_only_tx) => (
@@ -3162,9 +3167,10 @@ impl Bank {
                     None,
                     0,
                     fees_only_tx.rollback_accounts.data_size() as u32,
+                    Some(fees_only_tx.fee_details),
                 ),
             },
-            Err(error) => (vec![], Err(error), None, None, None, 0, 0),
+            Err(error) => (vec![], Err(error), None, None, None, 0, 0, None),
         };
         let logs = logs.unwrap_or_default();
 
@@ -3176,6 +3182,8 @@ impl Bank {
             loaded_accounts_data_size,
             return_data,
             inner_instructions,
+            fee: fee_details.map(|fee_details| fee_details.total_fee()),
+            balance_collector,
         }
     }
 
