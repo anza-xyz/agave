@@ -111,21 +111,8 @@ pub(crate) mod tests {
         let repair_type = ShredRepairType::Orphan(9);
         let mut outstanding_requests = OutstandingRequests::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
-
-        let shredder = Shredder::new(0, 0, 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
-            &keypair,
-            &[],
-            true,
-            Some(Hash::default()),
-            0,
-            0,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
-        let shred = shreds.pop().unwrap();
+        let shred = Shredder::single_shred_for_tests(0, &keypair);
 
         let expire_timestamp = outstanding_requests
             .requests
@@ -144,21 +131,8 @@ pub(crate) mod tests {
         let repair_type = ShredRepairType::Orphan(9);
         let mut outstanding_requests = OutstandingRequests::default();
         let nonce = outstanding_requests.add_request(repair_type, timestamp());
-
-        let shredder = Shredder::new(0, 0, 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
-            &keypair,
-            &[],
-            true,
-            Some(Hash::default()),
-            0,
-            0,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
-        let shred = shreds.pop().unwrap();
+        let shred = Shredder::single_shred_for_tests(0, &keypair);
         let mut expire_timestamp = outstanding_requests
             .requests
             .get(&nonce)

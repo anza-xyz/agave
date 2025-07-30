@@ -64,20 +64,8 @@ mod test {
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
         solana_logger::setup();
         let cache = RwLock::new(LruCache::new(/*capacity:*/ 128));
-        let shredder = Shredder::new(slot, slot.saturating_sub(1), 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
-            &keypair,
-            &[],
-            true,
-            Some(Hash::default()),
-            0,
-            0,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
-        let shred = shreds.pop().unwrap();
+        let shred = Shredder::single_shred_for_tests(slot, &keypair);
 
         trace!("signature {}", shred.signature());
         let nonce = 9;
