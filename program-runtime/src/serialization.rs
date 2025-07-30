@@ -624,15 +624,8 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index_in_instruction, index_in_transaction)| {
-                let index_in_callee = transaction_indexes
-                    .get(0..index_in_instruction)
-                    .unwrap()
-                    .iter()
-                    .position(|account_index| account_index == index_in_transaction)
-                    .unwrap_or(index_in_instruction);
                 InstructionAccount::new(
                     *index_in_transaction,
-                    index_in_callee as IndexOfAccount,
                     false,
                     is_writable(index_in_instruction),
                 )
