@@ -362,14 +362,16 @@ pub mod test {
         );
 
         rl.consume_tokens(ip2, 100).expect("Bucket should be full");
-        for ip in 0..16 {
+        // go several times over the capacity of the TB to make sure old record
+        // is erased no matter in which bucket it lands
+        for ip in 0..64 {
             let ip = IpAddr::V4(Ipv4Addr::from_bits(ip));
             rl.consume_tokens(ip, 50).unwrap();
         }
         assert_eq!(
             rl.current_tokens(ip1),
             None,
-            "Record should have been erased"
+            "Very old record should have been erased"
         );
         rl.consume_tokens(ip2, 100)
             .expect("New bucket should have been made for ip2");
