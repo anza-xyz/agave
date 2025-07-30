@@ -793,7 +793,7 @@ impl BankingSimulator {
 
         // Create a completely-dummy ClusterInfo for the broadcast stage.
         // We only need it to write shreds into the blockstore and it seems given ClusterInfo is
-        // irrelevant for the neccesary minimum work for this simulation.
+        // irrelevant for the necessary minimum work for this simulation.
         let random_keypair = Arc::new(Keypair::new());
         let cluster_info_for_broadcast = Arc::new(ClusterInfo::new(
             Node::new_localhost_with_pubkey(&random_keypair.pubkey()).info,
