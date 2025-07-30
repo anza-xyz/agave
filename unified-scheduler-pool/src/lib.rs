@@ -110,12 +110,12 @@ impl SupportedSchedulingMode {
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    fn block_verification_only() -> Self {
+    fn with_verification() -> Self {
         Self::Either(BlockVerification)
     }
 
     #[cfg(feature = "dev-context-only-utils")]
-    fn block_production_only() -> Self {
+    fn with_production() -> Self {
         Self::Either(BlockProduction)
     }
 }
@@ -475,7 +475,7 @@ where
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Arc<Self> {
         Self::new(
-            SupportedSchedulingMode::block_verification_only(),
+            SupportedSchedulingMode::with_verification(),
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -493,7 +493,7 @@ where
         prioritization_fee_cache: Arc<PrioritizationFeeCache>,
     ) -> Arc<Self> {
         Self::new(
-            SupportedSchedulingMode::block_production_only(),
+            SupportedSchedulingMode::with_production(),
             block_verification_handler_count,
             log_messages_bytes_limit,
             transaction_status_sender,
@@ -2806,7 +2806,7 @@ mod tests {
             timeout_duration: Duration,
         ) -> Arc<Self> {
             Self::do_new(
-                SupportedSchedulingMode::block_verification_only(),
+                SupportedSchedulingMode::with_verification(),
                 block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
@@ -2829,7 +2829,7 @@ mod tests {
             prioritization_fee_cache: Arc<PrioritizationFeeCache>,
         ) -> InstalledSchedulerPoolArc {
             Self::new(
-                SupportedSchedulingMode::block_verification_only(),
+                SupportedSchedulingMode::with_verification(),
                 block_verification_handler_count,
                 log_messages_bytes_limit,
                 transaction_status_sender,
@@ -3999,8 +3999,8 @@ mod tests {
         let (bank, _bank_forks) = setup_dummy_fork_graph(bank);
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let supported_scheduling_mode = match scheduling_mode {
-            BlockVerification => SupportedSchedulingMode::block_verification_only(),
-            BlockProduction => SupportedSchedulingMode::block_production_only(),
+            BlockVerification => SupportedSchedulingMode::with_verification(),
+            BlockProduction => SupportedSchedulingMode::with_production(),
         };
         let pool = SchedulerPool::<PooledScheduler<StallingHandler>, _>::new(
             supported_scheduling_mode,
@@ -5066,7 +5066,7 @@ mod tests {
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         const REDUCED_MAX_USAGE_QUEUE_COUNT: usize = 0;
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::block_production_only(),
+            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -5153,7 +5153,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::block_production_only(),
+            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
@@ -5295,7 +5295,7 @@ mod tests {
 
         let ignored_prioritization_fee_cache = Arc::new(PrioritizationFeeCache::new(0u64));
         let pool = DefaultSchedulerPool::do_new(
-            SupportedSchedulingMode::block_production_only(),
+            SupportedSchedulingMode::with_production(),
             None,
             None,
             None,
