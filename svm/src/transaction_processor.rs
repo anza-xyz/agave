@@ -733,9 +733,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         }
     }
 
-    /// Updates a map of executable program accounts (all accounts owned by any loader)
-    /// to their usage counters, for the transactions with a valid blockhash or nonce.
-    // HANA TODO no longer needs self
+    /// Appends to a set of executable program accounts (all accounts owned by any loader)
+    /// for transactions with a valid blockhash or nonce.
     fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,

@@ -5,7 +5,6 @@ use {
         mock_bank::{create_custom_loader, deploy_program, register_builtins, MockForkGraph},
         transaction_builder::SanitizedTransactionBuilder,
     },
-    ahash::AHashMap,
     assert_matches::assert_matches,
     mock_bank::MockBankCallback,
     shuttle::{
@@ -33,7 +32,7 @@ use {
     },
     solana_svm_feature_set::SVMFeatureSet,
     solana_timings::ExecuteTimings,
-    std::collections::HashMap,
+    std::collections::{HashMap, HashSet},
 };
 
 mod mock_bank;
@@ -52,11 +51,7 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: AHashMap<Pubkey, u64> = programs
-        .iter()
-        .enumerate()
-        .map(|(idx, key)| (*key, idx as u64))
-        .collect();
+    let account_maps: HashSet<Pubkey> = programs.clone().into_iter().collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
