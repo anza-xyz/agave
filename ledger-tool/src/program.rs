@@ -523,7 +523,7 @@ pub fn program(ledger_path: &Path, matches: &ArgMatches<'_>) {
         .transaction_context
         .get_next_instruction_context_mut()
         .unwrap()
-        .configure(
+        .configure_for_tests(
             vec![program_index, program_index.saturating_add(1)],
             instruction_accounts,
             &instruction_data,

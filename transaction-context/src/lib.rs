@@ -622,6 +622,10 @@ pub struct InstructionContext {
     instruction_accounts_lamport_sum: u128,
     program_accounts: Vec<IndexOfAccount>,
     instruction_accounts: Vec<InstructionAccount>,
+    /// This is an account deduplication map that maps index_in_transaction to index_in_instruction
+    /// Usage: dedup_map[index_in_transaction] = index_in_instruction
+    /// This is a vector of u8s to save memory, since many entries may be unused.
+    dedup_map: Vec<u8>,
     instruction_data: Vec<u8>,
 }
 
@@ -632,11 +636,41 @@ impl InstructionContext {
         &mut self,
         program_accounts: Vec<IndexOfAccount>,
         instruction_accounts: Vec<InstructionAccount>,
+        deduplication_map: Vec<u8>,
         instruction_data: &[u8],
     ) {
+        debug_assert_eq!(deduplication_map.len(), 256);
         self.program_accounts = program_accounts;
         self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
+        self.dedup_map = deduplication_map;
+    }
+
+    /// A version of `fn configure` to help creating the deduplication map in tests
+    #[cfg(not(target_os = "solana"))]
+    pub fn configure_for_tests(
+        &mut self,
+        program_accounts: Vec<IndexOfAccount>,
+        instruction_accounts: Vec<InstructionAccount>,
+        instruction_data: &[u8],
+    ) {
+        debug_assert!(instruction_accounts.len() <= 256);
+        let mut dedup_map = vec![u8::MAX; 256];
+        for (idx, account) in instruction_accounts.iter().enumerate() {
+            let index_in_instruction = dedup_map
+                .get_mut(account.index_in_transaction as usize)
+                .unwrap();
+            if *index_in_instruction == u8::MAX {
+                *index_in_instruction = idx as u8;
+            }
+        }
+
+        self.configure(
+            program_accounts,
+            instruction_accounts,
+            dedup_map,
+            instruction_data,
+        );
     }
 
     /// How many Instructions were on the stack after this one was pushed
