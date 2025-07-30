@@ -1370,20 +1370,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_shred_as_ping() {
-        let shredder = Shredder::new(123, 122, 0, 0).unwrap();
         let keypair = Keypair::new();
-        let reed_solomon_cache = ReedSolomonCache::default();
-        let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
-            &keypair,
-            &[],
-            true,
-            Some(Hash::default()),
-            0,
-            0,
-            &reed_solomon_cache,
-            &mut ProcessShredsStats::default(),
-        );
-        let shred = shreds.pop().unwrap();
+        let shred = Shredder::single_shred_for_tests(123, &keypair);
         let mut pkt = Packet::default();
         shred.copy_to_packet(&mut pkt);
         pkt.meta_mut().size = REPAIR_RESPONSE_SERIALIZED_PING_BYTES;
