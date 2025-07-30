@@ -2343,14 +2343,13 @@ impl Bank {
         }
     }
 
-    /// return reward info for each vote account
-    /// return account data for each vote account that needs to be stored
-    /// This return value is a little awkward at the moment so that downstream existing code in the non-partitioned rewards code path can be re-used without duplication or modification.
-    /// This function is copied from the existing code path's `store_vote_accounts`.
-    /// The primary differences:
-    /// - we want this fn to have no side effects (such as actually storing vote accounts) so that we
-    ///   can compare the expected results with the current code path
-    /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
+    /// Convert computed VoteRewards to VoteRewardsAccounts for storing.
+    ///
+    /// This function processes vote rewards and consolidates them into a single
+    /// structure containing the pubkey, reward info, and updated account data
+    /// for each vote account. The resulting structure is optimized for storage
+    /// by combining previously separate rewards and accounts vectors into a
+    /// single accounts_with_rewards vector.
     fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
         let len = vote_account_rewards.len();
         let mut result = VoteRewardsAccounts {
