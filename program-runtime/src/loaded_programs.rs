@@ -1065,10 +1065,10 @@ impl<FG: ForkGraph> ProgramCache<FG> {
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
         &self,
-        search_for: &mut Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))>,
+        search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria)>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
-        // HANA is_first_round: bool,
-    ) -> Option<(Pubkey, u64)> {
+        is_first_round: bool,
+    ) -> Option<Pubkey> {
         debug_assert!(self.fork_graph.is_some());
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
         let locked_fork_graph = fork_graph.read().unwrap();
@@ -1078,7 +1078,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 entries,
                 loading_entries,
             } => {
-                search_for.retain(|(key, (match_criteria, usage_count))| {
+                search_for.retain(|(key, match_criteria)| {
                     if let Some(second_level) = entries.get(key) {
                         for entry in second_level.iter().rev() {
                             if entry.deployment_slot <= self.latest_root_slot
@@ -1123,7 +1123,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                     .update_access_slot(loaded_programs_for_tx_batch.slot);
                                 entry_to_return
                                     .tx_usage_counter
-                                    .fetch_add(*usage_count, Ordering::Relaxed);
+                                    .fetch_add(1, Ordering::Relaxed);
                                 loaded_programs_for_tx_batch
                                     .entries
                                     .insert(*key, entry_to_return);
@@ -1139,7 +1139,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 loaded_programs_for_tx_batch.slot,
                                 thread::current().id(),
                             ));
-                            cooperative_loading_task = Some((*key, *usage_count));
+                            cooperative_loading_task = Some(*key);
                         }
                     }
                     true
@@ -1147,7 +1147,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
         drop(locked_fork_graph);
-        /* HANA TODO we need to replicate this somehow somewhere
         if is_first_round {
             self.stats
                 .misses
@@ -1157,7 +1156,6 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                 Ordering::Relaxed,
             );
         }
-        */
         cooperative_loading_task
     }
 

@@ -18,7 +18,6 @@ use {
         transaction_execution_result::{ExecutedTransaction, TransactionExecutionDetails},
         transaction_processing_result::{ProcessedTransaction, TransactionProcessingResult},
     },
-    ahash::AHashMap,
     log::debug,
     percentage::Percentage,
     solana_account::{state_traits::StateMut, AccountSharedData, ReadableAccount, PROGRAM_OWNERS},
@@ -57,7 +56,7 @@ use {
     solana_transaction_error::{TransactionError, TransactionResult},
     solana_type_overrides::sync::{atomic::Ordering, Arc, RwLock, RwLockReadGuard},
     std::{
-        collections::{hash_map::Entry, HashSet},
+        collections::HashSet,
         fmt::{Debug, Formatter},
         rc::Rc,
         sync::Weak,
@@ -330,11 +329,11 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     //   i think this means the next time we call extract, it does find the program as a hit
     //   but because we only get stats on the first round there is no problem
     // ! the problem is we lose all concept of a "first round"... in theory
-    // 
+    //
     // ? program usage counters, set up by filter and stored in replenish
     //   this is a bit wonky because the version in master is broken in one way
     //   and the version i wrote is broken in a different way
-    // these 
+    // these
     //
     // HANA OK i think i understand everything now
     // first point, just keep the first round concept. it doesnt matter that we build the cache incrementally
@@ -365,6 +364,12 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     //
     // OK SO the plan is add back first round for the hits/misses
     // and for usage, convert to hashset and add incrementally as described above
+    //
+    // been a bit since i had to do stake stuff. remind myself again
+    // X add back the first round distinction. store hits and misses just like we used to
+    // * change the program map to a hashset
+    // X when we access a program, increment the usage thing itself (do we have the entry already?)
+    // * convert those counts to Arc because we have a race condition from eviction now
 
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
@@ -410,13 +415,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
         // Create the loadable programs list and batch-local program cache.
-        let mut program_accounts_map: AHashMap<Pubkey, u64> = self
-            .builtin_program_ids
-            .read()
-            .unwrap()
-            .iter()
-            .map(|pubkey| (*pubkey, 0))
-            .collect();
+        let mut program_accounts_set = self.builtin_program_ids.read().unwrap().clone();
 
         let mut program_cache_for_tx_batch = {
             let program_cache = self.program_cache.read().unwrap();
@@ -459,7 +458,8 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
             let ((), filter_executable_us) = measure_us!(self.filter_executable_program_accounts(
                 &account_loader,
-                &mut program_accounts_map,
+                &mut program_accounts_set,
+                &mut program_cache_for_tx_batch,
                 tx,
                 PROGRAM_OWNERS,
             ));
@@ -471,7 +471,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             let ((), program_cache_us) = measure_us!({
                 self.replenish_program_cache(
                     &account_loader,
-                    &program_accounts_map,
+                    &program_accounts_set,
                     &mut program_cache_for_tx_batch,
                     &mut execute_timings,
                     config.check_program_modification_slot,
@@ -739,28 +739,30 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        program_accounts_map: &mut AHashMap<Pubkey, u64>,
+        program_accounts_set: &mut HashSet<Pubkey>,
+        program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         tx: &impl SVMMessage,
         program_owners: &[Pubkey],
     ) {
         for account_key in tx.account_keys().iter() {
-            match program_accounts_map.entry(*account_key) {
-                // HANA do i care if the owner changes???
-                // i think it doesnt matter. we never try to reload
-                // we just add to this number and then its only really used for evictions...
-                // and it happens after tx load now so there is less room for weird stuff
-                Entry::Occupied(mut entry) => {
-                    let count = entry.get_mut();
-                    *count = count.saturating_add(1);
+            if program_accounts_set.contains(account_key) {
+                // if program_accounts_set contains a key, one of these conditions *must* be true:
+                // * we already loaded the program into our local cache for a previous transaction
+                // * the key is a builtin and this is the first transaction so it hasnt been prepopulated
+                if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
+                    cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    debug_assert!(self
+                        .builtin_program_ids
+                        .read()
+                        .unwrap()
+                        .contains(account_key));
                 }
-                Entry::Vacant(entry) => {
-                    if account_loader
-                        .account_matches_owners(account_key, program_owners)
-                        .is_some()
-                    {
-                        entry.insert(1);
-                    }
-                }
+            } else if account_loader
+                .account_matches_owners(account_key, program_owners)
+                .is_some()
+            {
+                program_accounts_set.insert(*account_key);
             }
         }
     }
@@ -769,38 +771,42 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        program_accounts_map: &AHashMap<Pubkey, u64>,
+        program_accounts_set: &HashSet<Pubkey>,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
     ) {
-        let mut missing_programs: Vec<(Pubkey, (ProgramCacheMatchCriteria, u64))> =
-            program_accounts_map
-                .iter()
-                .filter(|(pubkey, _)| !program_cache_for_tx_batch.contains(pubkey))
-                .map(|(pubkey, count)| {
-                    let match_criteria = if check_program_modification_slot {
-                        get_program_modification_slot(account_loader, pubkey)
-                            .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
-                                ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
-                            })
-                    } else {
-                        ProgramCacheMatchCriteria::NoCriteria
-                    };
-                    (*pubkey, (match_criteria, *count))
-                })
-                .collect();
+        let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria)> = program_accounts_set
+            .iter()
+            .filter(|pubkey| !program_cache_for_tx_batch.contains(pubkey))
+            .map(|pubkey| {
+                let match_criteria = if check_program_modification_slot {
+                    get_program_modification_slot(account_loader, pubkey)
+                        .map_or(ProgramCacheMatchCriteria::Tombstone, |slot| {
+                            ProgramCacheMatchCriteria::DeployedOnOrAfterSlot(slot)
+                        })
+                } else {
+                    ProgramCacheMatchCriteria::NoCriteria
+                };
+                (*pubkey, match_criteria)
+            })
+            .collect();
 
+        let mut is_first_round = true;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
                 // Lock the global cache.
                 let program_cache = self.program_cache.read().unwrap();
                 // Figure out which program needs to be loaded next.
-                let program_to_load =
-                    program_cache.extract(&mut missing_programs, program_cache_for_tx_batch);
+                let program_to_load = program_cache.extract(
+                    &mut missing_programs,
+                    program_cache_for_tx_batch,
+                    is_first_round,
+                );
+                is_first_round = false;
 
-                let program_to_store = program_to_load.map(|(key, count)| {
+                let program_to_store = program_to_load.map(|key| {
                     // Load, verify and compile one program.
                     let program = load_program_with_pubkey(
                         account_loader,
@@ -811,7 +817,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         false,
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
-                    program.tx_usage_counter.store(count, Ordering::Relaxed);
+                    program.tx_usage_counter.store(1, Ordering::Relaxed);
                     (key, program)
                 });
 
