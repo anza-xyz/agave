@@ -333,7 +333,7 @@ impl<'a> InvokeContext<'a> {
         // function, we must borrow it again as mutable.
         let program_account_index = {
             let instruction_context = self.transaction_context.get_current_instruction_context()?;
-            debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
+            debug_assert!(instruction.accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
 
             for account_meta in instruction.accounts.iter() {
                 let index_in_transaction = self
@@ -479,7 +479,7 @@ impl<'a> InvokeContext<'a> {
         // On AArch64 in release mode, this function only consumes 464 bytes of stack (when it is
         // not inlined).
         let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
-        debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
+        debug_assert!(instruction.accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
 
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
@@ -972,7 +972,11 @@ mod tests {
         serde::{Deserialize, Serialize},
         solana_account::WritableAccount,
         solana_instruction::Instruction,
+        solana_keypair::Keypair,
         solana_rent::Rent,
+        solana_signer::Signer,
+        solana_transaction::{sanitized::SanitizedTransaction, Transaction},
+        std::collections::HashSet,
         test_case::test_case,
     };
 
@@ -1370,5 +1374,209 @@ mod tests {
                 .unwrap(),
             resize_delta
         );
+    }
+
+    #[test]
+    fn test_prepare_instruction_maximum_accounts() {
+        let mut transaction_accounts: Vec<TransactionAccount> =
+            Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
+
+        // Fee-payer
+        let fee_payer = Keypair::new();
+        transaction_accounts.push((
+            fee_payer.pubkey(),
+            AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+        ));
+        account_metas.push(AccountMeta::new(fee_payer.pubkey(), true));
+
+        let program_id = Pubkey::new_unique();
+        let mut program_account = AccountSharedData::new(1, 1, &Pubkey::new_unique());
+        program_account.set_executable(true);
+        transaction_accounts.push((program_id, program_account));
+        account_metas.push(AccountMeta::new_readonly(program_id, false));
+
+        for _ in 2..256 {
+            let key = Pubkey::new_unique();
+            transaction_accounts.push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+            account_metas.push(AccountMeta::new_readonly(key, false));
+        }
+
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+
+        let instruction_1 = Instruction::new_with_bytes(program_id, &[20], account_metas.clone());
+
+        let instruction_2 = Instruction::new_with_bytes(
+            program_id,
+            &[20],
+            account_metas.iter().rev().cloned().collect(),
+        );
+
+        let transaction = Transaction::new_with_payer(
+            &[instruction_1.clone(), instruction_2.clone()],
+            Some(&fee_payer.pubkey()),
+        );
+
+        let sanitized =
+            SanitizedTransaction::try_from_legacy_transaction(transaction, &HashSet::new())
+                .unwrap();
+
+        fn test_case_1(invoke_context: &InvokeContext) {
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_next_instruction_context()
+                .unwrap();
+            for index_in_transaction in 0..256 {
+                let index_in_instruction = instruction_context
+                    .get_index_of_account_in_instruction(index_in_transaction as IndexOfAccount)
+                    .unwrap();
+                let other_transaction = instruction_context
+                    .get_index_of_instruction_account_in_transaction(index_in_instruction)
+                    .unwrap();
+                assert_eq!(index_in_transaction, other_transaction);
+                assert_eq!(index_in_transaction, index_in_instruction);
+            }
+        }
+
+        fn test_case_2(invoke_context: &InvokeContext) {
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_next_instruction_context()
+                .unwrap();
+            for index_in_transaction in 0..256u16 {
+                let index_in_instruction = instruction_context
+                    .get_index_of_account_in_instruction(index_in_transaction as IndexOfAccount)
+                    .unwrap();
+                let other_transaction = instruction_context
+                    .get_index_of_instruction_account_in_transaction(index_in_instruction)
+                    .unwrap();
+                assert_eq!(
+                    index_in_instruction,
+                    255u16.saturating_sub(index_in_transaction)
+                );
+                assert_eq!(index_in_transaction, other_transaction);
+            }
+        }
+
+        let svm_instruction =
+            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
+        invoke_context
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .unwrap();
+
+        test_case_1(&invoke_context);
+
+        invoke_context.transaction_context.push().unwrap();
+        let svm_instruction =
+            SVMInstruction::from(sanitized.message().instructions().get(1).unwrap());
+        invoke_context
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .unwrap();
+
+        test_case_2(&invoke_context);
+
+        invoke_context.transaction_context.push().unwrap();
+        invoke_context
+            .prepare_next_instruction(&instruction_1, &[fee_payer.pubkey()])
+            .unwrap();
+        test_case_1(&invoke_context);
+
+        invoke_context.transaction_context.push().unwrap();
+        invoke_context
+            .prepare_next_instruction(&instruction_2, &[fee_payer.pubkey()])
+            .unwrap();
+        test_case_2(&invoke_context);
+    }
+
+    #[test]
+    fn test_duplicated_accounts() {
+        let mut transaction_accounts: Vec<TransactionAccount> =
+            Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut account_metas: Vec<AccountMeta> = Vec::with_capacity(MAX_ACCOUNTS_PER_TRANSACTION);
+
+        // Fee-payer
+        let fee_payer = Keypair::new();
+        transaction_accounts.push((
+            fee_payer.pubkey(),
+            AccountSharedData::new(1, 1, &Pubkey::new_unique()),
+        ));
+        account_metas.push(AccountMeta::new(fee_payer.pubkey(), true));
+
+        let program_id = Pubkey::new_unique();
+        let mut program_account = AccountSharedData::new(1, 1, &Pubkey::new_unique());
+        program_account.set_executable(true);
+        transaction_accounts.push((program_id, program_account));
+        account_metas.push(AccountMeta::new_readonly(program_id, false));
+
+        for i in 2..256 {
+            if i % 2 == 0 {
+                let key = Pubkey::new_unique();
+                transaction_accounts
+                    .push((key, AccountSharedData::new(1, 1, &Pubkey::new_unique())));
+                account_metas.push(AccountMeta::new_readonly(key, false));
+            } else {
+                let last_key = transaction_accounts.last().unwrap().0;
+                account_metas.push(AccountMeta::new_readonly(last_key, false));
+            }
+        }
+
+        with_mock_invoke_context!(invoke_context, transaction_context, transaction_accounts);
+
+        let instruction = Instruction::new_with_bytes(program_id, &[20], account_metas.clone());
+
+        let transaction = Transaction::new_with_payer(&[instruction], Some(&fee_payer.pubkey()));
+
+        let sanitized =
+            SanitizedTransaction::try_from_legacy_transaction(transaction, &HashSet::new())
+                .unwrap();
+        let svm_instruction =
+            SVMInstruction::from(sanitized.message().instructions().first().unwrap());
+
+        invoke_context
+            .prepare_next_top_level_instruction(&sanitized, &svm_instruction, vec![90])
+            .unwrap();
+
+        {
+            let instruction_context = invoke_context
+                .transaction_context
+                .get_next_instruction_context()
+                .unwrap();
+            for index_in_instruction in 2..256u16 {
+                let is_duplicate = instruction_context
+                    .is_instruction_account_duplicate(index_in_instruction)
+                    .unwrap();
+                if index_in_instruction % 2 == 0 {
+                    assert!(is_duplicate.is_none());
+                } else {
+                    assert_eq!(is_duplicate, Some(index_in_instruction.saturating_sub(1)));
+                }
+            }
+        }
+
+        invoke_context.transaction_context.push().unwrap();
+
+        let instruction = Instruction::new_with_bytes(
+            program_id,
+            &[20],
+            account_metas.iter().cloned().rev().collect(),
+        );
+
+        invoke_context
+            .prepare_next_instruction(&instruction, &[fee_payer.pubkey()])
+            .unwrap();
+        let instruction_context = invoke_context
+            .transaction_context
+            .get_next_instruction_context()
+            .unwrap();
+        for index_in_instruction in 1..254u16 {
+            let is_duplicate = instruction_context
+                .is_instruction_account_duplicate(index_in_instruction)
+                .unwrap();
+            if index_in_instruction % 2 == 0 {
+                assert!(is_duplicate.is_none());
+            } else {
+                assert_eq!(is_duplicate, Some(index_in_instruction.saturating_sub(1)));
+            }
+        }
     }
 }

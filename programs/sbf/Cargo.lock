@@ -7382,7 +7382,6 @@ version = "3.0.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
- "enum-iterator",
  "itertools 0.12.1",
  "log",
  "percentage",
@@ -7405,7 +7404,6 @@ dependencies = [
  "solana-sbpf",
  "solana-sdk-ids",
  "solana-slot-hashes",
- "solana-stable-layout",
  "solana-svm-callback",
  "solana-svm-feature-set",
  "solana-svm-transaction",
@@ -7415,7 +7413,6 @@ dependencies = [
  "solana-timings",
  "solana-transaction-context",
  "solana-type-overrides",
- "thiserror 2.0.12",
 ]
 
 [[package]]

@@ -693,7 +693,7 @@ mod tests {
                 }
 
                 let transaction_accounts_indexes: Vec<IndexOfAccount> =
-                    (1..(num_ix_accounts + 1) as u16).collect();
+                    (0..num_ix_accounts as u16).collect();
                 let mut instruction_accounts =
                     deduplicated_instruction_accounts(&transaction_accounts_indexes, |_| false);
                 if append_dup_account {
