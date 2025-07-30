@@ -1334,7 +1334,7 @@ mod tests {
                 .transaction_context
                 .get_next_instruction_context_mut()
                 .unwrap()
-                .configure($program_accounts, instruction_accounts, instruction_data);
+                .configure_for_tests($program_accounts, instruction_accounts, instruction_data);
             $invoke_context.push().unwrap();
         };
     }
@@ -1852,7 +1852,7 @@ mod tests {
             .transaction_context
             .get_next_instruction_context_mut()
             .unwrap()
-            .configure(
+            .configure_for_tests(
                 vec![0],
                 vec![
                     InstructionAccount::new(1, 0, false, true),

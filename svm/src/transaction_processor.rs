@@ -1279,7 +1279,7 @@ mod tests {
                 transaction_context
                     .get_next_instruction_context_mut()
                     .unwrap()
-                    .configure(vec![], vec![], &[index_in_trace as u8]);
+                    .configure_for_tests(vec![], vec![], &[index_in_trace as u8]);
                 transaction_context.push().unwrap();
             }
         }
