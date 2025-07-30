@@ -2117,7 +2117,7 @@ impl AccountsDb {
         storages.retain(|s| s.slot() <= max_slot_inclusive);
         // populate
         storages.par_iter().for_each_init(
-            || Box::new(append_vec::new_full_accounts_scan_buffer()),
+            || Box::new(append_vec::new_full_accounts_scan_reader()),
             |reader, storage| {
                 let slot = storage.slot();
                 storage
@@ -4011,7 +4011,7 @@ impl AccountsDb {
                     })
                 }
                 ScanAccountStorageData::DataRefForStorage => {
-                    let mut reader = append_vec::new_full_accounts_scan_buffer();
+                    let mut reader = append_vec::new_full_accounts_scan_reader();
                     storage.scan_accounts(&mut reader, |_offset, account| {
                         let account_without_data = StoredAccountInfoWithoutData::new_from(&account);
                         storage_scan_func(retval, &account_without_data, Some(account.data));
@@ -5698,7 +5698,7 @@ impl AccountsDb {
         let mut lt_hash = storages
             .par_iter()
             .map_init(
-                || Box::new(append_vec::new_full_accounts_scan_buffer()),
+                || Box::new(append_vec::new_full_accounts_scan_reader()),
                 |reader, storage| {
                     let mut accum = LtHash::identity();
                     // Function is calculating the accounts_lt_hash from all accounts in the
@@ -6767,7 +6767,7 @@ impl AccountsDb {
             let scan_time: u64 = storages
                 .par_chunks(chunk_size)
                 .map(|storages| {
-                    let mut reader = append_vec::new_full_accounts_scan_buffer();
+                    let mut reader = append_vec::new_full_accounts_scan_reader();
                     let mut log_status = MultiThreadProgress::new(
                         &total_processed_slots_across_all_threads,
                         2,

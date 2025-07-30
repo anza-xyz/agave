@@ -4790,7 +4790,7 @@ define_accounts_db_test!(test_calculate_storage_count_and_alive_bytes, |accounts
 
     let storage = accounts.storage.get_slot_storage_entry(slot0).unwrap();
     let storage_info = StorageSizeAndCountMap::default();
-    let mut reader = append_vec::new_full_accounts_scan_buffer();
+    let mut reader = append_vec::new_full_accounts_scan_reader();
 
     accounts.generate_index_for_slot(&mut reader, &storage, slot0, 0, &storage_info);
     assert_eq!(storage_info.len(), 1);
@@ -4815,7 +4815,7 @@ define_accounts_db_test!(
         // empty store
         let storage = accounts.create_and_insert_store(0, 1, "test");
         let storage_info = StorageSizeAndCountMap::default();
-        let mut reader = append_vec::new_full_accounts_scan_buffer();
+        let mut reader = append_vec::new_full_accounts_scan_reader();
         accounts.generate_index_for_slot(&mut reader, &storage, 0, 0, &storage_info);
         assert!(storage_info.is_empty());
     }
@@ -4852,7 +4852,7 @@ define_accounts_db_test!(
         );
 
         let storage_info = StorageSizeAndCountMap::default();
-        let mut reader = append_vec::new_full_accounts_scan_buffer();
+        let mut reader = append_vec::new_full_accounts_scan_reader();
         accounts.generate_index_for_slot(&mut reader, &storage, 0, 0, &storage_info);
         assert_eq!(storage_info.len(), 1);
         for entry in storage_info.iter() {
@@ -5911,7 +5911,7 @@ fn test_combine_ancient_slots_simple() {
 fn get_all_accounts_from_storages<'a>(
     storages: impl Iterator<Item = &'a Arc<AccountStorageEntry>>,
 ) -> Vec<(Pubkey, AccountSharedData)> {
-    let mut reader = append_vec::new_full_accounts_scan_buffer();
+    let mut reader = append_vec::new_full_accounts_scan_reader();
     storages
         .flat_map(|storage| {
             let mut vec = Vec::default();

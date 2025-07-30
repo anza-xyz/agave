@@ -66,7 +66,7 @@ impl AccountsDb {
         if accounts_update_notifier.snapshot_notifications_enabled() {
             let mut storages = self.storage.all_storages();
             storages.sort_unstable_by_key(|storage| Reverse(storage.slot));
-            let mut reader = append_vec::new_full_accounts_scan_buffer();
+            let mut reader = append_vec::new_full_accounts_scan_reader();
             storages
                 .iter()
                 .map(|storage| {

@@ -348,7 +348,7 @@ impl AccountsFile {
         &self,
         callback: impl for<'local> FnMut(StoredAccountMeta<'local>),
     ) -> Result<()> {
-        let mut reader = append_vec::new_full_accounts_scan_buffer();
+        let mut reader = append_vec::new_full_accounts_scan_reader();
         match self {
             Self::AppendVec(av) => av.scan_accounts_stored_meta(&mut reader, callback),
             Self::TieredStorage(_) => {
