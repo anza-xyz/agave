@@ -46,10 +46,9 @@ pub fn repair_response_packet_from_bytes(
 mod test {
     use {
         super::*,
-        solana_hash::Hash,
         solana_keypair::Keypair,
         solana_ledger::{
-            shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
+            shred::Shredder,
             sigverify_shreds::{verify_shred_cpu, LruCache},
         },
         solana_packet::PacketFlags,

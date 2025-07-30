@@ -85,12 +85,8 @@ pub struct RequestStatus<T> {
 #[cfg(test)]
 pub(crate) mod tests {
     use {
-        super::*,
-        crate::repair::serve_repair::ShredRepairType,
-        solana_hash::Hash,
-        solana_keypair::Keypair,
-        solana_ledger::shred::{ProcessShredsStats, ReedSolomonCache, Shredder},
-        solana_time_utils::timestamp,
+        super::*, crate::repair::serve_repair::ShredRepairType, solana_keypair::Keypair,
+        solana_ledger::shred::Shredder, solana_time_utils::timestamp,
     };
 
     #[test]
