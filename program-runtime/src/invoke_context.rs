@@ -32,6 +32,7 @@ use {
     solana_timings::{ExecuteDetailsTimings, ExecuteTimings},
     solana_transaction_context::{
         IndexOfAccount, InstructionAccount, TransactionAccount, TransactionContext,
+        MAX_ACCOUNTS_PER_TRANSACTION,
     },
     solana_type_overrides::sync::{atomic::Ordering, Arc},
     std::{
@@ -323,7 +324,7 @@ impl<'a> InvokeContext<'a> {
         // We reference accounts by an u8 index, so we have a total of 256 accounts.
         // This algorithm allocates the array on the stack for speed.
         // On AArch64 in release mode, this function only consumes 640 bytes of stack.
-        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; 256];
+        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         let mut instruction_accounts: Vec<InstructionAccount> =
             Vec::with_capacity(instruction.accounts.len());
 
@@ -477,7 +478,7 @@ impl<'a> InvokeContext<'a> {
         // This algorithm allocates the array on the stack for speed.
         // On AArch64 in release mode, this function only consumes 464 bytes of stack (when it is
         // not inlined).
-        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; 256];
+        let mut transaction_callee_map: Vec<u8> = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         debug_assert!(instruction.accounts.len() <= u8::MAX as usize);
 
         let mut instruction_accounts: Vec<InstructionAccount> =

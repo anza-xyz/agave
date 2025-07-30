@@ -49,12 +49,17 @@ static_assertions::const_assert_eq!(
     solana_account_info::MAX_PERMITTED_DATA_INCREASE
 );
 
+pub const MAX_ACCOUNTS_PER_TRANSACTION: usize = 256;
+
 /// Index of an account inside of the TransactionContext or an InstructionContext.
 pub type IndexOfAccount = u16;
 
 /// Contains account meta data which varies between instruction.
 ///
 /// It also contains indices to other structures for faster lookup.
+///
+/// This data structure is supposed to be shared with programs in ABIv2, so do not modify it
+/// without consulting SIMD-0177.
 #[repr(C)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InstructionAccount {
@@ -633,7 +638,7 @@ impl InstructionContext {
         deduplication_map: Vec<u8>,
         instruction_data: &[u8],
     ) {
-        debug_assert_eq!(deduplication_map.len(), 256);
+        debug_assert_eq!(deduplication_map.len(), MAX_ACCOUNTS_PER_TRANSACTION);
         self.program_accounts = program_accounts;
         self.instruction_accounts = instruction_accounts;
         self.instruction_data = instruction_data.to_vec();
@@ -648,8 +653,8 @@ impl InstructionContext {
         instruction_accounts: Vec<InstructionAccount>,
         instruction_data: &[u8],
     ) {
-        debug_assert!(instruction_accounts.len() <= 256);
-        let mut dedup_map = vec![u8::MAX; 256];
+        debug_assert!(instruction_accounts.len() <= MAX_ACCOUNTS_PER_TRANSACTION);
+        let mut dedup_map = vec![u8::MAX; MAX_ACCOUNTS_PER_TRANSACTION];
         for (idx, account) in instruction_accounts.iter().enumerate() {
             let index_in_instruction = dedup_map
                 .get_mut(account.index_in_transaction as usize)
