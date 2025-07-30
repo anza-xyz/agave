@@ -51,7 +51,7 @@ fn program_cache_execution(threads: usize) {
         deploy_program("clock-sysvar".to_string(), 0, &mut mock_bank),
     ];
 
-    let account_maps: HashSet<Pubkey> = programs.clone().into_iter().collect();
+    let account_maps: HashSet<Pubkey> = programs.iter().copied().collect();
 
     let ths: Vec<_> = (0..threads)
         .map(|_| {
