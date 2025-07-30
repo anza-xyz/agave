@@ -2199,10 +2199,10 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                     // session_result_sender just above
                     let mut new_result_with_timings = None;
 
-                    let mut discard_on_reset = false;
+                    let mut discard_on_session_resettting = false;
                     loop {
-                        if discard_on_reset {
-                            discard_on_reset = false;
+                        if discard_on_session_resettting {
+                            discard_on_session_resettting = false;
                             // Gracefully clear all buffered tasks to discard all outstanding stale
                             // tasks; we're not aborting scheduler here. So, `state_machine` needs
                             // to be reusable after this.
@@ -2260,7 +2260,7 @@ impl<S: SpawnableScheduler<TH>, TH: TaskHandler> ThreadManager<S, TH> {
                             }
                             Ok(NewTaskPayload::Reset) => {
                                 assert_matches!(scheduling_mode, BlockProduction);
-                                discard_on_reset = true;
+                                discard_on_session_resettting = true;
                             }
                             Ok(NewTaskPayload::Disconnect) => {
                                 // This unusual condition must be triggered by ThreadManager::drop().
@@ -5259,7 +5259,7 @@ mod tests {
     }
 
     #[test]
-    fn test_block_production_scheduler_discard_on_reset() {
+    fn test_block_production_scheduler_discard_on_session_resetting() {
         #[derive(Debug)]
         struct SimpleBankingMinitor;
         static START_DISCARD: Mutex<bool> = Mutex::new(false);
