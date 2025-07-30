@@ -76,7 +76,7 @@ impl TokenBucket {
         self.update_state(now);
         match self
             .tokens
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |tokens| {
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |tokens| {
                 if tokens >= request_size {
                     Some(tokens.saturating_sub(request_size))
                 } else {
@@ -100,7 +100,7 @@ impl TokenBucket {
     fn update_state(&self, now: u64) {
         // update last_access fist to prevent other threads from adding tokens
         // concurrent updaters will get elapsed = 0 or close to it
-        let last_access = self.last_update.swap(now, Ordering::Relaxed);
+        let last_access = self.last_update.swap(now, Ordering::AcqRel);
         if now <= last_access {
             // this happens if some other thread has beaten us to state update
             return;
@@ -108,7 +108,7 @@ impl TokenBucket {
         // use all actual elapsed time
         let elapsed = now.saturating_sub(last_access);
         // also add all leftovers from other conversion attempts
-        let elapsed = elapsed.saturating_add(self.spare_time.swap(0, Ordering::Relaxed));
+        let elapsed = elapsed.saturating_add(self.spare_time.swap(0, Ordering::AcqRel));
 
         let tokens_per_us = self.tokens_per_second / 1e6;
         let new_tokens = elapsed as f64 * tokens_per_us;
@@ -120,7 +120,7 @@ impl TokenBucket {
             // fill the bucket. Ignore results since it is always OK here.
             let _ = self
                 .tokens
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |tokens| {
+                .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |tokens| {
                     Some(tokens.saturating_add(new_tokens).min(self.max_tokens))
                 });
         } else {
@@ -148,7 +148,7 @@ where
     data: DashMap<K, TokenBucket>,
     target_capacity: usize,
     prototype_bucket: TokenBucket,
-    countup_to_shrink: AtomicUsize,
+    countdown_to_shrink: AtomicUsize,
     approx_len: AtomicUsize,
     shrink_interval: usize,
 }
@@ -165,13 +165,14 @@ where
     /// If a shard_amount which is not a power of two is provided, the function will panic.
     #[allow(clippy::arithmetic_side_effects)]
     pub fn new(target_capacity: usize, prototype_bucket: TokenBucket, shard_amount: usize) -> Self {
+        let shrink_interval = target_capacity / 4;
         Self {
             data: DashMap::with_capacity_and_shard_amount(target_capacity * 2, shard_amount),
             target_capacity,
             prototype_bucket,
-            countup_to_shrink: AtomicUsize::new(0),
+            countdown_to_shrink: AtomicUsize::new(shrink_interval),
             approx_len: AtomicUsize::new(0),
-            shrink_interval: target_capacity / 4,
+            shrink_interval,
         }
     }
 
@@ -206,22 +207,24 @@ where
         };
 
         if entry_added {
-            let step = self.shrink_interval;
-            if self
-                .countup_to_shrink
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                    if v >= step {
-                        // reset the countup to starting position
-                        // thus preventing other threads from racing for locks
-                        Some(0)
-                    } else {
-                        Some(v.saturating_add(1))
-                    }
-                })
-                .unwrap_or_default()
-                >= step
+            if let Ok(count) =
+                self.countdown_to_shrink
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                        if v == 0 {
+                            // reset the countup to starting position
+                            // thus preventing other threads from racing for locks
+                            None
+                        } else {
+                            Some(v.saturating_sub(1))
+                        }
+                    })
             {
-                self.maybe_shrink();
+                if count == 1 {
+                    // the last "previous" value we will see before counter reaches zero
+                    self.maybe_shrink();
+                    self.countdown_to_shrink
+                        .store(self.shrink_interval, Ordering::Relaxed);
+                }
             } else {
                 self.approx_len.fetch_add(1, Ordering::Relaxed);
             }
@@ -243,18 +246,20 @@ where
     fn maybe_shrink(&self) {
         let mut actual_len = 0;
         let target_shard_size = self.target_capacity / self.data.shards().len();
+        let mut entries = Vec::with_capacity(target_shard_size * 2);
         for shardlock in self.data.shards() {
             let mut shard = shardlock.write();
 
-            if shard.len() < target_shard_size.saturating_mul(2) {
+            if shard.len() <= target_shard_size * 3 / 2 {
                 actual_len += shard.len();
                 continue;
             }
-
-            let mut entries: Vec<_> = shard
-                .drain()
-                .map(|(key, value)| (key, value.get().last_update.load(Ordering::Relaxed), value))
-                .collect();
+            entries.clear();
+            entries.extend(
+                shard.drain().map(|(key, value)| {
+                    (key, value.get().last_update.load(Ordering::SeqCst), value)
+                }),
+            );
 
             entries.select_nth_unstable_by_key(target_shard_size, |(_, last_update, _)| {
                 Reverse(*last_update)
@@ -262,7 +267,7 @@ where
 
             shard.extend(
                 entries
-                    .into_iter()
+                    .drain(..)
                     .take(target_shard_size)
                     .map(|(key, _last_update, value)| (key, value)),
             );
@@ -272,10 +277,10 @@ where
         self.approx_len.store(actual_len, Ordering::Relaxed);
     }
 
-    /// Set the auto-shrink interval. Set to usize::max to disable shrinking.
+    /// Set the auto-shrink interval. Set to 0 to disable shrinking.
     /// During writes we want to check for length, but not too often
-    /// to reduce probability of lock contention.
-    /// This should be > 1000 if possible to reduce the odds of lock contention.
+    /// to reduce probability of lock contention, so keeping this
+    /// large is good for perf (at cost of memory use)
     pub fn set_shrink_interval(&mut self, interval: usize) {
         self.shrink_interval = interval;
     }
@@ -322,7 +327,7 @@ pub mod test {
     #[test]
     fn test_keyed_rate_limiter() {
         let prototype_bucket = TokenBucket::new(100, 100, 1000.0);
-        let rl = KeyedRateLimiter::new(8, prototype_bucket, 8);
+        let rl = KeyedRateLimiter::new(8, prototype_bucket, 2);
         let ip1 = IpAddr::V4(Ipv4Addr::from_bits(1234));
         let ip2 = IpAddr::V4(Ipv4Addr::from_bits(4321));
         assert_eq!(rl.current_tokens(ip1), None, "Initially no buckets exist");

@@ -11,17 +11,23 @@ use {
 fn bench_token_bucket_eviction() {
     println!("Running bench_token_bucket_eviction...");
     let run_duration = Duration::from_secs(5);
-    let target_size = 128;
+    let target_size = 256;
     let tb = TokenBucket::new(1, 60, 100.0);
-    let limiter = KeyedRateLimiter::new(target_size, tb, 8);
+    let mut limiter = KeyedRateLimiter::new(target_size, tb, 8);
+    // make shrinking more aggressive than default
+    // since only one worker is shrinking the
+    // datastructure at any given moment so we do not flake this test
+    // too hard
+    limiter.set_shrink_interval(32);
 
     let accepted = AtomicUsize::new(0);
     let rejected = AtomicUsize::new(0);
 
     let start = Instant::now();
     let ip_pool = 2048;
-    let workers = 8;
+    let workers = 16;
 
+    let max_size = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
@@ -35,16 +41,8 @@ fn bench_token_bucket_eviction() {
                     } else {
                         rejected.fetch_add(1, Ordering::Relaxed);
                     }
-                    if limiter.len_approx() > target_size * 2 + 1 {
-                        eprintln!(
-                            "Rate limiter grown over allowed size to {}!",
-                            limiter.len_approx()
-                        );
-                        panic!(
-                            "Rate limiter grown over allowed size to {}!",
-                            limiter.len_approx()
-                        );
-                    }
+                    let len_approx = limiter.len_approx();
+                    max_size.fetch_max(len_approx, Ordering::Relaxed);
                 }
             });
         }
@@ -53,6 +51,11 @@ fn bench_token_bucket_eviction() {
     let acc = accepted.load(Ordering::Relaxed);
     let rej = rejected.load(Ordering::Relaxed);
     println!("Run complete over {:?} seconds", run_duration.as_secs());
+    eprintln!("Max observed size was {}", max_size.load(Ordering::Relaxed));
+    assert!(
+        max_size.load(Ordering::Relaxed) <= target_size * 2,
+        "Max target size should never be exceeded"
+    );
     println!("processed {} requests", acc + rej);
     println!("Rejected: {rej}");
 }
@@ -69,7 +72,7 @@ fn bench_keyed_rate_limiter() {
     let start = Instant::now();
     let ip_pool = 2048;
     let expected_total_accepts = (run_duration.as_secs() * 100 * ip_pool) as i64;
-    let workers = 8;
+    let workers = 32;
 
     std::thread::scope(|scope| {
         for _ in 0..workers {
