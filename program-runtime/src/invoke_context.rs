@@ -380,11 +380,14 @@ impl<'a> InvokeContext<'a> {
 
             for current_index in 0..instruction_accounts.len() {
                 let instruction_account = instruction_accounts.get(current_index).unwrap();
+                let index_in_callee = *transaction_callee_map
+                    .get(instruction_account.index_in_transaction as usize)
+                    .unwrap() as usize;
 
-                if current_index != instruction_account.index_in_callee as usize {
+                if current_index != index_in_callee {
                     let (is_signer, is_writable) = {
                         let reference_account = instruction_accounts
-                            .get(instruction_account.index_in_callee as usize)
+                            .get(index_in_callee)
                             .ok_or(InstructionError::NotEnoughAccountKeys)?;
                         (
                             reference_account.is_signer(),

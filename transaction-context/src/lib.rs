@@ -60,10 +60,6 @@ pub type IndexOfAccount = u16;
 pub struct InstructionAccount {
     /// Points to the account and its key in the `TransactionContext`
     pub index_in_transaction: IndexOfAccount,
-    /// Points to the first occurrence in the current `InstructionContext`
-    ///
-    /// This excludes the program accounts.
-    pub index_in_callee: IndexOfAccount,
     /// Is this account supposed to sign
     is_signer: u8,
     /// Is this account allowed to become writable
@@ -73,13 +69,12 @@ pub struct InstructionAccount {
 impl InstructionAccount {
     pub fn new(
         index_in_transaction: IndexOfAccount,
-        index_in_callee: IndexOfAccount,
+        _index_in_callee: IndexOfAccount,
         is_signer: bool,
         is_writable: bool,
     ) -> InstructionAccount {
         InstructionAccount {
             index_in_transaction,
-            index_in_callee,
             is_signer: is_signer as u8,
             is_writable: is_writable as u8,
         }
@@ -769,10 +764,15 @@ impl InstructionContext {
         &self,
         index_in_transaction: IndexOfAccount,
     ) -> Result<IndexOfAccount, InstructionError> {
-        self.instruction_accounts
-            .iter()
-            .position(|account| account.index_in_transaction == index_in_transaction)
-            .map(|idx| idx as IndexOfAccount)
+        self.dedup_map
+            .get(index_in_transaction as usize)
+            .and_then(|idx| {
+                if *idx as usize >= self.instruction_accounts.len() {
+                    None
+                } else {
+                    Some(*idx as IndexOfAccount)
+                }
+            })
             .ok_or(InstructionError::MissingAccount)
     }
 
@@ -782,16 +782,18 @@ impl InstructionContext {
         &self,
         instruction_account_index: IndexOfAccount,
     ) -> Result<Option<IndexOfAccount>, InstructionError> {
-        let index_in_callee = self
-            .instruction_accounts
-            .get(instruction_account_index as usize)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?
-            .index_in_callee;
-        Ok(if index_in_callee == instruction_account_index {
-            None
-        } else {
-            Some(index_in_callee)
-        })
+        let index_in_transaction =
+            self.get_index_of_instruction_account_in_transaction(instruction_account_index)?;
+        let first_instruction_account_index =
+            self.get_index_of_account_in_instruction(index_in_transaction)?;
+
+        Ok(
+            if first_instruction_account_index == instruction_account_index {
+                None
+            } else {
+                Some(first_instruction_account_index)
+            },
+        )
     }
 
     /// Gets the key of the last program account of this Instruction
