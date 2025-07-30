@@ -137,7 +137,14 @@ fn test_multi_fec_block_different_size_coding() {
             .collect();
         let recovered_data: Vec<Shred> = shred::recover(all_shreds, &reed_solomon_cache)
             .unwrap()
-            .map(|s| s.unwrap())
+            .filter_map(|s| {
+                let s = s.unwrap();
+                if s.is_data() {
+                    Some(s)
+                } else {
+                    None
+                }
+            })
             .collect();
         // Necessary in order to ensure the last shred in the slot
         // is part of the recovered set, and that the below `index`
@@ -145,9 +152,6 @@ fn test_multi_fec_block_different_size_coding() {
         assert!(fec_data_shreds.len() % 2 == 0);
         for (i, recovered_shred) in recovered_data.into_iter().enumerate() {
             let index = first_data_index + (i * 2) + 1;
-            if recovered_shred.is_code() {
-                continue;
-            }
             verify_test_data_shred(
                 &recovered_shred,
                 index.try_into().unwrap(),

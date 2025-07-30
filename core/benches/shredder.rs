@@ -10,7 +10,7 @@ use {
     solana_keypair::Keypair,
     solana_ledger::shred::{
         get_data_shred_bytes_per_batch_typical, max_entries_per_n_shred, max_ticks_per_n_shreds,
-        ProcessShredsStats, ReedSolomonCache, Shred, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
+        recover, ProcessShredsStats, ReedSolomonCache, Shred, Shredder, DATA_SHREDS_PER_FEC_BLOCK,
     },
     solana_perf::test_tx,
     test::{black_box, Bencher},
@@ -192,9 +192,7 @@ fn bench_shredder_decoding(bencher: &mut Bencher) {
         .partition(Shred::is_data);
 
     bencher.iter(|| {
-        for shred in
-            solana_ledger::shred::recover(coding_shreds.clone(), &reed_solomon_cache).unwrap()
-        {
+        for shred in recover(coding_shreds.clone(), &reed_solomon_cache).unwrap() {
             black_box(shred.unwrap());
         }
     })

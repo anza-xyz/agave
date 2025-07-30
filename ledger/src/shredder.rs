@@ -167,9 +167,8 @@ impl Shredder {
         Vec<Shred>, // data shreds
         Vec<Shred>, // coding shreds
     ) {
-        if !merkle_variant {
-            panic!("Legacy shreds are not supported");
-        }
+        assert!(merkle_variant, "Legacy shreds are not supported");
+
         self.make_merkle_shreds_from_entries(
             keypair,
             entries,
