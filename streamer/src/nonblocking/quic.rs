@@ -360,7 +360,19 @@ async fn run_server(
                 .total_incoming_connection_attempts
                 .fetch_add(1, Ordering::Relaxed);
 
-            // first do per IpAddr rate limiting
+            if incoming.remote_address_validated() {
+                stats
+                    .incoming_connection_attempts_with_validated_remote_address
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                stats
+                    .incoming_connection_attempts_with_unvalidated_remote_address
+                    .fetch_add(1, Ordering::Relaxed);
+                // remote_address_validated = false --> may_retry = true
+                let _ = incoming.retry();
+                continue;
+            }
+
             if rate_limiter.len() > CONNECTION_RATE_LIMITER_CLEANUP_SIZE_THRESHOLD {
                 rate_limiter.retain_recent();
             }
