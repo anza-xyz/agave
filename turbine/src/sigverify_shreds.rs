@@ -220,7 +220,7 @@ fn run_shred_sigverify<const K: usize>(
             .flatten()
             .filter(|packet| !packet.meta().discard())
             .for_each(|mut packet| {
-                if let Err(_) = maybe_verify_and_resign_packet(
+                if maybe_verify_and_resign_packet(
                     &mut packet,
                     &root_bank,
                     &working_bank,
@@ -229,7 +229,9 @@ fn run_shred_sigverify<const K: usize>(
                     cluster_nodes_cache,
                     stats,
                     keypair,
-                ) {
+                )
+                .is_err()
+                {
                     packet.meta_mut().set_discard(true);
                 }
             })
