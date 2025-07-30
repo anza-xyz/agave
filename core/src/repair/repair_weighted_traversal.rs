@@ -287,24 +287,19 @@ pub mod test {
 
         let completed_shreds: Vec<Shred> = [0, 2, 4, 6]
             .iter()
-            .map(|slot| {
+            .flat_map(|slot| {
                 let shredder = Shredder::new(*slot, slot.saturating_sub(1), 0, 42).unwrap();
-                dbg!(last_shred);
-                let (mut shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
+                let (shreds, _) = shredder.entries_to_merkle_shreds_for_tests(
                     &keypair,
                     &[],
                     true,
                     Some(Hash::default()),
-                    0,
-                    0,
+                    last_shred as u32,
+                    last_shred as u32,
                     &reed_solomon_cache,
                     &mut ProcessShredsStats::default(),
                 );
-                let shred = shreds.pop().unwrap();
-                assert!(shred.last_in_slot());
-                dbg!(shred.id());
-                assert!(shred.sanitize().is_ok());
-                shred
+                shreds
             })
             .collect();
         blockstore
