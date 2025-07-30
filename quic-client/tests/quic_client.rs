@@ -341,9 +341,9 @@ mod tests {
         let client = QuicClient::new(Arc::new(QuicLazyInitializedEndpoint::default()), tpu_addr);
 
         // Send a full size packet with single byte writes.
-        let num_bytes = PACKET_DATA_SIZE;
+        let num_bytes = QUIC_MAX_STREAM_SIZE;
         let num_expected_packets: usize = 3;
-        let packets = vec![vec![0u8; PACKET_DATA_SIZE]; num_expected_packets];
+        let packets = vec![vec![0u8; QUIC_MAX_STREAM_SIZE]; num_expected_packets];
         let client_stats = ClientStats::default();
         for packet in packets {
             let _ = client
