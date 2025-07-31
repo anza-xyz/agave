@@ -2779,10 +2779,9 @@ fn program_cache_stats() {
     );
 
     assert!(
-        program_cache
+        !program_cache
             .iter()
-            .find(|(pubkey, _)| *pubkey == missing_program)
-            .is_none(),
+            .any(|(pubkey, _)| *pubkey == missing_program),
         "missing_program is missing"
     );
 }

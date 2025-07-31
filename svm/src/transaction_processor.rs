@@ -1195,7 +1195,7 @@ mod tests {
         },
         solana_rent::Rent,
         solana_rent_collector::{RentCollector, RENT_EXEMPT_RENT_EPOCH},
-        solana_sdk_ids::{bpf_loader, system_program, sysvar},
+        solana_sdk_ids::{bpf_loader, loader_v4, system_program, sysvar},
         solana_signature::Signature,
         solana_svm_callback::{AccountState, InvokeContextCallback},
         solana_transaction::{sanitized::SanitizedTransaction, Transaction},
@@ -1590,6 +1590,7 @@ mod tests {
             &mut ExecuteTimings::default(),
             false,
             true,
+            true,
         );
     }
 
@@ -1631,6 +1632,7 @@ mod tests {
                 &mut ExecuteTimings::default(),
                 false,
                 limit_to_load_programs,
+                true,
             );
             assert!(!program_cache_for_tx_batch.hit_max_limit);
             if program_cache_for_tx_batch.loaded_missing {
@@ -1650,9 +1652,9 @@ mod tests {
     fn test_filter_executable_program_accounts() {
         let mock_bank = MockBankCallback::default();
         let key1 = Pubkey::new_unique();
-        let owner1 = Pubkey::new_unique();
+        let owner1 = bpf_loader::id();
         let key2 = Pubkey::new_unique();
-        let owner2 = Pubkey::new_unique();
+        let owner2 = loader_v4::id();
 
         let mut data1 = AccountSharedData::default();
         data1.set_owner(owner1);
@@ -1693,16 +1695,10 @@ mod tests {
         );
 
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let owners = vec![owner1, owner2];
-
-        let mut program_accounts_set = HashSet::default();
-
-        batch_processor.filter_executable_program_accounts(
+        let program_accounts_set = batch_processor.filter_executable_program_accounts(
             &account_loader,
-            &mut program_accounts_set,
             &mut ProgramCacheForTxBatch::default(),
             &sanitized_transaction,
-            &owners,
         );
 
         assert_eq!(program_accounts_set.len(), 2);
@@ -1717,8 +1713,8 @@ mod tests {
 
         let non_program_pubkey1 = Pubkey::new_unique();
         let non_program_pubkey2 = Pubkey::new_unique();
-        let program1_pubkey = Pubkey::new_unique();
-        let program2_pubkey = Pubkey::new_unique();
+        let program1_pubkey = bpf_loader::id();
+        let program2_pubkey = loader_v4::id();
         let account1_pubkey = Pubkey::new_unique();
         let account2_pubkey = Pubkey::new_unique();
         let account3_pubkey = Pubkey::new_unique();
@@ -1780,15 +1776,11 @@ mod tests {
         let sanitized_tx2 = SanitizedTransaction::from_transaction_for_tests(tx2);
 
         let batch_processor = TransactionBatchProcessor::<TestForkGraph>::default();
-        let owners = &[program1_pubkey, program2_pubkey];
 
-        let mut tx1_programs = HashSet::default();
-        batch_processor.filter_executable_program_accounts(
+        let tx1_programs = batch_processor.filter_executable_program_accounts(
             &account_loader,
-            &mut tx1_programs,
             &mut ProgramCacheForTxBatch::default(),
             &sanitized_tx1,
-            owners,
         );
 
         assert_eq!(tx1_programs.len(), 1);
@@ -1797,13 +1789,10 @@ mod tests {
             "failed to find the program account",
         );
 
-        let mut tx2_programs = HashSet::default();
-        batch_processor.filter_executable_program_accounts(
+        let tx2_programs = batch_processor.filter_executable_program_accounts(
             &account_loader,
-            &mut tx2_programs,
             &mut ProgramCacheForTxBatch::default(),
             &sanitized_tx2,
-            owners,
         );
 
         assert_eq!(tx2_programs.len(), 2);
@@ -2016,6 +2005,7 @@ mod tests {
         batch_processor.program_cache.write().unwrap().extract(
             &mut vec![(key, ProgramCacheMatchCriteria::NoCriteria)],
             &mut loaded_programs_for_tx_batch,
+            true,
             true,
         );
         let entry = loaded_programs_for_tx_batch.find(&key).unwrap();
