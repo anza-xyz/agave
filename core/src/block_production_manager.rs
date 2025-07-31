@@ -32,7 +32,10 @@ pub struct BlockProductionManager {
     /// Non-vote thread handle(s).
     non_vote_thread_handles: Vec<JoinHandle<()>>,
 
-    context: BlockProductionContext,
+    // becomes None only during final shutdown.
+    // this is so channels are dropped and other threads
+    // can exit gracefully on detecting the disconnect.
+    context: Option<BlockProductionContext>,
 }
 
 impl BlockProductionManager {
@@ -51,7 +54,7 @@ impl BlockProductionManager {
             vote_thread_handle: Some(vote_thread_handle),
             non_vote_shutdown_signal,
             non_vote_thread_handles: vec![],
-            context,
+            context: Some(context),
         }
     }
 
@@ -66,6 +69,10 @@ impl BlockProductionManager {
             self.shutdown_non_vote_threads()?;
         }
 
+        let Some(context) = self.context.as_ref() else {
+            error!("block production context is not set. Cannot spawn non-vote threads.");
+            return Ok(());
+        };
         info!(
             "spawning non-vote block-production threads with method: {}, transaction structure: {}",
             block_production_method, transaction_structure
@@ -77,17 +84,17 @@ impl BlockProductionManager {
             &mut self.non_vote_thread_handles,
             block_production_method,
             transaction_structure,
-            self.context.poh_recorder.clone(),
+            context.poh_recorder.clone(),
             Committer::new(
-                self.context.transaction_status_sender.clone(),
-                self.context.replay_vote_sender.clone(),
-                self.context.prioritization_fee_cache.clone(),
+                context.transaction_status_sender.clone(),
+                context.replay_vote_sender.clone(),
+                context.prioritization_fee_cache.clone(),
             ),
-            self.context.transaction_recorder.clone(),
-            self.context.non_vote_receiver.clone(),
+            context.transaction_recorder.clone(),
+            context.non_vote_receiver.clone(),
             BankingStage::num_threads(),
-            self.context.log_messages_bytes_limit,
-            self.context.bank_forks.clone(),
+            context.log_messages_bytes_limit,
+            context.bank_forks.clone(),
         );
 
         Ok(())
@@ -95,6 +102,7 @@ impl BlockProductionManager {
 
     /// Perform final shutdown.
     pub fn shutdown(&mut self) -> thread::Result<()> {
+        self.context = None; // Clear context to prevent further use.
         self.shutdown_non_vote_threads()?;
 
         // Signal and wait for vote thread shutdown.

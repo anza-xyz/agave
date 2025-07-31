@@ -426,9 +426,6 @@ impl Tpu {
             self.tpu_forwards_quic_t.map_or(Ok(()), |t| t.join()),
             self.tpu_vote_quic_t.join(),
         ];
-        // drop early to remove internal arc references, which other stages depend on
-        // being dropped for shutdown.
-        drop(self.block_production_manager);
         let broadcast_result = self.broadcast_stage.join();
         for result in results {
             result?;
