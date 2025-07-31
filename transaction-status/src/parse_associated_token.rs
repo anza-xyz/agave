@@ -86,6 +86,7 @@ fn check_num_associated_token_accounts(
 mod test {
     use {
         super::*,
+        solana_instruction::AccountMeta,
         solana_message::Message,
         solana_pubkey::Pubkey,
         solana_sdk_ids::sysvar,
@@ -105,9 +106,13 @@ mod test {
         let mint = Pubkey::new_unique();
         let associated_account_address = get_associated_token_address(&wallet_address, &mint);
         let token_program_id = spl_token::id();
+        // mimic the deprecated instruction
         let mut create_ix =
             create_associated_token_account(&funder, &wallet_address, &mint, &token_program_id);
         create_ix.data = vec![];
+        create_ix
+            .accounts
+            .push(AccountMeta::new_readonly(sysvar::rent::id(), false));
         let mut message = Message::new(&[create_ix], None);
         let compiled_instruction = &mut message.instructions[0];
         let expected_parsed_ix = ParsedInstructionEnum {
