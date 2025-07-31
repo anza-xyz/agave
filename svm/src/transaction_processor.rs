@@ -805,7 +805,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     ) {
         let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria)> = program_accounts_set
             .iter()
-            .filter(|pubkey| !program_cache_for_tx_batch.contains(pubkey))
+            // HANA in theory this is a noop on latest rev .filter(|pubkey| !program_cache_for_tx_batch.contains(pubkey))
             .map(|pubkey| {
                 let match_criteria = if check_program_modification_slot {
                     get_program_modification_slot(account_loader, pubkey)
