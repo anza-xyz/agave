@@ -483,45 +483,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let (program_accounts_set, filter_executable_us) = measure_us!(self
-                .filter_executable_program_accounts(
-                    &account_loader,
-                    &mut program_cache_for_tx_batch,
-                    tx,
-                    PROGRAM_OWNERS,
-                ));
-            execute_timings.saturating_add_in_place(
-                ExecuteTimingType::FilterExecutableUs,
-                filter_executable_us,
-            );
-
-            let ((), program_cache_us) = measure_us!({
-                self.replenish_program_cache(
-                    &account_loader,
-                    &program_accounts_set,
-                    &mut program_cache_for_tx_batch,
-                    &mut execute_timings,
-                    config.check_program_modification_slot,
-                    config.limit_to_load_programs,
-                    true, // increment_usage_counter
-                );
-
-                if program_cache_for_tx_batch.hit_max_limit {
-                    return LoadAndExecuteSanitizedTransactionsOutput {
-                        error_metrics,
-                        execute_timings,
-                        processing_results: (0..sanitized_txs.len())
-                            .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
-                            .collect(),
-                        // If we abort the batch and balance recording is enabled, no balances should be
-                        // collected. If this is a leader thread, no batch will be committed.
-                        balance_collector: None,
-                    };
-                }
-            });
-            execute_timings
-                .saturating_add_in_place(ExecuteTimingType::ProgramCacheUs, program_cache_us);
-
             let ((), collect_balances_us) =
                 measure_us!(balance_collector.collect_pre_balances(&mut account_loader, tx));
             execute_timings
@@ -536,6 +497,46 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     Ok(ProcessedTransaction::FeesOnly(Box::new(fees_only_tx)))
                 }
                 TransactionLoadResult::Loaded(loaded_transaction) => {
+                    let (program_accounts_set, filter_executable_us) = measure_us!(self
+                        .filter_executable_program_accounts(
+                            &account_loader,
+                            &mut program_cache_for_tx_batch,
+                            tx,
+                        ));
+                    execute_timings.saturating_add_in_place(
+                        ExecuteTimingType::FilterExecutableUs,
+                        filter_executable_us,
+                    );
+
+                    let ((), program_cache_us) = measure_us!({
+                        self.replenish_program_cache(
+                            &account_loader,
+                            &program_accounts_set,
+                            &mut program_cache_for_tx_batch,
+                            &mut execute_timings,
+                            config.check_program_modification_slot,
+                            config.limit_to_load_programs,
+                            true, // increment_usage_counter
+                        );
+
+                        if program_cache_for_tx_batch.hit_max_limit {
+                            return LoadAndExecuteSanitizedTransactionsOutput {
+                                error_metrics,
+                                execute_timings,
+                                processing_results: (0..sanitized_txs.len())
+                                    .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                                    .collect(),
+                                // If we abort the batch and balance recording is enabled, no balances should be
+                                // collected. If this is a leader thread, no batch will be committed.
+                                balance_collector: None,
+                            };
+                        }
+                    });
+                    execute_timings.saturating_add_in_place(
+                        ExecuteTimingType::ProgramCacheUs,
+                        program_cache_us,
+                    );
+
                     let executed_tx = self.execute_loaded_transaction(
                         callbacks,
                         tx,
@@ -768,14 +769,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         account_loader: &AccountLoader<CB>,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         tx: &impl SVMMessage,
-        program_owners: &[Pubkey],
     ) -> HashSet<Pubkey> {
         let mut program_accounts_set = HashSet::default();
         for account_key in tx.account_keys().iter() {
             if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
                 cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
             } else if account_loader
-                .account_matches_owners(account_key, program_owners)
+                .account_matches_owners(account_key, PROGRAM_OWNERS)
                 .is_some()
             {
                 program_accounts_set.insert(*account_key);
@@ -844,7 +844,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                         false,
                     )
                     .expect("called load_program_with_pubkey() with nonexistent account");
-                    program.tx_usage_counter.store(1, Ordering::Relaxed);
+                    program.tx_usage_counter.store(0, Ordering::Relaxed);
                     (key, program)
                 });
 
