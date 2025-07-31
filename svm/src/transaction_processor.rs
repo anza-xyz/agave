@@ -310,67 +310,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         self.sysvar_cache.read().unwrap()
     }
 
-    // HANA OK WTF i think this basically works the main thing is just the fucking stats
-    // there are a couple things...
-    // ? pcache extract(), called by replenish
-    //   at the end, if first round, it adds hits and misses (hit/miss from the pov of the *global* not the local)
-    //   they get hits via the number of entries the local cache has after one extract() call
-    //   ie anything that didnt need to go to coop loading, since this is the first round
-    //   and they get misses via the length of the programs-to-load vec, which is pruned on hits
-    //   so it operates on the vec with retain() which is basically an in-place mutating filter
-    //   its so confusing because of the double level index and the fact that it retains things we *dont* find...
-    //   it is structured in such an insane way. what the fuck do these inner breaks do?
-    //   ok the whole thing is wrapped in uhh. ok i understand this now. it...
-    //   foreach program2load, if we got entries, go through them, if bad shit in there abort who cares
-    //   sometimes we might return an entry or a tombstone. this is a cache hit
-    //   in that case we mutate some shit and return false *out to the filter* to drop the program2load
-    //   but this stuff is all in a one-branch if statement which if we pass, it was a miss
-    //   next if we have no coop load yet we line one up. then we return true unconditionally to keep program2load
-    //   i think this means the next time we call extract, it does find the program as a hit
-    //   but because we only get stats on the first round there is no problem
-    // ! the problem is we lose all concept of a "first round"... in theory
-    //
-    // ? program usage counters, set up by filter and stored in replenish
-    //   this is a bit wonky because the version in master is broken in one way
-    //   and the version i wrote is broken in a different way
-    // these
-    //
-    // HANA OK i think i understand everything now
-    // first point, just keep the first round concept. it doesnt matter that we build the cache incrementally
-    // since we exclude already loaded accounts, each "first" round has a distinct set of accounts. behavior is the same
-    // second point... we start with an empty-ish (zero-usage all-builtin), batch-global map
-    // filter, step through tx, if something is in the map add to its count, or if loader-owned insert
-    // replenish, filter out anything already in the local cache, then extract
-    // for shit in the *global* cache we update access slot and *add* to usage count in extract
-    // for misses we load the data from account loader, set access slot in loadpwkey and store usage count in replenish
-    //
-    // i was wanting to keep the global p2l list and just set the usage counts after all txs execute
-    // but it seems like cross-thread eviction has a race condition where usage counts are lost
-    // so doing that would make it worse. i think... i make the batch-global p2l list
-    // then i do the same thing of adding usages in filter and skipping p2l items already in local
-    // but what i want to do now is more like... oh
-    // i can make filter a hashset i think. since we can only use once per tx
-    // so it goes like:
-    // * start. put keys for the builtins in the hashset
-    // * first tx. loop tx keys in filter. if in hashset, its also in cache, add one to count *there*
-    //   if not, insert it
-    // * in replenish, filter out any p2l keys in the local cache already
-    // * in extract, if we hit the global cache, add one to the entry
-    // * in replenish, when making a new entry for a global miss, start it at one
-    //
-    // and that should get me what i need. except the race condition still exists but thats life
-    // i could refuse to evict things loaded this slot but that has Other Problems if we keep the coinflip logic
-    // for now i think leave it as is. it ends up being jittery for new contestants but better than evicting tokenkeg
-    //
-    // OK SO the plan is add back first round for the hits/misses
-    // and for usage, convert to hashset and add incrementally as described above
-    //
-    // been a bit since i had to do stake stuff. remind myself again
-    // X add back the first round distinction. store hits and misses just like we used to
-    // * change the program map to a hashset
-    // X when we access a program, increment the usage thing itself (do we have the entry already?)
-    // * convert those counts to Arc because we have a race condition from eviction now
-
     /// Main entrypoint to the SVM.
     pub fn load_and_execute_sanitized_transactions<CB: TransactionProcessingCallback>(
         &self,
@@ -784,13 +723,6 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
 
         program_accounts_set
     }
-
-    // XXX TODO FIXME ok i have to step away but i think i have the solution to all my woes
-    // we just want to call replenish up front, before any transactions, with the list of builtins
-    // and we pass a bool in here which gets passed to extract wh... hmmmmmmm or not?
-    // can we get the usage counter in here rather than in extract? it would be easier
-    // ok no its too deep and indirect. the idea here is umm
-    // new bool prefill_builtins, rename firstround. then yea only add if real usage
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
