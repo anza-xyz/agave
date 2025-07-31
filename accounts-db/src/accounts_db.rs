@@ -6757,8 +6757,7 @@ impl AccountsDb {
             let total_processed_slots_across_all_threads = AtomicU64::new(0);
             let outer_slots_len = storages.len();
             let threads = num_cpus::get();
-            // approximately 400k slots in a snapshot
-            let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1;
+            let chunk_size = (outer_slots_len / (std::cmp::max(1, threads.saturating_sub(1)))) + 1; // approximately 400k slots in a snapshot
             let mut index_time = Measure::start("index");
             let insertion_time_us = AtomicU64::new(0);
             let total_including_duplicates = AtomicU64::new(0);

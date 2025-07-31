@@ -110,7 +110,6 @@ impl AccountsDb {
         let mut pure_notify_time = Duration::ZERO;
         let mut i = 0;
         let notifying_start = Instant::now();
-
         storage
             .accounts
             .scan_accounts_for_geyser(reader, |account| {
