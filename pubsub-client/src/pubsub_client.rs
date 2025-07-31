@@ -121,8 +121,7 @@ use {
         thread::{sleep, JoinHandle},
         time::Duration,
     },
-    tungstenite::{connect, stream::MaybeTlsStream, Message, WebSocket},
-    url::Url,
+    tungstenite::{client::IntoClientRequest, connect, stream::MaybeTlsStream, Message, WebSocket},
 };
 
 /// A subscription.
@@ -303,12 +302,15 @@ pub type RootSubscription = (PubsubRootClientSubscription, Receiver<Slot>);
 /// See the [module documentation][self].
 pub struct PubsubClient {}
 
-fn connect_with_retry(
-    url: Url,
-) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, Box<tungstenite::Error>> {
+fn connect_with_retry<R>(
+    request: R,
+) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, Box<tungstenite::Error>>
+where
+    R: Clone + IntoClientRequest + Unpin,
+{
     let mut connection_retries = 5;
     loop {
-        let result = connect(url.clone()).map(|(socket, _)| socket);
+        let result = connect(request.clone()).map(|(socket, _)| socket);
         if let Err(tungstenite::Error::Http(response)) = &result {
             if response.status() == http::StatusCode::TOO_MANY_REQUESTS && connection_retries > 0 {
                 let mut duration = Duration::from_millis(500);
@@ -346,13 +348,15 @@ impl PubsubClient {
     /// This method corresponds directly to the [`accountSubscribe`] RPC method.
     ///
     /// [`accountSubscribe`]: https://solana.com/docs/rpc/websocket/accountsubscribe
-    pub fn account_subscribe(
-        url: &str,
+    pub fn account_subscribe<R>(
+        request: R,
         pubkey: &Pubkey,
         config: Option<RpcAccountInfoConfig>,
-    ) -> Result<AccountSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    ) -> Result<AccountSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -399,13 +403,15 @@ impl PubsubClient {
     /// This method corresponds directly to the [`blockSubscribe`] RPC method.
     ///
     /// [`blockSubscribe`]: https://solana.com/docs/rpc/websocket/blocksubscribe
-    pub fn block_subscribe(
-        url: &str,
+    pub fn block_subscribe<R>(
+        request: R,
         filter: RpcBlockSubscribeFilter,
         config: Option<RpcBlockSubscribeConfig>,
-    ) -> Result<BlockSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    ) -> Result<BlockSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -447,13 +453,15 @@ impl PubsubClient {
     /// This method corresponds directly to the [`logsSubscribe`] RPC method.
     ///
     /// [`logsSubscribe`]: https://solana.com/docs/rpc/websocket/logssubscribe
-    pub fn logs_subscribe(
-        url: &str,
+    pub fn logs_subscribe<R>(
+        request: R,
         filter: RpcTransactionLogsFilter,
         config: RpcTransactionLogsConfig,
-    ) -> Result<LogsSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    ) -> Result<LogsSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -496,13 +504,15 @@ impl PubsubClient {
     /// This method corresponds directly to the [`programSubscribe`] RPC method.
     ///
     /// [`programSubscribe`]: https://solana.com/docs/rpc/websocket/programsubscribe
-    pub fn program_subscribe(
-        url: &str,
+    pub fn program_subscribe<R>(
+        request: R,
         pubkey: &Pubkey,
         config: Option<RpcProgramAccountsConfig>,
-    ) -> Result<ProgramSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    ) -> Result<ProgramSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -551,9 +561,11 @@ impl PubsubClient {
     /// This method corresponds directly to the [`voteSubscribe`] RPC method.
     ///
     /// [`voteSubscribe`]: https://solana.com/docs/rpc/websocket/votesubscribe
-    pub fn vote_subscribe(url: &str) -> Result<VoteSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    pub fn vote_subscribe<R>(request: R) -> Result<VoteSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -596,9 +608,11 @@ impl PubsubClient {
     /// This method corresponds directly to the [`rootSubscribe`] RPC method.
     ///
     /// [`rootSubscribe`]: https://solana.com/docs/rpc/websocket/rootsubscribe
-    pub fn root_subscribe(url: &str) -> Result<RootSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    pub fn root_subscribe<R>(request: R) -> Result<RootSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -642,13 +656,15 @@ impl PubsubClient {
     /// This method corresponds directly to the [`signatureSubscribe`] RPC method.
     ///
     /// [`signatureSubscribe`]: https://solana.com/docs/rpc/websocket/signaturesubscribe
-    pub fn signature_subscribe(
-        url: &str,
+    pub fn signature_subscribe<R>(
+        request: R,
         signature: &Signature,
         config: Option<RpcSignatureSubscribeConfig>,
-    ) -> Result<SignatureSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    ) -> Result<SignatureSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -693,9 +709,11 @@ impl PubsubClient {
     /// This method corresponds directly to the [`slotSubscribe`] RPC method.
     ///
     /// [`slotSubscribe`]: https://solana.com/docs/rpc/websocket/slotsubscribe
-    pub fn slot_subscribe(url: &str) -> Result<SlotsSubscription, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    pub fn slot_subscribe<R>(request: R) -> Result<SlotsSubscription, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
         let (sender, receiver) = unbounded::<SlotInfo>();
 
         let socket = Arc::new(RwLock::new(socket));
@@ -741,12 +759,14 @@ impl PubsubClient {
     /// This method corresponds directly to the [`slotUpdatesSubscribe`] RPC method.
     ///
     /// [`slotUpdatesSubscribe`]: https://solana.com/docs/rpc/websocket/slotsupdatessubscribe
-    pub fn slot_updates_subscribe(
-        url: &str,
+    pub fn slot_updates_subscribe<R>(
+        request: R,
         handler: impl Fn(SlotUpdate) + Send + 'static,
-    ) -> Result<PubsubClientSubscription<SlotUpdate>, PubsubClientError> {
-        let url = Url::parse(url)?;
-        let socket = connect_with_retry(url)?;
+    ) -> Result<PubsubClientSubscription<SlotUpdate>, PubsubClientError>
+    where
+        R: Clone + IntoClientRequest + Unpin,
+    {
+        let socket = connect_with_retry(request)?;
 
         let socket = Arc::new(RwLock::new(socket));
         let socket_clone = socket.clone();
