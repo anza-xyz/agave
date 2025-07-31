@@ -1,13 +1,14 @@
+use crate::transport::hid_transport::HidTransport;
 use {
     super::error::LedgerError,
     crate::{
         errors::RemoteWalletError,
         remote_wallet::{RemoteWallet, RemoteWalletInfo, RemoteWalletManager},
+        transport::transport_trait::Transport,
         wallet::{
             types::{Device, RemoteWalletType},
             WalletProbe,
         },
-        transport::transport_trait::Transport,
     },
     console::Emoji,
     dialoguer::{theme::ColorfulTheme, Select},
@@ -24,7 +25,6 @@ use {
     solana_signature::Signature,
     std::{cmp::min, convert::TryFrom},
 };
-use crate::transport::hid_transport::HidTransport;
 
 static CHECK_MARK: Emoji = Emoji("✅ ", "");
 
@@ -208,7 +208,10 @@ impl LedgerWallet {
                 chunk[header..header + size].copy_from_slice(&data[offset..offset + size]);
             }
             trace!("Ledger write {:?}", &hid_chunk[..]);
-            let n = self.transport.write(&hid_chunk[..]).map_err(|e| RemoteWalletError::Hid(e))?;
+            let n = self
+                .transport
+                .write(&hid_chunk[..])
+                .map_err(|e| RemoteWalletError::Hid(e))?;
             if n < size + header {
                 return Err(RemoteWalletError::Protocol("Incomplete write"));
             }
