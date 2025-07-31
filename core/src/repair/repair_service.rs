@@ -1265,7 +1265,7 @@ mod test {
     use {
         super::*,
         crate::repair::quic_endpoint::RemoteRequest,
-        solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
+        solana_gossip::{contact_info::ContactInfo, node::Node},
         solana_keypair::Keypair,
         solana_ledger::{
             blockstore::{
