@@ -912,7 +912,7 @@ struct VoteReward {
     vote_rewards: u64,
 }
 
-type VoteRewards = DashMap<Pubkey, VoteReward, RandomState>;
+type VoteRewards = HashMap<Pubkey, VoteReward, RandomState>;
 
 #[derive(Debug, Default)]
 pub struct NewBankOptions {
@@ -1808,18 +1808,7 @@ impl Bank {
         bank.transaction_processor =
             TransactionBatchProcessor::new_uninitialized(bank.slot, bank.epoch);
 
-        // TODO: Only create the thread pool if we need to recalculate rewards,
-        // i.e. epoch_reward_status is active. Currently, this thread pool is
-        // always created and used for recalculate_partitioned_rewards and
-        // lt_hash calculation. Once lt_hash feature is active, lt_hash won't
-        // need the thread pool. Thereby, after lt_hash feature activation, we
-        // can change to create the thread pool only when we need to recalculate
-        // rewards.
-        let thread_pool = ThreadPoolBuilder::new()
-            .thread_name(|i| format!("solBnkNewFlds{i:02}"))
-            .build()
-            .expect("new rayon threadpool");
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
 
         bank.finish_init(
             genesis_config,
@@ -2351,13 +2340,15 @@ impl Bank {
     /// - we want this fn to have no side effects (such as actually storing vote accounts) so that we
     ///   can compare the expected results with the current code path
     /// - we want to be able to batch store the vote accounts later for improved performance/cache updating
-    fn calc_vote_accounts_to_store(vote_account_rewards: VoteRewards) -> VoteRewardsAccounts {
-        let len = vote_account_rewards.len();
+    fn calc_vote_accounts_to_store(
+        vote_account_rewards: impl IntoIterator<Item = VoteRewards>,
+        len: usize,
+    ) -> VoteRewardsAccounts {
         let mut result = VoteRewardsAccounts {
             accounts_with_rewards: Vec::with_capacity(len),
             total_vote_rewards_lamports: 0,
         };
-        vote_account_rewards.into_iter().for_each(
+        vote_account_rewards.into_iter().flatten().for_each(
             |(
                 vote_pubkey,
                 VoteReward {

@@ -215,6 +215,7 @@ bitflags = { version = "2.9.1" }
 blake3 = "1.8.2"
 borsh = { version = "1.5.7", features = ["derive", "unstable__schema"] }
 borsh0-10 = { package = "borsh", version = "0.10.3" }
+boxcar = "0.2.13"
 bs58 = { version = "0.5.1", default-features = false }
 bv = "0.11.1"
 byte-unit = "4.0.19"

@@ -7165,6 +7165,7 @@ dependencies = [
  "libc",
  "log",
  "nix",
+ "num_cpus",
  "rand 0.8.5",
  "rayon",
  "serde",

@@ -58,6 +58,7 @@ assert_matches = { workspace = true }
 base64 = { workspace = true }
 bincode = { workspace = true }
 blake3 = { workspace = true }
+boxcar = { workspace = true }
 bv = { workspace = true, features = ["serde"] }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }

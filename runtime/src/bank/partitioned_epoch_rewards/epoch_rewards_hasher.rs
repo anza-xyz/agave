@@ -1,17 +1,17 @@
 use {
-    crate::bank::partitioned_epoch_rewards::PartitionedStakeReward, itertools::enumerate,
+    crate::bank::partitioned_epoch_rewards::PartitionedStakeRewards, itertools::enumerate,
     solana_epoch_rewards_hasher::EpochRewardsHasher, solana_hash::Hash,
 };
 
 pub(in crate::bank::partitioned_epoch_rewards) fn hash_rewards_into_partitions(
-    stake_rewards: &[PartitionedStakeReward],
+    stake_rewards: &PartitionedStakeRewards,
     parent_blockhash: &Hash,
     num_partitions: usize,
 ) -> Vec<Vec<usize>> {
     let hasher = EpochRewardsHasher::new(num_partitions, parent_blockhash);
     let mut indices = vec![vec![]; num_partitions];
 
-    for (i, reward) in enumerate(stake_rewards) {
+    for (i, (_, reward)) in enumerate(stake_rewards) {
         // clone here so the hasher's state is re-used on each call to `hash_address_to_partition`.
         // This prevents us from re-hashing the seed each time.
         // The clone is explicit (as opposed to an implicit copy) so it is clear this is intended.
@@ -32,6 +32,7 @@ mod tests {
             tests::create_genesis_config,
             Bank,
         },
+        boxcar::{vec as boxcar_vec, Vec as BoxcarVec},
         solana_epoch_schedule::EpochSchedule,
         solana_native_token::LAMPORTS_PER_SOL,
         std::sync::Arc,
@@ -44,7 +45,7 @@ mod tests {
 
         let stake_rewards = (0..expected_num)
             .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .collect::<BoxcarVec<_>>();
 
         let partition_indices = hash_rewards_into_partitions(&stake_rewards, &Hash::default(), 5);
         let total_num_after_hash_partition: usize = partition_indices.iter().map(|x| x.len()).sum();
@@ -55,7 +56,7 @@ mod tests {
 
     #[test]
     fn test_hash_rewards_into_partitions_empty() {
-        let stake_rewards = vec![];
+        let stake_rewards = boxcar_vec![];
 
         let num_partitions = 5;
         let partition_indices =
@@ -80,7 +81,7 @@ mod tests {
         let expected_num = 40959;
         let stake_rewards = (0..expected_num)
             .map(|_| PartitionedStakeReward::new_random())
-            .collect::<Vec<_>>();
+            .collect::<BoxcarVec<_>>();
 
         let partition_indices =
             hash_rewards_into_partitions(&stake_rewards, &Hash::new_from_array([1; 32]), 10);

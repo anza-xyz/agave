@@ -3,13 +3,13 @@ use {
         epoch_rewards_hasher::hash_rewards_into_partitions, Bank,
         CalculateRewardsAndDistributeVoteRewardsResult, CalculateValidatorRewardsResult,
         EpochRewardCalculateParamInfo, PartitionedRewardsCalculation, PartitionedStakeReward,
-        StakeRewardCalculation, VoteRewardsAccounts, VoteRewardsAccountsStorable,
-        REWARD_CALCULATION_NUM_BLOCKS,
+        PartitionedStakeRewards, StakeRewardCalculation, VoteRewardsAccounts,
+        VoteRewardsAccountsStorable, REWARD_CALCULATION_NUM_BLOCKS,
     },
     crate::{
         bank::{
             PrevEpochInflationRewards, RewardCalcTracer, RewardCalculationEvent, RewardsMetrics,
-            VoteReward, VoteRewards,
+            VoteReward,
         },
         inflation_rewards::{
             points::{calculate_points, PointValue},
@@ -18,8 +18,8 @@ use {
         stake_account::StakeAccount,
         stakes::Stakes,
     },
-    ahash::random_state::RandomState as AHashRandomState,
-    dashmap::DashMap,
+    ahash::RandomState,
+    boxcar::Vec as BoxcarVec,
     log::{debug, info},
     rayon::{
         iter::{IntoParallelRefIterator, ParallelIterator},
@@ -33,9 +33,12 @@ use {
     solana_sysvar::epoch_rewards::EpochRewards,
     solana_vote::vote_account::VoteAccount,
     solana_vote_program::vote_state::VoteStateVersions,
-    std::sync::{
-        atomic::{AtomicU64, Ordering::Relaxed},
-        Arc,
+    std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed},
+            Arc,
+        },
     },
 };
 
@@ -288,7 +291,6 @@ impl Bank {
                     &reward_calculate_param,
                     rewarded_epoch,
                     point_value.clone(),
-                    thread_pool,
                     reward_calc_tracer,
                     metrics,
                 );
@@ -330,7 +332,6 @@ impl Bank {
         reward_calculate_params: &EpochRewardCalculateParamInfo,
         rewarded_epoch: Epoch,
         point_value: PointValue,
-        thread_pool: &ThreadPool,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
         metrics: &mut RewardsMetrics,
     ) -> (VoteRewardsAccounts, StakeRewardCalculation) {
@@ -341,105 +342,136 @@ impl Bank {
         } = reward_calculate_params;
 
         let new_warmup_cooldown_rate_epoch = self.new_warmup_cooldown_rate_epoch();
-        let estimated_num_vote_accounts = cached_vote_accounts.len();
-        let vote_account_rewards: VoteRewards = DashMap::with_capacity_and_hasher_and_shard_amount(
-            estimated_num_vote_accounts,
-            AHashRandomState::default(),
-            1024, // shard amount
-        );
 
-        let total_stake_rewards = AtomicU64::default();
+        let vote_account_rewards_len = Arc::new(AtomicUsize::default());
+        let total_stake_rewards = Arc::new(AtomicU64::default());
+        let reward_calc_tracer = Arc::new(reward_calc_tracer);
         const ASSERT_STAKE_CACHE: bool = false; // Turn this on to assert that all vote accounts are in the cache
-        let (stake_rewards, measure_stake_rewards_us) = measure_us!(thread_pool.install(|| {
-            stake_delegations
-                .par_iter()
-                .filter_map(|(stake_pubkey, stake_account)| {
-                    // curry closure to add the contextual stake_pubkey
-                    let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
-                        // inner
-                        move |inner_event: &_| {
-                            outer(&RewardCalculationEvent::Staking(stake_pubkey, inner_event))
-                        }
-                    });
 
-                    let stake_pubkey = **stake_pubkey;
-                    let vote_pubkey = stake_account.delegation().voter_pubkey;
-                    let vote_account_from_cache = cached_vote_accounts.get(&vote_pubkey);
-                    if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
-                        let account_from_db = self.get_account_with_fixed_root(&vote_pubkey);
-                        if let Some(account_from_db) = account_from_db {
-                            if VoteStateVersions::is_correct_size_and_initialized(
-                                account_from_db.data(),
-                            ) && VoteAccount::try_from(account_from_db.clone()).is_ok()
-                            {
-                                panic!(
-                                    "Vote account {} not found in cache, but found in db: {:?}",
-                                    vote_pubkey, account_from_db
+        let num_workers = num_cpus::get();
+
+        let stake_rewards = Arc::new(BoxcarVec::with_capacity(stake_delegations.len()));
+        let mut vote_account_rewards: Vec<_> = (0..num_workers)
+            .map(|_| HashMap::with_hasher(RandomState::new()))
+            .collect();
+
+        let (_, measure_stake_rewards_us) =
+            measure_us!(solana_perf::thread_pool::scope_with_states(
+                "solStkRwrds",
+                &mut vote_account_rewards,
+                |s| {
+                    for stake_delegations in stake_delegations.chunks(10_000) {
+                        let vote_account_rewards_len = Arc::clone(&vote_account_rewards_len);
+                        let total_stake_rewards = Arc::clone(&total_stake_rewards);
+                        let reward_calc_tracer = Arc::clone(&reward_calc_tracer);
+                        let stake_rewards = Arc::clone(&stake_rewards);
+                        let point_value = point_value.clone();
+
+                        s.spawn(move |vote_account_rewards| {
+                            for (stake_pubkey, stake_account) in stake_delegations {
+                                // curry closure to add the contextual stake_pubkey
+                                let reward_calc_tracer =
+                                    reward_calc_tracer.as_ref().as_ref().map(|outer| {
+                                        // inner
+                                        move |inner_event: &_| {
+                                            outer(&RewardCalculationEvent::Staking(
+                                                stake_pubkey,
+                                                inner_event,
+                                            ))
+                                        }
+                                    });
+
+                                let stake_pubkey = **stake_pubkey;
+                                let vote_pubkey = stake_account.delegation().voter_pubkey;
+                                let vote_account_from_cache =
+                                    cached_vote_accounts.get(&vote_pubkey);
+                                if ASSERT_STAKE_CACHE && vote_account_from_cache.is_none() {
+                                    let account_from_db =
+                                        self.get_account_with_fixed_root(&vote_pubkey);
+                                    if let Some(account_from_db) = account_from_db {
+                                        if VoteStateVersions::is_correct_size_and_initialized(
+                                            account_from_db.data(),
+                                        ) && VoteAccount::try_from(account_from_db.clone())
+                                            .is_ok()
+                                        {
+                                            panic!(
+                                        "Vote account {} not found in cache, but found in db: {:?}",
+                                        vote_pubkey, account_from_db
+                                    );
+                                        }
+                                    }
+                                }
+                                let Some(vote_account) = vote_account_from_cache else {
+                                    return;
+                                };
+                                let vote_state_view = vote_account.vote_state_view();
+                                let mut stake_state = *stake_account.stake_state();
+
+                                let redeemed = redeem_rewards(
+                                    rewarded_epoch,
+                                    &mut stake_state,
+                                    vote_state_view,
+                                    &point_value,
+                                    stake_history,
+                                    reward_calc_tracer.as_ref(),
+                                    new_warmup_cooldown_rate_epoch,
                                 );
+
+                                if let Ok((stakers_reward, voters_reward)) = redeemed {
+                                    let commission = vote_state_view.commission();
+
+                                    // track voter rewards
+                                    let voters_reward_entry = vote_account_rewards
+                                        .entry(vote_pubkey)
+                                        .or_insert_with(|| {
+                                            vote_account_rewards_len.fetch_add(1, Relaxed);
+                                            VoteReward {
+                                                commission,
+                                                vote_account: vote_account.into(),
+                                                vote_rewards: 0,
+                                            }
+                                        });
+
+                                    voters_reward_entry.vote_rewards = voters_reward_entry
+                                        .vote_rewards
+                                        .saturating_add(voters_reward);
+
+                                    total_stake_rewards.fetch_add(stakers_reward, Relaxed);
+
+                                    // Safe to unwrap because all stake_delegations are type
+                                    // StakeAccount<Delegation>, which will always only wrap
+                                    // a `StakeStateV2::Stake` variant.
+                                    let stake = stake_state.stake().unwrap();
+                                    stake_rewards.push(PartitionedStakeReward {
+                                        stake_pubkey,
+                                        stake_reward: stakers_reward,
+                                        stake,
+                                        commission,
+                                    });
+                                } else {
+                                    debug!(
+                                        "redeem_rewards() failed for {}: {:?}",
+                                        stake_pubkey, redeemed
+                                    );
+                                }
                             }
-                        }
-                    }
-                    let vote_account = vote_account_from_cache?;
-                    let vote_state_view = vote_account.vote_state_view();
-                    let mut stake_state = *stake_account.stake_state();
-
-                    let redeemed = redeem_rewards(
-                        rewarded_epoch,
-                        &mut stake_state,
-                        vote_state_view,
-                        &point_value,
-                        stake_history,
-                        reward_calc_tracer.as_ref(),
-                        new_warmup_cooldown_rate_epoch,
-                    );
-
-                    if let Ok((stakers_reward, voters_reward)) = redeemed {
-                        let commission = vote_state_view.commission();
-
-                        // track voter rewards
-                        let mut voters_reward_entry = vote_account_rewards
-                            .entry(vote_pubkey)
-                            .or_insert(VoteReward {
-                                commission,
-                                vote_account: vote_account.into(),
-                                vote_rewards: 0,
-                            });
-
-                        voters_reward_entry.vote_rewards = voters_reward_entry
-                            .vote_rewards
-                            .saturating_add(voters_reward);
-
-                        total_stake_rewards.fetch_add(stakers_reward, Relaxed);
-
-                        // Safe to unwrap because all stake_delegations are type
-                        // StakeAccount<Delegation>, which will always only wrap
-                        // a `StakeStateV2::Stake` variant.
-                        let stake = stake_state.stake().unwrap();
-                        return Some(PartitionedStakeReward {
-                            stake_pubkey,
-                            stake_reward: stakers_reward,
-                            stake,
-                            commission,
                         });
-                    } else {
-                        debug!(
-                            "redeem_rewards() failed for {}: {:?}",
-                            stake_pubkey, redeemed
-                        );
                     }
-                    None
-                })
-                .collect()
-        }));
-        let (vote_rewards, measure_vote_rewards_us) =
-            measure_us!(Self::calc_vote_accounts_to_store(vote_account_rewards));
+                }
+            ));
+
+        let vote_account_rewards_len = vote_account_rewards_len.load(Relaxed);
+
+        let (vote_rewards, measure_vote_rewards_us) = measure_us!(
+            Self::calc_vote_accounts_to_store(vote_account_rewards, vote_account_rewards_len)
+        );
 
         metrics.redeem_rewards_us += measure_stake_rewards_us + measure_vote_rewards_us;
 
         (
             vote_rewards,
             StakeRewardCalculation {
-                stake_rewards: Arc::new(stake_rewards),
+                stake_rewards,
                 total_stake_rewards_lamports: total_stake_rewards.load(Relaxed),
             },
         )
@@ -458,6 +490,7 @@ impl Bank {
             stake_history,
             stake_delegations,
             cached_vote_accounts,
+            ..
         } = reward_calculate_params;
 
         let solana_vote_program: Pubkey = solana_vote_program::id();
@@ -497,15 +530,11 @@ impl Bank {
     pub(in crate::bank) fn recalculate_partitioned_rewards(
         &mut self,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-        thread_pool: &ThreadPool,
     ) {
         let epoch_rewards_sysvar = self.get_epoch_rewards_sysvar();
         if epoch_rewards_sysvar.active {
-            let (stake_rewards, partition_indices) = self.recalculate_stake_rewards(
-                &epoch_rewards_sysvar,
-                reward_calc_tracer,
-                thread_pool,
-            );
+            let (stake_rewards, partition_indices) =
+                self.recalculate_stake_rewards(&epoch_rewards_sysvar, reward_calc_tracer);
             self.set_epoch_reward_status_distribution(
                 epoch_rewards_sysvar.distribution_starting_block_height,
                 stake_rewards,
@@ -521,8 +550,7 @@ impl Bank {
         &self,
         epoch_rewards_sysvar: &EpochRewards,
         reward_calc_tracer: Option<impl RewardCalcTracer>,
-        thread_pool: &ThreadPool,
-    ) -> (Arc<Vec<PartitionedStakeReward>>, Vec<Vec<usize>>) {
+    ) -> (Arc<PartitionedStakeRewards>, Vec<Vec<usize>>) {
         assert!(epoch_rewards_sysvar.active);
         // If rewards are active, the rewarded epoch is always the immediately
         // preceding epoch.
@@ -545,7 +573,6 @@ impl Bank {
             &reward_calculate_param,
             rewarded_epoch,
             point_value,
-            thread_pool,
             reward_calc_tracer,
             &mut RewardsMetrics::default(), // This is required, but not reporting anything at the moment
         );
@@ -706,7 +733,10 @@ mod tests {
         );
 
         // assert that number of stake rewards matches
-        assert_eq!(stake_rewards.stake_rewards.len(), expected_num_delegations);
+        assert_eq!(
+            stake_rewards.stake_rewards.count(),
+            expected_num_delegations
+        );
     }
 
     #[test]
@@ -778,7 +808,6 @@ mod tests {
             .unwrap()
             .0;
 
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
         let mut rewards_metrics = RewardsMetrics::default();
 
         let point_value = PointValue {
@@ -794,7 +823,6 @@ mod tests {
             &reward_calculate_param,
             rewarded_epoch,
             point_value,
-            &thread_pool,
             reward_calc_tracer,
             &mut rewards_metrics,
         );
@@ -827,7 +855,7 @@ mod tests {
         );
         assert_eq!(vote_pubkey_from_result, vote_pubkey);
 
-        assert_eq!(stake_reward_calculation.stake_rewards.len(), 1);
+        assert_eq!(stake_reward_calculation.stake_rewards.count(), 1);
         let expected_reward = {
             let stake_reward = 8_400_000_000_000;
             let stake_state: StakeStateV2 = stake_account.state().unwrap();
@@ -850,7 +878,7 @@ mod tests {
     ) {
         for (i, partition) in received_stake_rewards.iter().enumerate() {
             let expected_partition = &expected_stake_rewards[i];
-            assert_eq!(partition.len(), expected_partition.len());
+            assert_eq!(partition.count(), expected_partition.count());
             for reward in partition {
                 assert!(expected_partition.iter().any(|x| x == reward));
             }
@@ -887,7 +915,7 @@ mod tests {
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let (recalculated_rewards, recalculated_partition_indices) =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer());
 
         let recalculated_rewards =
             build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
@@ -915,7 +943,7 @@ mod tests {
 
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let (recalculated_rewards, recalculated_partition_indices) =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer());
 
         // Note that recalculated rewards are **NOT** the same as expected
         // rewards, which were calculated before any distribution. This is
@@ -933,7 +961,7 @@ mod tests {
         );
         // First partition has already been distributed, so recalculation
         // returns 0 rewards
-        assert_eq!(recalculated_rewards[0].len(), 0);
+        assert_eq!(recalculated_rewards[0].count(), 0);
         let starting_index = (bank.block_height() + 1
             - epoch_rewards_sysvar.distribution_starting_block_height)
             as usize;
@@ -990,7 +1018,7 @@ mod tests {
             build_partitioned_stake_rewards(&expected_stake_rewards, &expected_partition_indices);
 
         let (recalculated_rewards, recalculated_partition_indices) =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer());
         let recalculated_rewards =
             build_partitioned_stake_rewards(&recalculated_rewards, &recalculated_partition_indices);
 
@@ -1005,7 +1033,7 @@ mod tests {
         assert!(!epoch_rewards_sysvar.active);
         // Should panic
         let _recalculated_rewards =
-            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer(), &thread_pool);
+            bank.recalculate_stake_rewards(&epoch_rewards_sysvar, null_tracer());
     }
 
     #[test]
@@ -1046,7 +1074,7 @@ mod tests {
             &mut rewards_metrics,
         );
 
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
             StartBlockHeightAndPartitionedRewards {
                 distribution_starting_block_height,
@@ -1084,7 +1112,7 @@ mod tests {
         let mut bank =
             Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 1);
 
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
         let EpochRewardStatus::Active(EpochRewardPhase::Distribution(
             StartBlockHeightAndPartitionedRewards {
                 distribution_starting_block_height,
@@ -1113,7 +1141,7 @@ mod tests {
         assert_eq!(expected_stake_rewards.len(), recalculated_rewards.len());
         // First partition has already been distributed, so recalculation
         // returns 0 rewards
-        assert_eq!(recalculated_rewards[0].len(), 0);
+        assert_eq!(recalculated_rewards[0].count(), 0);
         let epoch_rewards_sysvar = bank.get_epoch_rewards_sysvar();
         let starting_index = (bank.block_height() + 1
             - epoch_rewards_sysvar.distribution_starting_block_height)
@@ -1127,7 +1155,7 @@ mod tests {
         let mut bank =
             Bank::new_from_parent(Arc::new(bank), &Pubkey::default(), SLOTS_PER_EPOCH + 2);
 
-        bank.recalculate_partitioned_rewards(null_tracer(), &thread_pool);
+        bank.recalculate_partitioned_rewards(null_tracer());
         assert_eq!(bank.epoch_reward_status, EpochRewardStatus::Inactive);
     }
 }
