@@ -414,12 +414,39 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             .enable_transaction_balance_recording
             .then(|| BalanceCollector::new_with_transaction_count(sanitized_txs.len()));
 
-        // Create the loadable programs list and batch-local program cache.
-        let mut program_accounts_set = self.builtin_program_ids.read().unwrap().clone();
-
+        // Create the batch-local program cache.
         let mut program_cache_for_tx_batch = {
             let program_cache = self.program_cache.read().unwrap();
-            ProgramCacheForTxBatch::new_from_cache(self.slot, self.epoch, &program_cache)
+            let mut program_cache_for_tx_batch =
+                ProgramCacheForTxBatch::new_from_cache(self.slot, self.epoch, &program_cache);
+            drop(program_cache);
+
+            let builtins = self.builtin_program_ids.read().unwrap().clone();
+
+            self.replenish_program_cache(
+                &account_loader,
+                &builtins,
+                &mut program_cache_for_tx_batch,
+                &mut execute_timings,
+                config.check_program_modification_slot,
+                config.limit_to_load_programs,
+                false, // increment_usage_counter
+            );
+
+            if program_cache_for_tx_batch.hit_max_limit {
+                return LoadAndExecuteSanitizedTransactionsOutput {
+                    error_metrics,
+                    execute_timings,
+                    processing_results: (0..sanitized_txs.len())
+                        .map(|_| Err(TransactionError::ProgramCacheHitMaxLimit))
+                        .collect(),
+                    // If we abort the batch and balance recording is enabled, no balances should be
+                    // collected. If this is a leader thread, no batch will be committed.
+                    balance_collector: None,
+                };
+            }
+
+            program_cache_for_tx_batch
         };
 
         let (mut load_us, mut execution_us): (u64, u64) = (0, 0);
@@ -456,13 +483,13 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             ));
             load_us = load_us.saturating_add(single_load_us);
 
-            let ((), filter_executable_us) = measure_us!(self.filter_executable_program_accounts(
-                &account_loader,
-                &mut program_accounts_set,
-                &mut program_cache_for_tx_batch,
-                tx,
-                PROGRAM_OWNERS,
-            ));
+            let (program_accounts_set, filter_executable_us) = measure_us!(self
+                .filter_executable_program_accounts(
+                    &account_loader,
+                    &mut program_cache_for_tx_batch,
+                    tx,
+                    PROGRAM_OWNERS,
+                ));
             execute_timings.saturating_add_in_place(
                 ExecuteTimingType::FilterExecutableUs,
                 filter_executable_us,
@@ -476,6 +503,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                     &mut execute_timings,
                     config.check_program_modification_slot,
                     config.limit_to_load_programs,
+                    true, // increment_usage_counter
                 );
 
                 if program_cache_for_tx_batch.hit_max_limit {
@@ -738,25 +766,14 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
     fn filter_executable_program_accounts<CB: TransactionProcessingCallback>(
         &self,
         account_loader: &AccountLoader<CB>,
-        program_accounts_set: &mut HashSet<Pubkey>,
         program_cache_for_tx_batch: &mut ProgramCacheForTxBatch,
         tx: &impl SVMMessage,
         program_owners: &[Pubkey],
-    ) {
+    ) -> HashSet<Pubkey> {
+        let mut program_accounts_set = HashSet::default();
         for account_key in tx.account_keys().iter() {
-            if program_accounts_set.contains(account_key) {
-                // if program_accounts_set contains a key, one of these conditions *must* be true:
-                // * we already loaded the program into our local cache for a previous transaction
-                // * the key is a builtin and this is the first transaction so it hasnt been prepopulated
-                if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
-                    cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    debug_assert!(self
-                        .builtin_program_ids
-                        .read()
-                        .unwrap()
-                        .contains(account_key));
-                }
+            if let Some(cache_entry) = program_cache_for_tx_batch.find(account_key) {
+                cache_entry.tx_usage_counter.fetch_add(1, Ordering::Relaxed);
             } else if account_loader
                 .account_matches_owners(account_key, program_owners)
                 .is_some()
@@ -764,7 +781,16 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 program_accounts_set.insert(*account_key);
             }
         }
+
+        program_accounts_set
     }
+
+    // XXX TODO FIXME ok i have to step away but i think i have the solution to all my woes
+    // we just want to call replenish up front, before any transactions, with the list of builtins
+    // and we pass a bool in here which gets passed to extract wh... hmmmmmmm or not?
+    // can we get the usage counter in here rather than in extract? it would be easier
+    // ok no its too deep and indirect. the idea here is umm
+    // new bool prefill_builtins, rename firstround. then yea only add if real usage
 
     #[cfg_attr(feature = "dev-context-only-utils", qualifiers(pub))]
     fn replenish_program_cache<CB: TransactionProcessingCallback>(
@@ -775,6 +801,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         execute_timings: &mut ExecuteTimings,
         check_program_modification_slot: bool,
         limit_to_load_programs: bool,
+        increment_usage_counter: bool,
     ) {
         let mut missing_programs: Vec<(Pubkey, ProgramCacheMatchCriteria)> = program_accounts_set
             .iter()
@@ -792,7 +819,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
             })
             .collect();
 
-        let mut is_first_round = true;
+        let mut count_hits_and_misses = true;
         loop {
             let (program_to_store, task_cookie, task_waiter) = {
                 // Lock the global cache.
@@ -801,9 +828,10 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                 let program_to_load = program_cache.extract(
                     &mut missing_programs,
                     program_cache_for_tx_batch,
-                    is_first_round,
+                    increment_usage_counter,
+                    count_hits_and_misses,
                 );
-                is_first_round = false;
+                count_hits_and_misses = false;
 
                 let program_to_store = program_to_load.map(|key| {
                     // Load, verify and compile one program.

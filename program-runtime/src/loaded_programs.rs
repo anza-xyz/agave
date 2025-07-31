@@ -1060,14 +1060,14 @@ impl<FG: ForkGraph> ProgramCache<FG> {
         }
     }
 
-    // HANA TODO i want to check if an initial miss results in a second hit
     /// Extracts a subset of the programs relevant to a transaction batch
     /// and returns which program accounts the accounts DB needs to load.
     pub fn extract(
         &self,
         search_for: &mut Vec<(Pubkey, ProgramCacheMatchCriteria)>,
         loaded_programs_for_tx_batch: &mut ProgramCacheForTxBatch,
-        is_first_round: bool,
+        increment_usage_counter: bool,
+        count_hits_and_misses: bool,
     ) -> Option<Pubkey> {
         debug_assert!(self.fork_graph.is_some());
         let fork_graph = self.fork_graph.as_ref().unwrap().upgrade().unwrap();
@@ -1121,9 +1121,11 @@ impl<FG: ForkGraph> ProgramCache<FG> {
                                 };
                                 entry_to_return
                                     .update_access_slot(loaded_programs_for_tx_batch.slot);
-                                entry_to_return
-                                    .tx_usage_counter
-                                    .fetch_add(1, Ordering::Relaxed);
+                                if increment_usage_counter {
+                                    entry_to_return
+                                        .tx_usage_counter
+                                        .fetch_add(1, Ordering::Relaxed);
+                                }
                                 loaded_programs_for_tx_batch
                                     .entries
                                     .insert(*key, entry_to_return);
@@ -1147,7 +1149,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             }
         }
         drop(locked_fork_graph);
-        if is_first_round {
+        if count_hits_and_misses {
             self.stats
                 .misses
                 .fetch_add(search_for.len() as u64, Ordering::Relaxed);
