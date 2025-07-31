@@ -24,7 +24,7 @@ use {
     },
     solana_system_interface::instruction as system_instruction,
     solana_transaction::Transaction as SolanaTransaction,
-    spl_associated_token_account::get_associated_token_address,
+    spl_associated_token_account_interface::address::get_associated_token_address,
     std::collections::HashMap,
 };
 

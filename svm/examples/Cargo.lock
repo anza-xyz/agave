@@ -8271,7 +8271,7 @@ dependencies = [
  "solana-test-validator",
  "solana-transaction",
  "solana-transaction-error",
- "spl-associated-token-account",
+ "spl-associated-token-account-interface",
  "spl-token",
  "termcolor",
 ]
@@ -8668,7 +8668,7 @@ dependencies = [
  "solana-transaction-error",
  "solana-transaction-status-client-types",
  "solana-vote-interface",
- "spl-associated-token-account",
+ "spl-associated-token-account-interface",
  "spl-memo",
  "spl-token",
  "spl-token-2022",
@@ -9096,27 +9096,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "spl-associated-token-account"
-version = "7.0.0"
+name = "spl-associated-token-account-interface"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae179d4a26b3c7a20c839898e6aed84cb4477adf108a366c95532f058aea041b"
+checksum = "5e6bbe0794e532ac08428d3abf5bf8ae75bd81dfddd785c388e326c00c92c6f5"
 dependencies = [
  "borsh 1.5.7",
- "num-derive",
- "num-traits",
- "solana-program",
- "spl-associated-token-account-client",
- "spl-token",
- "spl-token-2022",
- "thiserror 2.0.12",
-]
-
-[[package]]
-name = "spl-associated-token-account-client"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f8349dbcbe575f354f9a533a21f272f3eb3808a49e2fdc1c34393b88ba76cb"
-dependencies = [
  "solana-instruction",
  "solana-pubkey",
 ]

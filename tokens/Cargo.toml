@@ -41,7 +41,7 @@ solana-system-interface = { workspace = true }
 solana-transaction = { workspace = true }
 solana-transaction-status = { workspace = true }
 solana-version = { workspace = true }
-spl-associated-token-account = { version = "=7.0.0", features = ["no-entrypoint"] }
+spl-associated-token-account-interface = { version = "=1.0.0" }
 spl-token = { version = "=8.0.0", features = ["no-entrypoint"] }
 tempfile = { workspace = true }
 thiserror = { workspace = true }

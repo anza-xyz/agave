@@ -30,7 +30,7 @@ static PARSABLE_PROGRAM_IDS: std::sync::LazyLock<HashMap<Pubkey, ParsableProgram
                 ParsableProgram::AddressLookupTable,
             ),
             (
-                spl_associated_token_account::id(),
+                spl_associated_token_account_interface::program::id(),
                 ParsableProgram::SplAssociatedTokenAccount,
             ),
             (spl_memo::v1::id(), ParsableProgram::SplMemo),

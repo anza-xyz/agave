@@ -9,8 +9,8 @@ use {
     solana_message::Message,
     solana_native_token::lamports_to_sol,
     solana_rpc_client::rpc_client::RpcClient,
-    spl_associated_token_account::{
-        get_associated_token_address, instruction::create_associated_token_account,
+    spl_associated_token_account_interface::{
+        address::get_associated_token_address, instruction::create_associated_token_account,
     },
     spl_token::{
         solana_program::program_pack::Pack,

@@ -9,7 +9,7 @@ use {
     solana_pubkey::Pubkey,
     solana_signer::Signer,
     solana_svm_example_paytube::{transaction::PayTubeTransaction, PayTubeChannel},
-    spl_associated_token_account::get_associated_token_address,
+    spl_associated_token_account_interface::address::get_associated_token_address,
 };
 
 #[test]

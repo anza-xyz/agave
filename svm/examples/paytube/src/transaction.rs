@@ -14,7 +14,7 @@ use {
         sanitized::SanitizedTransaction as SolanaSanitizedTransaction,
         Transaction as SolanaTransaction,
     },
-    spl_associated_token_account::get_associated_token_address,
+    spl_associated_token_account_interface::address::get_associated_token_address,
     std::collections::HashSet,
 };
 
