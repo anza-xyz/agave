@@ -150,38 +150,6 @@ impl Shredder {
         .partition(Shred::is_data)
     }
 
-    // For legacy tests and benchmarks.
-    #[allow(clippy::too_many_arguments)]
-    pub fn entries_to_shreds(
-        &self,
-        keypair: &Keypair,
-        entries: &[Entry],
-        is_last_in_slot: bool,
-        chained_merkle_root: Option<Hash>,
-        next_shred_index: u32,
-        next_code_index: u32,
-        merkle_variant: bool,
-        reed_solomon_cache: &ReedSolomonCache,
-        stats: &mut ProcessShredsStats,
-    ) -> (
-        Vec<Shred>, // data shreds
-        Vec<Shred>, // coding shreds
-    ) {
-        assert!(merkle_variant, "Legacy shreds are not supported");
-
-        self.make_merkle_shreds_from_entries(
-            keypair,
-            entries,
-            is_last_in_slot,
-            chained_merkle_root,
-            next_shred_index,
-            next_code_index,
-            reed_solomon_cache,
-            stats,
-        )
-        .partition(Shred::is_data)
-    }
-
     /// Combines all shreds to recreate the original buffer
     pub fn deshred<I, T: AsRef<[u8]>>(shreds: I) -> Result<Vec<u8>, Error>
     where
